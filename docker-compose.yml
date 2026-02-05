@@ -1,0 +1,120 @@
+services:
+# dev containers
+  db-dev:
+    image: postgres:16-alpine
+    container_name: m-80-db-dev
+    restart: always
+    environment:
+      POSTGRES_USER: $DB_USER_DEV
+      POSTGRES_PASSWORD: $DB_PASSWORD_DEV
+      POSTGRES_DB: $DB_NAME_DEV
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_dev_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    profiles: ["dev"]
+
+  whatsapp-bot-dev:
+    build:
+      context: .
+      target: dev
+    container_name: whatsapp-bot-dev
+    command: air -c .air.bot.toml
+    volumes:
+      - .:/app
+    environment:
+      - DB_HOST=$DB_HOST_DEV
+      - DB_PORT=$DB_PORT_DEV
+      - DB_USER=$DB_USER_DEV
+      - DB_PASSWORD=$DB_PASSWORD_DEV
+      - DB_NAME=$DB_NAME_DEV
+      - PAIRING_PHONE=$PAIRING_PHONE_DEV
+      - ENV=development
+    depends_on:
+      db-dev:
+        condition: service_healthy
+    profiles: ["dev"]
+
+# test containers
+  db-test:
+    image: postgres:16-alpine
+    container_name: m-80-db-test
+    restart: always
+    environment:
+      POSTGRES_USER: $DB_USER_TEST
+      POSTGRES_PASSWORD: $DB_PASSWORD_TEST
+      POSTGRES_DB: $DB_NAME_TEST
+    volumes:
+      - db_test_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    profiles:
+      - test
+
+  whatsapp-bot-test:
+    build:
+      context: .
+      target: test
+    container_name: whatsapp-bot-test
+    environment:
+      - DB_HOST=$DB_HOST_TEST
+      - DB_PORT=$DB_PORT_TEST
+      - DB_USER=$DB_USER_TEST
+      - DB_PASSWORD=$DB_PASSWORD_TEST
+      - DB_NAME=$DB_NAME_TEST
+      - PAIRING_PHONE=$PAIRING_PHONE_TEST
+      - ENV=test
+    depends_on:
+      db-test:
+        condition: service_healthy
+    profiles: [ "test" ]
+
+# prod containers
+  db-prod:
+    image: postgres:16-alpine
+    container_name: m-80-db-prod
+    restart: always
+    environment:
+      POSTGRES_USER: $DB_USER_PROD
+      POSTGRES_PASSWORD: $DB_PASSWORD_PROD
+      POSTGRES_DB: $DB_NAME_PROD
+    volumes:
+      - db_prod_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    profiles: [ "prod" ]
+
+  whatsapp-bot-prod:
+    build:
+      context: .
+      target: prod
+    container_name: whatsapp-bot-prod
+    environment:
+      - DB_HOST=$DB_HOST_PROD
+      - DB_PORT=$DB_PORT_PROD
+      - DB_USER=$DB_USER_PROD
+      - DB_PASSWORD=$DB_PASSWORD_PROD
+      - DB_NAME=$DB_NAME_PROD
+      - PAIRING_PHONE=$PAIRING_PHONE_PROD
+      - ENV=production
+    restart: always
+    depends_on:
+      db-prod:
+        condition: service_healthy
+    profiles: [ "prod" ]
+
+volumes:
+  db_dev_data:
+  db_test_data:
+  db_prod_data:
