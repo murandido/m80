@@ -9,6 +9,7 @@ import (
 
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
+	"go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -58,5 +59,25 @@ func (b *Bot) SendMessage(chatID types.JID, text string) {
 	if err != nil {
 		// TODO: audit this error
 		fmt.Println("Error sending:", err)
+	}
+}
+
+// ReplyMessage replies quoting the original message
+func (b *Bot) ReplyMessage(originalMsg *events.Message, text string) {
+	msg := &waE2E.Message{
+		ExtendedTextMessage: &waE2E.ExtendedTextMessage{
+			Text: proto.String(text),
+			ContextInfo: &waE2E.ContextInfo{
+				StanzaID:      proto.String(originalMsg.Info.ID),
+				Participant:   proto.String(originalMsg.Info.Sender.String()),
+				QuotedMessage: originalMsg.Message,
+			},
+		},
+	}
+
+	_, err := b.Client.SendMessage(context.Background(), originalMsg.Info.Chat, msg)
+	if err != nil {
+		// TODO: audit this error
+		fmt.Println("Error sending the reply:", err)
 	}
 }
