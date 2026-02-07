@@ -95,3 +95,17 @@ func (b *Bot) MarkMessageAsRead(evt *events.Message) {
 		fmt.Println("Error marking message as read:", err)
 	}
 }
+
+// SendPresenceTyping send to the chat that the bot is typing
+func (b *Bot) SendPresenceTyping(evt *events.Message) {
+	err := b.Client.SendChatPresence(
+		context.Background(),
+		evt.Info.Chat,
+		types.ChatPresenceComposing,
+		types.ChatPresenceMediaText,
+	)
+	// TODO: audit this error
+	if err != nil {
+		fmt.Println("Error sendind typing presence:", err)
+	}
+}
