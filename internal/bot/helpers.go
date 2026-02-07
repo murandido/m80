@@ -2,6 +2,7 @@ package bot
 
 import (
 	"math/rand"
+	"strings"
 	"time"
 
 	"go.mau.fi/whatsmeow/proto/waE2E"
@@ -32,4 +33,13 @@ func GetText(msg *waE2E.Message) string {
 	}
 
 	return ""
+}
+
+// IsCommand returns if the string has the conditions to be a valid command
+func IsCommand(msg string) bool {
+	if strings.HasPrefix(msg, "!") {
+		return true
+	}
+
+	return false
 }
