@@ -81,3 +81,17 @@ func (b *Bot) ReplyMessage(originalMsg *events.Message, text string) {
 		fmt.Println("Error sending the reply:", err)
 	}
 }
+
+func (b *Bot) MarkMessageAsRead(evt *events.Message) {
+	err := b.Client.MarkRead(
+		context.Background(),
+		[]types.MessageID{evt.Info.ID},
+		evt.Info.Timestamp,
+		evt.Info.Chat,
+		evt.Info.Sender,
+	)
+	if err != nil {
+		// TODO: audit this error
+		fmt.Println("Error marking message as read:", err)
+	}
+}
