@@ -57,3 +57,33 @@ func TestGetText(t *testing.T) {
 		})
 	}
 }
+
+func TestIsCommand(t *testing.T) {
+	// test table
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{
+			name:     "empty",
+			input:    "",
+			expected: false,
+		},
+		{
+			name:     "valid command",
+			input:    "!ping",
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := IsCommand(tt.input)
+
+			if result != tt.expected {
+				t.Errorf("got %v, want %v", result, tt.expected)
+			}
+		})
+	}
+}
