@@ -1,8 +1,23 @@
 package bot
 
 import (
+	"strings"
+
 	"go.mau.fi/whatsmeow/types/events"
 )
+
+// RouteCommand routes the commands to their respective functions
+func (b *Bot) RouteCommand(evt *events.Message, text string) {
+	cmd := strings.Split(strings.ToLower(strings.TrimSpace(text)), " ")
+
+	switch {
+	case cmd[0] == "!ping":
+		b.cmdPing(evt)
+
+	default:
+		return
+	}
+}
 
 // cmdPing just reply every "!ping" message
 func (b *Bot) cmdPing(evt *events.Message) {
