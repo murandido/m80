@@ -19,6 +19,11 @@ func (b *Bot) EventHandler(evt interface{}) {
 			SleepRandom(500, 1500)
 
 			b.MarkMessageAsRead(v)
+
+			if IsCommand(rawText) {
+				b.RouteCommand(v, rawText)
+				return
+			}
 		}()
 	}
 
