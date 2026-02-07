@@ -1,11 +1,15 @@
 package bot
 
 import (
+	"context"
+	"fmt"
 	"math/rand"
 	"strings"
 	"time"
 
 	"go.mau.fi/whatsmeow/proto/waE2E"
+	"go.mau.fi/whatsmeow/types"
+	"google.golang.org/protobuf/proto"
 )
 
 // SleepRandom sleeps for a random amount of time to humanize
@@ -42,4 +46,17 @@ func IsCommand(msg string) bool {
 	}
 
 	return false
+}
+
+// SendMessage sends a message to a specific chat JID
+func (b *Bot) SendMessage(chatID types.JID, text string) {
+	msg := &waE2E.Message{
+		Conversation: proto.String(text),
+	}
+
+	_, err := b.Client.SendMessage(context.Background(), chatID, msg)
+	if err != nil {
+		// TODO: audit this error
+		fmt.Println("Error sending:", err)
+	}
 }
