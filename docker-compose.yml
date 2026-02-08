@@ -38,6 +38,31 @@ services:
     depends_on:
       db-dev:
         condition: service_healthy
+      api-dev:
+        condition: service_started
+    profiles: ["dev"]
+
+  api-dev:
+    build:
+      context: .
+      target: dev
+    container_name: http-server-dev
+    command: air -c .air.api.toml
+    ports:
+      - "8080:8080"
+    volumes:
+      - .:/app
+    environment:
+      - DB_HOST=$DB_HOST_DEV
+      - DB_PORT=$DB_PORT_DEV
+      - DB_USER=$DB_USER_DEV
+      - DB_PASSWORD=$DB_PASSWORD_DEV
+      - DB_NAME=$DB_NAME_DEV
+      - ENV=development
+      - PORT=8080
+    depends_on:
+      db-dev:
+        condition: service_healthy
     profiles: ["dev"]
 
 # test containers
@@ -64,6 +89,7 @@ services:
       context: .
       target: test
     container_name: whatsapp-bot-test
+    command: go test ./cmd/bot/... ./internal/... -v
     environment:
       - DB_HOST=$DB_HOST_TEST
       - DB_PORT=$DB_PORT_TEST
@@ -71,6 +97,26 @@ services:
       - DB_PASSWORD=$DB_PASSWORD_TEST
       - DB_NAME=$DB_NAME_TEST
       - PAIRING_PHONE=$PAIRING_PHONE_TEST
+      - ENV=test
+    depends_on:
+      db-test:
+        condition: service_healthy
+      api-test:
+        condition: service_started
+    profiles: [ "test" ]
+
+  api-test:
+    build:
+      context: .
+      target: test
+    container_name: http-server-test
+    command: go test ./cmd/api/... ./internal/... -v
+    environment:
+      - DB_HOST=$DB_HOST_TEST
+      - DB_PORT=$DB_PORT_TEST
+      - DB_USER=$DB_USER_TEST
+      - DB_PASSWORD=$DB_PASSWORD_TEST
+      - DB_NAME=$DB_NAME_TEST
       - ENV=test
     depends_on:
       db-test:
@@ -99,6 +145,8 @@ services:
     build:
       context: .
       target: prod
+      args:
+        SERVICE_NAME: bot
     container_name: whatsapp-bot-prod
     environment:
       - DB_HOST=$DB_HOST_PROD
@@ -108,6 +156,31 @@ services:
       - DB_NAME=$DB_NAME_PROD
       - PAIRING_PHONE=$PAIRING_PHONE_PROD
       - ENV=production
+    restart: always
+    depends_on:
+      db-prod:
+        condition: service_healthy
+      api-prod:
+        condition: service_started
+    profiles: [ "prod" ]
+
+  api-prod:
+    build:
+      context: .
+      target: prod
+      args:
+        SERVICE_NAME: api
+    container_name: http-server-prod
+    ports:
+      - "8080:8080"
+    environment:
+      - DB_HOST=$DB_HOST_PROD
+      - DB_PORT=$DB_PORT_PROD
+      - DB_USER=$DB_USER_PROD
+      - DB_PASSWORD=$DB_PASSWORD_PROD
+      - DB_NAME=$DB_NAME_PROD
+      - ENV=production
+      - PORT=8080
     restart: always
     depends_on:
       db-prod:
