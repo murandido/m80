@@ -13,7 +13,6 @@ RUN go install github.com/air-verse/air@latest
 
 COPY . .
 
-
 # this default command is just a placeholder
 # docker-compose will overwrite this with the specific .toml file
 CMD ["air"]
@@ -27,8 +26,8 @@ CMD ["go", "test", "./...", "-v"]
 # builder image
 FROM base AS builder
 
-# argument to define which service will compile (default = bot)
-ARG SERVICE_NAME=bot
+# argument to define which service will compile
+ARG SERVICE_NAME
 
 COPY . .
 
