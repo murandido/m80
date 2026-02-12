@@ -29,9 +29,5 @@ func GetText(msg *waE2E.Message) string {
 
 // IsCommand returns if the string has the conditions to be a valid command
 func IsCommand(msg string) bool {
-	if strings.HasPrefix(msg, "!") {
-		return true
-	}
-
-	return false
+	return strings.HasPrefix(msg, "!")
 }
