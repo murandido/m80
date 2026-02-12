@@ -3,6 +3,7 @@ package bot
 import (
 	"strings"
 
+	"github.com/murandido/m-80-backend/internal/utils"
 	"go.mau.fi/whatsmeow/types/events"
 )
 
@@ -21,11 +22,11 @@ func (b *Bot) RouteCommand(evt *events.Message, text string) {
 
 // cmdPing just reply every "!ping" message
 func (b *Bot) cmdPing(evt *events.Message) {
-	SleepRandom(300, 500)
+	utils.SleepRandom(300, 500)
 
 	b.SendPresenceTyping(evt)
 
-	SleepRandom(1000, 1500)
+	utils.SleepRandom(1000, 1500)
 
 	b.ReplyMessage(evt, "Pong! 🏓")
 }

@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"github.com/murandido/m-80-backend/internal/utils"
 	"go.mau.fi/whatsmeow/types/events"
 )
 
@@ -12,15 +13,15 @@ func (b *Bot) EventHandler(evt interface{}) {
 			return
 		}
 
-		rawText := GetText(v.Message)
+		rawText := utils.GetText(v.Message)
 
 		go func() {
 			// delay to read the message
-			SleepRandom(500, 1500)
+			utils.SleepRandom(500, 1500)
 
 			b.MarkMessageAsRead(v)
 
-			if IsCommand(rawText) {
+			if utils.IsCommand(rawText) {
 				b.RouteCommand(v, rawText)
 				return
 			}

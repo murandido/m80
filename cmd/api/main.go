@@ -3,21 +3,42 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"os"
+
+	"github.com/murandido/m-80-backend/internal/api"
+	"github.com/murandido/m-80-backend/internal/data"
 )
 
 func main() {
-	fmt.Println("🚀 API M-80 rodando na porta 8080...")
+	data.Connect()
 
-	// Rota simples de teste
-	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		_, err := w.Write([]byte("API Operante! ✈️"))
-		if err != nil {
-			panic(err)
+	// creates an default user if the db is empty
+	var count int64
+	data.DB.Model(&data.User{}).Count(&count)
+	if count == 0 {
+		fmt.Println("🌱 DB empty. Creating ADMIN user...")
+		admin := data.User{
+			Name:     "Admin",
+			Phone:    "11999999999",
+			Password: "12345678",
+			Role:     "admin",
 		}
-	})
+		data.DB.Create(&admin)
+		fmt.Println("👤 Created admin: 11999999999 / 12345678")
+	}
 
-	// Bloqueia a execução ouvindo a porta
-	if err := http.ListenAndServe(":8080", nil); err != nil {
+	// config router
+	r := api.NewRouter(data.DB)
+
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	fmt.Printf("🔥 Http server running on %s\n", port)
+	err := http.ListenAndServe(":"+port, r)
+	if err != nil {
 		panic(err)
 	}
+
 }
