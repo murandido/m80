@@ -5,7 +5,8 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
+	chimiddleware "github.com/go-chi/chi/v5/middleware"
+	"github.com/murandido/m-80-backend/internal/api/middleware"
 	v1 "github.com/murandido/m-80-backend/internal/api/v1"
 	"gorm.io/gorm"
 )
@@ -13,9 +14,12 @@ import (
 func NewRouter(db *gorm.DB) *chi.Mux {
 	r := chi.NewRouter()
 
-	r.Use(middleware.Logger)
-	r.Use(middleware.Recoverer)
-	r.Use(middleware.RealIP)
+	r.Use(chimiddleware.Logger)
+	r.Use(chimiddleware.Recoverer)
+	r.Use(chimiddleware.RealIP)
+
+	r.Use(middleware.CORS())
+	r.Use(middleware.RateLimit())
 
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		_, err := w.Write([]byte("API On 🚀"))
