@@ -24,6 +24,18 @@ func NewAuthHandler(db *gorm.DB) *AuthHandler {
 	return &AuthHandler{DB: db, Validator: validator.New()}
 }
 
+// Login handles the http req to login an user.
+// @Summary      User Auth
+// @Description  Receives phone and password, checks in database and returns a JWT token.
+// @Tags         Auth
+// @Accept       json
+// @Produce      json
+// @Param        request body schemas.LoginRequest true "Login Credentials"
+// @Success      200  {object}  schemas.LoginResponse
+// @Failure      400  {object}  map[string]string "Invalid data"
+// @Failure      400  {object}  map[string]string "Invalid phone number"
+// @Failure      401  {object}  map[string]string "Phone or password incorrect"
+// @Router       /auth/login [post]
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var req schemas.LoginRequest
 

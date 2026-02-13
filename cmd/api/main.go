@@ -9,6 +9,16 @@ import (
 	"github.com/murandido/m-80-backend/internal/data"
 )
 
+// @title           M-80 Backend API
+// @version         0.1
+// @description     API for controlling the backend of M-80 dashboard.
+// @contact.name    murandido
+// @contact.email   murandido@gmail.com
+// @host            localhost:8080
+// @BasePath        /api/v1
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
 func main() {
 	data.Connect()
 
