@@ -39,12 +39,12 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var req schemas.LoginRequest
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.SendError(w, r, http.StatusBadRequest, "Invalid JSON")
+		utils.SendError(w, r, http.StatusBadRequest, "Invalid JSON payload")
 		return
 	}
 
 	if err := h.Validator.Struct(req); err != nil {
-		utils.SendError(w, r, http.StatusBadRequest, "Invalid data")
+		utils.SendError(w, r, http.StatusBadRequest, "Validation failed: "+err.Error())
 		return
 	}
 
