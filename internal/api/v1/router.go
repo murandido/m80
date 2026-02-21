@@ -34,6 +34,9 @@ func NewRouter(db *gorm.DB) chi.Router {
 				// get users
 				r.Get("/", userHandler.GetUsers)
 
+				// get user
+				r.Get("/{id}", userHandler.GetUser)
+
 				// update user
 				r.Put("/{id}", userHandler.UpdateUser)
 

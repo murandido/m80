@@ -86,6 +86,27 @@ func (h *UserHandler) GetUsers(w http.ResponseWriter, r *http.Request) {
 	utils.SendJSON(w, r, http.StatusOK, "Users fetched successfully", resp)
 }
 
+// GetUser handles the GET /users/{id} route
+func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	var user data.User
+	if err := h.DB.First(&user, "id = ?", id).Error; err != nil {
+		utils.SendError(w, r, http.StatusNotFound, "User not found")
+		return
+	}
+
+	resp := schemas.UserResponse{
+		ID:        user.ID,
+		Name:      user.Name,
+		Phone:     user.Phone,
+		Role:      user.Role,
+		CreatedAt: user.CreatedAt,
+	}
+
+	utils.SendJSON(w, r, http.StatusOK, "User fetched successfully", resp)
+}
+
 // UpdateUser handles the PUT /users/{id} route
 func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
