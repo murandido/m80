@@ -20,7 +20,7 @@ func NewRouter(db *gorm.DB) chi.Router {
 
 	// private routes
 	r.Group(func(r chi.Router) {
-		r.Use(middleware.RequireAuth())
+		r.Use(middleware.RequireAuth(db))
 
 		// admin routes
 		r.Group(func(r chi.Router) {

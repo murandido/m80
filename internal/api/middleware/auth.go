@@ -5,16 +5,18 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/murandido/m-80-backend/internal/auth"
+	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/utils"
+	"gorm.io/gorm"
 )
 
 type ContextKey string
 
 const UserContextKey ContextKey = "user_claims"
 
-func RequireAuth() func(handler http.Handler) http.Handler {
+// RequireAuth validates the JWT and ensures the user still exists in the database
+func RequireAuth(db *gorm.DB) func(handler http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authHeader := r.Header.Get("Authorization")
@@ -36,23 +38,35 @@ func RequireAuth() func(handler http.Handler) http.Handler {
 				return
 			}
 
-			ctx := context.WithValue(r.Context(), UserContextKey, claims)
+			userId, ok := claims["user_id"].(string)
+			if !ok {
+				utils.SendError(w, r, http.StatusUnauthorized, "Access denied: Invalid token payload")
+				return
+			}
+
+			var user data.User
+			if err := db.Select("id", "role").First(&user, "id = ?", userId).Error; err != nil {
+				utils.SendError(w, r, http.StatusUnauthorized, "Access denied: User no longer exists or was deactivated")
+				return
+			}
+
+			ctx := context.WithValue(r.Context(), UserContextKey, user)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }
 
+// RequireAdmin checks the fresh database data put in the context
 func RequireAdmin() func(handler http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			claims, ok := r.Context().Value(UserContextKey).(jwt.MapClaims)
+			user, ok := r.Context().Value(UserContextKey).(data.User)
 			if !ok {
-				utils.SendError(w, r, http.StatusInternalServerError, "Access denied: Server error reading credentials")
+				utils.SendError(w, r, http.StatusInternalServerError, "Internal Server Error: Could not read user context")
 				return
 			}
 
-			role, ok := claims["role"].(string)
-			if !ok || role != "admin" {
+			if user.Role != "admin" {
 				utils.SendError(w, r, http.StatusForbidden, "Access denied: Role not allowed")
 				return
 			}
