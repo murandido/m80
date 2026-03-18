@@ -58,3 +58,33 @@ export async function loginAction(
 
   redirect("/dashboard")
 }
+
+export async function verifySession() {
+  const cookieStore = await cookies()
+  const token = cookieStore.get("auth_token")?.value
+
+  if (!token) {
+    redirect("/")
+  }
+
+  let isValid = false
+
+  try {
+    const baseUrl = env.BACKEND_URL
+    const res = await fetch(`${baseUrl}/api/v1/auth/me`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    })
+
+    isValid = res.ok
+  } catch {
+    isValid = false
+  }
+
+  if (!isValid) {
+    redirect("/api/logout")
+  }
+
+  return true
+}
