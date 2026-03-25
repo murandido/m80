@@ -15,3 +15,11 @@ export function MobileSidebar() {
     </div>
   )
 }
+
+export function DesktopSidebar() {
+  return (
+    <div className="hidden lg:block">
+      <div></div>
+    </div>
+  )
+}
