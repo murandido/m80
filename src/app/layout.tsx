@@ -12,8 +12,10 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="pt">
-      <body className={`antialiased`}>{children}</body>
+    <html lang="pt" className="min-h-screen">
+      <body className={`flex min-h-screen flex-col antialiased`}>
+        {children}
+      </body>
     </html>
   )
 }
