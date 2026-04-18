@@ -10,30 +10,24 @@ front:
 	@echo "🚀 Initializing Frontend (Next.js)..."
 	cd frontend && pnpm dev
 
-# ==============================================================================
 # BACKEND (DOCKER)
-# ==============================================================================
-
-# Sobe o backend e infraestrutura via Docker (em background)
+# The backend and infrastructure are deployed via Docker (in the background).
 back-up:
 	@echo "🐳 Setting up the backend and infrastructure (Docker)..."
 	cd backend && docker compose --profile dev up --build -d
 
-# Derruba todos os containers do projeto
+# Knock down all the containers in the project.
 back-down:
 	@echo "🛑 Stopping containers..."
 	cd backend && docker compose --profile dev down
 
-# Acompanha os logs do backend em tempo real
+# Monitor backend logs in real time.
 back-logs:
 	@echo "📋 Reading Backend Logs (Ctrl+C to exit)..."
 	cd backend && docker compose --profile dev logs -f
 
-# ==============================================================================
 # UTILS
-# ==============================================================================
-
-# Limpa caches e builds (não apaga os volumes do Docker para não perder dados)
+# Clears caches and builds (does not delete Docker volumes to avoid data loss)
 clean:
 	@echo "🧹 Clearing frontend caches..."
 	rm -rf frontend/.next
