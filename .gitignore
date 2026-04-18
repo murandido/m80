@@ -1,0 +1,58 @@
+
+# Frontend (Node / Next.js / pnpm)
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/.vercel/
+frontend/.pnp.*
+frontend/.yarn/*
+!frontend/.yarn/patches
+!frontend/.yarn/plugins
+!frontend/.yarn/releases
+!frontend/.yarn/versions
+frontend/coverage/
+frontend/*.tsbuildinfo
+frontend/next-env.d.ts
+
+# NPM / Yarn / pnpm Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Backend (Go)
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+backend/bin/
+backend/tmp/
+
+# Test and Coverage
+*.test
+*.out
+*.coverprofile
+profile.cov
+coverage.*
+
+# Go Workspaces
+go.work
+go.work.sum
+
+# Environment & Secrets
+.env
+.env.*
+!.env.sample
+*.pem
+*.key
+
+# OS & IDEs
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
