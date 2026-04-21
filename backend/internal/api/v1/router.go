@@ -13,9 +13,16 @@ func NewRouter(db *gorm.DB) chi.Router {
 	authHandler := handlers.NewAuthHandler(db)
 	userHandler := handlers.NewUserHandler(db)
 
-	// public routes
 	r.Route("/auth", func(r chi.Router) {
+		// public routes
 		r.Post("/login", authHandler.Login)
+
+		// private routes
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RequireAuth(db))
+
+			r.Get("/me", authHandler.Me)
+		})
 	})
 
 	// private routes

@@ -1,7 +1,6 @@
 import { Button } from "@/components/ui/button"
 import { UserCog } from "lucide-react"
 import { Separator } from "@/components/ui/separator"
-import { UserTab } from "@/components/layout/UserTab"
 
 export default function UsersPage() {
   return (

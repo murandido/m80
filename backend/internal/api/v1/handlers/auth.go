@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/go-playground/validator/v10"
+	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/utils"
 	"gorm.io/gorm"
@@ -79,4 +80,26 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		"token": token,
 	}
 	utils.SendJSON(w, r, http.StatusOK, "Login successful", responseData)
+}
+
+// Me return the data of the authenticated user in the moment
+func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
+	// gets the data.User struct injected by the middleware
+	userCtx, ok := r.Context().Value(middleware.UserContextKey).(data.User)
+	if !ok {
+		utils.SendError(w, r, http.StatusUnauthorized, "Unauthorized or invalid context")
+		return
+	}
+
+	// get the user
+	var fullUser data.User
+	if err := h.DB.First(&fullUser, "id = ?", userCtx.ID).Error; err != nil {
+		utils.SendError(w, r, http.StatusNotFound, "User not found")
+		return
+	}
+
+	// clear the password hash before send to the frontend
+	fullUser.Password = ""
+
+	utils.SendJSON(w, r, http.StatusOK, "Data successfully recovered", fullUser)
 }
