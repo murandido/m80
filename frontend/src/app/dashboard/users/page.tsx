@@ -1,24 +1,34 @@
 import { cookies } from "next/headers"
 import { Separator } from "@/components/ui/separator"
 import { env } from "@/lib/env"
-import { getUsersSchema, User } from "@/schemas/user"
+import { getUsersSchema, getMeSchema, User } from "@/schemas/user"
 import { UserCard } from "@/components/users/user-card"
 import { CreateUserForm } from "@/components/users/create-user-form"
 
 export default async function UsersPage() {
   const cookieStore = await cookies()
   const token = cookieStore.get("auth_token")?.value
+  const authHeader = { Authorization: `Bearer ${token}` }
 
   let users: User[] = []
+  let currentUserId: string | null = null
 
   try {
-    const res = await fetch(`${env.BACKEND_URL}/api/v1/users`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-    const json = await res.json()
-    const parsed = getUsersSchema.response.safeParse(json)
-    if (parsed.success && parsed.data.data) {
-      users = parsed.data.data
+    const [usersRes, meRes] = await Promise.all([
+      fetch(`${env.BACKEND_URL}/api/v1/users`, { headers: authHeader }),
+      fetch(`${env.BACKEND_URL}/api/v1/auth/me`, { headers: authHeader }),
+    ])
+
+    const [usersJson, meJson] = await Promise.all([usersRes.json(), meRes.json()])
+
+    const parsedUsers = getUsersSchema.response.safeParse(usersJson)
+    if (parsedUsers.success && parsedUsers.data.data) {
+      users = parsedUsers.data.data
+    }
+
+    const parsedMe = getMeSchema.response.safeParse(meJson)
+    if (parsedMe.success && parsedMe.data.data) {
+      currentUserId = parsedMe.data.data.id
     }
   } catch {
     // silently fail — list stays empty
@@ -36,7 +46,11 @@ export default async function UsersPage() {
             <Separator className="my-2" />
             <div className="flex flex-col gap-2">
               {users.map((user) => (
-                <UserCard key={user.id} user={user} />
+                <UserCard
+                  key={user.id}
+                  user={user}
+                  isCurrentUser={user.id === currentUserId}
+                />
               ))}
             </div>
           </div>
