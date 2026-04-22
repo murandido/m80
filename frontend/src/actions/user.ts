@@ -5,6 +5,26 @@ import { env } from "@/lib/env"
 import { createUserSchema } from "@/schemas/user"
 import { z } from "zod"
 
+export async function deleteUserAction(userId: string) {
+  const cookieStore = await cookies()
+  const token = cookieStore.get("auth_token")?.value
+
+  try {
+    const res = await fetch(`${env.BACKEND_URL}/api/v1/users/${userId}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    })
+
+    if (!res.ok) {
+      return { error: "Erro ao deletar usuário." }
+    }
+
+    return { success: true }
+  } catch {
+    return { error: "Erro de conexão com o servidor." }
+  }
+}
+
 export async function createUserAction(
   data: z.infer<typeof createUserSchema.request>,
 ) {

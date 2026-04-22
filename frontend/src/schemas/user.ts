@@ -18,6 +18,13 @@ export const getUsersSchema = {
 
 export type User = z.infer<typeof userSchema>
 
+export const deleteUserSchema = {
+  response: z.object({
+    message: z.string(),
+    data: z.null().nullish(),
+  }),
+}
+
 export const createUserSchema = {
   request: z.object({
     name: z.string().min(1, "Nome é obrigatório"),
