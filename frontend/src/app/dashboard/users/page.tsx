@@ -1,10 +1,9 @@
 import { cookies } from "next/headers"
-import { Button } from "@/components/ui/button"
-import { UserCog } from "lucide-react"
 import { Separator } from "@/components/ui/separator"
 import { env } from "@/lib/env"
 import { getUsersSchema, User } from "@/schemas/user"
 import { UserCard } from "@/components/users/user-card"
+import { CreateUserForm } from "@/components/users/create-user-form"
 
 export default async function UsersPage() {
   const cookieStore = await cookies()
@@ -33,12 +32,7 @@ export default async function UsersPage() {
             <h1 className="text-lg font-semibold text-slate-800">
               Tabela de Usuários
             </h1>
-            <Button className="h-full bg-slate-800">
-              <div className="flex w-full items-center justify-center gap-2 p-1 text-sm text-slate-50">
-                <UserCog />
-                Cadastrar Usuário
-              </div>
-            </Button>
+            <CreateUserForm />
             <Separator className="my-2" />
             <div className="flex flex-col gap-2">
               {users.map((user) => (
