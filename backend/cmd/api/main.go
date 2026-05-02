@@ -9,9 +9,9 @@ import (
 	"github.com/murandido/m-80-backend/internal/data"
 )
 
-// @title           M-80 Backend API
-// @version         0.1
-// @description     API for controlling the backend of M-80 dashboard.
+// @title           M-80 API
+// @version         1.0
+// @description     API de controle do painel M-80. Gerencie usuários e autenticação.
 // @contact.name    murandido
 // @contact.email   murandido@gmail.com
 // @host            localhost:8080
@@ -19,6 +19,7 @@ import (
 // @securityDefinitions.apikey BearerAuth
 // @in header
 // @name Authorization
+// @description     Informe o token JWT no formato: Bearer {token}
 func main() {
 	data.Connect()
 

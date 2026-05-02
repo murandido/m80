@@ -27,6 +27,19 @@ func NewUserHandler(db *gorm.DB) *UserHandler {
 }
 
 // CreateUser handles the POST /users route
+// @Summary      Criar usuário
+// @Description  Cria um novo usuário no sistema. Apenas administradores podem acessar.
+// @Tags         Usuários
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        payload body schemas.CreateUserRequest true "Dados do novo usuário"
+// @Success      201  {object}  schemas.UserSingleResponse
+// @Failure      400  {object}  schemas.ErrorResponse "Payload inválido"
+// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a administradores"
+// @Failure      500  {object}  schemas.ErrorResponse "Erro ao criar usuário"
+// @Router       /users [post]
 func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	var req schemas.CreateUserRequest
 
@@ -64,6 +77,16 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetUsers handles the GET /users route.
+// @Summary      Listar usuários
+// @Description  Retorna todos os usuários cadastrados no sistema (sem senhas).
+// @Tags         Usuários
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200  {object}  schemas.UserListResponse
+// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a administradores"
+// @Failure      500  {object}  schemas.ErrorResponse "Erro ao buscar usuários"
+// @Router       /users [get]
 func (h *UserHandler) GetUsers(w http.ResponseWriter, r *http.Request) {
 	var users []data.User
 
@@ -87,6 +110,17 @@ func (h *UserHandler) GetUsers(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetUser handles the GET /users/{id} route
+// @Summary      Buscar usuário por ID
+// @Description  Retorna os dados de um usuário específico identificado pelo UUID.
+// @Tags         Usuários
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id  path  string  true  "UUID do usuário"
+// @Success      200  {object}  schemas.UserSingleResponse
+// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a administradores"
+// @Failure      404  {object}  schemas.ErrorResponse "Usuário não encontrado"
+// @Router       /users/{id} [get]
 func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
@@ -108,6 +142,21 @@ func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 }
 
 // UpdateUser handles the PUT /users/{id} route
+// @Summary      Atualizar usuário
+// @Description  Atualiza os dados de um usuário existente. Todos os campos são opcionais (atualização parcial).
+// @Tags         Usuários
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id      path  string                    true  "UUID do usuário"
+// @Param        payload body  schemas.UpdateUserRequest true  "Campos a atualizar"
+// @Success      200  {object}  schemas.UserSingleResponse
+// @Failure      400  {object}  schemas.ErrorResponse "Payload inválido"
+// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a administradores"
+// @Failure      404  {object}  schemas.ErrorResponse "Usuário não encontrado"
+// @Failure      500  {object}  schemas.ErrorResponse "Erro ao atualizar usuário"
+// @Router       /users/{id} [put]
 func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
@@ -161,6 +210,17 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 }
 
 // DeleteUser handles the DELETE /users/{id} route.
+// @Summary      Deletar usuário
+// @Description  Remove um usuário do sistema via soft delete (marca deleted_at, não apaga fisicamente).
+// @Tags         Usuários
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id  path  string  true  "UUID do usuário"
+// @Success      200  {object}  schemas.ErrorResponse "Usuário deletado com sucesso"
+// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a administradores"
+// @Failure      500  {object}  schemas.ErrorResponse "Erro ao deletar usuário"
+// @Router       /users/{id} [delete]
 func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 

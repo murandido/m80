@@ -25,16 +25,16 @@ func NewAuthHandler(db *gorm.DB) *AuthHandler {
 }
 
 // Login handles the http req to login an user.
-// @Summary      User Auth
-// @Description  Receives phone and password, checks in database and returns a JWT token.
-// @Tags         Auth
+// @Summary      Autenticação de usuário
+// @Description  Recebe telefone e senha, valida no banco e retorna um token JWT.
+// @Tags         Autenticação
 // @Accept       json
 // @Produce      json
-// @Param        request body schemas.LoginRequest true "Login Credentials"
-// @Success      200  {object}  schemas.LoginResponse
-// @Failure      400  {object}  map[string]string "Invalid data"
-// @Failure      400  {object}  map[string]string "Invalid phone number"
-// @Failure      401  {object}  map[string]string "Phone or password incorrect"
+// @Param        payload body schemas.LoginRequest true "Credenciais de login"
+// @Success      200  {object}  schemas.AuthLoginResponse
+// @Failure      400  {object}  schemas.ErrorResponse "Payload inválido ou telefone inválido"
+// @Failure      401  {object}  schemas.ErrorResponse "Telefone ou senha incorretos"
+// @Failure      500  {object}  schemas.ErrorResponse "Erro ao gerar token"
 // @Router       /auth/login [post]
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var req schemas.LoginRequest
@@ -83,6 +83,15 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 }
 
 // Me return the data of the authenticated user in the moment
+// @Summary      Dados do usuário autenticado
+// @Description  Retorna os dados do usuário cujo token JWT foi enviado no header Authorization.
+// @Tags         Autenticação
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200  {object}  schemas.AuthMeResponse
+// @Failure      401  {object}  schemas.ErrorResponse "Token ausente ou inválido"
+// @Failure      404  {object}  schemas.ErrorResponse "Usuário não encontrado"
+// @Router       /auth/me [get]
 func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 	// gets the data.User struct injected by the middleware
 	userCtx, ok := r.Context().Value(middleware.UserContextKey).(data.User)
