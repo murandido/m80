@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS issuances;
+DROP TYPE IF EXISTS trip_type;

@@ -15,7 +15,7 @@ type User struct {
 	Name      string         `gorm:"not null" json:"name"`
 	Phone     string         `gorm:"uniqueIndex:idx_users_phone,where:deleted_at IS NULL;not null" json:"phone"`
 	Password  string         `gorm:"not null" json:"-"`
-	Role      string         `gorm:"default:'user'" json:"role"`
+	Role      string         `gorm:"type:user_role;not null;default:'user'" json:"role"`
 	CreatedAt time.Time      `json:"created_at"`
 	UpdatedAt time.Time      `json:"updated_at"`
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
