@@ -33,6 +33,20 @@ type UserSingleResponse struct {
 	Data    UserResponse `json:"data"`
 }
 
+// PersonListResponse is the GET /people route response
+type PersonListResponse struct {
+	Success bool             `json:"success" example:"true"`
+	Message string           `json:"message" example:"Pessoas listadas com sucesso"`
+	Data    []PersonResponse `json:"data"`
+}
+
+// PersonSingleResponse is the response from single-person routes
+type PersonSingleResponse struct {
+	Success bool           `json:"success" example:"true"`
+	Message string         `json:"message" example:"Pessoa encontrada"`
+	Data    PersonResponse `json:"data"`
+}
+
 // ErrorResponse is the standard API error response
 type ErrorResponse struct {
 	Success bool   `json:"success" example:"false"`

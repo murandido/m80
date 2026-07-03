@@ -32,3 +32,20 @@ func (p *Person) BeforeCreate(tx *gorm.DB) error {
 	}
 	return nil
 }
+
+// ComputeComplete reports whether all essential fields of a person are filled in.
+// Complement is excluded since it's optional by nature (not every address has one).
+// Handlers use this to (re)calculate the Complete flag unless the caller explicitly overrides it.
+func (p *Person) ComputeComplete() bool {
+	return p.Name != "" &&
+		p.CPF != nil &&
+		p.BirthDate != nil &&
+		p.Email != nil &&
+		p.Phone != nil &&
+		p.ZipCode != nil &&
+		p.State != nil &&
+		p.City != nil &&
+		p.Address != nil &&
+		p.AddressNumber != nil &&
+		p.Neighborhood != nil
+}
