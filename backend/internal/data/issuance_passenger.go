@@ -1,9 +1,11 @@
 package data
 
 import (
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/murandido/m-80-backend/internal/utils"
 	"gorm.io/gorm"
 )
 
@@ -22,6 +24,28 @@ type IssuancePassenger struct {
 func (ip *IssuancePassenger) BeforeCreate(tx *gorm.DB) error {
 	if ip.ID == "" {
 		ip.ID = uuid.New().String()
+	}
+	return nil
+}
+
+func (ip *IssuancePassenger) BeforeSave(tx *gorm.DB) error {
+	if ip.Document != nil && !strings.HasPrefix(*ip.Document, "enc:") {
+		encrypted, err := utils.Encrypt(*ip.Document)
+		if err != nil {
+			return err
+		}
+		ip.Document = &encrypted
+	}
+	return nil
+}
+
+func (ip *IssuancePassenger) AfterFind(tx *gorm.DB) error {
+	if ip.Document != nil {
+		decrypted, err := utils.Decrypt(*ip.Document)
+		if err != nil {
+			return err
+		}
+		ip.Document = &decrypted
 	}
 	return nil
 }

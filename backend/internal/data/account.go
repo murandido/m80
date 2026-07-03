@@ -1,9 +1,11 @@
 package data
 
 import (
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/murandido/m-80-backend/internal/utils"
 	"gorm.io/gorm"
 )
 
@@ -25,6 +27,28 @@ type Account struct {
 func (a *Account) BeforeCreate(tx *gorm.DB) error {
 	if a.ID == "" {
 		a.ID = uuid.New().String()
+	}
+	return nil
+}
+
+func (a *Account) BeforeSave(tx *gorm.DB) error {
+	if a.Password != nil && !strings.HasPrefix(*a.Password, "enc:") {
+		encrypted, err := utils.Encrypt(*a.Password)
+		if err != nil {
+			return err
+		}
+		a.Password = &encrypted
+	}
+	return nil
+}
+
+func (a *Account) AfterFind(tx *gorm.DB) error {
+	if a.Password != nil {
+		decrypted, err := utils.Decrypt(*a.Password)
+		if err != nil {
+			return err
+		}
+		a.Password = &decrypted
 	}
 	return nil
 }

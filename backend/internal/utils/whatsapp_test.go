@@ -36,6 +36,15 @@ func TestGetText(t *testing.T) {
 			expected: "Hello World (ExtendedTextMessage)",
 		},
 		{
+			name: "extract ImageMessage Caption",
+			input: &waE2E.Message{
+				ImageMessage: &waE2E.ImageMessage{
+					Caption: proto.String("Image caption text"),
+				},
+			},
+			expected: "Image caption text",
+		},
+		{
 			name: "extract by prioritizing Conversation (instead of ExtendedTextMessage)",
 			input: &waE2E.Message{
 				Conversation: proto.String("Hello World (Priority)"),
