@@ -1,28 +1,15 @@
-"use client"
-
-import { useState } from "react"
+import { AppSidebar } from "@/components/layout/app-sidebar"
 import { Header } from "@/components/layout/header"
-import { DesktopSidebar, MobileSidebar } from "@/components/layout/sidebar"
+import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false)
-
   return (
-    <>
-      <Header setIsSidebarOpen={setIsSidebarOpen} />
-      <main className="flex flex-1 overflow-hidden">
-        <div
-          className={`flex flex-1 transition-transform duration-500 ease-in-out ${isSidebarOpen && "-translate-x-full"}`}
-        >
-          <div className="w-screen shrink-0 lg:w-[75vw] lg:shrink">
-            {children}
-          </div>
-          <div className="w-screen shrink-0 lg:shrink">
-            <MobileSidebar />
-            <DesktopSidebar />
-          </div>
-        </div>
-      </main>
-    </>
+    <SidebarProvider>
+      <SidebarInset>
+        <Header />
+        <main className="flex-1 overflow-auto">{children}</main>
+      </SidebarInset>
+      <AppSidebar />
+    </SidebarProvider>
   )
 }
