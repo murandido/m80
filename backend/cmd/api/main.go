@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 
@@ -36,6 +37,10 @@ func main() {
 		}
 		data.DB.Create(&admin)
 		fmt.Println("👤 Created admin: 11999999999 / 12345678")
+	}
+
+	if err := data.SeedAirports(); err != nil {
+		log.Fatal("❌ Failed to seed airports: ", err)
 	}
 
 	// config router
