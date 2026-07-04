@@ -1,5 +1,14 @@
 import { z } from "zod"
 
+export const personNicknameSchema = z.object({
+  id: z.string(),
+  person_id: z.string(),
+  nickname: z.string(),
+  created_at: z.string(),
+})
+
+export type PersonNickname = z.infer<typeof personNicknameSchema>
+
 export const personSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -14,6 +23,7 @@ export const personSchema = z.object({
   address_number: z.string().nullable(),
   complement: z.string().nullable(),
   neighborhood: z.string().nullable(),
+  nicknames: z.array(personNicknameSchema),
   complete: z.boolean(),
   created_at: z.string(),
   updated_at: z.string(),
@@ -46,6 +56,7 @@ export const createPersonSchema = {
     address_number: optionalTextField,
     complement: optionalTextField,
     neighborhood: optionalTextField,
+    nicknames: z.array(z.string().min(1)).optional(),
   }),
   response: z.object({
     success: z.boolean(),
@@ -80,5 +91,31 @@ export const deletePersonSchema = {
   response: z.object({
     message: z.string(),
     data: z.null().nullish(),
+  }),
+}
+
+export const createPersonNicknameSchema = {
+  request: z.object({
+    nickname: z.string().min(1, "Apelido é obrigatório"),
+  }),
+  response: z.object({
+    success: z.boolean(),
+    message: z.string(),
+    data: personNicknameSchema.nullish(),
+  }),
+}
+
+export const deletePersonNicknameSchema = {
+  response: z.object({
+    message: z.string(),
+    data: z.null().nullish(),
+  }),
+}
+
+export const checkNicknameAvailabilitySchema = {
+  response: z.object({
+    success: z.boolean(),
+    message: z.string(),
+    data: z.object({ available: z.boolean() }).nullish(),
   }),
 }

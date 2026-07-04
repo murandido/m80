@@ -97,6 +97,34 @@ func (h *PersonNicknameHandler) CreatePersonNickname(w http.ResponseWriter, r *h
 	utils.SendJSON(w, r, http.StatusCreated, "Nickname created successfully", toPersonNicknameResponse(nickname))
 }
 
+// CheckNicknameAvailability handles the GET /people/nicknames/availability route.
+// @Summary      Verificar disponibilidade de apelido
+// @Description  Verifica se um apelido já está em uso por alguém no sistema.
+// @Tags         Apelidos
+// @Produce      json
+// @Security     BearerAuth
+// @Param        nickname  query  string  true  "Apelido a verificar"
+// @Success      200  {object}  schemas.NicknameAvailabilityCheckResponse
+// @Failure      400  {object}  schemas.ErrorResponse "Parâmetro nickname ausente"
+// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      500  {object}  schemas.ErrorResponse "Erro ao verificar disponibilidade"
+// @Router       /people/nicknames/availability [get]
+func (h *PersonNicknameHandler) CheckNicknameAvailability(w http.ResponseWriter, r *http.Request) {
+	nickname := r.URL.Query().Get("nickname")
+	if nickname == "" {
+		utils.SendError(w, r, http.StatusBadRequest, "nickname query param is required")
+		return
+	}
+
+	var count int64
+	if err := h.DB.Model(&data.PersonNickname{}).Where("nickname = ?", nickname).Count(&count).Error; err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to check nickname availability")
+		return
+	}
+
+	utils.SendJSON(w, r, http.StatusOK, "Disponibilidade verificada", schemas.NicknameAvailabilityResponse{Available: count == 0})
+}
+
 // GetPersonNicknames handles the GET /people/{id}/nicknames route.
 // @Summary      Listar apelidos de uma pessoa
 // @Description  Retorna todos os apelidos cadastrados para a pessoa identificada pelo UUID.

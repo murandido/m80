@@ -10,6 +10,9 @@ import (
 func RegisterPersonNicknameRoutes(r chi.Router, db *gorm.DB) {
 	personNicknameHandler := handlers.NewPersonNicknameHandler(db)
 
+	// nickname availability check (global, not scoped to a specific person)
+	r.Get("/nicknames/availability", personNicknameHandler.CheckNicknameAvailability)
+
 	r.Route("/{id}/nicknames", func(r chi.Router) {
 		// create nickname
 		r.Post("/", personNicknameHandler.CreatePersonNickname)

@@ -33,6 +33,7 @@ import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 import { createPersonSchema } from "@/schemas/person"
 import { createPersonAction } from "@/actions/person"
+import { PersonNicknamesField } from "./person-nicknames-field"
 
 type FormData = z.infer<typeof createPersonSchema.request>
 
@@ -40,6 +41,10 @@ export function CreatePersonForm() {
   const router = useRouter()
   const [isOpen, setIsOpen] = useState(false)
   const [isPending, startTransition] = useTransition()
+  // Guards against creating the person twice: only set when the person was
+  // already created but some nicknames failed (rare race), keeping the panel
+  // open so the user can see the warning instead of silently losing it.
+  const [createdPersonId, setCreatedPersonId] = useState<string | null>(null)
 
   const form = useForm<FormData>({
     resolver: zodResolver(createPersonSchema.request),
@@ -57,17 +62,21 @@ export function CreatePersonForm() {
       address_number: "",
       complement: "",
       neighborhood: "",
+      nicknames: [],
     },
   })
 
   function handleToggle() {
     if (isOpen) {
       form.reset()
+      setCreatedPersonId(null)
     }
     setIsOpen((prev) => !prev)
   }
 
   function onSubmit(data: FormData) {
+    if (createdPersonId) return
+
     startTransition(async () => {
       const result = await createPersonAction(data)
 
@@ -76,9 +85,18 @@ export function CreatePersonForm() {
         return
       }
 
+      router.refresh()
+
+      if (result.failedNicknames?.length) {
+        setCreatedPersonId(result.personId)
+        form.setError("root", {
+          message: `Pessoa criada. Apelido(s) não adicionado(s) por já estar(em) em uso: ${result.failedNicknames.join(", ")}`,
+        })
+        return
+      }
+
       form.reset()
       setIsOpen(false)
-      router.refresh()
     })
   }
 
@@ -466,6 +484,23 @@ export function CreatePersonForm() {
                 </div>
 
                 <Separator />
+                <h3 className="text-xs font-semibold tracking-wide text-slate-500 uppercase">
+                  Apelidos
+                </h3>
+
+                <Controller
+                  name="nicknames"
+                  control={form.control}
+                  render={({ field }) => (
+                    <PersonNicknamesField
+                      value={field.value ?? []}
+                      onChange={field.onChange}
+                      disabled={isPending || !!createdPersonId}
+                    />
+                  )}
+                />
+
+                <Separator />
 
                 {/* root error */}
                 {form.formState.errors.root && (
@@ -478,7 +513,7 @@ export function CreatePersonForm() {
                 <Button
                   type="submit"
                   className="h-full bg-slate-800 hover:bg-slate-900"
-                  disabled={isPending}
+                  disabled={isPending || !!createdPersonId}
                 >
                   <div className="flex w-full items-center justify-center gap-2 p-1 text-sm text-slate-50">
                     {isPending ? <Spinner /> : <Save className="h-4 w-4" />}

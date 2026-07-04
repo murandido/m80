@@ -20,3 +20,8 @@ type PersonNicknameResponse struct {
 	Nickname  string    `json:"nickname"`
 	CreatedAt time.Time `json:"created_at"`
 }
+
+// NicknameAvailabilityResponse reports whether a nickname is free to use
+type NicknameAvailabilityResponse struct {
+	Available bool `json:"available"`
+}

@@ -31,6 +31,7 @@ import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 import { Person, updatePersonSchema } from "@/schemas/person"
 import { updatePersonAction } from "@/actions/person"
+import { PersonNicknames } from "./person-nicknames"
 
 type FormData = z.infer<typeof updatePersonSchema.request>
 
@@ -473,6 +474,12 @@ export function EditPersonPanel({ person, isOpen, onSaved }: EditPersonPanelProp
                   />
                 </div>
               </div>
+
+              <Separator />
+              <h3 className="text-xs font-semibold tracking-wide text-slate-500 uppercase">
+                Apelidos
+              </h3>
+              <PersonNicknames personId={person.id} nicknames={person.nicknames} />
 
               <Separator />
 

@@ -61,6 +61,13 @@ type PersonNicknameSingleResponse struct {
 	Data    PersonNicknameResponse `json:"data"`
 }
 
+// NicknameAvailabilityCheckResponse is the GET /people/nicknames/availability route response
+type NicknameAvailabilityCheckResponse struct {
+	Success bool                         `json:"success" example:"true"`
+	Message string                       `json:"message" example:"Disponibilidade verificada"`
+	Data    NicknameAvailabilityResponse `json:"data"`
+}
+
 // ErrorResponse is the standard API error response
 type ErrorResponse struct {
 	Success bool   `json:"success" example:"false"`
