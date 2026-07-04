@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation"
 import { Controller, useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
-import { Hash, KeyRound, Save, User, UserPlus, X } from "lucide-react"
+import { KeyRound, Save, User, UserPlus, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Field, FieldError, FieldLabel } from "@/components/ui/field"
 import {
@@ -18,17 +18,20 @@ import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 import { createAccountSchema } from "@/schemas/account"
 import { Person } from "@/schemas/person"
+import { LoyaltyProgram } from "@/schemas/loyalty-program"
 import { createAccountAction } from "@/actions/account"
 import { PersonCombobox } from "@/components/people/person-combobox"
+import { LoyaltyProgramCombobox } from "@/components/loyalty-programs/loyalty-program-combobox"
 import { AccountNicknamesField } from "./account-nicknames-field"
 
 type FormData = z.infer<typeof createAccountSchema.request>
 
 interface CreateAccountFormProps {
   people: Person[]
+  loyaltyPrograms: LoyaltyProgram[]
 }
 
-export function CreateAccountForm({ people }: CreateAccountFormProps) {
+export function CreateAccountForm({ people, loyaltyPrograms }: CreateAccountFormProps) {
   const router = useRouter()
   const [isOpen, setIsOpen] = useState(false)
   const [isPending, startTransition] = useTransition()
@@ -126,22 +129,16 @@ export function CreateAccountForm({ people }: CreateAccountFormProps) {
                     render={({ field, fieldState }) => (
                       <>
                         <FieldLabel htmlFor="loyalty_program_id">
-                          UUID do programa de fidelidade{" "}
+                          Programa de fidelidade{" "}
                           <span className="text-destructive">*</span>
                         </FieldLabel>
-                        <InputGroup className="bg-slate-200">
-                          <InputGroupInput
-                            {...field}
-                            id="loyalty_program_id"
-                            type="text"
-                            aria-invalid={fieldState.invalid}
-                            placeholder="00000000-0000-0000-0000-000000000000"
-                            disabled={isPending}
-                          />
-                          <InputGroupAddon align="inline-end">
-                            <Hash className="text-foreground h-4 w-4" />
-                          </InputGroupAddon>
-                        </InputGroup>
+                        <LoyaltyProgramCombobox
+                          loyaltyPrograms={loyaltyPrograms}
+                          value={field.value}
+                          onChange={field.onChange}
+                          disabled={isPending}
+                          placeholder="Buscar programa de fidelidade..."
+                        />
                         {fieldState.invalid && (
                           <FieldError errors={[fieldState.error]} />
                         )}

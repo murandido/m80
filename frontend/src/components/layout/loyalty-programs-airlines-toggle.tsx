@@ -2,7 +2,6 @@
 
 import Link from "next/link"
 import { Award, Plane } from "lucide-react"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
@@ -16,17 +15,26 @@ export function LoyaltyProgramsAirlinesToggle({
   return (
     <div className="flex gap-2">
       <Button
+        asChild
         type="button"
-        disabled
-        className="flex-1 cursor-not-allowed bg-slate-100 text-slate-400 hover:bg-slate-100"
+        className={cn(
+          "flex-1 transition-colors duration-200",
+          active === "loyalty-programs"
+            ? "bg-slate-800 hover:bg-slate-900"
+            : "bg-slate-100 text-slate-500 hover:bg-slate-200",
+        )}
       >
-        <div className="flex w-full items-center justify-center gap-2 p-1 text-sm">
-          <Award className="h-4 w-4" />
-          Programas de Fidelidade
-          <Badge variant="outline" className="text-[10px] text-slate-400">
-            Em breve
-          </Badge>
-        </div>
+        <Link href="/dashboard/loyalty-programs">
+          <div
+            className={cn(
+              "flex w-full items-center justify-center gap-2 p-1 text-sm",
+              active === "loyalty-programs" && "text-slate-50",
+            )}
+          >
+            <Award className="h-4 w-4" />
+            Programas de Fidelidade
+          </div>
+        </Link>
       </Button>
       <Button
         asChild

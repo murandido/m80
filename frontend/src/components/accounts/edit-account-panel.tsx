@@ -19,8 +19,10 @@ import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 import { Account, updateAccountSchema } from "@/schemas/account"
 import { Person } from "@/schemas/person"
+import { LoyaltyProgram } from "@/schemas/loyalty-program"
 import { updateAccountAction } from "@/actions/account"
 import { PersonCombobox } from "@/components/people/person-combobox"
+import { LoyaltyProgramCombobox } from "@/components/loyalty-programs/loyalty-program-combobox"
 import { AccountNicknames } from "./account-nicknames"
 
 type FormData = z.infer<typeof updateAccountSchema.request>
@@ -28,6 +30,7 @@ type FormData = z.infer<typeof updateAccountSchema.request>
 interface EditAccountPanelProps {
   account: Account
   people: Person[]
+  loyaltyPrograms: LoyaltyProgram[]
   isOpen: boolean
   onSaved: () => void
 }
@@ -45,6 +48,7 @@ function toFormValues(account: Account): FormData {
 export function EditAccountPanel({
   account,
   people,
+  loyaltyPrograms,
   isOpen,
   onSaved,
 }: EditAccountPanelProps) {
@@ -126,20 +130,15 @@ export function EditAccountPanel({
                   render={({ field, fieldState }) => (
                     <>
                       <FieldLabel htmlFor="edit-account-loyalty-program-id">
-                        UUID do programa de fidelidade
+                        Programa de fidelidade
                       </FieldLabel>
-                      <InputGroup className="bg-slate-200">
-                        <InputGroupInput
-                          {...field}
-                          id="edit-account-loyalty-program-id"
-                          type="text"
-                          aria-invalid={fieldState.invalid}
-                          disabled={isPending}
-                        />
-                        <InputGroupAddon align="inline-end">
-                          <Hash className="text-foreground h-4 w-4" />
-                        </InputGroupAddon>
-                      </InputGroup>
+                      <LoyaltyProgramCombobox
+                        loyaltyPrograms={loyaltyPrograms}
+                        value={field.value ?? ""}
+                        onChange={field.onChange}
+                        disabled={isPending}
+                        placeholder="Buscar programa de fidelidade..."
+                      />
                       {fieldState.invalid && (
                         <FieldError errors={[fieldState.error]} />
                       )}

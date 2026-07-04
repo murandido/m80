@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { Account } from "@/schemas/account"
 import { Person } from "@/schemas/person"
+import { LoyaltyProgram } from "@/schemas/loyalty-program"
 import { LoyaltyProgramBadge } from "./loyalty-program-badge"
 import { CopyCredentialsMenu } from "./copy-credentials-menu"
 import { DeleteOverlay } from "./delete-overlay"
@@ -15,9 +16,10 @@ import { EditAccountPanel } from "./edit-account-panel"
 interface AccountCardProps {
   account: Account
   people: Person[]
+  loyaltyPrograms: LoyaltyProgram[]
 }
 
-export function AccountCard({ account, people }: AccountCardProps) {
+export function AccountCard({ account, people, loyaltyPrograms }: AccountCardProps) {
   const router = useRouter()
   const [isDeleteOpen, setIsDeleteOpen] = useState(false)
   const [isEditOpen, setIsEditOpen] = useState(false)
@@ -91,6 +93,7 @@ export function AccountCard({ account, people }: AccountCardProps) {
       <EditAccountPanel
         account={account}
         people={people}
+        loyaltyPrograms={loyaltyPrograms}
         isOpen={isEditOpen}
         onSaved={() => setIsEditOpen(false)}
       />

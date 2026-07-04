@@ -3,6 +3,7 @@ import { Separator } from "@/components/ui/separator"
 import { env } from "@/lib/env"
 import { getAccountsSchema, Account } from "@/schemas/account"
 import { getPeopleSchema, Person } from "@/schemas/person"
+import { getLoyaltyProgramsSchema, LoyaltyProgram } from "@/schemas/loyalty-program"
 import { ContasPessoasToggle } from "@/components/layout/contas-pessoas-toggle"
 import { AccountCard } from "@/components/accounts/account-card"
 import { CreateAccountForm } from "@/components/accounts/create-account-form"
@@ -14,6 +15,7 @@ export default async function AccountsPage() {
 
   let accounts: Account[] = []
   let people: Person[] = []
+  let loyaltyPrograms: LoyaltyProgram[] = []
 
   try {
     const res = await fetch(`${env.BACKEND_URL}/api/v1/accounts`, {
@@ -43,6 +45,20 @@ export default async function AccountsPage() {
     // silently fail — combobox/title lookups just come up empty
   }
 
+  try {
+    const res = await fetch(`${env.BACKEND_URL}/api/v1/loyalty-programs`, {
+      headers: authHeader,
+    })
+    const json = await res.json()
+
+    const parsed = getLoyaltyProgramsSchema.response.safeParse(json)
+    if (parsed.success && parsed.data.data) {
+      loyaltyPrograms = parsed.data.data
+    }
+  } catch {
+    // silently fail — combobox just comes up empty
+  }
+
   return (
     <div className="p-6 sm:p-8">
       <div className="flex flex-col gap-2 sm:gap-6">
@@ -52,11 +68,16 @@ export default async function AccountsPage() {
 
         <ContasPessoasToggle active="contas" />
 
-        <CreateAccountForm people={people} />
+        <CreateAccountForm people={people} loyaltyPrograms={loyaltyPrograms} />
         <Separator className="my-2" />
         <div className="flex flex-col gap-2">
           {accounts.map((account) => (
-            <AccountCard key={account.id} account={account} people={people} />
+            <AccountCard
+              key={account.id}
+              account={account}
+              people={people}
+              loyaltyPrograms={loyaltyPrograms}
+            />
           ))}
         </div>
       </div>

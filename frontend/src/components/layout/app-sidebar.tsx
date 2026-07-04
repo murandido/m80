@@ -81,7 +81,7 @@ const navItems: NavEntry[] = [
     title: "Programas de Fidelidade e CIAs Aéreas",
     icon: Plane,
     items: [
-      { title: "Programas de Fidelidade", url: "", icon: Award, disabled: true },
+      { title: "Programas de Fidelidade", url: "/dashboard/loyalty-programs", icon: Award },
       { title: "CIAs Aéreas", url: "/dashboard/airlines", icon: Plane },
     ],
   },
