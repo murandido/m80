@@ -68,6 +68,34 @@ type NicknameAvailabilityCheckResponse struct {
 	Data    NicknameAvailabilityResponse `json:"data"`
 }
 
+// AccountListResponse is the GET /accounts route response
+type AccountListResponse struct {
+	Success bool              `json:"success" example:"true"`
+	Message string            `json:"message" example:"Contas listadas com sucesso"`
+	Data    []AccountResponse `json:"data"`
+}
+
+// AccountSingleResponse is the response from single-account routes
+type AccountSingleResponse struct {
+	Success bool            `json:"success" example:"true"`
+	Message string          `json:"message" example:"Conta encontrada"`
+	Data    AccountResponse `json:"data"`
+}
+
+// AccountNicknameListResponse is the GET /accounts/{id}/nicknames route response
+type AccountNicknameListResponse struct {
+	Success bool                      `json:"success" example:"true"`
+	Message string                    `json:"message" example:"Apelidos listados com sucesso"`
+	Data    []AccountNicknameResponse `json:"data"`
+}
+
+// AccountNicknameSingleResponse is the response from single-account-nickname routes
+type AccountNicknameSingleResponse struct {
+	Success bool                    `json:"success" example:"true"`
+	Message string                  `json:"message" example:"Apelido encontrado"`
+	Data    AccountNicknameResponse `json:"data"`
+}
+
 // ErrorResponse is the standard API error response
 type ErrorResponse struct {
 	Success bool   `json:"success" example:"false"`
