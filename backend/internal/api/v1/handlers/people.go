@@ -31,6 +31,11 @@ func NewPeopleHandler(db *gorm.DB) *PeopleHandler {
 }
 
 func toPersonResponse(person data.Person) schemas.PersonResponse {
+	nicknames := make([]schemas.PersonNicknameResponse, 0, len(person.Nicknames))
+	for _, nickname := range person.Nicknames {
+		nicknames = append(nicknames, toPersonNicknameResponse(nickname))
+	}
+
 	return schemas.PersonResponse{
 		ID:            person.ID,
 		Name:          person.Name,
@@ -45,6 +50,7 @@ func toPersonResponse(person data.Person) schemas.PersonResponse {
 		AddressNumber: person.AddressNumber,
 		Complement:    person.Complement,
 		Neighborhood:  person.Neighborhood,
+		Nicknames:     nicknames,
 		Complete:      person.Complete,
 		CreatedAt:     person.CreatedAt,
 		UpdatedAt:     person.UpdatedAt,
@@ -137,7 +143,7 @@ func (h *PeopleHandler) CreatePerson(w http.ResponseWriter, r *http.Request) {
 func (h *PeopleHandler) GetPeople(w http.ResponseWriter, r *http.Request) {
 	var people []data.Person
 
-	if err := h.DB.Find(&people).Error; err != nil {
+	if err := h.DB.Preload("Nicknames").Find(&people).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch people")
 		return
 	}
@@ -165,7 +171,7 @@ func (h *PeopleHandler) GetPerson(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
 	var person data.Person
-	if err := h.DB.First(&person, "id = ?", id).Error; err != nil {
+	if err := h.DB.Preload("Nicknames").First(&person, "id = ?", id).Error; err != nil {
 		utils.SendError(w, r, http.StatusNotFound, "Person not found")
 		return
 	}
@@ -192,7 +198,7 @@ func (h *PeopleHandler) UpdatePerson(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
 	var person data.Person
-	if err := h.DB.First(&person, "id = ?", id).Error; err != nil {
+	if err := h.DB.Preload("Nicknames").First(&person, "id = ?", id).Error; err != nil {
 		utils.SendError(w, r, http.StatusNotFound, "Person not found")
 		return
 	}

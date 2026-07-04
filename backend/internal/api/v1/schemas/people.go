@@ -41,20 +41,21 @@ type UpdatePersonRequest struct {
 
 // PersonResponse defines how a person should be returned in the API
 type PersonResponse struct {
-	ID            string     `json:"id"`
-	Name          string     `json:"name"`
-	CPF           *string    `json:"cpf"`
-	BirthDate     *time.Time `json:"birth_date"`
-	Email         *string    `json:"email"`
-	Phone         *string    `json:"phone"`
-	ZipCode       *string    `json:"zip_code"`
-	State         *string    `json:"state"`
-	City          *string    `json:"city"`
-	Address       *string    `json:"address"`
-	AddressNumber *string    `json:"address_number"`
-	Complement    *string    `json:"complement"`
-	Neighborhood  *string    `json:"neighborhood"`
-	Complete      bool       `json:"complete"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
+	ID            string                   `json:"id"`
+	Name          string                   `json:"name"`
+	CPF           *string                  `json:"cpf"`
+	BirthDate     *time.Time               `json:"birth_date"`
+	Email         *string                  `json:"email"`
+	Phone         *string                  `json:"phone"`
+	ZipCode       *string                  `json:"zip_code"`
+	State         *string                  `json:"state"`
+	City          *string                  `json:"city"`
+	Address       *string                  `json:"address"`
+	AddressNumber *string                  `json:"address_number"`
+	Complement    *string                  `json:"complement"`
+	Neighborhood  *string                  `json:"neighborhood"`
+	Nicknames     []PersonNicknameResponse `json:"nicknames"`
+	Complete      bool                     `json:"complete"`
+	CreatedAt     time.Time                `json:"created_at"`
+	UpdatedAt     time.Time                `json:"updated_at"`
 }

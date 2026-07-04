@@ -25,5 +25,8 @@ func RegisterPeopleRoutes(r chi.Router, db *gorm.DB) {
 
 		// delete person
 		r.Delete("/{id}", peopleHandler.DeletePerson)
+
+		// nicknames sub-resource
+		RegisterPersonNicknameRoutes(r, db)
 	})
 }

@@ -47,6 +47,20 @@ type PersonSingleResponse struct {
 	Data    PersonResponse `json:"data"`
 }
 
+// PersonNicknameListResponse is the GET /people/{id}/nicknames route response
+type PersonNicknameListResponse struct {
+	Success bool                     `json:"success" example:"true"`
+	Message string                   `json:"message" example:"Apelidos listados com sucesso"`
+	Data    []PersonNicknameResponse `json:"data"`
+}
+
+// PersonNicknameSingleResponse is the response from single-person-nickname routes
+type PersonNicknameSingleResponse struct {
+	Success bool                   `json:"success" example:"true"`
+	Message string                 `json:"message" example:"Apelido encontrado"`
+	Data    PersonNicknameResponse `json:"data"`
+}
+
 // ErrorResponse is the standard API error response
 type ErrorResponse struct {
 	Success bool   `json:"success" example:"false"`
