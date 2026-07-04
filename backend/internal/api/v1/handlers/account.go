@@ -32,9 +32,20 @@ func toAccountResponse(account data.Account) schemas.AccountResponse {
 		nicknames = append(nicknames, toAccountNicknameResponse(nickname))
 	}
 
+	var loyaltyProgram schemas.LoyaltyProgramResponse
+	if account.LoyaltyProgram != nil {
+		loyaltyProgram = schemas.LoyaltyProgramResponse{
+			ID:    account.LoyaltyProgram.ID,
+			Name:  account.LoyaltyProgram.Name,
+			Code:  account.LoyaltyProgram.Code,
+			Color: account.LoyaltyProgram.Color,
+		}
+	}
+
 	return schemas.AccountResponse{
 		ID:               account.ID,
 		LoyaltyProgramID: account.LoyaltyProgramID,
+		LoyaltyProgram:   loyaltyProgram,
 		Login:            account.Login,
 		Password:         account.Password,
 		HolderID:         account.HolderID,
@@ -100,7 +111,7 @@ func (h *AccountHandler) CreateAccount(w http.ResponseWriter, r *http.Request) {
 
 	// Reload: BeforeSave leaves Password encrypted in memory, and only a fresh
 	// read triggers AfterFind to decrypt it back for the response.
-	if err := h.DB.First(&account, "id = ?", account.ID).Error; err != nil {
+	if err := h.DB.Preload("LoyaltyProgram").First(&account, "id = ?", account.ID).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to load created account: "+err.Error())
 		return
 	}
@@ -121,7 +132,7 @@ func (h *AccountHandler) CreateAccount(w http.ResponseWriter, r *http.Request) {
 func (h *AccountHandler) GetAccounts(w http.ResponseWriter, r *http.Request) {
 	var accounts []data.Account
 
-	if err := h.DB.Preload("Nicknames").Find(&accounts).Error; err != nil {
+	if err := h.DB.Preload("Nicknames").Preload("LoyaltyProgram").Find(&accounts).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch accounts")
 		return
 	}
@@ -149,7 +160,7 @@ func (h *AccountHandler) GetAccount(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
 	var account data.Account
-	if err := h.DB.Preload("Nicknames").First(&account, "id = ?", id).Error; err != nil {
+	if err := h.DB.Preload("Nicknames").Preload("LoyaltyProgram").First(&account, "id = ?", id).Error; err != nil {
 		utils.SendError(w, r, http.StatusNotFound, "Account not found")
 		return
 	}
@@ -223,7 +234,7 @@ func (h *AccountHandler) UpdateAccount(w http.ResponseWriter, r *http.Request) {
 
 	// Reload: BeforeSave leaves Password encrypted in memory, and only a fresh
 	// read triggers AfterFind to decrypt it back for the response.
-	if err := h.DB.Preload("Nicknames").First(&account, "id = ?", account.ID).Error; err != nil {
+	if err := h.DB.Preload("Nicknames").Preload("LoyaltyProgram").First(&account, "id = ?", account.ID).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to load updated account: "+err.Error())
 		return
 	}

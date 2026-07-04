@@ -1,10 +1,8 @@
 import { cookies } from "next/headers"
-import { Landmark, Users } from "lucide-react"
-import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
-import { cn } from "@/lib/utils"
 import { env } from "@/lib/env"
 import { getPeopleSchema, Person } from "@/schemas/person"
+import { ContasPessoasToggle } from "@/components/layout/contas-pessoas-toggle"
 import { PersonCard } from "@/components/people/person-card"
 import { CreatePersonForm } from "@/components/people/create-person-form"
 
@@ -36,31 +34,7 @@ export default async function PeoplePage() {
           Contas e Pessoas
         </h1>
 
-        {/* Contas/Pessoas toggle — Contas is disabled until its CRUD exists on the backend */}
-        <div className="flex gap-2">
-          <Button
-            type="button"
-            disabled
-            title="Em breve"
-            className="flex-1 cursor-not-allowed bg-slate-100 text-slate-400 hover:bg-slate-100"
-          >
-            <div className="flex w-full items-center justify-center gap-2 p-1 text-sm">
-              <Landmark className="h-4 w-4" />
-              Contas
-            </div>
-          </Button>
-          <Button
-            type="button"
-            className={cn(
-              "flex-1 bg-slate-800 hover:bg-slate-900",
-            )}
-          >
-            <div className="flex w-full items-center justify-center gap-2 p-1 text-sm text-slate-50">
-              <Users className="h-4 w-4" />
-              Pessoas
-            </div>
-          </Button>
-        </div>
+        <ContasPessoasToggle active="pessoas" />
 
         <CreatePersonForm />
         <Separator className="my-2" />

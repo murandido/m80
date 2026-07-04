@@ -3,7 +3,7 @@
 import { useState } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { ChevronRight, Contact, LayoutDashboard, Users } from "lucide-react"
+import { ChevronRight, Contact, Landmark, LayoutDashboard, Users } from "lucide-react"
 import {
   Sidebar,
   SidebarContent,
@@ -48,15 +48,17 @@ function isNavGroup(item: NavEntry): item is NavGroup {
 
 // Add a new dashboard page by adding an entry here — no other file needs to change.
 // A plain entry ({ title, url, icon }) renders as a direct link. An entry with
-// `items` renders as a collapsible group whose children are links (e.g. "Contas e
-// Pessoas" today only holds "Pessoas" — add "Contas" to `items` once its CRUD exists).
+// `items` renders as a collapsible group whose children are links.
 const navItems: NavEntry[] = [
   { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
   { title: "Usuários", url: "/dashboard/users", icon: Users },
   {
     title: "Contas e Pessoas",
     icon: Contact,
-    items: [{ title: "Pessoas", url: "/dashboard/people", icon: Users }],
+    items: [
+      { title: "Contas", url: "/dashboard/accounts", icon: Landmark },
+      { title: "Pessoas", url: "/dashboard/people", icon: Users },
+    ],
   },
 ]
 

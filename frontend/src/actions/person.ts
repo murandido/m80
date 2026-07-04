@@ -2,6 +2,7 @@
 
 import { cookies } from "next/headers"
 import { env } from "@/lib/env"
+import { stripEmptyFields } from "@/lib/strip-empty-fields"
 import {
   checkNicknameAvailabilitySchema,
   createPersonNicknameSchema,
@@ -11,22 +12,6 @@ import {
   updatePersonSchema,
 } from "@/schemas/person"
 import { z } from "zod"
-
-// The backend treats an absent key as "don't touch" (update) / "null" (create) for
-// every optional field, since they're all `*string` with `omitempty`. Sending an
-// empty string would instead persist as an actual empty value and skew
-// Person.ComputeComplete(), so strip blank fields before building the request body.
-function stripEmptyFields<T extends Record<string, string | undefined>>(
-  data: T,
-): Partial<T> {
-  const body: Partial<T> = {}
-  for (const [key, value] of Object.entries(data)) {
-    if (value) {
-      body[key as keyof T] = value as T[keyof T]
-    }
-  }
-  return body
-}
 
 export async function createPersonAction(
   data: z.infer<typeof createPersonSchema.request>,
