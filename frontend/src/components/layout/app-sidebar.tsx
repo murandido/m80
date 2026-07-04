@@ -3,7 +3,15 @@
 import { useState } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { ChevronRight, Contact, Landmark, LayoutDashboard, Users } from "lucide-react"
+import {
+  Award,
+  ChevronRight,
+  Contact,
+  Landmark,
+  LayoutDashboard,
+  Plane,
+  Users,
+} from "lucide-react"
 import {
   Sidebar,
   SidebarContent,
@@ -24,6 +32,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 
 type IconComponent = React.ComponentType<{ className?: string }>
@@ -34,10 +43,18 @@ interface NavLink {
   icon: IconComponent
 }
 
+interface NavGroupItem {
+  title: string
+  url: string
+  icon: IconComponent
+  // Rendered greyed-out and non-navigating — for features without a page yet.
+  disabled?: boolean
+}
+
 interface NavGroup {
   title: string
   icon: IconComponent
-  items: { title: string; url: string; icon: IconComponent }[]
+  items: NavGroupItem[]
 }
 
 type NavEntry = NavLink | NavGroup
@@ -60,6 +77,14 @@ const navItems: NavEntry[] = [
       { title: "Pessoas", url: "/dashboard/people", icon: Users },
     ],
   },
+  {
+    title: "Programas de Fidelidade e CIAs Aéreas",
+    icon: Plane,
+    items: [
+      { title: "Programas de Fidelidade", url: "", icon: Award, disabled: true },
+      { title: "CIAs Aéreas", url: "/dashboard/airlines", icon: Plane },
+    ],
+  },
 ]
 
 export function AppSidebar() {
@@ -73,8 +98,8 @@ export function AppSidebar() {
     const initial: Record<string, boolean> = {}
     for (const item of navItems) {
       if (isNavGroup(item)) {
-        initial[item.title] = item.items.some((child) =>
-          pathname.startsWith(child.url),
+        initial[item.title] = item.items.some(
+          (child) => !child.disabled && pathname.startsWith(child.url),
         )
       }
     }
@@ -94,8 +119,8 @@ export function AppSidebar() {
             <SidebarMenu>
               {navItems.map((item) => {
                 if (isNavGroup(item)) {
-                  const isChildActive = item.items.some((child) =>
-                    pathname.startsWith(child.url),
+                  const isChildActive = item.items.some(
+                    (child) => !child.disabled && pathname.startsWith(child.url),
                   )
 
                   // Icon-only rail: the inline sub-menu is hidden by CSS in this
@@ -112,14 +137,21 @@ export function AppSidebar() {
                             </SidebarMenuButton>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent side="left" align="start">
-                            {item.items.map((child) => (
-                              <DropdownMenuItem key={child.url} asChild>
-                                <Link href={child.url}>
+                            {item.items.map((child) =>
+                              child.disabled ? (
+                                <DropdownMenuItem key={child.title} disabled>
                                   <child.icon className="h-4 w-4" />
                                   <span>{child.title}</span>
-                                </Link>
-                              </DropdownMenuItem>
-                            ))}
+                                </DropdownMenuItem>
+                              ) : (
+                                <DropdownMenuItem key={child.title} asChild>
+                                  <Link href={child.url}>
+                                    <child.icon className="h-4 w-4" />
+                                    <span>{child.title}</span>
+                                  </Link>
+                                </DropdownMenuItem>
+                              ),
+                            )}
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </SidebarMenuItem>
@@ -134,30 +166,48 @@ export function AppSidebar() {
                         isActive={isChildActive}
                         tooltip={item.title}
                         onClick={() => toggleGroup(item.title)}
+                        className="h-auto items-start py-2"
                       >
-                        <item.icon />
-                        <span>{item.title}</span>
+                        <item.icon className="mt-0.5 shrink-0" />
+                        <span className="min-w-0 flex-1">{item.title}</span>
                         <ChevronRight
                           className={cn(
-                            "ml-auto h-4 w-4 transition-transform duration-200",
+                            "ml-auto mt-0.5 h-4 w-4 shrink-0 transition-transform duration-200",
                             isOpen && "rotate-90",
                           )}
                         />
                       </SidebarMenuButton>
                       {isOpen && (
                         <SidebarMenuSub>
-                          {item.items.map((child) => (
-                            <SidebarMenuSubItem key={child.url}>
-                              <SidebarMenuSubButton
-                                asChild
-                                isActive={pathname.startsWith(child.url)}
-                              >
-                                <Link href={child.url}>
-                                  <span>{child.title}</span>
-                                </Link>
-                              </SidebarMenuSubButton>
-                            </SidebarMenuSubItem>
-                          ))}
+                          {item.items.map((child) =>
+                            child.disabled ? (
+                              <SidebarMenuSubItem key={child.title}>
+                                <SidebarMenuSubButton
+                                  aria-disabled="true"
+                                  className="h-auto items-start py-1.5"
+                                >
+                                  <span className="min-w-0 flex-1">{child.title}</span>
+                                  <Badge
+                                    variant="outline"
+                                    className="ml-auto mt-0.5 shrink-0 text-[10px]"
+                                  >
+                                    Em breve
+                                  </Badge>
+                                </SidebarMenuSubButton>
+                              </SidebarMenuSubItem>
+                            ) : (
+                              <SidebarMenuSubItem key={child.title}>
+                                <SidebarMenuSubButton
+                                  asChild
+                                  isActive={pathname.startsWith(child.url)}
+                                >
+                                  <Link href={child.url}>
+                                    <span>{child.title}</span>
+                                  </Link>
+                                </SidebarMenuSubButton>
+                              </SidebarMenuSubItem>
+                            ),
+                          )}
                         </SidebarMenuSub>
                       )}
                     </SidebarMenuItem>
