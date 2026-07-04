@@ -35,10 +35,13 @@ func toAccountResponse(account data.Account) schemas.AccountResponse {
 	var loyaltyProgram schemas.LoyaltyProgramResponse
 	if account.LoyaltyProgram != nil {
 		loyaltyProgram = schemas.LoyaltyProgramResponse{
-			ID:    account.LoyaltyProgram.ID,
-			Name:  account.LoyaltyProgram.Name,
-			Code:  account.LoyaltyProgram.Code,
-			Color: account.LoyaltyProgram.Color,
+			ID:               account.LoyaltyProgram.ID,
+			Name:             account.LoyaltyProgram.Name,
+			Code:             account.LoyaltyProgram.Code,
+			Color:            account.LoyaltyProgram.Color,
+			DefaultAirlineID: account.LoyaltyProgram.DefaultAirlineID,
+			CreatedAt:        account.LoyaltyProgram.CreatedAt,
+			UpdatedAt:        account.LoyaltyProgram.UpdatedAt,
 		}
 	}
 

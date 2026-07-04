@@ -33,6 +33,7 @@ func NewRouter(db *gorm.DB) chi.Router {
 		routes.RegisterPeopleRoutes(r, db)
 		routes.RegisterAccountRoutes(r, db)
 		routes.RegisterAirlineRoutes(r, db)
+		routes.RegisterLoyaltyProgramRoutes(r, db)
 
 		// admin routes
 		r.Group(func(r chi.Router) {

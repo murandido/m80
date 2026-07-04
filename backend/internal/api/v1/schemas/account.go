@@ -25,14 +25,6 @@ type UpdateAccountRequest struct {
 	Complete *bool `json:"complete" validate:"omitempty"`
 }
 
-// LoyaltyProgramResponse is a minimal projection of a loyalty program, embedded in AccountResponse.
-type LoyaltyProgramResponse struct {
-	ID    string `json:"id"`
-	Name  string `json:"name"`
-	Code  string `json:"code"`
-	Color string `json:"color"`
-}
-
 // AccountResponse defines how an account should be returned in the API.
 // Password is returned decrypted (unlike User's password, which is write-only)
 // since staff need to see it to log into the loyalty program on the customer's behalf.

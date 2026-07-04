@@ -110,6 +110,20 @@ type AirlineSingleResponse struct {
 	Data    AirlineResponse `json:"data"`
 }
 
+// LoyaltyProgramListResponse is the GET /loyalty-programs route response
+type LoyaltyProgramListResponse struct {
+	Success bool                     `json:"success" example:"true"`
+	Message string                   `json:"message" example:"Programas de fidelidade listados com sucesso"`
+	Data    []LoyaltyProgramResponse `json:"data"`
+}
+
+// LoyaltyProgramSingleResponse is the response from single-loyalty-program routes
+type LoyaltyProgramSingleResponse struct {
+	Success bool                   `json:"success" example:"true"`
+	Message string                 `json:"message" example:"Programa de fidelidade encontrado"`
+	Data    LoyaltyProgramResponse `json:"data"`
+}
+
 // ErrorResponse is the standard API error response
 type ErrorResponse struct {
 	Success bool   `json:"success" example:"false"`
