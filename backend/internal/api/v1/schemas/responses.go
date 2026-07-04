@@ -96,6 +96,20 @@ type AccountNicknameSingleResponse struct {
 	Data    AccountNicknameResponse `json:"data"`
 }
 
+// AirlineListResponse is the GET /airlines route response
+type AirlineListResponse struct {
+	Success bool              `json:"success" example:"true"`
+	Message string            `json:"message" example:"Companhias aéreas listadas com sucesso"`
+	Data    []AirlineResponse `json:"data"`
+}
+
+// AirlineSingleResponse is the response from single-airline routes
+type AirlineSingleResponse struct {
+	Success bool            `json:"success" example:"true"`
+	Message string          `json:"message" example:"Companhia aérea encontrada"`
+	Data    AirlineResponse `json:"data"`
+}
+
 // ErrorResponse is the standard API error response
 type ErrorResponse struct {
 	Success bool   `json:"success" example:"false"`
