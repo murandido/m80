@@ -7,6 +7,7 @@ import {
   Award,
   ChevronRight,
   Contact,
+  Building2,
   Landmark,
   LayoutDashboard,
   Plane,
@@ -69,6 +70,7 @@ function isNavGroup(item: NavEntry): item is NavGroup {
 const navItems: NavEntry[] = [
   { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
   { title: "Usuários", url: "/dashboard/users", icon: Users },
+  { title: "Agências", url: "/dashboard/agencies", icon: Building2 },
   {
     title: "Contas e Pessoas",
     icon: Contact,
