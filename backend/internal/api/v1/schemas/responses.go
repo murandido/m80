@@ -124,6 +124,20 @@ type LoyaltyProgramSingleResponse struct {
 	Data    LoyaltyProgramResponse `json:"data"`
 }
 
+// AgencyListResponse is the GET /agencies route response
+type AgencyListResponse struct {
+	Success bool             `json:"success" example:"true"`
+	Message string           `json:"message" example:"Agências listadas com sucesso"`
+	Data    []AgencyResponse `json:"data"`
+}
+
+// AgencySingleResponse is the response from single-agency routes
+type AgencySingleResponse struct {
+	Success bool           `json:"success" example:"true"`
+	Message string         `json:"message" example:"Agência encontrada"`
+	Data    AgencyResponse `json:"data"`
+}
+
 // ErrorResponse is the standard API error response
 type ErrorResponse struct {
 	Success bool   `json:"success" example:"false"`
