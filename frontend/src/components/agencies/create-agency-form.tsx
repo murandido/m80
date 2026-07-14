@@ -18,6 +18,7 @@ import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 import { createAgencySchema } from "@/schemas/agency"
 import { createAgencyAction } from "@/actions/agency"
+import { AgencyNicknamesField } from "./agency-nicknames-field"
 
 type FormData = z.infer<typeof createAgencySchema.request>
 
@@ -25,6 +26,10 @@ export function CreateAgencyForm() {
   const router = useRouter()
   const [isOpen, setIsOpen] = useState(false)
   const [isPending, startTransition] = useTransition()
+  // Guards against creating the agency twice: only set when the agency was
+  // already created but some nicknames failed (rare race), keeping the panel
+  // open so the user can see the warning instead of silently losing it.
+  const [createdAgencyId, setCreatedAgencyId] = useState<string | null>(null)
 
   const form = useForm<FormData>({
     resolver: zodResolver(createAgencySchema.request),
@@ -32,17 +37,21 @@ export function CreateAgencyForm() {
     defaultValues: {
       name: "",
       is_default: false,
+      nicknames: [],
     },
   })
 
   function handleToggle() {
     if (isOpen) {
       form.reset()
+      setCreatedAgencyId(null)
     }
     setIsOpen((prev) => !prev)
   }
 
   function onSubmit(data: FormData) {
+    if (createdAgencyId) return
+
     startTransition(async () => {
       const result = await createAgencyAction(data)
 
@@ -51,9 +60,18 @@ export function CreateAgencyForm() {
         return
       }
 
+      router.refresh()
+
+      if (result.failedNicknames?.length) {
+        setCreatedAgencyId(result.agencyId)
+        form.setError("root", {
+          message: `Agência criada. Apelido(s) não adicionado(s) por já estar(em) em uso: ${result.failedNicknames.join(", ")}`,
+        })
+        return
+      }
+
       form.reset()
       setIsOpen(false)
-      router.refresh()
     })
   }
 
@@ -158,6 +176,23 @@ export function CreateAgencyForm() {
                 </div>
 
                 <Separator />
+                <h3 className="text-xs font-semibold tracking-wide text-slate-500 uppercase">
+                  Apelidos
+                </h3>
+
+                <Controller
+                  name="nicknames"
+                  control={form.control}
+                  render={({ field }) => (
+                    <AgencyNicknamesField
+                      value={field.value ?? []}
+                      onChange={field.onChange}
+                      disabled={isPending || !!createdAgencyId}
+                    />
+                  )}
+                />
+
+                <Separator />
 
                 {/* root error */}
                 {form.formState.errors.root && (
@@ -170,7 +205,7 @@ export function CreateAgencyForm() {
                 <Button
                   type="submit"
                   className="h-full bg-slate-800 hover:bg-slate-900"
-                  disabled={isPending}
+                  disabled={isPending || !!createdAgencyId}
                 >
                   <div className="flex w-full items-center justify-center gap-2 p-1 text-sm text-slate-50">
                     {isPending ? <Spinner /> : <Save className="h-4 w-4" />}

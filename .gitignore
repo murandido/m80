@@ -56,3 +56,6 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+# Local knowledge-graph build artifacts (graphify)
+graphify-out/

@@ -27,10 +27,16 @@ func NewAgencyHandler(db *gorm.DB) *AgencyHandler {
 }
 
 func toAgencyResponse(agency data.Agency) schemas.AgencyResponse {
+	nicknames := make([]schemas.AgencyNicknameResponse, 0, len(agency.Nicknames))
+	for _, nickname := range agency.Nicknames {
+		nicknames = append(nicknames, toAgencyNicknameResponse(nickname))
+	}
+
 	return schemas.AgencyResponse{
 		ID:        agency.ID,
 		Name:      agency.Name,
 		IsDefault: agency.IsDefault,
+		Nicknames: nicknames,
 		CreatedAt: agency.CreatedAt,
 		UpdatedAt: agency.UpdatedAt,
 	}
@@ -110,7 +116,7 @@ func (h *AgencyHandler) CreateAgency(w http.ResponseWriter, r *http.Request) {
 func (h *AgencyHandler) GetAgencies(w http.ResponseWriter, r *http.Request) {
 	var agencies []data.Agency
 
-	if err := h.DB.Find(&agencies).Error; err != nil {
+	if err := h.DB.Preload("Nicknames").Find(&agencies).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch agencies")
 		return
 	}
@@ -138,7 +144,7 @@ func (h *AgencyHandler) GetAgency(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
 	var agency data.Agency
-	if err := h.DB.First(&agency, "id = ?", id).Error; err != nil {
+	if err := h.DB.Preload("Nicknames").First(&agency, "id = ?", id).Error; err != nil {
 		utils.SendError(w, r, http.StatusNotFound, "Agency not found")
 		return
 	}
@@ -166,7 +172,7 @@ func (h *AgencyHandler) UpdateAgency(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
 	var agency data.Agency
-	if err := h.DB.First(&agency, "id = ?", id).Error; err != nil {
+	if err := h.DB.Preload("Nicknames").First(&agency, "id = ?", id).Error; err != nil {
 		utils.SendError(w, r, http.StatusNotFound, "Agency not found")
 		return
 	}

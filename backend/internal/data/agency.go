@@ -8,11 +8,12 @@ import (
 )
 
 type Agency struct {
-	ID        string    `gorm:"primaryKey;type:uuid" json:"id"`
-	Name      string    `gorm:"not null" json:"name"`
-	IsDefault bool      `gorm:"column:is_default;not null;default:false" json:"is_default"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        string           `gorm:"primaryKey;type:uuid" json:"id"`
+	Name      string           `gorm:"not null" json:"name"`
+	IsDefault bool             `gorm:"column:is_default;not null;default:false" json:"is_default"`
+	Nicknames []AgencyNickname `gorm:"foreignKey:AgencyID;references:ID" json:"nicknames,omitempty"`
+	CreatedAt time.Time        `json:"created_at"`
+	UpdatedAt time.Time        `json:"updated_at"`
 }
 
 func (a *Agency) BeforeCreate(tx *gorm.DB) error {

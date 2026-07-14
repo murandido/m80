@@ -25,5 +25,8 @@ func RegisterAgencyRoutes(r chi.Router, db *gorm.DB) {
 
 		// delete agency
 		r.Delete("/{id}", agencyHandler.DeleteAgency)
+
+		// nicknames sub-resource
+		RegisterAgencyNicknameRoutes(r, db)
 	})
 }

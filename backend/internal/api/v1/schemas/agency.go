@@ -17,9 +17,10 @@ type UpdateAgencyRequest struct {
 
 // AgencyResponse defines how an agency should be returned in the API.
 type AgencyResponse struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	IsDefault bool      `json:"is_default"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        string                   `json:"id"`
+	Name      string                   `json:"name"`
+	IsDefault bool                     `json:"is_default"`
+	Nicknames []AgencyNicknameResponse `json:"nicknames"`
+	CreatedAt time.Time                `json:"created_at"`
+	UpdatedAt time.Time                `json:"updated_at"`
 }

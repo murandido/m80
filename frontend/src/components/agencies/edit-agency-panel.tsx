@@ -18,6 +18,7 @@ import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 import { Agency, updateAgencySchema } from "@/schemas/agency"
 import { updateAgencyAction } from "@/actions/agency"
+import { AgencyNicknames } from "./agency-nicknames"
 
 type FormData = z.infer<typeof updateAgencySchema.request>
 
@@ -42,12 +43,15 @@ export function EditAgencyPanel({ agency, isOpen, onSaved }: EditAgencyPanelProp
     defaultValues,
   })
 
-  // Reset form whenever the panel closes
+  // Reset form whenever the panel closes. Also depends on agency.is_default:
+  // setting another agency as default auto-swaps this one back to false on
+  // the server, and that prop change must resync this form even though
+  // isOpen itself never toggled.
   useEffect(() => {
     if (!isOpen) {
       form.reset(defaultValues)
     }
-  }, [isOpen]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isOpen, agency.is_default]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function onSubmit(data: FormData) {
     startTransition(async () => {
@@ -171,6 +175,12 @@ export function EditAgencyPanel({ agency, isOpen, onSaved }: EditAgencyPanelProp
                   )}
                 />
               </div>
+
+              <Separator />
+              <h3 className="text-xs font-semibold tracking-wide text-slate-500 uppercase">
+                Apelidos
+              </h3>
+              <AgencyNicknames agencyId={agency.id} nicknames={agency.nicknames} />
 
               <Separator />
 
