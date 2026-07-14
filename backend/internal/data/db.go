@@ -68,7 +68,11 @@ func runMigrations(databaseURL string) error {
 	if err != nil {
 		return fmt.Errorf("creating migrate instance: %w", err)
 	}
-	defer m.Close()
+	defer func() {
+		if srcErr, dbErr := m.Close(); srcErr != nil || dbErr != nil {
+			log.Println("⚠️ Error closing migrate instance:", srcErr, dbErr)
+		}
+	}()
 
 	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		return fmt.Errorf("running up migrations: %w", err)

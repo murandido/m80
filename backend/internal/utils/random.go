@@ -11,6 +11,6 @@ func SleepRandom(minMs, maxMs int) {
 		time.Sleep(time.Duration(minMs) * time.Millisecond)
 		return
 	}
-	duration := rand.Intn(maxMs-minMs) + minMs
+	duration := rand.Intn(maxMs-minMs) + minMs // #nosec G404 -- jitter de delay do bot, não é sensível a segurança
 	time.Sleep(time.Duration(duration) * time.Millisecond)
 }

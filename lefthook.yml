@@ -1,0 +1,14 @@
+pre-commit:
+  commands:
+    goimports:
+      root: "backend"
+      glob: "*.go"
+      priority: 1
+      run: goimports -w {staged_files}
+      stage_fixed: true
+    golangci-lint:
+      root: "backend"
+      glob: "*.go"
+      priority: 2
+      run: golangci-lint run --fix {staged_files}
+      stage_fixed: true

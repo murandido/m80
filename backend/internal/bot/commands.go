@@ -11,8 +11,8 @@ import (
 func (b *Bot) RouteCommand(evt *events.Message, text string) {
 	cmd := strings.Split(strings.ToLower(strings.TrimSpace(text)), " ")
 
-	switch {
-	case cmd[0] == "!ping":
+	switch cmd[0] {
+	case "!ping":
 		b.cmdPing(evt)
 
 	default:

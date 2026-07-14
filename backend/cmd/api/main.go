@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/murandido/m-80-backend/internal/api"
 	"github.com/murandido/m-80-backend/internal/data"
@@ -52,8 +53,12 @@ func main() {
 	}
 
 	fmt.Printf("🔥 Http server running on %s\n", port)
-	err := http.ListenAndServe(":"+port, r)
-	if err != nil {
+	srv := &http.Server{
+		Addr:              ":" + port,
+		Handler:           r,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	if err := srv.ListenAndServe(); err != nil {
 		panic(err)
 	}
 

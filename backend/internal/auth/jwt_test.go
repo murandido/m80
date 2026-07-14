@@ -111,7 +111,7 @@ func TestValidateToken_ExpiredToken(t *testing.T) {
 func TestValidateToken_WrongSigningMethod(t *testing.T) {
 	// Build a token header that claims RS256 but is actually unsigned — just to
 	// trigger the method-mismatch guard in ValidateToken.
-	fakeToken := "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1MSJ9.invalidsig"
+	fakeToken := "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1MSJ9.invalidsig" // #nosec G101 -- JWT fake só pra testar o guard de signing method, não é credencial real
 
 	_, err := ValidateToken(fakeToken)
 	if err == nil {
