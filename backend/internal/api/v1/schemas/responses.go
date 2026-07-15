@@ -138,6 +138,20 @@ type AgencySingleResponse struct {
 	Data    AgencyResponse `json:"data"`
 }
 
+// ClientListResponse is the GET /clients route response
+type ClientListResponse struct {
+	Success bool             `json:"success" example:"true"`
+	Message string           `json:"message" example:"Clientes listados com sucesso"`
+	Data    []ClientResponse `json:"data"`
+}
+
+// ClientSingleResponse is the response from single-client routes
+type ClientSingleResponse struct {
+	Success bool           `json:"success" example:"true"`
+	Message string         `json:"message" example:"Cliente encontrado"`
+	Data    ClientResponse `json:"data"`
+}
+
 // ErrorResponse is the standard API error response
 type ErrorResponse struct {
 	Success bool   `json:"success" example:"false"`
