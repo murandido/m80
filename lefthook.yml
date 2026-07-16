@@ -10,5 +10,5 @@ pre-commit:
       root: "backend"
       glob: "*.go"
       priority: 2
-      run: golangci-lint run --fix {staged_files}
+      run: golangci-lint run --fix --new-from-rev=HEAD ./...
       stage_fixed: true

@@ -110,6 +110,20 @@ type AirlineSingleResponse struct {
 	Data    AirlineResponse `json:"data"`
 }
 
+// ObservationPresetListResponse is the GET /observation-presets route response
+type ObservationPresetListResponse struct {
+	Success bool                        `json:"success" example:"true"`
+	Message string                      `json:"message" example:"Observações listadas com sucesso"`
+	Data    []ObservationPresetResponse `json:"data"`
+}
+
+// ObservationPresetSingleResponse is the response from single-observation-preset routes
+type ObservationPresetSingleResponse struct {
+	Success bool                      `json:"success" example:"true"`
+	Message string                    `json:"message" example:"Observação encontrada"`
+	Data    ObservationPresetResponse `json:"data"`
+}
+
 // LoyaltyProgramListResponse is the GET /loyalty-programs route response
 type LoyaltyProgramListResponse struct {
 	Success bool                     `json:"success" example:"true"`
