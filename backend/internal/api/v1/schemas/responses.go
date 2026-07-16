@@ -152,6 +152,20 @@ type ClientSingleResponse struct {
 	Data    ClientResponse `json:"data"`
 }
 
+// IssuanceListResponse is the GET /issuances route response
+type IssuanceListResponse struct {
+	Success bool               `json:"success" example:"true"`
+	Message string             `json:"message" example:"Emissões listadas com sucesso"`
+	Data    []IssuanceResponse `json:"data"`
+}
+
+// IssuanceSingleResponse is the response from single-issuance routes
+type IssuanceSingleResponse struct {
+	Success bool             `json:"success" example:"true"`
+	Message string           `json:"message" example:"Emissão encontrada"`
+	Data    IssuanceResponse `json:"data"`
+}
+
 // ErrorResponse is the standard API error response
 type ErrorResponse struct {
 	Success bool   `json:"success" example:"false"`
