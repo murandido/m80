@@ -180,6 +180,20 @@ type IssuanceSingleResponse struct {
 	Data    IssuanceResponse `json:"data"`
 }
 
+// IssuancePassengerListResponse is the GET /issuances/{id}/passengers route response
+type IssuancePassengerListResponse struct {
+	Success bool                        `json:"success" example:"true"`
+	Message string                      `json:"message" example:"Passageiros listados com sucesso"`
+	Data    []IssuancePassengerResponse `json:"data"`
+}
+
+// IssuancePassengerSingleResponse is the response from single-issuance-passenger routes
+type IssuancePassengerSingleResponse struct {
+	Success bool                      `json:"success" example:"true"`
+	Message string                    `json:"message" example:"Passageiro encontrado"`
+	Data    IssuancePassengerResponse `json:"data"`
+}
+
 // ErrorResponse is the standard API error response
 type ErrorResponse struct {
 	Success bool   `json:"success" example:"false"`

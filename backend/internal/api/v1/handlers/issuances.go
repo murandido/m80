@@ -129,6 +129,13 @@ func toIssuanceResponse(issuance data.Issuance) schemas.IssuanceResponse {
 		}
 		resp.Flights = flights
 	}
+	if len(issuance.Passengers) > 0 {
+		passengers := make([]schemas.IssuancePassengerResponse, 0, len(issuance.Passengers))
+		for _, passenger := range issuance.Passengers {
+			passengers = append(passengers, toIssuancePassengerResponse(passenger))
+		}
+		resp.Passengers = passengers
+	}
 
 	return resp
 }
@@ -187,6 +194,7 @@ func (h *IssuanceHandler) GetIssuance(w http.ResponseWriter, r *http.Request) {
 	var issuance data.Issuance
 	query := preloadIssuanceAssociations(h.DB).
 		Preload("Flights").
+		Preload("Passengers").
 		Preload("OriginAirport").
 		Preload("DestinationAirport")
 
