@@ -140,6 +140,50 @@ func toIssuanceResponse(issuance data.Issuance) schemas.IssuanceResponse {
 	return resp
 }
 
+func toIssuanceSummaryResponse(issuance data.Issuance) schemas.IssuanceSummaryResponse {
+	status := "incomplete"
+	if issuance.CancelledAt != nil {
+		status = "cancelled"
+	} else if issuance.Complete {
+		status = "complete"
+	}
+
+	resp := schemas.IssuanceSummaryResponse{
+		ID:                  issuance.ID,
+		ProgramLocator:      issuance.ProgramLocator,
+		AirlineLocator:      issuance.AirlineLocator,
+		IssuedAt:            issuance.CreatedAt,
+		MainPassengerName:   issuance.MainPassengerName,
+		OriginIATACode:      issuance.OriginIATACode,
+		DestinationIATACode: issuance.DestinationIATACode,
+		Points:              issuance.Points,
+		ValueOfTheThousand:  issuance.ValueOfTheThousand,
+		Taxes:               issuance.Taxes,
+		Status:              status,
+	}
+
+	if issuance.LoyaltyProgram != nil {
+		resp.LoyaltyProgramName = issuance.LoyaltyProgram.Name
+	}
+	if issuance.Airline != nil {
+		resp.AirlineName = issuance.Airline.Name
+	}
+	if issuance.Account != nil {
+		resp.AccountLogin = issuance.Account.Login
+	}
+	if issuance.Issuer != nil {
+		resp.IssuerName = issuance.Issuer.Name
+	}
+	if issuance.Agency != nil {
+		resp.AgencyName = issuance.Agency.Name
+	}
+	if len(issuance.Flights) > 0 {
+		resp.FlightDate = &issuance.Flights[0].DepartureAt
+	}
+
+	return resp
+}
+
 // preloadIssuanceAssociations applies the standard set of preloads used by the
 // list and single-issuance responses.
 func preloadIssuanceAssociations(query *gorm.DB) *gorm.DB {
@@ -172,6 +216,37 @@ func (h *IssuanceHandler) GetIssuances(w http.ResponseWriter, r *http.Request) {
 	resp := make([]schemas.IssuanceResponse, 0, len(issuances))
 	for _, issuance := range issuances {
 		resp = append(resp, toIssuanceResponse(issuance))
+	}
+
+	utils.SendJSON(w, r, http.StatusOK, "Issuances fetched successfully", resp)
+}
+
+// GetIssuancesSummary handles the GET /issuances/summary route.
+// @Summary      Listar emissões (resumo)
+// @Description  Retorna uma versão enxuta das emissões ativas, com apenas os campos usados em telas de listagem.
+// @Tags         Emissões
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200  {object}  schemas.IssuanceSummaryListResponse
+// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      500  {object}  schemas.ErrorResponse "Erro ao buscar emissões"
+// @Router       /issuances/summary [get]
+func (h *IssuanceHandler) GetIssuancesSummary(w http.ResponseWriter, r *http.Request) {
+	var issuances []data.Issuance
+
+	query := preloadIssuanceAssociations(h.DB).
+		Preload("Flights", func(db *gorm.DB) *gorm.DB {
+			return db.Where("direction = ?", "outbound").Order("leg_order asc")
+		})
+
+	if err := query.Find(&issuances).Error; err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch issuances")
+		return
+	}
+
+	resp := make([]schemas.IssuanceSummaryResponse, 0, len(issuances))
+	for _, issuance := range issuances {
+		resp = append(resp, toIssuanceSummaryResponse(issuance))
 	}
 
 	utils.SendJSON(w, r, http.StatusOK, "Issuances fetched successfully", resp)

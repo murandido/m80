@@ -117,3 +117,26 @@ type IssuanceResponse struct {
 	CreatedAt           time.Time                   `json:"created_at"`
 	UpdatedAt           time.Time                   `json:"updated_at"`
 }
+
+// IssuanceSummaryResponse defines a lightweight issuance representation for listing
+// screens - only the fields needed to render a table row, no nested relations.
+type IssuanceSummaryResponse struct {
+	ID                  string     `json:"id"`
+	LoyaltyProgramName  string     `json:"loyalty_program_name"`
+	AirlineName         string     `json:"airline_name"`
+	ProgramLocator      string     `json:"program_locator"`
+	AirlineLocator      *string    `json:"airline_locator"`
+	IssuedAt            time.Time  `json:"issued_at"`
+	FlightDate          *time.Time `json:"flight_date"`
+	MainPassengerName   *string    `json:"main_passenger_name"`
+	OriginIATACode      *string    `json:"origin_iata_code"`
+	DestinationIATACode *string    `json:"destination_iata_code"`
+	Points              int        `json:"points"`
+	ValueOfTheThousand  int        `json:"value_of_the_thousand"`
+	Taxes               *int       `json:"taxes"`
+	AccountLogin        *string    `json:"account_login"`
+	IssuerName          string     `json:"issuer_name"`
+	AgencyName          string     `json:"agency_name"`
+	// Status is derived: "incomplete" | "complete" | "cancelled".
+	Status string `json:"status" example:"incomplete"`
+}

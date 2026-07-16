@@ -180,6 +180,13 @@ type IssuanceSingleResponse struct {
 	Data    IssuanceResponse `json:"data"`
 }
 
+// IssuanceSummaryListResponse is the GET /issuances/summary route response
+type IssuanceSummaryListResponse struct {
+	Success bool                      `json:"success" example:"true"`
+	Message string                    `json:"message" example:"Emissões listadas com sucesso"`
+	Data    []IssuanceSummaryResponse `json:"data"`
+}
+
 // IssuancePassengerListResponse is the GET /issuances/{id}/passengers route response
 type IssuancePassengerListResponse struct {
 	Success bool                        `json:"success" example:"true"`

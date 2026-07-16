@@ -17,6 +17,9 @@ func RegisterIssuanceRoutes(r chi.Router, db *gorm.DB) {
 		// get issuances
 		r.Get("/", issuanceHandler.GetIssuances)
 
+		// get issuances (resumo para listagem)
+		r.Get("/summary", issuanceHandler.GetIssuancesSummary)
+
 		// get issuance
 		r.Get("/{id}", issuanceHandler.GetIssuance)
 
