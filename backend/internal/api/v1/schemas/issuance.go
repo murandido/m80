@@ -7,8 +7,7 @@ import (
 )
 
 // CreateIssuanceRequest defines the expected payload to create a new issuance.
-// issuer_id is never accepted here - it always comes from the JWT. complete is
-// never accepted either - it always starts as false.
+// complete is never accepted - it always starts as false.
 type CreateIssuanceRequest struct {
 	ProgramLocator     string `json:"program_locator" validate:"required"`
 	LoyaltyProgramID   string `json:"loyalty_program_id" validate:"required,uuid"`
@@ -18,7 +17,9 @@ type CreateIssuanceRequest struct {
 	// AirlineID defaults to the loyalty program's default_airline_id when omitted.
 	AirlineID *string `json:"airline_id" validate:"omitempty,uuid"`
 	// AgencyID defaults to the agency where is_default=true when omitted.
-	AgencyID            *string        `json:"agency_id" validate:"omitempty,uuid"`
+	AgencyID *string `json:"agency_id" validate:"omitempty,uuid"`
+	// IssuerID defaults to the authenticated (JWT) user when omitted.
+	IssuerID            *string        `json:"issuer_id" validate:"omitempty,uuid"`
 	AirlineLocator      *string        `json:"airline_locator" validate:"omitempty"`
 	LatamPurchaseNumber *string        `json:"latam_purchase_number" validate:"omitempty"`
 	MainPassengerName   *string        `json:"main_passenger_name" validate:"omitempty"`
@@ -32,14 +33,15 @@ type CreateIssuanceRequest struct {
 
 // UpdateIssuanceRequest defines the payload for a partial (autosave) update of an
 // existing issuance. All fields are optional pointers: nil means "don't change this
-// field". complete and issuer_id are never accepted - they're not client-editable.
-// program_locator and airline_locator are silently ignored by the handler when the
-// issuance is already complete.
+// field". complete is never accepted directly - use Status instead, which the handler
+// translates into complete/cancelled_at. program_locator and airline_locator are
+// silently ignored by the handler when the issuance is already complete.
 type UpdateIssuanceRequest struct {
 	LoyaltyProgramID    *string        `json:"loyalty_program_id" validate:"omitempty,uuid"`
 	AirlineID           *string        `json:"airline_id" validate:"omitempty,uuid"`
 	AccountID           *string        `json:"account_id" validate:"omitempty,uuid"`
 	AgencyID            *string        `json:"agency_id" validate:"omitempty,uuid"`
+	IssuerID            *string        `json:"issuer_id" validate:"omitempty,uuid"`
 	ProgramLocator      *string        `json:"program_locator" validate:"omitempty"`
 	AirlineLocator      *string        `json:"airline_locator" validate:"omitempty"`
 	LatamPurchaseNumber *string        `json:"latam_purchase_number" validate:"omitempty"`
@@ -52,70 +54,67 @@ type UpdateIssuanceRequest struct {
 	Taxes               *int           `json:"taxes" validate:"omitempty"`
 	Observation         *string        `json:"observation" validate:"omitempty"`
 	AdditionalServices  datatypes.JSON `json:"additional_services" validate:"omitempty" swaggertype:"object"`
-}
-
-// AirportResponse defines how an airport should be returned nested in an issuance response.
-type AirportResponse struct {
-	ID       string  `json:"id"`
-	IATACode string  `json:"iata_code"`
-	Name     string  `json:"name"`
-	City     *string `json:"city"`
-	State    *string `json:"state"`
-	Country  string  `json:"country"`
+	// Status transitions the issuance between incomplete/complete/cancelled. "deleted"
+	// is not a valid value here - it's only reachable via DELETE /issuances/{id}.
+	Status *string `json:"status" validate:"omitempty,oneof=incomplete complete cancelled"`
+	// FlightDate (YYYY-MM-DD) upserts the primary outbound flight leg's departure date.
+	FlightDate *string `json:"flight_date" validate:"omitempty,datetime=2006-01-02"`
 }
 
 // IssuanceFlightResponse defines how a flight leg should be returned nested in an issuance response.
 type IssuanceFlightResponse struct {
-	ID                  string    `json:"id"`
-	Direction           string    `json:"direction"`
-	LegOrder            int       `json:"leg_order"`
-	FlightNumber        string    `json:"flight_number"`
-	OriginIATACode      *string   `json:"origin_iata_code"`
-	DestinationIATACode *string   `json:"destination_iata_code"`
-	DepartureAt         time.Time `json:"departure_at"`
-	ArrivalAt           time.Time `json:"arrival_at"`
-	DurationMin         *int      `json:"duration_min"`
-	Cabin               *string   `json:"cabin"`
-	CreatedAt           time.Time `json:"created_at"`
+	ID                  string     `json:"id"`
+	Direction           string     `json:"direction"`
+	LegOrder            int        `json:"leg_order"`
+	FlightNumber        *string    `json:"flight_number"`
+	OriginIATACode      *string    `json:"origin_iata_code"`
+	DestinationIATACode *string    `json:"destination_iata_code"`
+	DepartureAt         time.Time  `json:"departure_at"`
+	ArrivalAt           *time.Time `json:"arrival_at"`
+	DurationMin         *int       `json:"duration_min"`
+	Cabin               *string    `json:"cabin"`
+	CreatedAt           time.Time  `json:"created_at"`
 }
 
 // IssuanceResponse defines how an issuance should be returned in the API.
 type IssuanceResponse struct {
-	ID                  string                      `json:"id"`
-	LoyaltyProgramID    string                      `json:"loyalty_program_id"`
-	LoyaltyProgram      *LoyaltyProgramResponse     `json:"loyalty_program,omitempty"`
-	AirlineID           string                      `json:"airline_id"`
-	Airline             *AirlineResponse            `json:"airline,omitempty"`
-	ProgramLocator      string                      `json:"program_locator"`
-	AirlineLocator      *string                     `json:"airline_locator"`
-	LatamPurchaseNumber *string                     `json:"latam_purchase_number"`
-	MainPassengerName   *string                     `json:"main_passenger_name"`
-	TripType            *string                     `json:"trip_type"`
-	OriginIATACode      *string                     `json:"origin_iata_code"`
-	OriginAirport       *AirportResponse            `json:"origin_airport,omitempty"`
-	DestinationIATACode *string                     `json:"destination_iata_code"`
-	DestinationAirport  *AirportResponse            `json:"destination_airport,omitempty"`
-	Points              int                         `json:"points"`
-	ValueOfTheThousand  int                         `json:"value_of_the_thousand"`
-	Taxes               *int                        `json:"taxes"`
-	AccountID           string                      `json:"account_id"`
-	Account             *AccountResponse            `json:"account,omitempty"`
-	IssuerID            string                      `json:"issuer_id"`
-	Issuer              *UserResponse               `json:"issuer,omitempty"`
-	AgencyID            string                      `json:"agency_id"`
-	Agency              *AgencyResponse             `json:"agency,omitempty"`
-	Complete            bool                        `json:"complete"`
-	Flights             []IssuanceFlightResponse    `json:"flights,omitempty"`
-	Passengers          []IssuancePassengerResponse `json:"passengers,omitempty"`
-	AdditionalServices  datatypes.JSON              `json:"additional_services" swaggertype:"object"`
-	Observation         *string                     `json:"observation"`
-	Active              bool                        `json:"active"`
-	CancelledAt         *time.Time                  `json:"cancelled_at"`
-	RefundedPoints      *int                        `json:"refunded_points"`
-	RefundedTaxes       *int                        `json:"refunded_taxes"`
-	CancellationFee     *int                        `json:"cancellation_fee"`
-	CreatedAt           time.Time                   `json:"created_at"`
-	UpdatedAt           time.Time                   `json:"updated_at"`
+	ID                  string                  `json:"id"`
+	LoyaltyProgramID    string                  `json:"loyalty_program_id"`
+	LoyaltyProgram      *LoyaltyProgramResponse `json:"loyalty_program,omitempty"`
+	AirlineID           string                  `json:"airline_id"`
+	Airline             *AirlineResponse        `json:"airline,omitempty"`
+	ProgramLocator      string                  `json:"program_locator"`
+	AirlineLocator      *string                 `json:"airline_locator"`
+	LatamPurchaseNumber *string                 `json:"latam_purchase_number"`
+	MainPassengerName   *string                 `json:"main_passenger_name"`
+	TripType            *string                 `json:"trip_type"`
+	OriginIATACode      *string                 `json:"origin_iata_code"`
+	OriginAirport       *AirportResponse        `json:"origin_airport,omitempty"`
+	DestinationIATACode *string                 `json:"destination_iata_code"`
+	DestinationAirport  *AirportResponse        `json:"destination_airport,omitempty"`
+	Points              int                     `json:"points"`
+	ValueOfTheThousand  int                     `json:"value_of_the_thousand"`
+	Taxes               *int                    `json:"taxes"`
+	AccountID           string                  `json:"account_id"`
+	Account             *AccountResponse        `json:"account,omitempty"`
+	IssuerID            string                  `json:"issuer_id"`
+	Issuer              *UserResponse           `json:"issuer,omitempty"`
+	AgencyID            string                  `json:"agency_id"`
+	Agency              *AgencyResponse         `json:"agency,omitempty"`
+	Complete            bool                    `json:"complete"`
+	// Status is derived: "incomplete" | "complete" | "cancelled".
+	Status             string                      `json:"status" example:"incomplete"`
+	Flights            []IssuanceFlightResponse    `json:"flights,omitempty"`
+	Passengers         []IssuancePassengerResponse `json:"passengers,omitempty"`
+	AdditionalServices datatypes.JSON              `json:"additional_services" swaggertype:"object"`
+	Observation        *string                     `json:"observation"`
+	Active             bool                        `json:"active"`
+	CancelledAt        *time.Time                  `json:"cancelled_at"`
+	RefundedPoints     *int                        `json:"refunded_points"`
+	RefundedTaxes      *int                        `json:"refunded_taxes"`
+	CancellationFee    *int                        `json:"cancellation_fee"`
+	CreatedAt          time.Time                   `json:"created_at"`
+	UpdatedAt          time.Time                   `json:"updated_at"`
 }
 
 // IssuanceSummaryResponse defines a lightweight issuance representation for listing

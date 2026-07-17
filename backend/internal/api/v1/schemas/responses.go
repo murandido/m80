@@ -110,6 +110,13 @@ type AirlineSingleResponse struct {
 	Data    AirlineResponse `json:"data"`
 }
 
+// AirportListResponse is the GET /airports route response
+type AirportListResponse struct {
+	Success bool              `json:"success" example:"true"`
+	Message string            `json:"message" example:"Aeroportos listados com sucesso"`
+	Data    []AirportResponse `json:"data"`
+}
+
 // ObservationPresetListResponse is the GET /observation-presets route response
 type ObservationPresetListResponse struct {
 	Success bool                        `json:"success" example:"true"`

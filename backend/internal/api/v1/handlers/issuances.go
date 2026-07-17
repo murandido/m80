@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
@@ -29,17 +30,6 @@ func NewIssuanceHandler(db *gorm.DB) *IssuanceHandler {
 	return &IssuanceHandler{
 		DB:        db,
 		Validator: validator.New(),
-	}
-}
-
-func toAirportResponse(airport data.Airport) schemas.AirportResponse {
-	return schemas.AirportResponse{
-		ID:       airport.ID,
-		IATACode: airport.IATACode,
-		Name:     airport.Name,
-		City:     airport.City,
-		State:    airport.State,
-		Country:  airport.Country,
 	}
 }
 
@@ -78,6 +68,7 @@ func toIssuanceResponse(issuance data.Issuance) schemas.IssuanceResponse {
 		IssuerID:            issuance.IssuerID,
 		AgencyID:            issuance.AgencyID,
 		Complete:            issuance.Complete,
+		Status:              deriveIssuanceStatus(issuance.Complete, issuance.CancelledAt),
 		AdditionalServices:  issuance.AdditionalServices,
 		Observation:         issuance.Observation,
 		Active:              issuance.Active,
@@ -140,13 +131,21 @@ func toIssuanceResponse(issuance data.Issuance) schemas.IssuanceResponse {
 	return resp
 }
 
-func toIssuanceSummaryResponse(issuance data.Issuance) schemas.IssuanceSummaryResponse {
-	status := "incomplete"
-	if issuance.CancelledAt != nil {
-		status = "cancelled"
-	} else if issuance.Complete {
-		status = "complete"
+// deriveIssuanceStatus derives the client-facing status from the underlying
+// complete/cancelled_at columns. Deleted issuances never reach here (soft-deleted
+// rows are excluded by GORM's default scope in every query this is called from).
+func deriveIssuanceStatus(complete bool, cancelledAt *time.Time) string {
+	if cancelledAt != nil {
+		return "cancelled"
 	}
+	if complete {
+		return "complete"
+	}
+	return "incomplete"
+}
+
+func toIssuanceSummaryResponse(issuance data.Issuance) schemas.IssuanceSummaryResponse {
+	status := deriveIssuanceStatus(issuance.Complete, issuance.CancelledAt)
 
 	resp := schemas.IssuanceSummaryResponse{
 		ID:                  issuance.ID,
@@ -208,7 +207,12 @@ func preloadIssuanceAssociations(query *gorm.DB) *gorm.DB {
 func (h *IssuanceHandler) GetIssuances(w http.ResponseWriter, r *http.Request) {
 	var issuances []data.Issuance
 
-	if err := preloadIssuanceAssociations(h.DB).Find(&issuances).Error; err != nil {
+	query := preloadIssuanceAssociations(h.DB).
+		Preload("Flights", func(db *gorm.DB) *gorm.DB {
+			return db.Where("direction = ?", "outbound").Order("leg_order asc")
+		})
+
+	if err := query.Find(&issuances).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch issuances")
 		return
 	}
@@ -283,7 +287,7 @@ func (h *IssuanceHandler) GetIssuance(w http.ResponseWriter, r *http.Request) {
 
 // CreateIssuance handles the POST /issuances route
 // @Summary      Criar emissão
-// @Description  Cria uma nova emissão. issuer_id vem do JWT, agency_id usa a agência padrão se omitido, e a emissão sempre nasce com complete=false.
+// @Description  Cria uma nova emissão. issuer_id usa o usuário autenticado (JWT) se omitido, agency_id usa a agência padrão se omitido, e a emissão sempre nasce com complete=false.
 // @Tags         Emissões
 // @Accept       json
 // @Produce      json
@@ -354,6 +358,15 @@ func (h *IssuanceHandler) CreateIssuance(w http.ResponseWriter, r *http.Request)
 		issuance.AgencyID = defaultAgency.ID
 	}
 
+	if req.IssuerID != nil {
+		var issuer data.User
+		if err := h.DB.First(&issuer, "id = ?", *req.IssuerID).Error; err != nil {
+			utils.SendError(w, r, http.StatusBadRequest, "Issuer not found")
+			return
+		}
+		issuance.IssuerID = *req.IssuerID
+	}
+
 	err := h.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&issuance).Error; err != nil {
 			return err
@@ -386,7 +399,7 @@ func (h *IssuanceHandler) CreateIssuance(w http.ResponseWriter, r *http.Request)
 
 // UpdateIssuance handles the PATCH /issuances/{id} route
 // @Summary      Atualizar emissão (autosave)
-// @Description  Atualiza um subconjunto de campos de uma emissão existente. program_locator e airline_locator são ignorados silenciosamente se a emissão já estiver completa. complete e issuer_id não são aceitos.
+// @Description  Atualiza um subconjunto de campos de uma emissão existente. program_locator e airline_locator são ignorados silenciosamente se a emissão já estiver completa. complete não é aceito diretamente - use status, que é traduzido para complete/cancelled_at. flight_date (YYYY-MM-DD) cria ou atualiza a data de partida da perna de ida principal.
 // @Tags         Emissões
 // @Accept       json
 // @Produce      json
@@ -394,7 +407,7 @@ func (h *IssuanceHandler) CreateIssuance(w http.ResponseWriter, r *http.Request)
 // @Param        id      path  string                       true  "UUID da emissão"
 // @Param        payload body  schemas.UpdateIssuanceRequest true  "Campos a atualizar"
 // @Success      200  {object}  schemas.IssuanceSingleResponse
-// @Failure      400  {object}  schemas.ErrorResponse "Payload inválido"
+// @Failure      400  {object}  schemas.ErrorResponse "Payload inválido ou flight_date com formato inválido"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      404  {object}  schemas.ErrorResponse "Emissão não encontrada"
 // @Failure      422  {object}  schemas.ErrorResponse "Program locator já está em uso por uma emissão ativa"
@@ -418,6 +431,15 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 	if err := h.Validator.Struct(req); err != nil {
 		utils.SendError(w, r, http.StatusBadRequest, "Validation failed: "+err.Error())
 		return
+	}
+
+	if req.IssuerID != nil {
+		var user data.User
+		if err := h.DB.First(&user, "id = ?", *req.IssuerID).Error; err != nil {
+			utils.SendError(w, r, http.StatusBadRequest, "Issuer not found")
+			return
+		}
+		issuance.IssuerID = *req.IssuerID
 	}
 
 	// program_locator and airline_locator (the "PNR") lock once the issuance is complete.
@@ -473,7 +495,63 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 		issuance.AdditionalServices = req.AdditionalServices
 	}
 
-	if err := h.DB.Save(&issuance).Error; err != nil {
+	if req.Status != nil {
+		switch *req.Status {
+		case "incomplete":
+			issuance.Complete = false
+			issuance.CancelledAt = nil
+		case "complete":
+			issuance.Complete = true
+			issuance.CancelledAt = nil
+		case "cancelled":
+			now := time.Now()
+			issuance.CancelledAt = &now
+		}
+	}
+
+	var flightDate *time.Time
+	if req.FlightDate != nil {
+		parsed, err := time.Parse("2006-01-02", *req.FlightDate)
+		if err != nil {
+			utils.SendError(w, r, http.StatusBadRequest, "Invalid flight_date")
+			return
+		}
+		flightDate = &parsed
+	}
+
+	err := h.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Save(&issuance).Error; err != nil {
+			return err
+		}
+
+		if flightDate == nil {
+			return nil
+		}
+
+		// The primary outbound leg (leg_order=1) is upserted with only the date
+		// collected by this simplified UI - flight_number/arrival_at/etc. are left
+		// nil rather than filled with placeholder data.
+		var flight data.IssuanceFlight
+		err := tx.Where("issuance_id = ? AND direction = ? AND leg_order = ?", issuance.ID, "outbound", 1).
+			First(&flight).Error
+		switch {
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			flight = data.IssuanceFlight{
+				IssuanceID:  issuance.ID,
+				Direction:   "outbound",
+				LegOrder:    1,
+				DepartureAt: *flightDate,
+			}
+			return tx.Create(&flight).Error
+		case err != nil:
+			return err
+		default:
+			flight.DepartureAt = *flightDate
+			return tx.Save(&flight).Error
+		}
+	})
+
+	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == postgresUniqueViolation {
 			utils.SendError(w, r, http.StatusUnprocessableEntity, "Program locator já está em uso por uma emissão ativa")
@@ -484,7 +562,11 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if err := preloadIssuanceAssociations(h.DB).First(&issuance, "id = ?", issuance.ID).Error; err != nil {
+	if err := preloadIssuanceAssociations(h.DB).
+		Preload("Flights", func(db *gorm.DB) *gorm.DB {
+			return db.Where("direction = ?", "outbound").Order("leg_order asc")
+		}).
+		First(&issuance, "id = ?", issuance.ID).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch updated issuance")
 		return
 	}

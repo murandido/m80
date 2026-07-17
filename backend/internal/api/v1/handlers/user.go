@@ -78,13 +78,12 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 
 // GetUsers handles the GET /users route.
 // @Summary      Listar usuários
-// @Description  Retorna todos os usuários cadastrados no sistema (sem senhas).
+// @Description  Retorna todos os usuários cadastrados no sistema (sem senhas). Acessível a qualquer usuário autenticado (ex: para popular o combobox de "emissor" em outras telas).
 // @Tags         Usuários
 // @Produce      json
 // @Security     BearerAuth
 // @Success      200  {object}  schemas.UserListResponse
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
-// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a administradores"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao buscar usuários"
 // @Router       /users [get]
 func (h *UserHandler) GetUsers(w http.ResponseWriter, r *http.Request) {

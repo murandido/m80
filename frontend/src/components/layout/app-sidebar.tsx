@@ -11,6 +11,7 @@ import {
   Landmark,
   LayoutDashboard,
   Plane,
+  Ticket,
   Users,
 } from "lucide-react"
 import {
@@ -71,6 +72,7 @@ const navItems: NavEntry[] = [
   { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
   { title: "Usuários", url: "/dashboard/users", icon: Users },
   { title: "Agências", url: "/dashboard/agencies", icon: Building2 },
+  { title: "Emissões", url: "/dashboard/issuances", icon: Ticket },
   {
     title: "Contas e Pessoas",
     icon: Contact,

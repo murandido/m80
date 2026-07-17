@@ -38,13 +38,10 @@ func NewRouter(db *gorm.DB) chi.Router {
 		routes.RegisterAgencyRoutes(r, db)
 		routes.RegisterClientRoutes(r, db)
 		routes.RegisterIssuanceRoutes(r, db)
-
-		// admin routes
-		r.Group(func(r chi.Router) {
-			r.Use(middleware.RequireAdmin())
-
-			routes.RegisterUserRoutes(r, db)
-		})
+		routes.RegisterAirportRoutes(r, db)
+		// GET /users is open to any authenticated user; its write routes are
+		// admin-gated inline within RegisterUserRoutes itself.
+		routes.RegisterUserRoutes(r, db)
 	})
 
 	return r
