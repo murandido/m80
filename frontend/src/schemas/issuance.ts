@@ -89,6 +89,8 @@ export const createIssuanceSchema = {
     destination_iata_code: z.string().optional(),
     taxes: z.number().int().optional(),
     observation: z.string().optional(),
+    // ISO YYYY-MM-DD - converted from the grid's DD/MM/AAAA mask before sending.
+    flight_date: z.string().optional(),
   }),
   response: z.object({
     success: z.boolean(),

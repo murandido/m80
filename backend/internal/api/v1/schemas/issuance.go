@@ -29,13 +29,14 @@ type CreateIssuanceRequest struct {
 	Taxes               *int           `json:"taxes" validate:"omitempty"`
 	Observation         *string        `json:"observation" validate:"omitempty"`
 	AdditionalServices  datatypes.JSON `json:"additional_services" validate:"omitempty" swaggertype:"object"`
+	// FlightDate (YYYY-MM-DD) creates the primary outbound flight leg.
+	FlightDate *string `json:"flight_date" validate:"omitempty,datetime=2006-01-02"`
 }
 
 // UpdateIssuanceRequest defines the payload for a partial (autosave) update of an
 // existing issuance. All fields are optional pointers: nil means "don't change this
 // field". complete is never accepted directly - use Status instead, which the handler
-// translates into complete/cancelled_at. program_locator and airline_locator are
-// silently ignored by the handler when the issuance is already complete.
+// translates into complete/cancelled_at.
 type UpdateIssuanceRequest struct {
 	LoyaltyProgramID    *string        `json:"loyalty_program_id" validate:"omitempty,uuid"`
 	AirlineID           *string        `json:"airline_id" validate:"omitempty,uuid"`

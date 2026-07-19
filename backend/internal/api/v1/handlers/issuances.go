@@ -183,6 +183,32 @@ func toIssuanceSummaryResponse(issuance data.Issuance) schemas.IssuanceSummaryRe
 	return resp
 }
 
+// upsertPrimaryOutboundFlight creates or updates the leg_order=1 outbound leg with the
+// only field this simplified UI collects - the departure date. flight_number/arrival_at/etc.
+// are left nil rather than filled with placeholder data. Shared by create and update so
+// a date typed before the issuance exists is persisted the same way as one edited after.
+func upsertPrimaryOutboundFlight(tx *gorm.DB, issuanceID string, departureAt time.Time) error {
+	var flight data.IssuanceFlight
+	err := tx.Where("issuance_id = ? AND direction = ? AND leg_order = ?", issuanceID, "outbound", 1).
+		First(&flight).Error
+
+	switch {
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		flight = data.IssuanceFlight{
+			IssuanceID:  issuanceID,
+			Direction:   "outbound",
+			LegOrder:    1,
+			DepartureAt: departureAt,
+		}
+		return tx.Create(&flight).Error
+	case err != nil:
+		return err
+	default:
+		flight.DepartureAt = departureAt
+		return tx.Save(&flight).Error
+	}
+}
+
 // preloadIssuanceAssociations applies the standard set of preloads used by the
 // list and single-issuance responses.
 func preloadIssuanceAssociations(query *gorm.DB) *gorm.DB {
@@ -287,14 +313,14 @@ func (h *IssuanceHandler) GetIssuance(w http.ResponseWriter, r *http.Request) {
 
 // CreateIssuance handles the POST /issuances route
 // @Summary      Criar emissão
-// @Description  Cria uma nova emissão. issuer_id usa o usuário autenticado (JWT) se omitido, agency_id usa a agência padrão se omitido, e a emissão sempre nasce com complete=false.
+// @Description  Cria uma nova emissão. issuer_id usa o usuário autenticado (JWT) se omitido, agency_id usa a agência padrão se omitido, e a emissão sempre nasce com complete=false. flight_date (YYYY-MM-DD) cria a data de partida da perna de ida principal.
 // @Tags         Emissões
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
 // @Param        payload body schemas.CreateIssuanceRequest true "Dados da nova emissão"
 // @Success      201  {object}  schemas.IssuanceSingleResponse
-// @Failure      400  {object}  schemas.ErrorResponse "Payload inválido"
+// @Failure      400  {object}  schemas.ErrorResponse "Payload inválido ou flight_date com formato inválido"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      422  {object}  schemas.ErrorResponse "Program locator já está em uso por uma emissão ativa"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao criar emissão"
@@ -367,10 +393,27 @@ func (h *IssuanceHandler) CreateIssuance(w http.ResponseWriter, r *http.Request)
 		issuance.IssuerID = *req.IssuerID
 	}
 
+	var flightDate *time.Time
+	if req.FlightDate != nil {
+		parsed, err := time.Parse("2006-01-02", *req.FlightDate)
+		if err != nil {
+			utils.SendError(w, r, http.StatusBadRequest, "Invalid flight_date")
+			return
+		}
+		flightDate = &parsed
+	}
+
 	err := h.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&issuance).Error; err != nil {
 			return err
 		}
+
+		if flightDate != nil {
+			if err := upsertPrimaryOutboundFlight(tx, issuance.ID, *flightDate); err != nil {
+				return err
+			}
+		}
+
 		return tx.Create(&data.AuditLog{
 			IssuanceID:  issuance.ID,
 			ChangedByID: userCtx.ID,
@@ -389,7 +432,11 @@ func (h *IssuanceHandler) CreateIssuance(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if err := preloadIssuanceAssociations(h.DB).First(&issuance, "id = ?", issuance.ID).Error; err != nil {
+	if err := preloadIssuanceAssociations(h.DB).
+		Preload("Flights", func(db *gorm.DB) *gorm.DB {
+			return db.Where("direction = ?", "outbound").Order("leg_order asc")
+		}).
+		First(&issuance, "id = ?", issuance.ID).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch created issuance")
 		return
 	}
@@ -399,7 +446,7 @@ func (h *IssuanceHandler) CreateIssuance(w http.ResponseWriter, r *http.Request)
 
 // UpdateIssuance handles the PATCH /issuances/{id} route
 // @Summary      Atualizar emissão (autosave)
-// @Description  Atualiza um subconjunto de campos de uma emissão existente. program_locator e airline_locator são ignorados silenciosamente se a emissão já estiver completa. complete não é aceito diretamente - use status, que é traduzido para complete/cancelled_at. flight_date (YYYY-MM-DD) cria ou atualiza a data de partida da perna de ida principal.
+// @Description  Atualiza um subconjunto de campos de uma emissão existente. complete não é aceito diretamente - use status, que é traduzido para complete/cancelled_at. flight_date (YYYY-MM-DD) cria ou atualiza a data de partida da perna de ida principal.
 // @Tags         Emissões
 // @Accept       json
 // @Produce      json
@@ -442,14 +489,11 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 		issuance.IssuerID = *req.IssuerID
 	}
 
-	// program_locator and airline_locator (the "PNR") lock once the issuance is complete.
-	if !issuance.Complete {
-		if req.ProgramLocator != nil {
-			issuance.ProgramLocator = *req.ProgramLocator
-		}
-		if req.AirlineLocator != nil {
-			issuance.AirlineLocator = req.AirlineLocator
-		}
+	if req.ProgramLocator != nil {
+		issuance.ProgramLocator = *req.ProgramLocator
+	}
+	if req.AirlineLocator != nil {
+		issuance.AirlineLocator = req.AirlineLocator
 	}
 
 	if req.LoyaltyProgramID != nil {
@@ -528,27 +572,7 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 			return nil
 		}
 
-		// The primary outbound leg (leg_order=1) is upserted with only the date
-		// collected by this simplified UI - flight_number/arrival_at/etc. are left
-		// nil rather than filled with placeholder data.
-		var flight data.IssuanceFlight
-		err := tx.Where("issuance_id = ? AND direction = ? AND leg_order = ?", issuance.ID, "outbound", 1).
-			First(&flight).Error
-		switch {
-		case errors.Is(err, gorm.ErrRecordNotFound):
-			flight = data.IssuanceFlight{
-				IssuanceID:  issuance.ID,
-				Direction:   "outbound",
-				LegOrder:    1,
-				DepartureAt: *flightDate,
-			}
-			return tx.Create(&flight).Error
-		case err != nil:
-			return err
-		default:
-			flight.DepartureAt = *flightDate
-			return tx.Save(&flight).Error
-		}
+		return upsertPrimaryOutboundFlight(tx, issuance.ID, *flightDate)
 	})
 
 	if err != nil {

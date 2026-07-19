@@ -67,6 +67,13 @@ export function IssuancesGrid({ initialIssuances, currentUserId, ...referenceDat
   const [interaction, dispatch] = useReducer(interactionReducer, initialInteractionState)
   const activeCellSaveRef = useRef<(() => void) | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
+  // Rows whose POST is currently in flight. `row.isDraft` alone can't gate the create:
+  // it comes from the current render, so a cell edited before the POST resolves would
+  // still see isDraft === true and fire a second create for the same row.
+  const creatingKeysRef = useRef(new Set<string>())
+  // Edits made while a row's POST is in flight, replayed as a PATCH once the server
+  // hands back the real id.
+  const queuedPatchesRef = useRef(new Map<string, Partial<IssuanceRow>>())
 
   useEffect(() => {
     if (!interaction.editing) {
@@ -90,12 +97,31 @@ export function IssuancesGrid({ initialIssuances, currentUserId, ...referenceDat
     setTimeout(() => updateRow(key, { saveStatus: "idle" }), 900)
   }
 
+  // The backend fills defaults the client can't know (airline from the loyalty program,
+  // the default agency, issuer from the JWT) and derives `status`, so a created row is
+  // re-hydrated from the response instead of being patched with just the new id. The
+  // draft's key is kept - issuanceToRow would swap in the backend id, remounting the row
+  // and dropping the user's cell selection mid-typing.
+  function reconcileCreatedRow(key: string, issuance: Issuance) {
+    setRows((prev) =>
+      prev.map((row) =>
+        row.key === key ? { ...issuanceToRow(issuance), key, saveStatus: row.saveStatus } : row,
+      ),
+    )
+  }
+
   async function persist(row: IssuanceRow, patch: Partial<IssuanceRow>) {
     const merged = { ...row, ...patch }
 
     if (row.isDraft) {
+      if (creatingKeysRef.current.has(row.key)) {
+        queuedPatchesRef.current.set(row.key, { ...queuedPatchesRef.current.get(row.key), ...patch })
+        return
+      }
+
       if (!draftIsReadyToCreate(merged)) return
 
+      creatingKeysRef.current.add(row.key)
       updateRow(row.key, { saveStatus: "saving" })
       const result = await createIssuanceAction({
         program_locator: merged.program_locator,
@@ -111,16 +137,27 @@ export function IssuancesGrid({ initialIssuances, currentUserId, ...referenceDat
         origin_iata_code: merged.origin_iata_code ?? undefined,
         destination_iata_code: merged.destination_iata_code ?? undefined,
         taxes: merged.taxes ?? undefined,
-      })
+        flight_date: merged.flight_date ?? undefined,
+      }).finally(() => creatingKeysRef.current.delete(row.key))
+
+      const queued = queuedPatchesRef.current.get(row.key)
+      queuedPatchesRef.current.delete(row.key)
 
       if ("error" in result) {
         toast.error(result.error)
         flashSaveStatus(row.key, "error")
+        // The row stays a draft holding those edits in local state, so the next cell
+        // save retries the create with them merged in - replaying them as a PATCH here
+        // would target an issuance that was never persisted.
         return
       }
 
-      updateRow(row.key, { id: result.issuance.id, isDraft: false })
+      reconcileCreatedRow(row.key, result.issuance)
       flashSaveStatus(row.key, "success")
+
+      if (queued) {
+        await persist({ ...merged, key: row.key, id: result.issuance.id, isDraft: false }, queued)
+      }
       return
     }
 
@@ -135,6 +172,11 @@ export function IssuancesGrid({ initialIssuances, currentUserId, ...referenceDat
       flashSaveStatus(row.key, "error")
       return
     }
+
+    // Only `status` is taken from the response: it's the sole displayed field the server
+    // derives on its own, and a fuller merge risks a late reply clobbering a cell the
+    // user has edited since this save started.
+    if (result.issuance) updateRow(row.key, { status: result.issuance.status })
 
     flashSaveStatus(row.key, "success")
   }
