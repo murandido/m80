@@ -11,6 +11,7 @@ export type Direction = "down" | "up" | "tab-right" | "tab-left"
 // "Conta", "Emissor", "Agência", "Status".
 export const COLUMN_COUNT = 14
 export const CALCULATED_COLUMN_INDEX = 9
+export const ACCOUNT_COLUMN_INDEX = 10
 
 function isSkippableRow(row: NavigableRow): boolean {
   return row.status === "cancelled"

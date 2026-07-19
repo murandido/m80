@@ -8,19 +8,51 @@ import { LocatorCell } from "@/components/issuances/cells/locator-cell"
 import { DateMaskCell } from "@/components/issuances/cells/date-mask-cell"
 import { NumberCell } from "@/components/issuances/cells/number-cell"
 import { CalculatedCell } from "@/components/issuances/cells/calculated-cell"
-import { ComboboxCell } from "@/components/issuances/cells/combobox-cell"
+import { ComboboxCell, ComboOption } from "@/components/issuances/cells/combobox-cell"
 import { AirportAutocompleteCell } from "@/components/issuances/cells/airport-autocomplete-cell"
 import { CiaAereaCell } from "@/components/issuances/cells/cia-aerea-cell"
 import { StatusCell } from "@/components/issuances/cells/status-cell"
 
-function accountLabel(account: Account, people: Person[]): string {
-  if (account.nicknames.length > 0) return account.nicknames.map((n) => n.nickname).join(", ")
+// Only used for accounts with no registered alias - those with aliases get one option
+// per alias instead, so there is nothing to fall back to.
+function accountFallbackLabel(account: Account, people: Person[]): string {
   const holder = people.find((p) => p.id === account.holder_id)
   return holder?.name ?? account.login ?? account.id
 }
 
+// One option per alias, so the operator picks a specific alias rather than an account
+// labelled with all of its aliases at once. Aliases belong to a loyalty program, so the
+// list is narrowed to the program the row is issuing on; before a program is chosen there
+// is nothing to narrow by and the full list stays available.
+function buildAccountOptions(
+  accounts: Account[],
+  people: Person[],
+  loyaltyProgramId: string | null,
+): ComboOption[] {
+  const selectable = loyaltyProgramId
+    ? accounts.filter((account) => account.loyalty_program_id === loyaltyProgramId)
+    : accounts
+
+  return selectable.flatMap((account): ComboOption[] =>
+    account.nicknames.length > 0
+      ? account.nicknames.map((nickname) => ({
+          key: nickname.id,
+          label: nickname.nickname,
+          patch: { account_id: account.id, account_nickname_id: nickname.id },
+        }))
+      : [
+          {
+            key: account.id,
+            label: accountFallbackLabel(account, people),
+            patch: { account_id: account.id, account_nickname_id: null },
+          },
+        ],
+  )
+}
+
 export function GridCell({ r, c }: { r: number; c: number }) {
-  const { accounts, users, agencies, people } = useGridContext()
+  const { rows, accounts, users, agencies, people } = useGridContext()
+  const row = rows[r]
 
   switch (c) {
     case 0:
@@ -48,8 +80,9 @@ export function GridCell({ r, c }: { r: number; c: number }) {
         <ComboboxCell
           r={r}
           c={c}
-          field="account_id"
-          options={accounts.map((a) => ({ value: a.id, label: accountLabel(a, people) }))}
+          options={buildAccountOptions(accounts, people, row.loyalty_program_id)}
+          // Accounts without an alias are keyed by their own id, so this covers both cases.
+          selectedKey={row.account_nickname_id ?? row.account_id}
         />
       )
     case 11:
@@ -57,8 +90,8 @@ export function GridCell({ r, c }: { r: number; c: number }) {
         <ComboboxCell
           r={r}
           c={c}
-          field="issuer_id"
-          options={users.map((u) => ({ value: u.id, label: u.name }))}
+          options={users.map((u) => ({ key: u.id, label: u.name, patch: { issuer_id: u.id } }))}
+          selectedKey={row.issuer_id}
         />
       )
     case 12:
@@ -66,8 +99,8 @@ export function GridCell({ r, c }: { r: number; c: number }) {
         <ComboboxCell
           r={r}
           c={c}
-          field="agency_id"
-          options={agencies.map((a) => ({ value: a.id, label: a.name }))}
+          options={agencies.map((a) => ({ key: a.id, label: a.name, patch: { agency_id: a.id } }))}
+          selectedKey={row.agency_id}
         />
       )
     case 13:

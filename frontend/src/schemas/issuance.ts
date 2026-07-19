@@ -2,7 +2,7 @@ import { z } from "zod"
 import { loyaltyProgramSchema } from "@/schemas/loyalty-program"
 import { airlineSchema } from "@/schemas/airline"
 import { airportSchema } from "@/schemas/airport"
-import { accountSchema } from "@/schemas/account"
+import { accountSchema, accountNicknameSchema } from "@/schemas/account"
 import { userSchema } from "@/schemas/user"
 import { agencySchema } from "@/schemas/agency"
 
@@ -47,6 +47,8 @@ export const issuanceSchema = z.object({
   taxes: z.number().nullable(),
   account_id: z.string(),
   account: accountSchema.nullish(),
+  account_nickname_id: z.string().nullable(),
+  account_nickname: accountNicknameSchema.nullish(),
   issuer_id: z.string(),
   issuer: userSchema.nullish(),
   agency_id: z.string(),
@@ -76,6 +78,8 @@ export const createIssuanceSchema = {
     program_locator: z.string().min(1, "Localizador é obrigatório"),
     loyalty_program_id: z.string().uuid("Selecione um programa de fidelidade"),
     account_id: z.string().uuid("Selecione uma conta"),
+    // Optional: accounts with no registered alias are still issuable.
+    account_nickname_id: z.string().uuid().optional(),
     points: z.number().int().positive("Pontos deve ser maior que zero"),
     value_of_the_thousand: z.number().int().positive("Valor do milheiro deve ser maior que zero"),
     airline_id: z.string().uuid().optional(),
@@ -105,7 +109,10 @@ export const updateIssuanceSchema = {
   request: z.object({
     loyalty_program_id: z.string().uuid().optional(),
     airline_id: z.string().uuid().optional(),
-    account_id: z.string().uuid().optional(),
+    account_id: z.string().uuid().nullable().optional(),
+    // Sent alongside account_id, never on its own - the backend updates the pair as a
+    // unit, so an omitted alias here means "this account has no alias".
+    account_nickname_id: z.string().uuid().nullable().optional(),
     agency_id: z.string().uuid().optional(),
     issuer_id: z.string().uuid().optional(),
     program_locator: z.string().optional(),

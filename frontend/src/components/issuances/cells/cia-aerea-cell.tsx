@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react"
 import { cn } from "@/lib/utils"
 import { useGridContext } from "@/components/issuances/grid-context"
+import { IssuanceRow } from "@/components/issuances/types"
 import { Direction } from "@/lib/grid-navigation"
 import { LoyaltyProgramBadge } from "@/components/accounts/loyalty-program-badge"
 import { DropdownPortal } from "@/components/issuances/cells/dropdown-portal"
@@ -103,6 +104,16 @@ export function CiaAereaCell({ r, c }: { r: number; c: number }) {
     setFiltered([])
   }
 
+  // An account belongs to one loyalty program, so it cannot carry over to a different
+  // one. Clearing it (and its alias) leaves the cell empty, which is the prompt to pick
+  // a valid account. Only on an actual program change - reselecting the same program, or
+  // just swapping the airline, must not wipe the account the user already chose.
+  function accountResetFor(programId: string): Partial<IssuanceRow> {
+    // Nothing to clear, and nothing to warn about, when no account was chosen yet.
+    if (programId === row.loyalty_program_id || row.account_id === null) return {}
+    return { account_id: null, account_nickname_id: null }
+  }
+
   function commit(direction: Direction | null) {
     if (savedRef.current) return
     savedRef.current = true
@@ -114,7 +125,15 @@ export function CiaAereaCell({ r, c }: { r: number; c: number }) {
         onSaveAndMove(r, {}, direction)
         return
       }
-      onSaveAndMove(r, { loyalty_program_id: program.id, airline_id: program.default_airline_id }, direction)
+      onSaveAndMove(
+        r,
+        {
+          loyalty_program_id: program.id,
+          airline_id: program.default_airline_id,
+          ...accountResetFor(program.id),
+        },
+        direction,
+      )
       return
     }
 
@@ -126,7 +145,11 @@ export function CiaAereaCell({ r, c }: { r: number; c: number }) {
       onSaveAndMove(r, {}, direction)
       return
     }
-    onSaveAndMove(r, { loyalty_program_id: program.id, airline_id: airline.id }, direction)
+    onSaveAndMove(
+      r,
+      { loyalty_program_id: program.id, airline_id: airline.id, ...accountResetFor(program.id) },
+      direction,
+    )
   }
 
   useEffect(() => {

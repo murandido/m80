@@ -100,6 +100,11 @@ func toIssuanceResponse(issuance data.Issuance) schemas.IssuanceResponse {
 		account := toAccountResponse(*issuance.Account)
 		resp.Account = &account
 	}
+	resp.AccountNicknameID = issuance.AccountNicknameID
+	if issuance.AccountNickname != nil {
+		nickname := toAccountNicknameResponse(*issuance.AccountNickname)
+		resp.AccountNickname = &nickname
+	}
 	if issuance.Issuer != nil {
 		resp.Issuer = &schemas.UserResponse{
 			ID:        issuance.Issuer.ID,
@@ -209,6 +214,25 @@ func upsertPrimaryOutboundFlight(tx *gorm.DB, issuanceID string, departureAt tim
 	}
 }
 
+// validateAccountNickname checks that the chosen alias actually belongs to the chosen
+// account. Both ids arrive from the client independently, so without this a typo (or a
+// stale grid row) could persist an issuance labelled with another account's alias.
+// A nil nicknameID is valid: accounts with no registered alias are still issuable.
+func validateAccountNickname(db *gorm.DB, accountID string, nicknameID *string) error {
+	if nicknameID == nil {
+		return nil
+	}
+
+	var nickname data.AccountNickname
+	if err := db.First(&nickname, "id = ?", *nicknameID).Error; err != nil {
+		return errors.New("account nickname not found")
+	}
+	if nickname.AccountID != accountID {
+		return errors.New("account nickname does not belong to the given account")
+	}
+	return nil
+}
+
 // preloadIssuanceAssociations applies the standard set of preloads used by the
 // list and single-issuance responses.
 func preloadIssuanceAssociations(query *gorm.DB) *gorm.DB {
@@ -216,6 +240,8 @@ func preloadIssuanceAssociations(query *gorm.DB) *gorm.DB {
 		Preload("LoyaltyProgram").
 		Preload("Airline").
 		Preload("Account").
+		Preload("Account.Nicknames").
+		Preload("AccountNickname").
 		Preload("Issuer").
 		Preload("Agency")
 }
@@ -313,14 +339,14 @@ func (h *IssuanceHandler) GetIssuance(w http.ResponseWriter, r *http.Request) {
 
 // CreateIssuance handles the POST /issuances route
 // @Summary      Criar emissão
-// @Description  Cria uma nova emissão. issuer_id usa o usuário autenticado (JWT) se omitido, agency_id usa a agência padrão se omitido, e a emissão sempre nasce com complete=false. flight_date (YYYY-MM-DD) cria a data de partida da perna de ida principal.
+// @Description  Cria uma nova emissão. issuer_id usa o usuário autenticado (JWT) se omitido, agency_id usa a agência padrão se omitido, e a emissão sempre nasce com complete=false. flight_date (YYYY-MM-DD) cria a data de partida da perna de ida principal. account_nickname_id é opcional e, quando informado, precisa pertencer à conta em account_id.
 // @Tags         Emissões
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
 // @Param        payload body schemas.CreateIssuanceRequest true "Dados da nova emissão"
 // @Success      201  {object}  schemas.IssuanceSingleResponse
-// @Failure      400  {object}  schemas.ErrorResponse "Payload inválido ou flight_date com formato inválido"
+// @Failure      400  {object}  schemas.ErrorResponse "Payload inválido, flight_date com formato inválido ou apelido que não pertence à conta"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      422  {object}  schemas.ErrorResponse "Program locator já está em uso por uma emissão ativa"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao criar emissão"
@@ -343,6 +369,11 @@ func (h *IssuanceHandler) CreateIssuance(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	if err := validateAccountNickname(h.DB, req.AccountID, req.AccountNicknameID); err != nil {
+		utils.SendError(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	issuance := data.Issuance{
 		LoyaltyProgramID:    req.LoyaltyProgramID,
 		ProgramLocator:      req.ProgramLocator,
@@ -356,6 +387,7 @@ func (h *IssuanceHandler) CreateIssuance(w http.ResponseWriter, r *http.Request)
 		ValueOfTheThousand:  req.ValueOfTheThousand,
 		Taxes:               req.Taxes,
 		AccountID:           req.AccountID,
+		AccountNicknameID:   req.AccountNicknameID,
 		Observation:         req.Observation,
 		AdditionalServices:  req.AdditionalServices,
 		IssuerID:            userCtx.ID,
@@ -502,8 +534,18 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 	if req.AirlineID != nil {
 		issuance.AirlineID = *req.AirlineID
 	}
+	// account_id and account_nickname_id are updated as a unit: the grid always sends
+	// both when the account cell changes, so an omitted nickname alongside a present
+	// account means "this account has no alias", not "keep the previous alias". A plain
+	// *string field cannot otherwise express clearing the alias, since JSON null and an
+	// absent key both decode to nil.
 	if req.AccountID != nil {
+		if err := validateAccountNickname(h.DB, *req.AccountID, req.AccountNicknameID); err != nil {
+			utils.SendError(w, r, http.StatusBadRequest, err.Error())
+			return
+		}
 		issuance.AccountID = *req.AccountID
+		issuance.AccountNicknameID = req.AccountNicknameID
 	}
 	if req.AgencyID != nil {
 		issuance.AgencyID = *req.AgencyID

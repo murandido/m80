@@ -24,6 +24,9 @@ export interface IssuanceRow {
   value_of_the_thousand: number | null // centavos
   taxes: number | null // centavos
   account_id: string | null
+  // Which of the account's aliases was picked. Null for accounts with no registered
+  // alias, which are still selectable - see grid-cell.tsx.
+  account_nickname_id: string | null
   issuer_id: string | null
   agency_id: string | null
   status: IssuanceStatus
@@ -48,6 +51,7 @@ export function issuanceToRow(issuance: Issuance): IssuanceRow {
     value_of_the_thousand: issuance.value_of_the_thousand,
     taxes: issuance.taxes,
     account_id: issuance.account_id,
+    account_nickname_id: issuance.account_nickname_id,
     issuer_id: issuance.issuer_id,
     agency_id: issuance.agency_id,
     status: issuance.status,
@@ -74,6 +78,7 @@ export function makeDraftRow(issuerId?: string | null): IssuanceRow {
     value_of_the_thousand: null,
     taxes: null,
     account_id: null,
+    account_nickname_id: null,
     issuer_id: issuerId ?? null,
     agency_id: null,
     status: "incomplete",

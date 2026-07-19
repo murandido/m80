@@ -13,6 +13,7 @@ import { AutosaveDot } from "@/components/issuances/autosave-dot"
 import { interactionReducer, initialInteractionState } from "@/components/issuances/interaction-reducer"
 import { IssuanceRow, issuanceToRow, makeDraftRow, draftIsReadyToCreate } from "@/components/issuances/types"
 import {
+  ACCOUNT_COLUMN_INDEX,
   CALCULATED_COLUMN_INDEX,
   COLUMN_COUNT,
   clampMove,
@@ -74,6 +75,10 @@ export function IssuancesGrid({ initialIssuances, currentUserId, ...referenceDat
   // Edits made while a row's POST is in flight, replayed as a PATCH once the server
   // hands back the real id.
   const queuedPatchesRef = useRef(new Map<string, Partial<IssuanceRow>>())
+  // Rows whose account the program change wiped, until a new one is picked. Session-only
+  // by nature: the old account_id survives in the database (the column is NOT NULL), so a
+  // reload brings it back and the highlight legitimately disappears.
+  const [accountClearedKeys, setAccountClearedKeys] = useState(new Set<string>())
 
   useEffect(() => {
     if (!interaction.editing) {
@@ -89,6 +94,12 @@ export function IssuancesGrid({ initialIssuances, currentUserId, ...referenceDat
     setRows((prev) => {
       const next = prev.filter((row) => row.key !== key)
       return next.length > 0 ? next : [makeDraftRow(currentUserId)]
+    })
+    setAccountClearedKeys((prev) => {
+      if (!prev.has(key)) return prev
+      const next = new Set(prev)
+      next.delete(key)
+      return next
     })
   }
 
@@ -127,6 +138,7 @@ export function IssuancesGrid({ initialIssuances, currentUserId, ...referenceDat
         program_locator: merged.program_locator,
         loyalty_program_id: merged.loyalty_program_id!,
         account_id: merged.account_id!,
+        account_nickname_id: merged.account_nickname_id ?? undefined,
         points: merged.points!,
         value_of_the_thousand: merged.value_of_the_thousand!,
         airline_id: merged.airline_id ?? undefined,
@@ -194,6 +206,14 @@ export function IssuancesGrid({ initialIssuances, currentUserId, ...referenceDat
     if (!row) return
 
     if (Object.keys(patch).length > 0) {
+      if ("account_id" in patch) {
+        setAccountClearedKeys((prev) => {
+          const next = new Set(prev)
+          if (patch.account_id === null) next.add(row.key)
+          else next.delete(row.key)
+          return next
+        })
+      }
       updateRow(row.key, patch)
       void persist(row, patch)
     }
@@ -343,19 +363,35 @@ export function IssuancesGrid({ initialIssuances, currentUserId, ...referenceDat
                     <AutosaveDot status={row.saveStatus} />
                   </span>
                 </TableCell>
-                {Array.from({ length: COLUMN_COUNT }, (_, c) => (
-                  <TableCell
-                    key={c}
-                    className={cn(
-                      "whitespace-normal border-l p-0 first:border-l-0",
-                      interaction.sel.r === r &&
-                        interaction.sel.c === c &&
-                        "ring-2 ring-inset ring-primary",
-                    )}
-                  >
-                    <GridCell r={r} c={c} />
-                  </TableCell>
-                ))}
+                {Array.from({ length: COLUMN_COUNT }, (_, c) => {
+                  const accountNeedsPicking =
+                    c === ACCOUNT_COLUMN_INDEX && accountClearedKeys.has(row.key)
+                  return (
+                    <TableCell
+                      key={c}
+                      // Background rather than a ring or border: the selection ring below
+                      // already owns --tw-ring-color on this cell, and two competing
+                      // ring-* utilities resolve by their order in the generated CSS, not
+                      // by the order they appear here.
+                      className={cn(
+                        "whitespace-normal border-l p-0 first:border-l-0",
+                        accountNeedsPicking && "bg-red-100",
+                        interaction.sel.r === r &&
+                          interaction.sel.c === c &&
+                          "ring-2 ring-inset ring-primary",
+                      )}
+                      title={
+                        accountNeedsPicking
+                          ? row.isDraft
+                            ? "Selecione uma conta — a emissão não será salva sem ela."
+                            : "Selecione uma conta — a emissão ainda está vinculada à conta do programa anterior."
+                          : undefined
+                      }
+                    >
+                      <GridCell r={r} c={c} />
+                    </TableCell>
+                  )
+                })}
                 <TableCell className="p-1">
                   <RowActions r={r} />
                 </TableCell>

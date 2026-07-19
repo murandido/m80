@@ -9,11 +9,14 @@ import (
 // CreateIssuanceRequest defines the expected payload to create a new issuance.
 // complete is never accepted - it always starts as false.
 type CreateIssuanceRequest struct {
-	ProgramLocator     string `json:"program_locator" validate:"required"`
-	LoyaltyProgramID   string `json:"loyalty_program_id" validate:"required,uuid"`
-	AccountID          string `json:"account_id" validate:"required,uuid"`
-	Points             int    `json:"points" validate:"required"`
-	ValueOfTheThousand int    `json:"value_of_the_thousand" validate:"required"`
+	ProgramLocator   string `json:"program_locator" validate:"required"`
+	LoyaltyProgramID string `json:"loyalty_program_id" validate:"required,uuid"`
+	AccountID        string `json:"account_id" validate:"required,uuid"`
+	// AccountNicknameID is optional - accounts without a registered alias are still
+	// issuable. When present it must belong to AccountID.
+	AccountNicknameID  *string `json:"account_nickname_id" validate:"omitempty,uuid"`
+	Points             int     `json:"points" validate:"required"`
+	ValueOfTheThousand int     `json:"value_of_the_thousand" validate:"required"`
 	// AirlineID defaults to the loyalty program's default_airline_id when omitted.
 	AirlineID *string `json:"airline_id" validate:"omitempty,uuid"`
 	// AgencyID defaults to the agency where is_default=true when omitted.
@@ -38,9 +41,12 @@ type CreateIssuanceRequest struct {
 // field". complete is never accepted directly - use Status instead, which the handler
 // translates into complete/cancelled_at.
 type UpdateIssuanceRequest struct {
-	LoyaltyProgramID    *string        `json:"loyalty_program_id" validate:"omitempty,uuid"`
-	AirlineID           *string        `json:"airline_id" validate:"omitempty,uuid"`
-	AccountID           *string        `json:"account_id" validate:"omitempty,uuid"`
+	LoyaltyProgramID *string `json:"loyalty_program_id" validate:"omitempty,uuid"`
+	AirlineID        *string `json:"airline_id" validate:"omitempty,uuid"`
+	AccountID        *string `json:"account_id" validate:"omitempty,uuid"`
+	// AccountNicknameID is only read when AccountID is also present - the two are
+	// updated as a unit. See UpdateIssuance for why.
+	AccountNicknameID   *string        `json:"account_nickname_id" validate:"omitempty,uuid"`
 	AgencyID            *string        `json:"agency_id" validate:"omitempty,uuid"`
 	IssuerID            *string        `json:"issuer_id" validate:"omitempty,uuid"`
 	ProgramLocator      *string        `json:"program_locator" validate:"omitempty"`
@@ -79,30 +85,32 @@ type IssuanceFlightResponse struct {
 
 // IssuanceResponse defines how an issuance should be returned in the API.
 type IssuanceResponse struct {
-	ID                  string                  `json:"id"`
-	LoyaltyProgramID    string                  `json:"loyalty_program_id"`
-	LoyaltyProgram      *LoyaltyProgramResponse `json:"loyalty_program,omitempty"`
-	AirlineID           string                  `json:"airline_id"`
-	Airline             *AirlineResponse        `json:"airline,omitempty"`
-	ProgramLocator      string                  `json:"program_locator"`
-	AirlineLocator      *string                 `json:"airline_locator"`
-	LatamPurchaseNumber *string                 `json:"latam_purchase_number"`
-	MainPassengerName   *string                 `json:"main_passenger_name"`
-	TripType            *string                 `json:"trip_type"`
-	OriginIATACode      *string                 `json:"origin_iata_code"`
-	OriginAirport       *AirportResponse        `json:"origin_airport,omitempty"`
-	DestinationIATACode *string                 `json:"destination_iata_code"`
-	DestinationAirport  *AirportResponse        `json:"destination_airport,omitempty"`
-	Points              int                     `json:"points"`
-	ValueOfTheThousand  int                     `json:"value_of_the_thousand"`
-	Taxes               *int                    `json:"taxes"`
-	AccountID           string                  `json:"account_id"`
-	Account             *AccountResponse        `json:"account,omitempty"`
-	IssuerID            string                  `json:"issuer_id"`
-	Issuer              *UserResponse           `json:"issuer,omitempty"`
-	AgencyID            string                  `json:"agency_id"`
-	Agency              *AgencyResponse         `json:"agency,omitempty"`
-	Complete            bool                    `json:"complete"`
+	ID                  string                   `json:"id"`
+	LoyaltyProgramID    string                   `json:"loyalty_program_id"`
+	LoyaltyProgram      *LoyaltyProgramResponse  `json:"loyalty_program,omitempty"`
+	AirlineID           string                   `json:"airline_id"`
+	Airline             *AirlineResponse         `json:"airline,omitempty"`
+	ProgramLocator      string                   `json:"program_locator"`
+	AirlineLocator      *string                  `json:"airline_locator"`
+	LatamPurchaseNumber *string                  `json:"latam_purchase_number"`
+	MainPassengerName   *string                  `json:"main_passenger_name"`
+	TripType            *string                  `json:"trip_type"`
+	OriginIATACode      *string                  `json:"origin_iata_code"`
+	OriginAirport       *AirportResponse         `json:"origin_airport,omitempty"`
+	DestinationIATACode *string                  `json:"destination_iata_code"`
+	DestinationAirport  *AirportResponse         `json:"destination_airport,omitempty"`
+	Points              int                      `json:"points"`
+	ValueOfTheThousand  int                      `json:"value_of_the_thousand"`
+	Taxes               *int                     `json:"taxes"`
+	AccountID           string                   `json:"account_id"`
+	Account             *AccountResponse         `json:"account,omitempty"`
+	AccountNicknameID   *string                  `json:"account_nickname_id"`
+	AccountNickname     *AccountNicknameResponse `json:"account_nickname,omitempty"`
+	IssuerID            string                   `json:"issuer_id"`
+	Issuer              *UserResponse            `json:"issuer,omitempty"`
+	AgencyID            string                   `json:"agency_id"`
+	Agency              *AgencyResponse          `json:"agency,omitempty"`
+	Complete            bool                     `json:"complete"`
 	// Status is derived: "incomplete" | "complete" | "cancelled".
 	Status             string                      `json:"status" example:"incomplete"`
 	Flights            []IssuanceFlightResponse    `json:"flights,omitempty"`

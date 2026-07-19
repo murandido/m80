@@ -8,15 +8,21 @@ import { Direction } from "@/lib/grid-navigation"
 import { DropdownPortal } from "@/components/issuances/cells/dropdown-portal"
 
 export interface ComboOption {
-  value: string
+  // Identity of the option itself, not of the row field it writes. The account column
+  // needs the distinction: several options can share one account_id (one per alias), so
+  // keying on the written value would make every alias of an account resolve to the first.
+  key: string
   label: string
+  // What picking this option writes onto the row. The caller owns the mapping, which is
+  // what lets a single option set more than one field.
+  patch: Partial<IssuanceRow>
 }
 
 interface ComboboxCellProps {
   r: number
   c: number
-  field: "account_id" | "issuer_id" | "agency_id"
   options: ComboOption[]
+  selectedKey: string | null
 }
 
 function filterOptions(options: ComboOption[], typed: string): ComboOption[] {
@@ -32,13 +38,12 @@ function filterOptions(options: ComboOption[], typed: string): ComboOption[] {
     })
 }
 
-export function ComboboxCell({ r, c, field, options }: ComboboxCellProps) {
-  const { rows, sel, editing, pendingChar, onCellClick, onSaveAndMove, onExitEdit, registerActiveCellSave } =
+export function ComboboxCell({ r, c, options, selectedKey }: ComboboxCellProps) {
+  const { sel, editing, pendingChar, onCellClick, onSaveAndMove, onExitEdit, registerActiveCellSave } =
     useGridContext()
-  const row = rows[r]
   const isThisCellEditing = editing && sel.r === r && sel.c === c
 
-  const currentOption = options.find((o) => o.value === row[field])
+  const currentOption = options.find((o) => o.key === selectedKey)
   const displayValue = currentOption?.label ?? ""
 
   const [text, setText] = useState(displayValue)
@@ -90,7 +95,7 @@ export function ComboboxCell({ r, c, field, options }: ComboboxCellProps) {
       onSaveAndMove(r, {}, direction)
       return
     }
-    onSaveAndMove(r, { [field]: match.value } as Partial<IssuanceRow>, direction)
+    onSaveAndMove(r, match.patch, direction)
   }
 
   useEffect(() => {
@@ -164,7 +169,7 @@ export function ComboboxCell({ r, c, field, options }: ComboboxCellProps) {
         <DropdownPortal anchorRef={inputRef}>
           {filtered.map((option, index) => (
             <button
-              key={option.value}
+              key={option.key}
               type="button"
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => {
