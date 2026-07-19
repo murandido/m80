@@ -3,6 +3,7 @@
 import { cookies } from "next/headers"
 import { env } from "@/lib/env"
 import { stripEmptyFields } from "@/lib/strip-empty-fields"
+import { createPersonAction } from "@/actions/person"
 import {
   checkAccountNicknameAvailabilitySchema,
   createAccountNicknameSchema,
@@ -39,10 +40,11 @@ export async function createAccountAction(
       return { error: parsed.data?.message || "Erro ao cadastrar conta." }
     }
 
-    const accountId = parsed.data?.data?.id
-    if (!accountId) {
+    const account = parsed.data?.data
+    if (!account) {
       return { error: "Erro ao cadastrar conta." }
     }
+    const accountId = account.id
 
     // Nicknames are a separate sub-resource — the account already exists at this
     // point, so create each nickname individually and report which (if any)
@@ -61,10 +63,10 @@ export async function createAccountAction(
     }
 
     if (failedNicknames.length > 0) {
-      return { success: true as const, accountId, failedNicknames }
+      return { success: true as const, accountId, account, failedNicknames }
     }
 
-    return { success: true as const, accountId }
+    return { success: true as const, accountId, account }
   } catch {
     return { error: "Erro de conexão com o servidor." }
   }
@@ -131,7 +133,10 @@ export async function createAccountNicknameAction(
       return { error: parsed.data?.message || "Erro ao adicionar apelido." }
     }
 
-    return { success: true as const }
+    // The created nickname is returned so callers that need to reference it right
+    // away - the issuances grid writes account_nickname_id onto the row - don't have
+    // to refetch the account to learn the id.
+    return { success: true as const, nickname: parsed.data?.data }
   } catch {
     return { error: "Erro de conexão com o servidor." }
   }
@@ -217,5 +222,48 @@ export async function deleteAccountAction(accountId: string) {
     return { success: true }
   } catch {
     return { error: "Erro de conexão com o servidor." }
+  }
+}
+
+// Creates the Person/Account/nickname trio behind a name typed straight into the
+// issuances grid, where the operator has a name and no time to leave the spreadsheet
+// to register it. Account has no name of its own - the name lives on the Person that
+// holds it, and the nickname is what the grid's dropdown lists - so one typed string
+// has to become three records.
+//
+// Orchestrated server-side so the grid spends a single round trip on it, and so the
+// three calls fail in one place. There is no transaction across them: a Person whose
+// account then fails to create is left behind, and the caller is told so it can say
+// as much. That is the cost of doing this without a dedicated backend endpoint.
+export async function createAccountForIssuanceAction(name: string, loyaltyProgramId: string) {
+  // The empty strings are how these schemas spell "not provided" - the union accepts
+  // "" and stripEmptyFields drops the key before it reaches the backend.
+  const person = await createPersonAction({ name, email: "" })
+  if ("error" in person) {
+    return { error: person.error }
+  }
+
+  const account = await createAccountAction({
+    loyalty_program_id: loyaltyProgramId,
+    holder_id: person.personId,
+    administrator_id: "",
+  })
+  if ("error" in account) {
+    return { error: `${account.error} A pessoa "${name}" foi criada e ficou sem conta.` }
+  }
+
+  const nickname = await createAccountNicknameAction(account.accountId, name, loyaltyProgramId)
+  if ("error" in nickname || !nickname.nickname) {
+    const reason = "error" in nickname ? nickname.error : "Erro ao adicionar apelido."
+    return { error: `${reason} A conta foi criada sem apelido.` }
+  }
+
+  // The account was created before the nickname existed, so the body echoed back by
+  // POST /accounts has an empty nicknames array. The grid keys its options by nickname
+  // id, so the freshly created one is folded in here rather than refetching.
+  return {
+    success: true as const,
+    account: { ...account.account, nicknames: [nickname.nickname] },
+    nicknameId: nickname.nickname.id,
   }
 }

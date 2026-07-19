@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useReducer, useRef, useState } from "react"
+import { useEffect, useMemo, useReducer, useRef, useState } from "react"
 import { Plus } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
@@ -21,7 +21,9 @@ import {
   Direction,
 } from "@/lib/grid-navigation"
 import { Issuance, updateIssuanceSchema } from "@/schemas/issuance"
+import { Account } from "@/schemas/account"
 import { createIssuanceAction, updateIssuanceAction, deleteIssuanceAction } from "@/actions/issuance"
+import { createAccountForIssuanceAction } from "@/actions/account"
 import { z } from "zod"
 
 const COLUMN_LABELS = [
@@ -79,6 +81,26 @@ export function IssuancesGrid({ initialIssuances, currentUserId, ...referenceDat
   // by nature: the old account_id survives in the database (the column is NOT NULL), so a
   // reload brings it back and the highlight legitimately disappears.
   const [accountClearedKeys, setAccountClearedKeys] = useState(new Set<string>())
+  // Accounts created inline from the account cell. Kept alongside the prop rather than
+  // replacing it, so a later refresh of the server-fetched list doesn't get shadowed by
+  // a stale copy - the merge below dedupes when the same account arrives from both.
+  const [createdAccounts, setCreatedAccounts] = useState<Account[]>([])
+  const [pendingAccountLabels, setPendingAccountLabels] = useState<Record<string, string>>({})
+  // Lets the async account creation read the rows as they are when it resolves, not as
+  // they were when it started.
+  const rowsRef = useRef(rows)
+
+  const accounts = useMemo(() => {
+    const byId = new Map(referenceData.accounts.map((account) => [account.id, account]))
+    for (const account of createdAccounts) {
+      if (!byId.has(account.id)) byId.set(account.id, account)
+    }
+    return [...byId.values()]
+  }, [referenceData.accounts, createdAccounts])
+
+  useEffect(() => {
+    rowsRef.current = rows
+  }, [rows])
 
   useEffect(() => {
     if (!interaction.editing) {
@@ -104,7 +126,9 @@ export function IssuancesGrid({ initialIssuances, currentUserId, ...referenceDat
   }
 
   function flashSaveStatus(key: string, status: "success" | "error") {
-    updateRow(key, { saveStatus: status })
+    // hasError outlives the flash: the dot resets to idle after 900ms, but a failed row
+    // stays flagged red until a later save succeeds and clears it here.
+    updateRow(key, { saveStatus: status, hasError: status === "error" })
     setTimeout(() => updateRow(key, { saveStatus: "idle" }), 900)
   }
 
@@ -202,23 +226,30 @@ export function IssuancesGrid({ initialIssuances, currentUserId, ...referenceDat
     dispatch({ type: "CLICK_CELL", r, c, editable })
   }
 
+  // Applies a patch optimistically and persists it. Shared by the cell-save path and by
+  // inline account creation, which lands its patch long after the cell has moved on -
+  // both need the accountClearedKeys bookkeeping, or the account cell stays flagged red.
+  function applyPatch(row: IssuanceRow, patch: Partial<IssuanceRow>) {
+    if (Object.keys(patch).length === 0) return
+
+    if ("account_id" in patch) {
+      setAccountClearedKeys((prev) => {
+        const next = new Set(prev)
+        if (patch.account_id === null) next.add(row.key)
+        else next.delete(row.key)
+        return next
+      })
+    }
+    updateRow(row.key, patch)
+    void persist(row, patch)
+  }
+
   function onSaveAndMove(r: number, patch: Partial<IssuanceRow>, direction: Direction | null) {
     activeCellSaveRef.current = null
     const row = rows[r]
     if (!row) return
 
-    if (Object.keys(patch).length > 0) {
-      if ("account_id" in patch) {
-        setAccountClearedKeys((prev) => {
-          const next = new Set(prev)
-          if (patch.account_id === null) next.add(row.key)
-          else next.delete(row.key)
-          return next
-        })
-      }
-      updateRow(row.key, patch)
-      void persist(row, patch)
-    }
+    applyPatch(row, patch)
 
     if (direction === null) {
       dispatch({ type: "EXIT_EDIT_ONLY" })
@@ -230,6 +261,35 @@ export function IssuancesGrid({ initialIssuances, currentUserId, ...referenceDat
       setRows((prev) => [...prev, makeDraftRow(currentUserId)])
     }
     dispatch({ type: "MOVE", r: resolved.r, c: resolved.c, alsoEdit: interaction.sticky })
+  }
+
+  async function createAccountForRow(rowKey: string, name: string) {
+    const row = rows.find((r) => r.key === rowKey)
+    if (!row?.loyalty_program_id) return
+
+    setPendingAccountLabels((prev) => ({ ...prev, [rowKey]: name }))
+    updateRow(rowKey, { saveStatus: "saving" })
+
+    const result = await createAccountForIssuanceAction(name, row.loyalty_program_id)
+
+    setPendingAccountLabels((prev) => {
+      const { [rowKey]: _removed, ...rest } = prev
+      return rest
+    })
+
+    if ("error" in result) {
+      toast.error(result.error)
+      flashSaveStatus(rowKey, "error")
+      return
+    }
+
+    setCreatedAccounts((prev) => [...prev, result.account])
+
+    // Re-read the row: the await gave the operator time to keep editing, and applyPatch
+    // hands the row it is given to persist() as the pre-patch base.
+    const current = rowsRef.current.find((r) => r.key === rowKey)
+    if (!current) return
+    applyPatch(current, { account_id: result.account.id, account_nickname_id: result.nicknameId })
   }
 
   function onExitEdit() {
@@ -313,6 +373,8 @@ export function IssuancesGrid({ initialIssuances, currentUserId, ...referenceDat
     <GridProvider
       value={{
         ...referenceData,
+        // Overrides the prop: includes accounts created inline this session.
+        accounts,
         rows,
         sel: interaction.sel,
         editing: interaction.editing,
@@ -324,6 +386,8 @@ export function IssuancesGrid({ initialIssuances, currentUserId, ...referenceDat
         registerActiveCellSave,
         requestSaveActiveCell,
         onDeleteRow,
+        createAccountForRow: (rowKey, name) => void createAccountForRow(rowKey, name),
+        pendingAccountLabels,
       }}
     >
       <div className="sticky top-0 z-10 flex justify-end bg-background py-2">
@@ -357,9 +421,20 @@ export function IssuancesGrid({ initialIssuances, currentUserId, ...referenceDat
             {rows.map((row, r) => (
               <TableRow
                 key={row.key}
-                className={cn("group/row", row.status === "cancelled" && "bg-red-50 hover:bg-red-50")}
+                className={cn(
+                  "group/row",
+                  row.status === "cancelled" && "bg-red-50 hover:bg-red-50",
+                  // The red stripe (on the number cell below) is what sets a failed save
+                  // apart from a cancelled row, which shares this light-red background.
+                  row.hasError && "bg-red-50 hover:bg-red-50",
+                )}
               >
-                <TableCell className="relative w-8 p-1 text-center text-xs text-muted-foreground tabular-nums">
+                <TableCell
+                  className={cn(
+                    "relative w-8 p-1 text-center text-xs text-muted-foreground tabular-nums",
+                    row.hasError && "border-l-4 border-l-red-600",
+                  )}
+                >
                   {r + 1}
                   <span className="absolute right-0.5 top-0.5">
                     <AutosaveDot status={row.saveStatus} />

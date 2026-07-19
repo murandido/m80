@@ -51,7 +51,8 @@ function buildAccountOptions(
 }
 
 export function GridCell({ r, c }: { r: number; c: number }) {
-  const { rows, accounts, users, agencies, people } = useGridContext()
+  const { rows, accounts, users, agencies, people, createAccountForRow, pendingAccountLabels } =
+    useGridContext()
   const row = rows[r]
 
   switch (c) {
@@ -83,6 +84,17 @@ export function GridCell({ r, c }: { r: number; c: number }) {
           options={buildAccountOptions(accounts, people, row.loyalty_program_id)}
           // Accounts without an alias are keyed by their own id, so this covers both cases.
           selectedKey={row.account_nickname_id ?? row.account_id}
+          create={{
+            label: (typed) => `Criar conta "${typed}"`,
+            hint: "cria a pessoa, a conta no programa e o apelido",
+            // An account cannot exist without a loyalty program, and the program comes
+            // from the row - so the airline column has to be filled in first.
+            disabledReason: row.loyalty_program_id
+              ? null
+              : "Escolha a Cia aérea antes de criar uma conta",
+            onCreate: (typed) => createAccountForRow(row.key, typed),
+          }}
+          pendingLabel={pendingAccountLabels[row.key]}
         />
       )
     case 11:

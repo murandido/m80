@@ -13,9 +13,11 @@ interface Option {
   label: string
 }
 
+// An empty query yields the whole list, in its original order: opening the cell should
+// show what is available instead of making the operator guess a prefix to type.
 function filterByName(options: Option[], typed: string): Option[] {
   const q = typed.trim().toLowerCase()
-  if (q === "") return []
+  if (q === "") return options
   return options
     .filter((o) => o.label.toLowerCase().includes(q))
     .sort((a, b) => {
@@ -66,16 +68,35 @@ export function CiaAereaCell({ r, c }: { r: number; c: number }) {
   const [prefix, setPrefix] = useState("")
   const [filtered, setFiltered] = useState<Option[]>([])
   const [activeIndex, setActiveIndex] = useState(0)
+  // Open state is tracked explicitly rather than derived from filtered.length, because the
+  // list now stays populated even when the query is empty - there is no length that means
+  // "closed" anymore. Escape and picking an option are what close it.
+  const [isOpen, setIsOpen] = useState(false)
+  // Whether the user typed or arrowed since entering the cell. Enter/Tab only accept the
+  // highlighted option once this is true; otherwise they commit and move as they always
+  // did. Without it, tabbing through an untouched cell would write whatever happens to be
+  // highlighted - on an empty cell, that is the first program, silently invented.
+  const [hasInteracted, setHasInteracted] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
   const savedRef = useRef(false)
-  const acOpen = filtered.length > 0
+  const acOpen = isOpen && filtered.length > 0
 
   useEffect(() => {
     if (isThisCellEditing) {
       const startValue = pendingChar ?? displayText
       setText(startValue)
-      setFiltered([])
-      setActiveIndex(0)
+      // Opening on a cell that already names a program still lists every program, so the
+      // operator sees the alternatives; only a typed character narrows the list on open.
+      const startFiltered = filterByName(programOptions, pendingChar ?? "")
+      setStage("program")
+      setPrefix("")
+      setFiltered(startFiltered)
+      // Highlight the row's current program so accepting without moving is a no-op.
+      const selectedIndex = startFiltered.findIndex((o) => o.value === row.loyalty_program_id)
+      setActiveIndex(selectedIndex === -1 ? 0 : selectedIndex)
+      setIsOpen(true)
+      setHasInteracted(false)
       savedRef.current = false
       requestAnimationFrame(() => {
         inputRef.current?.focus()
@@ -85,31 +106,37 @@ export function CiaAereaCell({ r, c }: { r: number; c: number }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isThisCellEditing])
 
+  // Keeps the highlighted option visible while arrowing through a list taller than the box.
+  useEffect(() => {
+    if (!acOpen) return
+    listRef.current?.children[activeIndex]?.scrollIntoView({ block: "nearest" })
+  }, [activeIndex, acOpen])
+
   function handleChange(value: string) {
     setText(value)
     const slashIndex = value.indexOf("/")
     if (slashIndex === -1) {
       setStage("program")
       setPrefix("")
-      setFiltered(findByName(programOptions, value) ? [] : filterByName(programOptions, value))
+      setFiltered(filterByName(programOptions, value))
     } else {
       const airlineTyped = value.slice(slashIndex + 1)
       setStage("airline")
       setPrefix(value.slice(0, slashIndex + 1))
-      setFiltered(findByName(airlineOptions, airlineTyped) ? [] : filterByName(airlineOptions, airlineTyped))
+      setFiltered(filterByName(airlineOptions, airlineTyped))
     }
     setActiveIndex(0)
+    setIsOpen(true)
+    setHasInteracted(true)
   }
 
-  function findByName(options: Option[], name: string): Option | undefined {
-    return options.find((o) => o.label.toLowerCase() === name.trim().toLowerCase())
-  }
-
+  // Accepting keeps the cell in edit mode rather than committing: after picking a program
+  // the operator may still type "/" to override the default airline.
   function acceptActive() {
     const active = filtered[activeIndex]
     if (!active) return
     setText(stage === "program" ? active.label : prefix + active.label)
-    setFiltered([])
+    setIsOpen(false)
   }
 
   // An account belongs to one loyalty program, so it cannot carry over to a different
@@ -199,23 +226,27 @@ export function CiaAereaCell({ r, c }: { r: number; c: number }) {
         onKeyDown={(e) => {
           if (e.key === "Escape") {
             e.preventDefault()
-            if (acOpen) setFiltered([])
+            if (acOpen) setIsOpen(false)
             else onExitEdit()
           } else if (e.key === "ArrowDown") {
             e.preventDefault()
-            if (acOpen) setActiveIndex((i) => Math.min(i + 1, filtered.length - 1))
-            else commit("down")
+            if (acOpen) {
+              setActiveIndex((i) => Math.min(i + 1, filtered.length - 1))
+              setHasInteracted(true)
+            } else commit("down")
           } else if (e.key === "ArrowUp") {
             e.preventDefault()
-            if (acOpen) setActiveIndex((i) => Math.max(i - 1, 0))
-            else commit("up")
+            if (acOpen) {
+              setActiveIndex((i) => Math.max(i - 1, 0))
+              setHasInteracted(true)
+            } else commit("up")
           } else if (e.key === "Enter") {
             e.preventDefault()
-            if (acOpen) acceptActive()
+            if (acOpen && hasInteracted) acceptActive()
             else commit("tab-right")
           } else if (e.key === "Tab") {
             e.preventDefault()
-            if (acOpen) acceptActive()
+            if (acOpen && hasInteracted) acceptActive()
             else commit(e.shiftKey ? "tab-left" : "tab-right")
           }
         }}
@@ -224,6 +255,7 @@ export function CiaAereaCell({ r, c }: { r: number; c: number }) {
       />
       {acOpen && (
         <DropdownPortal anchorRef={inputRef}>
+          <div ref={listRef}>
           {filtered.map((option, index) => {
             // Airlines carry no color of their own, so the badge is limited to the
             // program stage - the same dropdown serves both.
@@ -237,7 +269,8 @@ export function CiaAereaCell({ r, c }: { r: number; c: number }) {
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => {
                   setText(stage === "program" ? option.label : prefix + option.label)
-                  setFiltered([])
+                  setIsOpen(false)
+                  inputRef.current?.focus()
                 }}
                 className={cn(
                   "flex w-full items-center px-2 py-1.5 text-left text-sm hover:bg-accent",
@@ -252,6 +285,7 @@ export function CiaAereaCell({ r, c }: { r: number; c: number }) {
               </button>
             )
           })}
+          </div>
         </DropdownPortal>
       )}
     </div>

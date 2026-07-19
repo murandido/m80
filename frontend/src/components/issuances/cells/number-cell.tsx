@@ -124,6 +124,12 @@ export function NumberCell({ r, c, field, mode }: NumberCellProps) {
 function parseIntOrNull(text: string): number | null {
   const trimmed = text.trim()
   if (trimmed === "") return null
-  const value = Number(trimmed.replace(/\D/g, ""))
-  return Number.isNaN(value) ? null : value
+  // The points column reads as milheiros (thousands): a comma is the decimal
+  // separator, so "0,5" means half a thousand = 500 points. Dots are thousands
+  // grouping and are stripped. A plain integer stays the raw point count, so
+  // "500" and "0,5" both land on 500 and render as "0.500".
+  const normalized = trimmed.replace(/\./g, "").replace(",", ".")
+  const value = Number(normalized)
+  if (Number.isNaN(value)) return null
+  return Math.round(trimmed.includes(",") ? value * 1000 : value)
 }

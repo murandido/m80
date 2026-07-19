@@ -37,6 +37,15 @@ export interface GridContextValue extends GridReferenceData {
   registerActiveCellSave: (save: (() => void) | null) => void
   requestSaveActiveCell: () => void
   onDeleteRow: (r: number) => void
+  // Creates a Person, an Account on the row's loyalty program and a nickname, all from
+  // a name typed into the account cell that matched nothing, then points the row at the
+  // new account. Rows are addressed by key, not index: the creation is async and a row
+  // can move (or be deleted) while it is in flight.
+  createAccountForRow: (rowKey: string, name: string) => void
+  // Names typed into the account cell whose account is still being created, by row key.
+  // The cell renders it greyed so the value the operator just typed doesn't blink back
+  // to an em dash while the three requests run.
+  pendingAccountLabels: Record<string, string>
 }
 
 const GridContext = createContext<GridContextValue | null>(null)

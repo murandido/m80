@@ -49,6 +49,10 @@ export function AirportAutocompleteCell({ r, c, field }: AirportAutocompleteCell
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isThisCellEditing])
 
+  // TODO: align with the other combobox cells, which open showing every option and filter
+  // as the user types. Airports cannot do that yet: they are searched on the backend per
+  // keystroke and there is no endpoint that lists them, so an empty query has nothing to
+  // show. Revisit once the full airport CRUD exists and a list endpoint is available.
   function scheduleSearch(query: string) {
     if (debounceRef.current) clearTimeout(debounceRef.current)
     if (query.trim() === "") {

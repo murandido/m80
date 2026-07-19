@@ -31,6 +31,10 @@ export interface IssuanceRow {
   agency_id: string | null
   status: IssuanceStatus
   saveStatus: SaveStatus
+  // Sticks until the row next saves successfully, unlike saveStatus which flashes
+  // for 900ms and resets. Drives the persistent red row highlight so a failed save
+  // isn't lost the moment the toast and the dot fade.
+  hasError: boolean
 }
 
 export function issuanceToRow(issuance: Issuance): IssuanceRow {
@@ -56,6 +60,7 @@ export function issuanceToRow(issuance: Issuance): IssuanceRow {
     agency_id: issuance.agency_id,
     status: issuance.status,
     saveStatus: "idle",
+    hasError: false,
   }
 }
 
@@ -83,6 +88,7 @@ export function makeDraftRow(issuerId?: string | null): IssuanceRow {
     agency_id: null,
     status: "incomplete",
     saveStatus: "idle",
+    hasError: false,
   }
 }
 
