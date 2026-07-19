@@ -68,20 +68,6 @@ export function ComboboxCell({ r, c, options, selectedKey }: ComboboxCellProps) 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isThisCellEditing])
 
-  // Inline "ghost text" autocomplete via native text selection.
-  useEffect(() => {
-    if (!acOpen) return
-    const active = filtered[activeIndex]
-    if (!active) return
-    if (active.label.toLowerCase().startsWith(text.toLowerCase()) && active.label !== text) {
-      const input = inputRef.current
-      if (!input) return
-      input.value = active.label
-      input.setSelectionRange(text.length, active.label.length)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtered, activeIndex])
-
   function findExactMatch(value: string): ComboOption | undefined {
     return options.find((o) => o.label.toLowerCase() === value.trim().toLowerCase())
   }
