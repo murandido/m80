@@ -221,23 +221,34 @@ export function CiaAereaCell({ r, c }: { r: number; c: number }) {
       />
       {acOpen && (
         <DropdownPortal anchorRef={inputRef}>
-          {filtered.map((option, index) => (
-            <button
-              key={option.value}
-              type="button"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => {
-                setText(stage === "program" ? option.label : prefix + option.label)
-                setFiltered([])
-              }}
-              className={cn(
-                "block w-full truncate px-2 py-1.5 text-left text-sm hover:bg-accent",
-                index === activeIndex && "bg-accent",
-              )}
-            >
-              {option.label}
-            </button>
-          ))}
+          {filtered.map((option, index) => {
+            // Airlines carry no color of their own, so the badge is limited to the
+            // program stage - the same dropdown serves both.
+            const program =
+              stage === "program" ? loyaltyPrograms.find((lp) => lp.id === option.value) : undefined
+
+            return (
+              <button
+                key={option.value}
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  setText(stage === "program" ? option.label : prefix + option.label)
+                  setFiltered([])
+                }}
+                className={cn(
+                  "flex w-full items-center px-2 py-1.5 text-left text-sm hover:bg-accent",
+                  index === activeIndex && "bg-accent",
+                )}
+              >
+                {program ? (
+                  <LoyaltyProgramBadge loyaltyProgram={program} />
+                ) : (
+                  <span className="truncate">{option.label}</span>
+                )}
+              </button>
+            )
+          })}
         </DropdownPortal>
       )}
     </div>
