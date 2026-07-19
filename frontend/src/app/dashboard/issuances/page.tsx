@@ -6,6 +6,7 @@ import { getAirlinesSchema, Airline } from "@/schemas/airline"
 import { getAccountsSchema, Account } from "@/schemas/account"
 import { getAgenciesSchema, Agency } from "@/schemas/agency"
 import { getUsersSchema, getMeSchema, User } from "@/schemas/user"
+import { getPeopleSchema, Person } from "@/schemas/person"
 import { IssuancesGrid } from "@/components/issuances/issuances-grid"
 
 export default async function IssuancesPage() {
@@ -19,10 +20,11 @@ export default async function IssuancesPage() {
   let accounts: Account[] = []
   let agencies: Agency[] = []
   let users: User[] = []
+  let people: Person[] = []
   let currentUserId: string | null = null
 
   try {
-    const [issuancesRes, loyaltyProgramsRes, airlinesRes, accountsRes, agenciesRes, usersRes, meRes] =
+    const [issuancesRes, loyaltyProgramsRes, airlinesRes, accountsRes, agenciesRes, usersRes, peopleRes, meRes] =
       await Promise.all([
         fetch(`${env.BACKEND_URL}/api/v1/issuances`, { headers: authHeader }),
         fetch(`${env.BACKEND_URL}/api/v1/loyalty-programs`, { headers: authHeader }),
@@ -30,10 +32,11 @@ export default async function IssuancesPage() {
         fetch(`${env.BACKEND_URL}/api/v1/accounts`, { headers: authHeader }),
         fetch(`${env.BACKEND_URL}/api/v1/agencies`, { headers: authHeader }),
         fetch(`${env.BACKEND_URL}/api/v1/users`, { headers: authHeader }),
+        fetch(`${env.BACKEND_URL}/api/v1/people`, { headers: authHeader }),
         fetch(`${env.BACKEND_URL}/api/v1/auth/me`, { headers: authHeader }),
       ])
 
-    const [issuancesJson, loyaltyProgramsJson, airlinesJson, accountsJson, agenciesJson, usersJson, meJson] =
+    const [issuancesJson, loyaltyProgramsJson, airlinesJson, accountsJson, agenciesJson, usersJson, peopleJson, meJson] =
       await Promise.all([
         issuancesRes.json(),
         loyaltyProgramsRes.json(),
@@ -41,6 +44,7 @@ export default async function IssuancesPage() {
         accountsRes.json(),
         agenciesRes.json(),
         usersRes.json(),
+        peopleRes.json(),
         meRes.json(),
       ])
 
@@ -64,6 +68,9 @@ export default async function IssuancesPage() {
     const parsedUsers = getUsersSchema.response.safeParse(usersJson)
     if (parsedUsers.success && parsedUsers.data.data) users = parsedUsers.data.data
 
+    const parsedPeople = getPeopleSchema.response.safeParse(peopleJson)
+    if (parsedPeople.success && parsedPeople.data.data) people = parsedPeople.data.data
+
     const parsedMe = getMeSchema.response.safeParse(meJson)
     if (parsedMe.success && parsedMe.data.data) currentUserId = parsedMe.data.data.id
   } catch {
@@ -82,6 +89,7 @@ export default async function IssuancesPage() {
           accounts={accounts}
           agencies={agencies}
           users={users}
+          people={people}
           currentUserId={currentUserId}
         />
       </div>

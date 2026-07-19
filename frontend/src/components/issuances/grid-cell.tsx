@@ -1,6 +1,8 @@
 "use client"
 
 import { useGridContext } from "@/components/issuances/grid-context"
+import { Account } from "@/schemas/account"
+import { Person } from "@/schemas/person"
 import { TextCell } from "@/components/issuances/cells/text-cell"
 import { LocatorCell } from "@/components/issuances/cells/locator-cell"
 import { DateMaskCell } from "@/components/issuances/cells/date-mask-cell"
@@ -11,8 +13,14 @@ import { AirportAutocompleteCell } from "@/components/issuances/cells/airport-au
 import { CiaAereaCell } from "@/components/issuances/cells/cia-aerea-cell"
 import { StatusCell } from "@/components/issuances/cells/status-cell"
 
+function accountLabel(account: Account, people: Person[]): string {
+  if (account.nicknames.length > 0) return account.nicknames.map((n) => n.nickname).join(", ")
+  const holder = people.find((p) => p.id === account.holder_id)
+  return holder?.name ?? account.login ?? account.id
+}
+
 export function GridCell({ r, c }: { r: number; c: number }) {
-  const { accounts, users, agencies } = useGridContext()
+  const { accounts, users, agencies, people } = useGridContext()
 
   switch (c) {
     case 0:
@@ -41,7 +49,7 @@ export function GridCell({ r, c }: { r: number; c: number }) {
           r={r}
           c={c}
           field="account_id"
-          options={accounts.map((a) => ({ value: a.id, label: a.login ?? a.id }))}
+          options={accounts.map((a) => ({ value: a.id, label: accountLabel(a, people) }))}
         />
       )
     case 11:
