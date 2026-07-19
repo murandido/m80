@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from "react"
 import { useGridContext } from "@/components/issuances/grid-context"
-import { IssuanceRow } from "@/components/issuances/types"
 import { Direction } from "@/lib/grid-navigation"
 
 // Composite "Localizador" cell: same "/" convention as the Cia aérea field -
@@ -45,11 +44,13 @@ export function LocatorCell({ r, c }: { r: number; c: number }) {
     const programLocator = slashIndex === -1 ? value : value.slice(0, slashIndex)
     const airlineLocator = slashIndex === -1 ? "" : value.slice(slashIndex + 1).trim()
 
-    const patch: Partial<IssuanceRow> = { program_locator: programLocator }
-    if (airlineLocator !== "") {
-      patch.airline_locator = airlineLocator
-    }
-    onSaveAndMove(r, patch, direction)
+    // airline_locator is sent even when empty: an omitted key reads as "keep the previous
+    // value" on both the local merge and the PATCH, which made the field unclearable.
+    onSaveAndMove(
+      r,
+      { program_locator: programLocator, airline_locator: airlineLocator },
+      direction,
+    )
   }
 
   useEffect(() => {

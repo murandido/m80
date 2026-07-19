@@ -44,9 +44,17 @@ export function CiaAereaCell({ r, c }: { r: number; c: number }) {
 
   const currentProgram = loyaltyPrograms.find((lp) => lp.id === row.loyalty_program_id)
   const currentAirline = airlines.find((a) => a.id === row.airline_id)
+
+  // The default airline is implied by the program, so it is left out of both the read
+  // view and the edit text - showing it would make the user delete a redundant suffix.
+  const showsNonDefaultAirline =
+    currentProgram !== undefined &&
+    currentAirline !== undefined &&
+    currentAirline.id !== currentProgram.default_airline_id
+
   const displayText = currentProgram
-    ? currentAirline
-      ? `${currentProgram.name}/${currentAirline.name}`
+    ? showsNonDefaultAirline
+      ? `${currentProgram.name}/${currentAirline!.name}`
       : currentProgram.name
     : ""
 
@@ -159,11 +167,6 @@ export function CiaAereaCell({ r, c }: { r: number; c: number }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isThisCellEditing, text])
-
-  const showsNonDefaultAirline =
-    currentProgram !== undefined &&
-    currentAirline !== undefined &&
-    currentAirline.id !== currentProgram.default_airline_id
 
   if (!isThisCellEditing) {
     return (

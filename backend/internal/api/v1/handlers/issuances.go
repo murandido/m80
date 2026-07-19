@@ -524,8 +524,14 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 	if req.ProgramLocator != nil {
 		issuance.ProgramLocator = *req.ProgramLocator
 	}
+	// An empty string is how the client says "cleared": JSON null and an absent key both
+	// decode to nil here, so the empty string is the only value left to express it.
 	if req.AirlineLocator != nil {
-		issuance.AirlineLocator = req.AirlineLocator
+		if *req.AirlineLocator == "" {
+			issuance.AirlineLocator = nil
+		} else {
+			issuance.AirlineLocator = req.AirlineLocator
+		}
 	}
 
 	if req.LoyaltyProgramID != nil {
