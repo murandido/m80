@@ -1,4 +1,4 @@
-import { verifySession } from "@/actions/auth"
+import { getSessionUser, verifySession } from "@/actions/auth"
 import { DashboardShell } from "@/components/layout/dashboard-shell"
 
 export default async function DashboardLayout({
@@ -6,5 +6,8 @@ export default async function DashboardLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   await verifySession()
 
-  return <DashboardShell>{children}</DashboardShell>
+  const user = await getSessionUser()
+  const isAdmin = user?.role === "admin"
+
+  return <DashboardShell isAdmin={isAdmin}>{children}</DashboardShell>
 }

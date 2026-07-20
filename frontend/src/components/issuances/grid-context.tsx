@@ -8,6 +8,7 @@ import { Account } from "@/schemas/account"
 import { Agency } from "@/schemas/agency"
 import { User } from "@/schemas/user"
 import { Person } from "@/schemas/person"
+import { Airport } from "@/schemas/airport"
 import { Direction } from "@/lib/grid-navigation"
 
 export interface GridReferenceData {
@@ -17,6 +18,7 @@ export interface GridReferenceData {
   agencies: Agency[]
   users: User[]
   people: Person[]
+  airports: Airport[]
 }
 
 export interface GridContextValue extends GridReferenceData {

@@ -10,6 +10,7 @@ import {
   Building2,
   Landmark,
   LayoutDashboard,
+  MapPin,
   Plane,
   Ticket,
   Users,
@@ -43,6 +44,8 @@ interface NavLink {
   title: string
   url: string
   icon: IconComponent
+  // Only rendered for admins — hidden entirely from regular users.
+  adminOnly?: boolean
 }
 
 interface NavGroupItem {
@@ -71,6 +74,7 @@ function isNavGroup(item: NavEntry): item is NavGroup {
 const navItems: NavEntry[] = [
   { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
   { title: "Usuários", url: "/dashboard/users", icon: Users },
+  { title: "Aeroportos", url: "/dashboard/airports", icon: MapPin, adminOnly: true },
   { title: "Agências", url: "/dashboard/agencies", icon: Building2 },
   { title: "Emissões", url: "/dashboard/issuances", icon: Ticket },
   {
@@ -91,12 +95,18 @@ const navItems: NavEntry[] = [
   },
 ]
 
-export function AppSidebar() {
+export function AppSidebar({ isAdmin = false }: { isAdmin?: boolean }) {
   const pathname = usePathname()
   const { state, isMobile } = useSidebar()
   // The mobile sidebar always renders full-width inside a Sheet, regardless of
   // `state` — so the icon-only rail only exists when collapsed on desktop.
   const isIconMode = state === "collapsed" && !isMobile
+
+  // Admin-only links are hidden entirely from regular users; the backend still
+  // enforces the same restriction on its routes.
+  const visibleNavItems = navItems.filter(
+    (item) => isNavGroup(item) || !item.adminOnly || isAdmin,
+  )
 
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => {
     const initial: Record<string, boolean> = {}
@@ -121,7 +131,7 @@ export function AppSidebar() {
           <SidebarGroupLabel>Navegação</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {navItems.map((item) => {
+              {visibleNavItems.map((item) => {
                 if (isNavGroup(item)) {
                   const isChildActive = item.items.some(
                     (child) => !child.disabled && pathname.startsWith(child.url),

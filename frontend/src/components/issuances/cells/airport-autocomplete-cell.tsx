@@ -5,7 +5,6 @@ import { cn } from "@/lib/utils"
 import { useGridContext } from "@/components/issuances/grid-context"
 import { IssuanceRow } from "@/components/issuances/types"
 import { Direction } from "@/lib/grid-navigation"
-import { searchAirportsAction } from "@/actions/airport"
 import { Airport } from "@/schemas/airport"
 import { DropdownPortal } from "@/components/issuances/cells/dropdown-portal"
 
@@ -15,31 +14,81 @@ interface AirportAutocompleteCellProps {
   field: "origin_iata_code" | "destination_iata_code"
 }
 
+// The dropdown never renders the whole seed (thousands of airports): the list is
+// filtered in memory and capped, which is enough to reach any airport by typing a
+// few characters while keeping the DOM small.
+const MAX_RESULTS = 50
+
 function airportLabel(airport: Airport): string {
   return `${airport.iata_code} - ${airport.city ?? airport.name}`
 }
 
+// An empty query yields the whole list (capped), in IATA order: opening the cell
+// shows what is available instead of making the operator guess a prefix. A query
+// matches across code/name/city/state/country, ranking IATA-prefix hits first to
+// mirror the backend's priority.
+function filterAirports(airports: Airport[], typed: string): Airport[] {
+  const q = typed.trim().toLowerCase()
+  if (q === "") return airports.slice(0, MAX_RESULTS)
+  return airports
+    .filter((a) =>
+      [a.iata_code, a.name, a.city, a.state, a.country].some(
+        (value) => value?.toLowerCase().includes(q),
+      ),
+    )
+    .sort((a, b) => {
+      const aStarts = a.iata_code.toLowerCase().startsWith(q)
+      const bStarts = b.iata_code.toLowerCase().startsWith(q)
+      if (aStarts === bStarts) return 0
+      return aStarts ? -1 : 1
+    })
+    .slice(0, MAX_RESULTS)
+}
+
 export function AirportAutocompleteCell({ r, c, field }: AirportAutocompleteCellProps) {
-  const { rows, sel, editing, pendingChar, onCellClick, onSaveAndMove, onExitEdit, registerActiveCellSave } =
-    useGridContext()
+  const {
+    rows,
+    sel,
+    editing,
+    pendingChar,
+    onCellClick,
+    onSaveAndMove,
+    onExitEdit,
+    registerActiveCellSave,
+    airports,
+  } = useGridContext()
   const row = rows[r]
   const isThisCellEditing = editing && sel.r === r && sel.c === c
   const displayValue = row[field] ?? ""
 
   const [text, setText] = useState(displayValue)
-  const [results, setResults] = useState<Airport[]>([])
+  const [filtered, setFiltered] = useState<Airport[]>([])
   const [activeIndex, setActiveIndex] = useState(0)
+  // Open state is tracked explicitly rather than derived from filtered.length,
+  // because the list stays populated even when the query is empty - there is no
+  // length that means "closed". Escape and picking an option are what close it.
+  const [isOpen, setIsOpen] = useState(false)
+  // Whether the user typed or arrowed since entering the cell. Enter/Tab only
+  // accept the highlighted option once this is true; otherwise they commit and
+  // move, so tabbing through an untouched cell never writes a silently-highlighted
+  // airport.
+  const [hasInteracted, setHasInteracted] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
   const savedRef = useRef(false)
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const acOpen = results.length > 0
+  const acOpen = isOpen && filtered.length > 0
 
   useEffect(() => {
     if (isThisCellEditing) {
       const startValue = pendingChar ?? displayValue
+      const startFiltered = filterAirports(airports, pendingChar ?? "")
       setText(startValue)
-      setResults([])
-      setActiveIndex(0)
+      setFiltered(startFiltered)
+      // Highlight the row's current airport so accepting without moving is a no-op.
+      const selectedIndex = startFiltered.findIndex((a) => a.iata_code === displayValue)
+      setActiveIndex(selectedIndex === -1 ? 0 : selectedIndex)
+      setIsOpen(true)
+      setHasInteracted(false)
       savedRef.current = false
       requestAnimationFrame(() => {
         inputRef.current?.focus()
@@ -49,50 +98,47 @@ export function AirportAutocompleteCell({ r, c, field }: AirportAutocompleteCell
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isThisCellEditing])
 
-  // TODO: align with the other combobox cells, which open showing every option and filter
-  // as the user types. Airports cannot do that yet: they are searched on the backend per
-  // keystroke and there is no endpoint that lists them, so an empty query has nothing to
-  // show. Revisit once the full airport CRUD exists and a list endpoint is available.
-  function scheduleSearch(query: string) {
-    if (debounceRef.current) clearTimeout(debounceRef.current)
-    if (query.trim() === "") {
-      setResults([])
-      return
-    }
-    debounceRef.current = setTimeout(async () => {
-      const result = await searchAirportsAction(query)
-      if ("airports" in result) {
-        setResults(result.airports)
-        setActiveIndex(0)
-      }
-    }, 200)
-  }
+  // Keeps the highlighted option visible while arrowing through a list taller than the box.
+  useEffect(() => {
+    if (!acOpen) return
+    listRef.current?.children[activeIndex]?.scrollIntoView({ block: "nearest" })
+  }, [activeIndex, acOpen])
 
-  function commit(direction: Direction | null) {
+  function commitCode(code: string, direction: Direction | null) {
     if (savedRef.current) return
     savedRef.current = true
 
-    const code = text.trim().toUpperCase()
-    if (code === "") {
+    const normalized = code.trim().toUpperCase()
+    if (normalized === "") {
       onSaveAndMove(r, {}, direction)
       return
     }
-    onSaveAndMove(r, { [field]: code } as Partial<IssuanceRow>, direction)
+    onSaveAndMove(r, { [field]: normalized } as Partial<IssuanceRow>, direction)
   }
 
   useEffect(() => {
     if (isThisCellEditing) {
-      registerActiveCellSave(() => commit(null))
+      registerActiveCellSave(() => commitCode(text, null))
       return () => registerActiveCellSave(null)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isThisCellEditing, text])
 
+  function handleChange(value: string) {
+    setText(value)
+    setFiltered(filterAirports(airports, value))
+    setActiveIndex(0)
+    setIsOpen(true)
+    setHasInteracted(true)
+  }
+
+  // Accepting via keyboard keeps the cell in edit mode (dropdown closes): a second
+  // Enter/Tab is what commits and moves.
   function acceptActive() {
-    const active = results[activeIndex]
+    const active = filtered[activeIndex]
     if (!active) return
     setText(active.iata_code)
-    setResults([])
+    setIsOpen(false)
   }
 
   if (!isThisCellEditing) {
@@ -112,56 +158,55 @@ export function AirportAutocompleteCell({ r, c, field }: AirportAutocompleteCell
       <input
         ref={inputRef}
         value={text}
-        onChange={(e) => {
-          const value = e.target.value
-          setText(value)
-          scheduleSearch(value)
-        }}
+        onChange={(e) => handleChange(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === "Escape") {
             e.preventDefault()
-            if (acOpen) setResults([])
+            if (acOpen) setIsOpen(false)
             else onExitEdit()
           } else if (e.key === "ArrowDown") {
             e.preventDefault()
-            if (acOpen) setActiveIndex((i) => Math.min(i + 1, results.length - 1))
-            else commit("down")
+            if (acOpen) {
+              setActiveIndex((i) => Math.min(i + 1, filtered.length - 1))
+              setHasInteracted(true)
+            } else commitCode(text, "down")
           } else if (e.key === "ArrowUp") {
             e.preventDefault()
-            if (acOpen) setActiveIndex((i) => Math.max(i - 1, 0))
-            else commit("up")
+            if (acOpen) {
+              setActiveIndex((i) => Math.max(i - 1, 0))
+              setHasInteracted(true)
+            } else commitCode(text, "up")
           } else if (e.key === "Enter") {
             e.preventDefault()
-            if (acOpen) acceptActive()
-            else commit("tab-right")
+            if (acOpen && hasInteracted) acceptActive()
+            else commitCode(text, "tab-right")
           } else if (e.key === "Tab") {
             e.preventDefault()
-            if (acOpen) acceptActive()
-            else commit(e.shiftKey ? "tab-left" : "tab-right")
+            if (acOpen && hasInteracted) acceptActive()
+            else commitCode(text, e.shiftKey ? "tab-left" : "tab-right")
           }
         }}
-        onBlur={() => commit(null)}
+        onBlur={() => commitCode(text, null)}
         className="w-full bg-transparent px-2 py-1.5 outline-none ring-2 ring-primary"
       />
       {acOpen && (
         <DropdownPortal anchorRef={inputRef}>
-          {results.map((airport, index) => (
-            <button
-              key={airport.id}
-              type="button"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => {
-                setText(airport.iata_code)
-                setResults([])
-              }}
-              className={cn(
-                "block w-full truncate px-2 py-1.5 text-left text-sm hover:bg-accent",
-                index === activeIndex && "bg-accent",
-              )}
-            >
-              {airportLabel(airport)}
-            </button>
-          ))}
+          <div ref={listRef}>
+            {filtered.map((airport, index) => (
+              <button
+                key={airport.id}
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => commitCode(airport.iata_code, null)}
+                className={cn(
+                  "block w-full truncate px-2 py-1.5 text-left text-sm hover:bg-accent",
+                  index === activeIndex && "bg-accent",
+                )}
+              >
+                {airportLabel(airport)}
+              </button>
+            ))}
+          </div>
         </DropdownPortal>
       )}
     </div>

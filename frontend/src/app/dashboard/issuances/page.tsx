@@ -10,6 +10,7 @@ import { getAccountsSchema } from "@/schemas/account"
 import { getAgenciesSchema } from "@/schemas/agency"
 import { getUsersSchema, getMeSchema } from "@/schemas/user"
 import { getPeopleSchema } from "@/schemas/person"
+import { getAirportsSchema } from "@/schemas/airport"
 import { IssuancesGrid } from "@/components/issuances/issuances-grid"
 
 // Returns null when the request or the parse failed - distinct from an empty list,
@@ -49,7 +50,7 @@ export default async function IssuancesPage() {
 
   // Every promise below resolves (never rejects), so a single failure degrades only
   // its own list instead of taking the other seven down with it.
-  const [issuances, loyaltyPrograms, airlines, accounts, agencies, users, people, currentUserId] =
+  const [issuances, loyaltyPrograms, airlines, accounts, agencies, users, people, airports, currentUserId] =
     await Promise.all([
       fetchList(`${api}/issuances`, getIssuancesSchema.response, authHeader),
       fetchList(`${api}/loyalty-programs`, getLoyaltyProgramsSchema.response, authHeader),
@@ -58,12 +59,19 @@ export default async function IssuancesPage() {
       fetchList(`${api}/agencies`, getAgenciesSchema.response, authHeader),
       fetchList(`${api}/users`, getUsersSchema.response, authHeader),
       fetchList(`${api}/people`, getPeopleSchema.response, authHeader),
+      fetchList(`${api}/airports/all`, getAirportsSchema.response, authHeader),
       fetchCurrentUserId(authHeader),
     ])
 
-  const referenceDataFailed = [loyaltyPrograms, airlines, accounts, agencies, users, people].some(
-    (list) => list === null,
-  )
+  const referenceDataFailed = [
+    loyaltyPrograms,
+    airlines,
+    accounts,
+    agencies,
+    users,
+    people,
+    airports,
+  ].some((list) => list === null)
 
   return (
     <div className="p-6 sm:p-8">
@@ -102,6 +110,7 @@ export default async function IssuancesPage() {
               agencies={agencies ?? []}
               users={users ?? []}
               people={people ?? []}
+              airports={airports ?? []}
               currentUserId={currentUserId}
             />
           </>

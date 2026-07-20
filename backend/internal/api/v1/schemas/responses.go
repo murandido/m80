@@ -117,6 +117,20 @@ type AirportListResponse struct {
 	Data    []AirportResponse `json:"data"`
 }
 
+// AirportPaginatedResponse is the GET /airports/manage route response
+type AirportPaginatedResponse struct {
+	Success bool                 `json:"success" example:"true"`
+	Message string               `json:"message" example:"Aeroportos listados com sucesso"`
+	Data    AirportPaginatedData `json:"data"`
+}
+
+// AirportSingleResponse is the response from single-airport routes
+type AirportSingleResponse struct {
+	Success bool            `json:"success" example:"true"`
+	Message string          `json:"message" example:"Aeroporto encontrado"`
+	Data    AirportResponse `json:"data"`
+}
+
 // ObservationPresetListResponse is the GET /observation-presets route response
 type ObservationPresetListResponse struct {
 	Success bool                        `json:"success" example:"true"`
