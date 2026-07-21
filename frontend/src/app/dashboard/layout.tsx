@@ -9,5 +9,9 @@ export default async function DashboardLayout({
   const user = await getSessionUser()
   const isAdmin = user?.role === "admin"
 
-  return <DashboardShell isAdmin={isAdmin}>{children}</DashboardShell>
+  return (
+    <DashboardShell isAdmin={isAdmin} user={user}>
+      {children}
+    </DashboardShell>
+  )
 }

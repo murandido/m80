@@ -73,7 +73,7 @@ function isNavGroup(item: NavEntry): item is NavGroup {
 // `items` renders as a collapsible group whose children are links.
 const navItems: NavEntry[] = [
   { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
-  { title: "Usuários", url: "/dashboard/users", icon: Users },
+  { title: "Usuários", url: "/dashboard/users", icon: Users, adminOnly: true },
   { title: "Aeroportos", url: "/dashboard/airports", icon: MapPin, adminOnly: true },
   { title: "Agências", url: "/dashboard/agencies", icon: Building2 },
   { title: "Emissões", url: "/dashboard/issuances", icon: Ticket },
