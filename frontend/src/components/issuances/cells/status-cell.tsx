@@ -77,8 +77,13 @@ export function StatusCell({ r, c }: { r: number; c: number }) {
           onExitEdit()
         } else if (e.key === "Enter") {
           e.preventDefault()
-          commit("tab-right")
+          commit(e.shiftKey ? "up" : "down")
+        } else if (e.key === "Tab") {
+          e.preventDefault()
+          commit(e.shiftKey ? "tab-left" : "tab-right")
         }
+        // ArrowUp/Down are left to the native select so they change the status value;
+        // Tab/Enter are what commit and leave this (last) column.
       }}
       onBlur={() => commit(null)}
       className="w-full bg-transparent px-2 py-1.5 outline-none ring-2 ring-primary"

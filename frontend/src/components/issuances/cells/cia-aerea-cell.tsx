@@ -243,7 +243,7 @@ export function CiaAereaCell({ r, c }: { r: number; c: number }) {
           } else if (e.key === "Enter") {
             e.preventDefault()
             if (acOpen && hasInteracted) acceptActive()
-            else commit("tab-right")
+            else commit(e.shiftKey ? "up" : "down")
           } else if (e.key === "Tab") {
             e.preventDefault()
             if (acOpen && hasInteracted) acceptActive()

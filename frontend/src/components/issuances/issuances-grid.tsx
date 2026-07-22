@@ -1,17 +1,29 @@
 "use client"
 
 import { useEffect, useMemo, useReducer, useRef, useState } from "react"
-import { Plus } from "lucide-react"
+import { Plus, Keyboard } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Button } from "@/components/ui/button"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { GridProvider, GridReferenceData } from "@/components/issuances/grid-context"
 import { GridCell } from "@/components/issuances/grid-cell"
 import { RowActions } from "@/components/issuances/row-actions"
 import { AutosaveDot } from "@/components/issuances/autosave-dot"
 import { interactionReducer, initialInteractionState } from "@/components/issuances/interaction-reducer"
 import { IssuanceRow, issuanceToRow, makeDraftRow, draftIsReadyToCreate } from "@/components/issuances/types"
+import { clearPatchForColumn } from "@/components/issuances/column-fields"
 import {
   ACCOUNT_COLUMN_INDEX,
   CALCULATED_COLUMN_INDEX,
@@ -49,6 +61,34 @@ interface IssuancesGridProps extends GridReferenceData {
   currentUserId: string | null
 }
 
+// One undoable step: the patch that restores a row to its prior state, keyed by the
+// row's stable client id (not its index, which shifts as rows are added/removed).
+interface HistoryEntry {
+  key: string
+  patch: Partial<IssuanceRow>
+}
+
+// Caps each history stack so a long editing session can't grow them without bound.
+const HISTORY_LIMIT = 100
+
+// Shown in the "Atalhos" popover so the keyboard-first workflow is discoverable.
+const SHORTCUTS: { keys: string; label: string }[] = [
+  { keys: "Tab / Shift+Tab", label: "Próxima / célula anterior" },
+  { keys: "Enter / Shift+Enter", label: "Célula abaixo / acima" },
+  { keys: "Setas", label: "Mover a seleção" },
+  { keys: "F2 ou digitar", label: "Editar a célula" },
+  { keys: "Esc", label: "Cancelar a edição" },
+  { keys: "Home / End", label: "Início / fim da linha" },
+  { keys: "Ctrl+Home / Ctrl+End", label: "Início / fim da grade" },
+  { keys: "Ctrl + setas", label: "Saltar até a borda" },
+  { keys: "Ctrl+Enter", label: "Nova emissão" },
+  { keys: "Delete", label: "Limpar a célula" },
+  { keys: "Ctrl+C / Ctrl+V", label: "Copiar / colar" },
+  { keys: "Ctrl+Z / Ctrl+Shift+Z", label: "Desfazer / refazer" },
+  { keys: "Ctrl+Shift+⌫", label: "Excluir a linha" },
+  { keys: "/", label: 'Separar "programa/cia" (Cia aérea, Localizador)' },
+]
+
 // A draft row nobody has touched yet - clicking "Nova emissão" repeatedly
 // should focus this one instead of piling up empty rows.
 function isUntouchedDraft(row: IssuanceRow): boolean {
@@ -70,6 +110,12 @@ export function IssuancesGrid({ initialIssuances, currentUserId, ...referenceDat
   const [interaction, dispatch] = useReducer(interactionReducer, initialInteractionState)
   const activeCellSaveRef = useRef<(() => void) | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
+  // A hidden but focusable textarea that holds focus while a cell is selected
+  // (not editing). It exists so Ctrl+V fires a native `paste` event we can read
+  // synchronously from clipboardData - a focused non-editable <div> never
+  // receives paste events, and navigator.clipboard.readText() prompts for a
+  // clipboard-read permission on first use.
+  const pasteCatcherRef = useRef<HTMLTextAreaElement>(null)
   // Rows whose POST is currently in flight. `row.isDraft` alone can't gate the create:
   // it comes from the current render, so a cell edited before the POST resolves would
   // still see isDraft === true and fire a second create for the same row.
@@ -86,9 +132,21 @@ export function IssuancesGrid({ initialIssuances, currentUserId, ...referenceDat
   // a stale copy - the merge below dedupes when the same account arrives from both.
   const [createdAccounts, setCreatedAccounts] = useState<Account[]>([])
   const [pendingAccountLabels, setPendingAccountLabels] = useState<Record<string, string>>({})
+  // Row index awaiting delete confirmation, driven by the Ctrl+Shift+Backspace shortcut.
+  // Null means the confirm dialog is closed.
+  const [pendingDeleteRow, setPendingDeleteRow] = useState<number | null>(null)
   // Lets the async account creation read the rows as they are when it resolves, not as
   // they were when it started.
   const rowsRef = useRef(rows)
+  // Undo/redo history. Each entry is the inverse patch (the field values as they were
+  // before a change) plus the row it targets. Every value mutation funnels through
+  // applyPatch, which records the inverse here; Ctrl+Z/Ctrl+Y replay entries between the
+  // two stacks. Refs, not state: the history must not trigger re-renders and must be read
+  // fresh inside the keydown handler without stale-closure surprises. historyModeRef tells
+  // applyPatch which stack to feed while a replay is in flight (see runHistory).
+  const undoStackRef = useRef<HistoryEntry[]>([])
+  const redoStackRef = useRef<HistoryEntry[]>([])
+  const historyModeRef = useRef<"record" | "undo" | "redo">("record")
 
   const accounts = useMemo(() => {
     const byId = new Map(referenceData.accounts.map((account) => [account.id, account]))
@@ -104,9 +162,22 @@ export function IssuancesGrid({ initialIssuances, currentUserId, ...referenceDat
 
   useEffect(() => {
     if (!interaction.editing) {
-      containerRef.current?.focus()
+      // preventScroll: the catcher sits off-screen; focusing it must not yank
+      // the viewport away from the cell the user is actually on.
+      pasteCatcherRef.current?.focus({ preventScroll: true })
     }
   }, [interaction.editing, interaction.sel.r, interaction.sel.c])
+
+  // Keeps the selected cell in view as the user navigates. The catcher holds focus
+  // off-screen, so the browser never scrolls to the active cell on its own; without this,
+  // arrow/Tab navigation to a cell outside the viewport would leave it hidden. `nearest`
+  // scrolls the minimum on both axes, and scroll-mt on the cells clears the sticky header.
+  useEffect(() => {
+    const cell = containerRef.current?.querySelector(
+      `[data-cell="${interaction.sel.r}-${interaction.sel.c}"]`,
+    )
+    cell?.scrollIntoView({ block: "nearest", inline: "nearest" })
+  }, [interaction.sel.r, interaction.sel.c])
 
   function updateRow(key: string, patch: Partial<IssuanceRow>) {
     setRows((prev) => prev.map((row) => (row.key === key ? { ...row, ...patch } : row)))
@@ -232,6 +303,23 @@ export function IssuancesGrid({ initialIssuances, currentUserId, ...referenceDat
   function applyPatch(row: IssuanceRow, patch: Partial<IssuanceRow>) {
     if (Object.keys(patch).length === 0) return
 
+    // Record the inverse (the fields as they were before this patch) so Ctrl+Z can
+    // replay it. `row` is the pre-patch state, so this is just its current values for
+    // the keys being changed. During a replay, historyModeRef routes the inverse to the
+    // opposite stack instead, which is what makes redo fall out for free.
+    const inverse = Object.fromEntries(
+      Object.keys(patch).map((key) => [key, row[key as keyof IssuanceRow]]),
+    ) as Partial<IssuanceRow>
+    if (historyModeRef.current === "record") {
+      undoStackRef.current.push({ key: row.key, patch: inverse })
+      if (undoStackRef.current.length > HISTORY_LIMIT) undoStackRef.current.shift()
+      redoStackRef.current = [] // a fresh edit invalidates the redo stack
+    } else if (historyModeRef.current === "undo") {
+      redoStackRef.current.push({ key: row.key, patch: inverse })
+    } else {
+      undoStackRef.current.push({ key: row.key, patch: inverse })
+    }
+
     if ("account_id" in patch) {
       setAccountClearedKeys((prev) => {
         const next = new Set(prev)
@@ -242,6 +330,31 @@ export function IssuancesGrid({ initialIssuances, currentUserId, ...referenceDat
     }
     updateRow(row.key, patch)
     void persist(row, patch)
+  }
+
+  // Replays one step off the undo (or redo) stack. Re-applying through applyPatch both
+  // persists the reversal and captures the current values onto the opposite stack, so
+  // redo needs no special-casing. Entries whose row no longer exists (a deleted row -
+  // structural changes are out of scope) are skipped so the stacks never dead-end.
+  function runHistory(mode: "undo" | "redo") {
+    const stack = mode === "undo" ? undoStackRef : redoStackRef
+    let entry = stack.current.pop()
+    while (entry && !rowsRef.current.some((r) => r.key === entry!.key)) {
+      entry = stack.current.pop()
+    }
+    if (!entry) return
+
+    const row = rowsRef.current.find((r) => r.key === entry!.key)
+    if (!row) return
+
+    historyModeRef.current = mode
+    applyPatch(row, entry.patch)
+    historyModeRef.current = "record"
+
+    // Move the selection onto the affected row (keeping the current column) so the change
+    // the user just undid or redid is on screen rather than happening off in another row.
+    const rowIndex = rowsRef.current.findIndex((r) => r.key === entry!.key)
+    if (rowIndex >= 0) dispatch({ type: "SELECT_ONLY", r: rowIndex, c: interaction.sel.c })
   }
 
   function onSaveAndMove(r: number, patch: Partial<IssuanceRow>, direction: Direction | null) {
@@ -322,6 +435,18 @@ export function IssuancesGrid({ initialIssuances, currentUserId, ...referenceDat
     removeRow(row.key)
   }
 
+  // Keyboard entry point for deleting the active row. An untouched empty draft has nothing
+  // to lose, so it is dropped without a prompt; anything else opens the confirm dialog.
+  function requestRowDelete(r: number) {
+    const row = rows[r]
+    if (!row) return
+    if (isUntouchedDraft(row)) {
+      void onDeleteRow(r)
+      return
+    }
+    setPendingDeleteRow(r)
+  }
+
   function handleAddRow() {
     const lastRow = rows[rows.length - 1]
     if (lastRow && isUntouchedDraft(lastRow)) {
@@ -337,9 +462,64 @@ export function IssuancesGrid({ initialIssuances, currentUserId, ...referenceDat
   function handleContainerKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
     if (interaction.editing) return
 
-    if (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "ArrowLeft" || e.key === "ArrowRight") {
+    // Power-user jumps and row ops, handled before the single-step arrows/Enter below so
+    // the modifier combinations win over their unmodified counterparts.
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
       e.preventDefault()
-      const dr = e.key === "ArrowDown" ? 1 : e.key === "ArrowUp" ? -1 : 0
+      handleAddRow()
+      return
+    }
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "Backspace" || e.key === "Delete")) {
+      e.preventDefault()
+      requestRowDelete(interaction.sel.r)
+      return
+    }
+    if (
+      e.key === "Home" ||
+      e.key === "End" ||
+      ((e.ctrlKey || e.metaKey) &&
+        (e.key === "ArrowUp" ||
+          e.key === "ArrowDown" ||
+          e.key === "ArrowLeft" ||
+          e.key === "ArrowRight"))
+    ) {
+      e.preventDefault()
+      const lastRow = Math.max(rows.length - 1, 0)
+      const lastCol = COLUMN_COUNT - 1
+      const toCorner = e.ctrlKey || e.metaKey // Ctrl+Home/End jump to the grid corner
+      let r = interaction.sel.r
+      let c = interaction.sel.c
+      if (e.key === "Home") {
+        c = 0
+        if (toCorner) r = 0
+      } else if (e.key === "End") {
+        c = lastCol
+        if (toCorner) r = lastRow
+      } else if (e.key === "ArrowUp") r = 0
+      else if (e.key === "ArrowDown") r = lastRow
+      else if (e.key === "ArrowLeft") c = 0
+      else if (e.key === "ArrowRight") c = lastCol
+      dispatch({ type: "SELECT_ONLY", r, c })
+      return
+    }
+
+    // Enter moves down and Shift+Enter up, like a spreadsheet; editing a cell is F2,
+    // a click, or typing (type-to-replace). Handled with the arrows so it works from any
+    // column, including the read-only calculated one.
+    if (
+      e.key === "ArrowDown" ||
+      e.key === "ArrowUp" ||
+      e.key === "ArrowLeft" ||
+      e.key === "ArrowRight" ||
+      e.key === "Enter"
+    ) {
+      e.preventDefault()
+      const dr =
+        e.key === "ArrowDown" || (e.key === "Enter" && !e.shiftKey)
+          ? 1
+          : e.key === "ArrowUp" || (e.key === "Enter" && e.shiftKey)
+            ? -1
+            : 0
       const dc = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0
       const next = clampMove(rows.length, interaction.sel, dr, dc)
       dispatch({ type: "SELECT_ONLY", r: next.r, c: next.c })
@@ -355,18 +535,86 @@ export function IssuancesGrid({ initialIssuances, currentUserId, ...referenceDat
       return
     }
 
+    // Undo/redo are grid-wide, not tied to the active cell, so they sit before the
+    // calculated-column guard below (which only gates per-cell editing actions).
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !e.shiftKey) {
+      e.preventDefault()
+      runHistory("undo")
+      return
+    }
+    if (
+      (e.ctrlKey || e.metaKey) &&
+      (e.key.toLowerCase() === "y" || (e.shiftKey && e.key.toLowerCase() === "z"))
+    ) {
+      e.preventDefault()
+      runHistory("redo")
+      return
+    }
+
     const isCalculated = interaction.sel.c === CALCULATED_COLUMN_INDEX
     if (isCalculated) return
 
-    if (e.key === "Enter" || e.key === "F2") {
+    if (e.key === "F2") {
       e.preventDefault()
       dispatch({ type: "ENTER_EDIT" })
       return
     }
 
+    if (e.key === "Delete") {
+      const patch = clearPatchForColumn(interaction.sel.c)
+      const row = rows[interaction.sel.r]
+      if (patch && row) {
+        e.preventDefault()
+        applyPatch(row, patch)
+      }
+      return
+    }
+
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c") {
+      e.preventDefault()
+      void copyActiveCell()
+      return
+    }
+
+    // Ctrl+V is not handled here: it arrives as a native `paste` event on the
+    // focused catcher textarea (see handlePaste), which reads the clipboard
+    // synchronously without a permission prompt.
+
     if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
       dispatch({ type: "TYPE_REPLACE", char: e.key })
     }
+  }
+
+  // Copies the value the user actually sees (a combobox shows a name, not its id),
+  // read from the rendered read-view via the cell's data-cell marker. The empty
+  // placeholder ("—") copies as an empty string.
+  async function copyActiveCell() {
+    const node = containerRef.current?.querySelector(
+      `[data-cell="${interaction.sel.r}-${interaction.sel.c}"]`,
+    )
+    const text = (node?.textContent ?? "").trim()
+    const copyable = text === "—" ? "" : text
+    try {
+      await navigator.clipboard.writeText(copyable)
+      toast.success("Célula copiada para a área de transferência")
+    } catch {
+      toast.error("Não foi possível copiar a célula")
+    }
+  }
+
+  // Pastes into the active cell by entering edit mode with the clipboard text
+  // pre-filled (pendingChar carries multi-character text just as well as a single
+  // typed char), so each cell's own parser decides the value on commit. Fires
+  // from the catcher textarea's native paste event, so it never touches the
+  // permission-gated navigator.clipboard.readText().
+  function handlePaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    // Only meaningful outside edit mode: while editing, the cell's own input has
+    // focus and handles its native paste directly.
+    if (interaction.editing) return
+    if (interaction.sel.c === CALCULATED_COLUMN_INDEX) return
+    e.preventDefault()
+    const text = e.clipboardData.getData("text/plain")
+    if (text) dispatch({ type: "TYPE_REPLACE", char: text })
   }
 
   return (
@@ -390,7 +638,29 @@ export function IssuancesGrid({ initialIssuances, currentUserId, ...referenceDat
         pendingAccountLabels,
       }}
     >
-      <div className="sticky top-0 z-10 flex justify-end bg-background py-2">
+      <div className="sticky top-0 z-10 flex items-center justify-end gap-2 bg-background py-2">
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button type="button" variant="outline" size="sm">
+              <Keyboard className="h-4 w-4" />
+              Atalhos
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-80">
+            <p className="mb-2 text-sm font-medium">Atalhos de teclado</p>
+            <dl className="space-y-1">
+              {SHORTCUTS.map((shortcut) => (
+                <div
+                  key={shortcut.keys}
+                  className="flex items-baseline justify-between gap-3 text-xs"
+                >
+                  <dt className="text-muted-foreground">{shortcut.label}</dt>
+                  <dd className="shrink-0 font-mono text-[11px]">{shortcut.keys}</dd>
+                </div>
+              ))}
+            </dl>
+          </PopoverContent>
+        </Popover>
         <Button type="button" size="sm" onClick={handleAddRow}>
           <Plus className="h-4 w-4" />
           Nova emissão
@@ -398,23 +668,40 @@ export function IssuancesGrid({ initialIssuances, currentUserId, ...referenceDat
       </div>
       <div
         ref={containerRef}
-        tabIndex={0}
         onKeyDown={handleContainerKeyDown}
-        className="rounded-md border outline-none"
+        // Bounded scroll region so the header can stick to its top (a sticky header needs a
+        // scroll ancestor with a fixed height) and long lists scroll inside the grid.
+        className="relative max-h-[calc(100vh-13rem)] overflow-auto rounded-md border outline-none"
       >
-        <Table>
+        {/* Off-screen focus holder: keydown and paste events from it bubble to the
+            container's onKeyDown/handlePaste. Kept empty (onInput clears any char
+            that type-to-replace lets through) so it never accumulates text. */}
+        <textarea
+          ref={pasteCatcherRef}
+          aria-hidden="true"
+          tabIndex={-1}
+          onPaste={handlePaste}
+          onInput={(e) => {
+            e.currentTarget.value = ""
+          }}
+          className="pointer-events-none absolute left-0 top-0 h-px w-px resize-none opacity-0"
+        />
+        <table className="w-full caption-bottom text-sm">
           <TableHeader>
             <TableRow className="hover:bg-transparent">
-              <TableHead className="w-8 p-1 text-center">#</TableHead>
+              <TableHead className="sticky top-0 z-10 w-8 bg-background p-1 text-center">#</TableHead>
               {COLUMN_LABELS.map((label, c) => (
                 <TableHead
                   key={label}
-                  className={cn("whitespace-nowrap", c === CALCULATED_COLUMN_INDEX && "text-right")}
+                  className={cn(
+                    "sticky top-0 z-10 whitespace-nowrap bg-background",
+                    c === CALCULATED_COLUMN_INDEX && "text-right",
+                  )}
                 >
                   {label}
                 </TableHead>
               ))}
-              <TableHead className="w-8 p-1" />
+              <TableHead className="sticky top-0 z-10 w-8 bg-background p-1" />
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -446,12 +733,15 @@ export function IssuancesGrid({ initialIssuances, currentUserId, ...referenceDat
                   return (
                     <TableCell
                       key={c}
+                      // Marks the cell for Ctrl+C, which copies its rendered text.
+                      data-cell={`${r}-${c}`}
                       // Background rather than a ring or border: the selection ring below
                       // already owns --tw-ring-color on this cell, and two competing
                       // ring-* utilities resolve by their order in the generated CSS, not
                       // by the order they appear here.
                       className={cn(
-                        "whitespace-normal border-l p-0 first:border-l-0",
+                        // scroll-mt clears the sticky header when scrollIntoView lands here.
+                        "scroll-mt-9 whitespace-normal border-l p-0 first:border-l-0",
                         accountNeedsPicking && "bg-red-100",
                         interaction.sel.r === r &&
                           interaction.sel.c === c &&
@@ -475,8 +765,43 @@ export function IssuancesGrid({ initialIssuances, currentUserId, ...referenceDat
               </TableRow>
             ))}
           </TableBody>
-        </Table>
+        </table>
       </div>
+
+      {/* Confirmation for the keyboard row-delete (Ctrl+Shift+Backspace). The per-row
+          trash button in RowActions has its own trigger-based dialog; this one is opened
+          from the keyboard, so it is controlled and returns focus to the catcher on close. */}
+      <AlertDialog
+        open={pendingDeleteRow !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingDeleteRow(null)
+        }}
+      >
+        <AlertDialogContent
+          onCloseAutoFocus={(e) => {
+            e.preventDefault()
+            pasteCatcherRef.current?.focus({ preventScroll: true })
+          }}
+        >
+          <AlertDialogHeader>
+            <AlertDialogTitle>Deletar emissão</AlertDialogTitle>
+            <AlertDialogDescription>Você realmente deseja deletar essa emissão?</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700">
+              Não
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (pendingDeleteRow !== null) void onDeleteRow(pendingDeleteRow)
+                setPendingDeleteRow(null)
+              }}
+            >
+              Sim, deletar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </GridProvider>
   )
 }

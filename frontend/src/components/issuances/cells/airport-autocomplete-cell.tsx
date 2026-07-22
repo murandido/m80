@@ -179,7 +179,7 @@ export function AirportAutocompleteCell({ r, c, field }: AirportAutocompleteCell
           } else if (e.key === "Enter") {
             e.preventDefault()
             if (acOpen && hasInteracted) acceptActive()
-            else commitCode(text, "tab-right")
+            else commitCode(text, e.shiftKey ? "up" : "down")
           } else if (e.key === "Tab") {
             e.preventDefault()
             if (acOpen && hasInteracted) acceptActive()

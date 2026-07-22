@@ -7,8 +7,9 @@ export interface InteractionState {
   editing: boolean
   sticky: boolean
   // Set when edit mode was entered by typing a character outside edit mode
-  // (replace-on-type). The newly-mounted cell consumes it once, then it's
-  // cleared via CLEAR_PENDING_CHAR.
+  // (replace-on-type), or by pasting (Ctrl+V), in which case it carries the whole
+  // pasted string. The newly-mounted cell consumes it once, then it's cleared via
+  // CLEAR_PENDING_CHAR.
   pendingChar: string | null
 }
 

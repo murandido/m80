@@ -266,7 +266,7 @@ export function ComboboxCell({
           } else if (e.key === "Enter") {
             e.preventDefault()
             if (acOpen && hasInteracted && hasAcceptTarget) acceptActiveSuggestion()
-            else commit("tab-right")
+            else commit(e.shiftKey ? "up" : "down")
           } else if (e.key === "Tab") {
             e.preventDefault()
             if (acOpen && hasInteracted && hasAcceptTarget) acceptActiveSuggestion()

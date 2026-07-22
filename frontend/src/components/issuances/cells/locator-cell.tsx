@@ -85,7 +85,7 @@ export function LocatorCell({ r, c }: { r: number; c: number }) {
           onExitEdit()
         } else if (e.key === "Enter") {
           e.preventDefault()
-          commit("tab-right")
+          commit(e.shiftKey ? "up" : "down")
         } else if (e.key === "Tab") {
           e.preventDefault()
           commit(e.shiftKey ? "tab-left" : "tab-right")
