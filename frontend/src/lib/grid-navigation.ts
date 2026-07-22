@@ -10,6 +10,7 @@ export type Direction = "down" | "up" | "tab-right" | "tab-left"
 // "Destino", "Pontos", "Valor milheiro", "Taxas", "Valor total" (calculated),
 // "Conta", "Emissor", "Agência", "Status".
 export const COLUMN_COUNT = 14
+export const LOCATOR_COLUMN_INDEX = 1
 export const CALCULATED_COLUMN_INDEX = 9
 export const ACCOUNT_COLUMN_INDEX = 10
 

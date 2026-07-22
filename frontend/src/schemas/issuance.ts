@@ -59,6 +59,10 @@ export const issuanceSchema = z.object({
   observation: z.string().nullable(),
   active: z.boolean(),
   cancelled_at: z.string().nullable(),
+  cancelled_by_id: z.string().nullable(),
+  refunded_points: z.number().nullable(),
+  refunded_taxes: z.number().nullable(),
+  cancellation_fee: z.number().nullable(),
   created_at: z.string(),
   updated_at: z.string(),
 })
@@ -141,5 +145,32 @@ export const deleteIssuanceSchema = {
   response: z.object({
     message: z.string(),
     data: z.null().nullish(),
+  }),
+}
+
+// Cancel payload - all fields optional (a bare cancel with no refund is valid).
+// refunded_taxes/cancellation_fee are in centavos, matching the backend (in cents).
+export const cancelIssuanceSchema = {
+  request: z.object({
+    refunded_points: z.number().int().nonnegative().optional(),
+    refunded_taxes: z.number().int().nonnegative().optional(),
+    cancellation_fee: z.number().int().nonnegative().optional(),
+  }),
+  response: z.object({
+    success: z.boolean(),
+    message: z.string(),
+    data: issuanceSchema.nullish(),
+  }),
+}
+
+export type CancelIssuanceInput = z.infer<typeof cancelIssuanceSchema.request>
+
+// Revert a cancellation - no request body; the backend restores active=true, clears the
+// cancellation metadata and puts the linked sale back to its pre-cancel state.
+export const uncancelIssuanceSchema = {
+  response: z.object({
+    success: z.boolean(),
+    message: z.string(),
+    data: issuanceSchema.nullish(),
   }),
 }

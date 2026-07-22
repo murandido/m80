@@ -68,6 +68,14 @@ type UpdateIssuanceRequest struct {
 	FlightDate *string `json:"flight_date" validate:"omitempty,datetime=2006-01-02"`
 }
 
+// CancelIssuanceRequest is the optional body for POST /issuances/{id}/cancel.
+// All fields are optional: a bare cancel with no refund is valid. Amounts are in cents.
+type CancelIssuanceRequest struct {
+	RefundedPoints  *int `json:"refunded_points" validate:"omitempty"`
+	RefundedTaxes   *int `json:"refunded_taxes" validate:"omitempty"`
+	CancellationFee *int `json:"cancellation_fee" validate:"omitempty"`
+}
+
 // IssuanceFlightResponse defines how a flight leg should be returned nested in an issuance response.
 type IssuanceFlightResponse struct {
 	ID                  string     `json:"id"`
@@ -119,6 +127,7 @@ type IssuanceResponse struct {
 	Observation        *string                     `json:"observation"`
 	Active             bool                        `json:"active"`
 	CancelledAt        *time.Time                  `json:"cancelled_at"`
+	CancelledByID      *string                     `json:"cancelled_by_id"`
 	RefundedPoints     *int                        `json:"refunded_points"`
 	RefundedTaxes      *int                        `json:"refunded_taxes"`
 	CancellationFee    *int                        `json:"cancellation_fee"`

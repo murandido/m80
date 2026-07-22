@@ -2,7 +2,13 @@
 
 import { cookies } from "next/headers"
 import { env } from "@/lib/env"
-import { createIssuanceSchema, updateIssuanceSchema, deleteIssuanceSchema } from "@/schemas/issuance"
+import {
+  createIssuanceSchema,
+  updateIssuanceSchema,
+  deleteIssuanceSchema,
+  cancelIssuanceSchema,
+  uncancelIssuanceSchema,
+} from "@/schemas/issuance"
 import { z } from "zod"
 
 export async function createIssuanceAction(
@@ -61,6 +67,62 @@ export async function updateIssuanceAction(
 
     if (!res.ok) {
       return { error: parsed.data?.message || "Erro ao salvar emissão." }
+    }
+
+    return { success: true as const, issuance: parsed.data?.data }
+  } catch {
+    return { error: "Erro de conexão com o servidor." }
+  }
+}
+
+export async function cancelIssuanceAction(
+  issuanceId: string,
+  data: z.infer<typeof cancelIssuanceSchema.request>,
+) {
+  const cookieStore = await cookies()
+  const token = cookieStore.get("auth_token")?.value
+
+  try {
+    const res = await fetch(`${env.BACKEND_URL}/api/v1/issuances/${issuanceId}/cancel`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(data),
+    })
+
+    const json = await res.json()
+    const parsed = cancelIssuanceSchema.response.safeParse(json)
+
+    if (!res.ok) {
+      return { error: parsed.data?.message || "Erro ao cancelar emissão." }
+    }
+
+    return { success: true as const, issuance: parsed.data?.data }
+  } catch {
+    return { error: "Erro de conexão com o servidor." }
+  }
+}
+
+export async function uncancelIssuanceAction(issuanceId: string) {
+  const cookieStore = await cookies()
+  const token = cookieStore.get("auth_token")?.value
+
+  try {
+    const res = await fetch(`${env.BACKEND_URL}/api/v1/issuances/${issuanceId}/uncancel`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+    })
+
+    const json = await res.json()
+    const parsed = uncancelIssuanceSchema.response.safeParse(json)
+
+    if (!res.ok) {
+      return { error: parsed.data?.message || "Erro ao reverter cancelamento." }
     }
 
     return { success: true as const, issuance: parsed.data?.data }

@@ -44,6 +44,8 @@ type Issuance struct {
 	Observation        *string             `gorm:"type:text" json:"observation"`
 	Active             bool                `gorm:"not null;default:true" json:"active"`
 	CancelledAt        *time.Time          `gorm:"column:cancelled_at" json:"cancelled_at"`
+	CancelledByID      *string             `gorm:"column:cancelled_by_id;type:uuid" json:"cancelled_by_id"`
+	CancelledBy        *User               `gorm:"foreignKey:CancelledByID;references:ID" json:"cancelled_by,omitempty"`
 	RefundedPoints     *int                `gorm:"column:refunded_points" json:"refunded_points"`
 	RefundedTaxes      *int                `gorm:"column:refunded_taxes" json:"refunded_taxes"`
 	CancellationFee    *int                `gorm:"column:cancellation_fee" json:"cancellation_fee"`

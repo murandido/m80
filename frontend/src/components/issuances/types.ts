@@ -30,6 +30,13 @@ export interface IssuanceRow {
   issuer_id: string | null
   agency_id: string | null
   status: IssuanceStatus
+  // Read-only cancellation metadata, surfaced in the status pill's hover card. Never
+  // edited through the grid - only set when the row loads cancelled or is cancelled here.
+  cancelled_at: string | null
+  cancelled_by_id: string | null
+  refunded_points: number | null
+  refunded_taxes: number | null // centavos
+  cancellation_fee: number | null // centavos
   saveStatus: SaveStatus
   // Sticks until the row next saves successfully, unlike saveStatus which flashes
   // for 900ms and resets. Drives the persistent red row highlight so a failed save
@@ -59,14 +66,23 @@ export function issuanceToRow(issuance: Issuance): IssuanceRow {
     issuer_id: issuance.issuer_id,
     agency_id: issuance.agency_id,
     status: issuance.status,
+    cancelled_at: issuance.cancelled_at,
+    cancelled_by_id: issuance.cancelled_by_id,
+    refunded_points: issuance.refunded_points,
+    refunded_taxes: issuance.refunded_taxes,
+    cancellation_fee: issuance.cancellation_fee,
     saveStatus: "idle",
     hasError: false,
   }
 }
 
-// issuerId defaults a new draft row's "Emissor" to the logged-in user - still
-// freely editable before the row is first created (see issuances-grid.tsx).
-export function makeDraftRow(issuerId?: string | null): IssuanceRow {
+// issuerId defaults a new draft row's "Emissor" to the logged-in user, and agencyId its
+// "Agência" to the configured default agency - both still freely editable before the row is
+// first created (see issuances-grid.tsx).
+export function makeDraftRow(
+  issuerId?: string | null,
+  agencyId?: string | null,
+): IssuanceRow {
   return {
     key: `draft-${Math.random().toString(36).slice(2)}`,
     id: null,
@@ -85,8 +101,13 @@ export function makeDraftRow(issuerId?: string | null): IssuanceRow {
     account_id: null,
     account_nickname_id: null,
     issuer_id: issuerId ?? null,
-    agency_id: null,
+    agency_id: agencyId ?? null,
     status: "incomplete",
+    cancelled_at: null,
+    cancelled_by_id: null,
+    refunded_points: null,
+    refunded_taxes: null,
+    cancellation_fee: null,
     saveStatus: "idle",
     hasError: false,
   }

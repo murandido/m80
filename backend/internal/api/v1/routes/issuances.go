@@ -29,6 +29,12 @@ func RegisterIssuanceRoutes(r chi.Router, db *gorm.DB) {
 		// delete issuance (soft delete)
 		r.Delete("/{id}", issuanceHandler.DeleteIssuance)
 
+		// cancel issuance (deactivate + refund + audit)
+		r.Post("/{id}/cancel", issuanceHandler.CancelIssuance)
+
+		// uncancel issuance (revert cancellation, restore prior sale state + audit)
+		r.Post("/{id}/uncancel", issuanceHandler.UncancelIssuance)
+
 		// passengers sub-resource
 		RegisterIssuancePassengerRoutes(r, db)
 	})

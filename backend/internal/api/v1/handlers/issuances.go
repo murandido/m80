@@ -3,7 +3,9 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -13,12 +15,15 @@ import (
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/utils"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
 const (
-	auditActionCreated = "created"
-	auditActionDeleted = "deleted"
+	auditActionCreated   = "created"
+	auditActionCancelled = "cancelled"
+	auditActionRestored  = "restored"
+	auditActionDeleted   = "deleted"
 )
 
 type IssuanceHandler struct {
@@ -73,6 +78,7 @@ func toIssuanceResponse(issuance data.Issuance) schemas.IssuanceResponse {
 		Observation:         issuance.Observation,
 		Active:              issuance.Active,
 		CancelledAt:         issuance.CancelledAt,
+		CancelledByID:       issuance.CancelledByID,
 		RefundedPoints:      issuance.RefundedPoints,
 		RefundedTaxes:       issuance.RefundedTaxes,
 		CancellationFee:     issuance.CancellationFee,
@@ -254,13 +260,25 @@ const issuanceListTimezone = "America/Sao_Paulo"
 // applyIssuanceListFilters narrows an issuance list query by the optional query
 // params (issuer_id, account_id, loyalty_program_id, airline_id, date_from,
 // date_to). Every param is optional: an absent or empty one leaves that
-// dimension unfiltered, and each present filter is ANDed onto the query.
-// The date filters bound created_at to whole local calendar days.
+// dimension unfiltered.
+//
+// account_id/loyalty_program_id/airline_id are plain ANDed filters that apply to
+// every row. issuer_id + date_from/date_to are instead coupled into an OR of two
+// branches so a cancelled issuance surfaces in the flow of whoever cancelled it,
+// on the day they cancelled it - not only in the creator's creation-day flow:
+//
+//	(issuer_id = ? AND created_at in [from,to))            -- creation branch
+//	OR
+//	(active = false AND cancelled_by_id = ?                -- cancellation branch
+//	     AND cancelled_at in [from,to))
+//
+// Each present dimension feeds both branches (issuer -> issuer_id/cancelled_by_id,
+// dates -> created_at/cancelled_at). When neither issuer nor dates are given the
+// OR group is skipped entirely and the query stays unfiltered on those dimensions.
 func applyIssuanceListFilters(query *gorm.DB, r *http.Request) *gorm.DB {
 	q := r.URL.Query()
 
 	for column, param := range map[string]string{
-		"issuer_id":          "issuer_id",
 		"account_id":         "account_id",
 		"loyalty_program_id": "loyalty_program_id",
 		"airline_id":         "airline_id",
@@ -270,32 +288,65 @@ func applyIssuanceListFilters(query *gorm.DB, r *http.Request) *gorm.DB {
 		}
 	}
 
-	// created_at is UTC in the DB; resolve local calendar days into UTC bounds so
-	// "today" matches the operator's day. Fall back to UTC if tzdata is missing.
+	// created_at/cancelled_at are UTC in the DB; resolve local calendar days into UTC
+	// bounds so "today" matches the operator's day. Fall back to UTC if tzdata is missing.
 	loc, err := time.LoadLocation(issuanceListTimezone)
 	if err != nil {
 		loc = time.UTC
 	}
 
-	if from := q.Get("date_from"); from != "" {
-		if parsed, err := time.ParseInLocation("2006-01-02", from, loc); err == nil {
-			query = query.Where("created_at >= ?", parsed.UTC())
+	issuer := q.Get("issuer_id")
+	var from, to *time.Time
+	if v := q.Get("date_from"); v != "" {
+		if parsed, err := time.ParseInLocation("2006-01-02", v, loc); err == nil {
+			t := parsed.UTC()
+			from = &t
 		}
 	}
-	if to := q.Get("date_to"); to != "" {
-		if parsed, err := time.ParseInLocation("2006-01-02", to, loc); err == nil {
+	if v := q.Get("date_to"); v != "" {
+		if parsed, err := time.ParseInLocation("2006-01-02", v, loc); err == nil {
 			// Exclusive upper bound at the start of the next day so the whole
 			// "to" day is included.
-			query = query.Where("created_at < ?", parsed.AddDate(0, 0, 1).UTC())
+			t := parsed.AddDate(0, 0, 1).UTC()
+			to = &t
 		}
 	}
 
-	return query
+	if issuer == "" && from == nil && to == nil {
+		return query
+	}
+
+	creation := []string{}
+	cancellation := []string{"active = ?"}
+	creationArgs := []any{}
+	cancellationArgs := []any{false}
+
+	if issuer != "" {
+		creation = append(creation, "issuer_id = ?")
+		creationArgs = append(creationArgs, issuer)
+		cancellation = append(cancellation, "cancelled_by_id = ?")
+		cancellationArgs = append(cancellationArgs, issuer)
+	}
+	if from != nil {
+		creation = append(creation, "created_at >= ?")
+		creationArgs = append(creationArgs, *from)
+		cancellation = append(cancellation, "cancelled_at >= ?")
+		cancellationArgs = append(cancellationArgs, *from)
+	}
+	if to != nil {
+		creation = append(creation, "created_at < ?")
+		creationArgs = append(creationArgs, *to)
+		cancellation = append(cancellation, "cancelled_at < ?")
+		cancellationArgs = append(cancellationArgs, *to)
+	}
+
+	condition := "(" + strings.Join(creation, " AND ") + ") OR (" + strings.Join(cancellation, " AND ") + ")"
+	return query.Where(condition, append(creationArgs, cancellationArgs...)...)
 }
 
 // GetIssuances handles the GET /issuances route.
 // @Summary      Listar emissões
-// @Description  Retorna as emissões ativas cadastradas no sistema (exclui as removidas). Aceita filtros opcionais por data de emissão, programa de fidelidade, cia aérea, conta e emissor.
+// @Description  Retorna as emissões cadastradas no sistema (exclui as removidas). Aceita filtros opcionais por data, programa de fidelidade, cia aérea, conta e emissor. As emissões canceladas também entram no filtro de data/usuário pela data e pelo usuário do cancelamento (cancelled_at/cancelled_by_id), não só pela criação.
 // @Tags         Emissões
 // @Produce      json
 // @Security     BearerAuth
@@ -749,4 +800,227 @@ func (h *IssuanceHandler) DeleteIssuance(w http.ResponseWriter, r *http.Request)
 	}
 
 	utils.SendJSON(w, r, http.StatusOK, "Issuance deleted successfully", nil)
+}
+
+// CancelIssuance handles the POST /issuances/{id}/cancel route.
+// @Summary      Cancelar emissão
+// @Description  Cancela uma emissão (active=false, cancelled_at=now), registra os valores de reembolso, reseta o pagamento da venda associada (se paga) e grava um audit log. Tudo numa única transação.
+// @Tags         Emissões
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id      path  string                        true  "UUID da emissão"
+// @Param        payload body  schemas.CancelIssuanceRequest false "Valores de reembolso (todos opcionais)"
+// @Success      200  {object}  schemas.IssuanceSingleResponse
+// @Failure      400  {object}  schemas.ErrorResponse "Payload inválido"
+// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      404  {object}  schemas.ErrorResponse "Emissão não encontrada"
+// @Failure      422  {object}  schemas.ErrorResponse "Emissão já está cancelada"
+// @Failure      500  {object}  schemas.ErrorResponse "Erro ao cancelar emissão"
+// @Router       /issuances/{id}/cancel [post]
+func (h *IssuanceHandler) CancelIssuance(w http.ResponseWriter, r *http.Request) {
+	userCtx, ok := r.Context().Value(middleware.UserContextKey).(data.User)
+	if !ok {
+		utils.SendError(w, r, http.StatusUnauthorized, "Unauthorized or invalid context")
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+
+	// GORM's soft-delete scope excludes deleted_at IS NOT NULL rows, so a deleted
+	// issuance is indistinguishable from a missing one here - both are 404.
+	var issuance data.Issuance
+	if err := h.DB.First(&issuance, "id = ?", id).Error; err != nil {
+		utils.SendError(w, r, http.StatusNotFound, "Issuance not found")
+		return
+	}
+
+	var req schemas.CancelIssuanceRequest
+	// An empty body is valid (cancel without refund), so treat EOF as no payload.
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		utils.SendError(w, r, http.StatusBadRequest, "Invalid JSON payload")
+		return
+	}
+
+	if err := h.Validator.Struct(req); err != nil {
+		utils.SendError(w, r, http.StatusBadRequest, "Validation failed: "+err.Error())
+		return
+	}
+
+	if !issuance.Active {
+		utils.SendError(w, r, http.StatusUnprocessableEntity, "issuance already cancelled")
+		return
+	}
+
+	now := time.Now()
+	issuance.Active = false
+	issuance.CancelledAt = &now
+	// Denormalize the canceller onto the row so the list filter can surface it in the
+	// canceller's flow (audit_logs also records it, but isn't joined by the list query).
+	cancelledBy := userCtx.ID
+	issuance.CancelledByID = &cancelledBy
+	issuance.RefundedPoints = req.RefundedPoints
+	issuance.RefundedTaxes = req.RefundedTaxes
+	issuance.CancellationFee = req.CancellationFee
+
+	err := h.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Save(&issuance).Error; err != nil {
+			return err
+		}
+
+		// Only touch a paid sale: scoping on paid=true keeps this a no-op when there is
+		// no sale linked or it was already unpaid. RowsAffected records whether we actually
+		// flipped it, so UncancelIssuance can restore the exact prior state on a revert.
+		res := tx.Model(&data.Sale{}).
+			Where("issuance_id = ? AND paid = ?", issuance.ID, true).
+			Update("paid", false)
+		if res.Error != nil {
+			return res.Error
+		}
+
+		details, err := json.Marshal(map[string]any{
+			"refunded_points":  req.RefundedPoints,
+			"refunded_taxes":   req.RefundedTaxes,
+			"cancellation_fee": req.CancellationFee,
+			"cancelled_at":     now,
+			"sale_paid_reset":  res.RowsAffected > 0,
+		})
+		if err != nil {
+			return err
+		}
+
+		return tx.Create(&data.AuditLog{
+			IssuanceID:  issuance.ID,
+			ChangedByID: userCtx.ID,
+			Action:      auditActionCancelled,
+			Details:     datatypes.JSON(details),
+		}).Error
+	})
+
+	if err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to cancel issuance: "+err.Error())
+		return
+	}
+
+	if err := preloadIssuanceAssociations(h.DB).
+		Preload("Flights", func(db *gorm.DB) *gorm.DB {
+			return db.Where("direction = ?", "outbound").Order("leg_order asc")
+		}).
+		First(&issuance, "id = ?", issuance.ID).Error; err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch cancelled issuance")
+		return
+	}
+
+	utils.SendJSON(w, r, http.StatusOK, "Issuance cancelled successfully", toIssuanceResponse(issuance))
+}
+
+// UncancelIssuance handles the POST /issuances/{id}/uncancel route.
+// @Summary      Reverter cancelamento de emissão
+// @Description  Reverte o cancelamento de uma emissão (active=true, limpa cancelled_at/cancelled_by e os valores de reembolso). O status volta a ser derivado de complete. Se o cancelamento havia resetado o pagamento da venda associada, restaura paid=true, voltando ao estado original. Grava um audit log. Tudo numa única transação.
+// @Tags         Emissões
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id   path  string  true  "UUID da emissão"
+// @Success      200  {object}  schemas.IssuanceSingleResponse
+// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      404  {object}  schemas.ErrorResponse "Emissão não encontrada"
+// @Failure      422  {object}  schemas.ErrorResponse "Emissão não está cancelada"
+// @Failure      500  {object}  schemas.ErrorResponse "Erro ao reverter cancelamento"
+// @Router       /issuances/{id}/uncancel [post]
+func (h *IssuanceHandler) UncancelIssuance(w http.ResponseWriter, r *http.Request) {
+	userCtx, ok := r.Context().Value(middleware.UserContextKey).(data.User)
+	if !ok {
+		utils.SendError(w, r, http.StatusUnauthorized, "Unauthorized or invalid context")
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+
+	// GORM's soft-delete scope excludes deleted_at IS NOT NULL rows, so a deleted
+	// issuance is indistinguishable from a missing one here - both are 404.
+	var issuance data.Issuance
+	if err := h.DB.First(&issuance, "id = ?", id).Error; err != nil {
+		utils.SendError(w, r, http.StatusNotFound, "Issuance not found")
+		return
+	}
+
+	if issuance.Active {
+		utils.SendError(w, r, http.StatusUnprocessableEntity, "issuance is not cancelled")
+		return
+	}
+
+	// The linked sale's paid flag is only restored if the cancellation itself reset it -
+	// blindly setting paid=true could wrongly mark a sale that was never paid. The cancel
+	// audit log records that decision under sale_paid_reset; read the latest one.
+	salePaidReset := false
+	var lastCancel data.AuditLog
+	if err := h.DB.
+		Where("issuance_id = ? AND action = ?", id, auditActionCancelled).
+		Order("created_at desc").
+		First(&lastCancel).Error; err == nil {
+		var details struct {
+			SalePaidReset bool `json:"sale_paid_reset"`
+		}
+		_ = json.Unmarshal(lastCancel.Details, &details)
+		salePaidReset = details.SalePaidReset
+	}
+
+	now := time.Now()
+	// Clearing cancelled_at makes deriveIssuanceStatus fall back to complete/incomplete;
+	// cancel never touched Complete, so the pre-cancel status is recovered for free.
+	issuance.Active = true
+	issuance.CancelledAt = nil
+	issuance.CancelledByID = nil
+	issuance.RefundedPoints = nil
+	issuance.RefundedTaxes = nil
+	issuance.CancellationFee = nil
+
+	details, err := json.Marshal(map[string]any{
+		"restored_sale_paid": salePaidReset,
+		"restored_at":        now,
+	})
+	if err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to build audit details: "+err.Error())
+		return
+	}
+
+	err = h.DB.Transaction(func(tx *gorm.DB) error {
+		// Save (not Updates) so the nil pointers above persist as NULL - Updates would skip
+		// them as zero values, leaving the stale cancellation data behind.
+		if err := tx.Save(&issuance).Error; err != nil {
+			return err
+		}
+
+		if salePaidReset {
+			if err := tx.Model(&data.Sale{}).
+				Where("issuance_id = ?", issuance.ID).
+				Update("paid", true).Error; err != nil {
+				return err
+			}
+		}
+
+		return tx.Create(&data.AuditLog{
+			IssuanceID:  issuance.ID,
+			ChangedByID: userCtx.ID,
+			Action:      auditActionRestored,
+			Details:     datatypes.JSON(details),
+		}).Error
+	})
+
+	if err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to revert issuance cancellation: "+err.Error())
+		return
+	}
+
+	if err := preloadIssuanceAssociations(h.DB).
+		Preload("Flights", func(db *gorm.DB) *gorm.DB {
+			return db.Where("direction = ?", "outbound").Order("leg_order asc")
+		}).
+		First(&issuance, "id = ?", issuance.ID).Error; err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch restored issuance")
+		return
+	}
+
+	utils.SendJSON(w, r, http.StatusOK, "Issuance cancellation reverted successfully", toIssuanceResponse(issuance))
 }

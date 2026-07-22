@@ -28,13 +28,21 @@ import {
   ACCOUNT_COLUMN_INDEX,
   CALCULATED_COLUMN_INDEX,
   COLUMN_COUNT,
+  LOCATOR_COLUMN_INDEX,
   clampMove,
   resolveNextCell,
   Direction,
 } from "@/lib/grid-navigation"
 import { Issuance, updateIssuanceSchema } from "@/schemas/issuance"
 import { Account } from "@/schemas/account"
-import { createIssuanceAction, updateIssuanceAction, deleteIssuanceAction } from "@/actions/issuance"
+import {
+  createIssuanceAction,
+  updateIssuanceAction,
+  deleteIssuanceAction,
+  cancelIssuanceAction,
+  uncancelIssuanceAction,
+} from "@/actions/issuance"
+import { CancelIssuanceInput } from "@/schemas/issuance"
 import { createAccountForIssuanceAction } from "@/actions/account"
 import { z } from "zod"
 
@@ -127,6 +135,12 @@ export function IssuancesGrid({
   // receives paste events, and navigator.clipboard.readText() prompts for a
   // clipboard-read permission on first use.
   const pasteCatcherRef = useRef<HTMLTextAreaElement>(null)
+  // The agency a new draft row defaults to - the one flagged is_default. The backend applies
+  // the same fallback when agency_id is omitted, so this just surfaces it in the draft.
+  const defaultAgencyId = useMemo(
+    () => referenceData.agencies.find((a) => a.is_default)?.id ?? null,
+    [referenceData.agencies],
+  )
   // Rows whose POST is currently in flight. `row.isDraft` alone can't gate the create:
   // it comes from the current render, so a cell edited before the POST resolves would
   // still see isDraft === true and fire a second create for the same row.
@@ -211,7 +225,7 @@ export function IssuancesGrid({
     (key: string) => {
       setRows((prev) => {
         const next = prev.filter((row) => row.key !== key)
-        return next.length > 0 ? next : [makeDraftRow(currentUserId)]
+        return next.length > 0 ? next : [makeDraftRow(currentUserId, defaultAgencyId)]
       })
       setAccountClearedKeys((prev) => {
         if (!prev.has(key)) return prev
@@ -220,7 +234,7 @@ export function IssuancesGrid({
         return next
       })
     },
-    [currentUserId],
+    [currentUserId, defaultAgencyId],
   )
 
   const flashSaveStatus = useCallback(
@@ -334,7 +348,9 @@ export function IssuancesGrid({
   const onCellClick = useCallback((r: number, c: number) => {
     activeCellSaveRef.current?.()
     activeCellSaveRef.current = null
-    const editable = c !== CALCULATED_COLUMN_INDEX
+    // A cancelled issuance is terminal: its cells select (so they can be read/copied) but
+    // never enter edit mode. The calculated column is likewise never editable.
+    const editable = c !== CALCULATED_COLUMN_INDEX && rowsRef.current[r]?.status !== "cancelled"
     dispatch({ type: "CLICK_CELL", r, c, editable })
   }, [])
 
@@ -422,11 +438,11 @@ export function IssuancesGrid({
       const { sel, sticky } = interactionRef.current
       const resolved = resolveNextCell(currentRows, sel, direction)
       if (resolved.appendRow) {
-        setRows((prev) => [...prev, makeDraftRow(currentUserId)])
+        setRows((prev) => [...prev, makeDraftRow(currentUserId, defaultAgencyId)])
       }
       dispatch({ type: "MOVE", r: resolved.r, c: resolved.c, alsoEdit: sticky })
     },
-    [applyPatch, currentUserId],
+    [applyPatch, currentUserId, defaultAgencyId],
   )
 
   const createAccountForRow = useCallback(
@@ -494,6 +510,60 @@ export function IssuancesGrid({
     [removeRow],
   )
 
+  const onCancelRow = useCallback(
+    async (r: number, data: CancelIssuanceInput) => {
+      const row = rowsRef.current[r]
+      // A draft has no persisted id to cancel - the dialog only opens on real rows.
+      if (!row || row.isDraft || !row.id) {
+        return { error: "Emissão ainda não foi salva." }
+      }
+
+      const result = await cancelIssuanceAction(row.id, data)
+      if ("error" in result) {
+        return { error: result.error ?? "Erro ao cancelar emissão." }
+      }
+      // Local update mirrors persist(): flip the row to cancelled (turns it archived-grey,
+      // swaps the cancel button for revert) and fold in the cancellation metadata from the
+      // response so the status pill's hover card has it immediately, without a refetch.
+      updateRow(row.key, {
+        status: "cancelled",
+        cancelled_at: result.issuance?.cancelled_at ?? null,
+        cancelled_by_id: result.issuance?.cancelled_by_id ?? null,
+        refunded_points: result.issuance?.refunded_points ?? null,
+        refunded_taxes: result.issuance?.refunded_taxes ?? null,
+        cancellation_fee: result.issuance?.cancellation_fee ?? null,
+      })
+      return { success: true as const }
+    },
+    [updateRow],
+  )
+
+  const onUncancelRow = useCallback(
+    async (r: number) => {
+      const row = rowsRef.current[r]
+      if (!row || row.isDraft || !row.id) {
+        return { error: "Emissão ainda não foi salva." }
+      }
+
+      const result = await uncancelIssuanceAction(row.id)
+      if ("error" in result) {
+        return { error: result.error ?? "Erro ao reverter cancelamento." }
+      }
+      // Back to its derived status (complete/incomplete), editable again, with the
+      // cancellation metadata cleared so the archived styling and hover card fall away.
+      updateRow(row.key, {
+        status: result.issuance?.status ?? "incomplete",
+        cancelled_at: null,
+        cancelled_by_id: null,
+        refunded_points: null,
+        refunded_taxes: null,
+        cancellation_fee: null,
+      })
+      return { success: true as const }
+    },
+    [updateRow],
+  )
+
   // Keyboard entry point for deleting the active row. An untouched empty draft has nothing
   // to lose, so it is dropped without a prompt; anything else opens the confirm dialog.
   function requestRowDelete(r: number) {
@@ -514,7 +584,7 @@ export function IssuancesGrid({
     }
 
     const newIndex = rows.length
-    setRows((prev) => [...prev, makeDraftRow(currentUserId)])
+    setRows((prev) => [...prev, makeDraftRow(currentUserId, defaultAgencyId)])
     dispatch({ type: "CLICK_CELL", r: newIndex, c: 0, editable: true })
   }
 
@@ -589,7 +659,7 @@ export function IssuancesGrid({
       e.preventDefault()
       const direction: Direction = e.shiftKey ? "tab-left" : "tab-right"
       const resolved = resolveNextCell(rows, interaction.sel, direction)
-      if (resolved.appendRow) setRows((prev) => [...prev, makeDraftRow(currentUserId)])
+      if (resolved.appendRow) setRows((prev) => [...prev, makeDraftRow(currentUserId, defaultAgencyId)])
       dispatch({ type: "MOVE", r: resolved.r, c: resolved.c, alsoEdit: interaction.sticky })
       return
     }
@@ -613,13 +683,20 @@ export function IssuancesGrid({
     const isCalculated = interaction.sel.c === CALCULATED_COLUMN_INDEX
     if (isCalculated) return
 
+    // A cancelled row is read-only: block every path that starts an edit or mutates a cell
+    // (F2, Delete, replace-on-type below). Navigation and Ctrl+C stay allowed - hence these
+    // guards are per-branch rather than a single early return.
+    const rowIsCancelled = rows[interaction.sel.r]?.status === "cancelled"
+
     if (e.key === "F2") {
+      if (rowIsCancelled) return
       e.preventDefault()
       dispatch({ type: "ENTER_EDIT" })
       return
     }
 
     if (e.key === "Delete") {
+      if (rowIsCancelled) return
       const patch = clearPatchForColumn(interaction.sel.c)
       const row = rows[interaction.sel.r]
       if (patch && row) {
@@ -640,6 +717,7 @@ export function IssuancesGrid({
     // synchronously without a permission prompt.
 
     if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      if (rowIsCancelled) return
       dispatch({ type: "TYPE_REPLACE", char: e.key })
     }
   }
@@ -671,6 +749,8 @@ export function IssuancesGrid({
     // focus and handles its native paste directly.
     if (interaction.editing) return
     if (interaction.sel.c === CALCULATED_COLUMN_INDEX) return
+    // A cancelled row is read-only - a paste must not seed an edit into it.
+    if (rows[interaction.sel.r]?.status === "cancelled") return
     e.preventDefault()
     const text = e.clipboardData.getData("text/plain")
     if (text) dispatch({ type: "TYPE_REPLACE", char: text })
@@ -698,6 +778,8 @@ export function IssuancesGrid({
       registerActiveCellSave,
       requestSaveActiveCell,
       onDeleteRow,
+      onCancelRow,
+      onUncancelRow,
       createAccountForRow,
       pendingAccountLabels,
     }),
@@ -715,6 +797,8 @@ export function IssuancesGrid({
       registerActiveCellSave,
       requestSaveActiveCell,
       onDeleteRow,
+      onCancelRow,
+      onUncancelRow,
       createAccountForRow,
       pendingAccountLabels,
     ],
@@ -810,9 +894,9 @@ export function IssuancesGrid({
                 key={row.key}
                 className={cn(
                   "group/row",
-                  row.status === "cancelled" && "bg-red-50 hover:bg-red-50",
-                  // The red stripe (on the number cell below) is what sets a failed save
-                  // apart from a cancelled row, which shares this light-red background.
+                  // Cancelled reads as archived/terminal (muted grey), keeping red exclusively
+                  // for a failed save so the two states are never confused.
+                  row.status === "cancelled" && "bg-muted/40 text-muted-foreground hover:bg-muted/40",
                   row.hasError && "bg-red-50 hover:bg-red-50",
                 )}
               >
@@ -845,6 +929,9 @@ export function IssuancesGrid({
                         // scroll-mt clears the sticky header when scrollIntoView lands here.
                         "scroll-mt-9 whitespace-normal border-l p-0 first:border-l-0",
                         accountNeedsPicking && "bg-red-100",
+                        // Strike through the locator of a cancelled row - a "voided" cue on the
+                        // cell that identifies the issuance.
+                        row.status === "cancelled" && c === LOCATOR_COLUMN_INDEX && "line-through",
                         isSelected && "ring-2 ring-inset ring-primary",
                       )}
                       title={
@@ -870,7 +957,7 @@ export function IssuancesGrid({
                   )
                 })}
                 <TableCell className="p-1">
-                  <RowActions r={r} />
+                  <RowActions r={r} row={row} />
                 </TableCell>
               </TableRow>
             ))}

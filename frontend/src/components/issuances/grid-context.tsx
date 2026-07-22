@@ -2,6 +2,7 @@
 
 import { createContext, useContext } from "react"
 import { IssuanceRow } from "@/components/issuances/types"
+import { CancelIssuanceInput } from "@/schemas/issuance"
 import { LoyaltyProgram } from "@/schemas/loyalty-program"
 import { Airline } from "@/schemas/airline"
 import { Account } from "@/schemas/account"
@@ -46,6 +47,17 @@ export interface GridContextValue extends GridReferenceData {
   registerActiveCellSave: (save: (() => void) | null) => void
   requestSaveActiveCell: () => void
   onDeleteRow: (r: number) => void
+  // Cancels the issuance at row r (POST /issuances/{id}/cancel) with optional refund
+  // amounts, then flips the row to "cancelled" in local state. Returns the action result
+  // so the cancel dialog can toast + stay open on error, close on success.
+  onCancelRow: (
+    r: number,
+    data: CancelIssuanceInput,
+  ) => Promise<{ success: true } | { error: string }>
+  // Reverts the cancellation at row r (POST /issuances/{id}/uncancel), flipping it back to
+  // its derived status (complete/incomplete) and clearing the cancellation metadata locally.
+  onUncancelRow: (r: number) => Promise<{ success: true } | { error: string }>
+
   // Creates a Person, an Account on the row's loyalty program and a nickname, all from
   // a name typed into the account cell that matched nothing, then points the row at the
   // new account. Rows are addressed by key, not index: the creation is async and a row
