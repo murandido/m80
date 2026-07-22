@@ -1,12 +1,15 @@
 "use client"
 
-import { useGridContext } from "@/components/issuances/grid-context"
+import { memo } from "react"
+import { CellStateProps, useGridContext } from "@/components/issuances/grid-context"
 import { formatCurrencyBRL } from "@/lib/currency"
 import { CALCULATED_COLUMN_INDEX } from "@/lib/grid-navigation"
 
-export function CalculatedCell({ r }: { r: number }) {
-  const { rows, onCellClick } = useGridContext()
-  const row = rows[r]
+export const CalculatedCell = memo(function CalculatedCell({
+  r,
+  row,
+}: { r: number } & Pick<CellStateProps, "row">) {
+  const { onCellClick } = useGridContext()
 
   const total =
     row.points !== null && row.value_of_the_thousand !== null
@@ -22,4 +25,4 @@ export function CalculatedCell({ r }: { r: number }) {
       {total !== null ? formatCurrencyBRL(total) : "—"}
     </button>
   )
-}
+})

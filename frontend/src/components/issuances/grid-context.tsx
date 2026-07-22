@@ -21,12 +21,19 @@ export interface GridReferenceData {
   airports: Airport[]
 }
 
-export interface GridContextValue extends GridReferenceData {
-  rows: IssuanceRow[]
-  sel: { r: number; c: number }
-  editing: boolean
-  sticky: boolean
+// Volatile per-cell state passed down as props (not through the context) so that moving
+// the selection or editing one cell doesn't invalidate the context for every other cell.
+// The context below holds only referentially-stable data (reference lists + memoized
+// callbacks + pendingAccountLabels), which is what lets React.memo skip untouched cells.
+export interface CellStateProps {
+  row: IssuanceRow
+  isEditing: boolean
+  // Carries the replace-on-type / paste seed, and only for the cell that is editing;
+  // every other cell receives null, so this prop stays stable for them.
   pendingChar: string | null
+}
+
+export interface GridContextValue extends GridReferenceData {
   onCellClick: (r: number, c: number) => void
   // patch: the changed fields for row r, in backend field-name shape (e.g.
   // {program_locator}, {loyalty_program_id, airline_id}, {status}, {flight_date}).

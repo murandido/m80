@@ -1,9 +1,9 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { memo, useEffect, useRef, useState } from "react"
 import { Loader2, Plus } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { useGridContext } from "@/components/issuances/grid-context"
+import { CellStateProps, useGridContext } from "@/components/issuances/grid-context"
 import { IssuanceRow } from "@/components/issuances/types"
 import { Direction } from "@/lib/grid-navigation"
 import { DropdownPortal } from "@/components/issuances/cells/dropdown-portal"
@@ -19,7 +19,7 @@ export interface ComboOption {
   patch: Partial<IssuanceRow>
 }
 
-interface ComboboxCellProps {
+interface ComboboxCellProps extends Pick<CellStateProps, "isEditing" | "pendingChar"> {
   r: number
   c: number
   options: ComboOption[]
@@ -55,17 +55,18 @@ function filterOptions(options: ComboOption[], typed: string): ComboOption[] {
     })
 }
 
-export function ComboboxCell({
+export const ComboboxCell = memo(function ComboboxCell({
   r,
   c,
   options,
   selectedKey,
   create,
   pendingLabel,
+  isEditing,
+  pendingChar,
 }: ComboboxCellProps) {
-  const { sel, editing, pendingChar, onCellClick, onSaveAndMove, onExitEdit, registerActiveCellSave } =
-    useGridContext()
-  const isThisCellEditing = editing && sel.r === r && sel.c === c
+  const { onCellClick, onSaveAndMove, onExitEdit, registerActiveCellSave } = useGridContext()
+  const isThisCellEditing = isEditing
 
   const currentOption = options.find((o) => o.key === selectedKey)
   const displayValue = currentOption?.label ?? ""
@@ -321,4 +322,4 @@ export function ComboboxCell({
       )}
     </div>
   )
-}
+})

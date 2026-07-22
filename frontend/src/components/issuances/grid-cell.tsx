@@ -1,6 +1,7 @@
 "use client"
 
-import { useGridContext } from "@/components/issuances/grid-context"
+import { memo } from "react"
+import { CellStateProps, useGridContext } from "@/components/issuances/grid-context"
 import { Account } from "@/schemas/account"
 import { Person } from "@/schemas/person"
 import { TextCell } from "@/components/issuances/cells/text-cell"
@@ -50,37 +51,105 @@ function buildAccountOptions(
   )
 }
 
-export function GridCell({ r, c }: { r: number; c: number }) {
-  const { rows, accounts, users, agencies, people, createAccountForRow, pendingAccountLabels } =
+// Volatile per-cell state (row/isEditing/pendingChar) arrives as props from the grid's
+// render loop rather than through the context, so moving the selection re-renders only the
+// cells whose props actually change. Memoized: with a stable context, an unchanged row and
+// isEditing/pendingChar let React skip this cell (and its leaf) on a selection move.
+export const GridCell = memo(function GridCell({
+  r,
+  c,
+  row,
+  isEditing,
+  pendingChar,
+}: { r: number; c: number } & CellStateProps) {
+  const { accounts, users, agencies, people, createAccountForRow, pendingAccountLabels } =
     useGridContext()
-  const row = rows[r]
 
   switch (c) {
     case 0:
-      return <CiaAereaCell r={r} c={c} />
+      return <CiaAereaCell r={r} c={c} row={row} isEditing={isEditing} pendingChar={pendingChar} />
     case 1:
-      return <LocatorCell r={r} c={c} />
+      return <LocatorCell r={r} c={c} row={row} isEditing={isEditing} pendingChar={pendingChar} />
     case 2:
-      return <DateMaskCell r={r} c={c} />
+      return <DateMaskCell r={r} c={c} row={row} isEditing={isEditing} pendingChar={pendingChar} />
     case 3:
-      return <TextCell r={r} c={c} field="main_passenger_name" />
+      return (
+        <TextCell
+          r={r}
+          c={c}
+          row={row}
+          isEditing={isEditing}
+          pendingChar={pendingChar}
+          field="main_passenger_name"
+        />
+      )
     case 4:
-      return <AirportAutocompleteCell r={r} c={c} field="origin_iata_code" />
+      return (
+        <AirportAutocompleteCell
+          r={r}
+          c={c}
+          row={row}
+          isEditing={isEditing}
+          pendingChar={pendingChar}
+          field="origin_iata_code"
+        />
+      )
     case 5:
-      return <AirportAutocompleteCell r={r} c={c} field="destination_iata_code" />
+      return (
+        <AirportAutocompleteCell
+          r={r}
+          c={c}
+          row={row}
+          isEditing={isEditing}
+          pendingChar={pendingChar}
+          field="destination_iata_code"
+        />
+      )
     case 6:
-      return <NumberCell r={r} c={c} field="points" mode="integer" />
+      return (
+        <NumberCell
+          r={r}
+          c={c}
+          row={row}
+          isEditing={isEditing}
+          pendingChar={pendingChar}
+          field="points"
+          mode="integer"
+        />
+      )
     case 7:
-      return <NumberCell r={r} c={c} field="value_of_the_thousand" mode="currency" />
+      return (
+        <NumberCell
+          r={r}
+          c={c}
+          row={row}
+          isEditing={isEditing}
+          pendingChar={pendingChar}
+          field="value_of_the_thousand"
+          mode="currency"
+        />
+      )
     case 8:
-      return <NumberCell r={r} c={c} field="taxes" mode="currency" />
+      return (
+        <NumberCell
+          r={r}
+          c={c}
+          row={row}
+          isEditing={isEditing}
+          pendingChar={pendingChar}
+          field="taxes"
+          mode="currency"
+        />
+      )
     case 9:
-      return <CalculatedCell r={r} />
+      return <CalculatedCell r={r} row={row} />
     case 10:
       return (
         <ComboboxCell
           r={r}
           c={c}
+          isEditing={isEditing}
+          pendingChar={pendingChar}
           options={buildAccountOptions(accounts, people, row.loyalty_program_id)}
           // Accounts without an alias are keyed by their own id, so this covers both cases.
           selectedKey={row.account_nickname_id ?? row.account_id}
@@ -102,6 +171,8 @@ export function GridCell({ r, c }: { r: number; c: number }) {
         <ComboboxCell
           r={r}
           c={c}
+          isEditing={isEditing}
+          pendingChar={pendingChar}
           options={users.map((u) => ({ key: u.id, label: u.name, patch: { issuer_id: u.id } }))}
           selectedKey={row.issuer_id}
         />
@@ -111,13 +182,15 @@ export function GridCell({ r, c }: { r: number; c: number }) {
         <ComboboxCell
           r={r}
           c={c}
+          isEditing={isEditing}
+          pendingChar={pendingChar}
           options={agencies.map((a) => ({ key: a.id, label: a.name, patch: { agency_id: a.id } }))}
           selectedKey={row.agency_id}
         />
       )
     case 13:
-      return <StatusCell r={r} c={c} />
+      return <StatusCell r={r} c={c} row={row} isEditing={isEditing} />
     default:
       return null
   }
-}
+})

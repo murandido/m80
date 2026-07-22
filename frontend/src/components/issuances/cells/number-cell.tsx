@@ -1,13 +1,13 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
-import { useGridContext } from "@/components/issuances/grid-context"
+import { memo, useEffect, useRef, useState } from "react"
+import { CellStateProps, useGridContext } from "@/components/issuances/grid-context"
 import { IssuanceRow } from "@/components/issuances/types"
 import { Direction } from "@/lib/grid-navigation"
 import { formatCurrencyBRL, parseCurrencyBRLInput } from "@/lib/currency"
 import { applyThousandsMask, applyPaddedThousandsMask } from "@/lib/number-mask"
 
-interface NumberCellProps {
+interface NumberCellProps extends CellStateProps {
   r: number
   c: number
   field: "points" | "value_of_the_thousand" | "taxes"
@@ -25,11 +25,9 @@ function formatEditBuffer(value: number | null, mode: "integer" | "currency"): s
   return (value / 100).toFixed(2).replace(".", ",")
 }
 
-export function NumberCell({ r, c, field, mode }: NumberCellProps) {
-  const { rows, sel, editing, pendingChar, onCellClick, onSaveAndMove, onExitEdit, registerActiveCellSave } =
-    useGridContext()
-  const row = rows[r]
-  const isThisCellEditing = editing && sel.r === r && sel.c === c
+export const NumberCell = memo(function NumberCell({ r, c, field, mode, row, isEditing, pendingChar }: NumberCellProps) {
+  const { onCellClick, onSaveAndMove, onExitEdit, registerActiveCellSave } = useGridContext()
+  const isThisCellEditing = isEditing
   const rawValue = row[field]
 
   const [text, setText] = useState(() => formatEditBuffer(rawValue, mode))
@@ -119,7 +117,7 @@ export function NumberCell({ r, c, field, mode }: NumberCellProps) {
       className="w-full bg-transparent px-2 py-1.5 text-right outline-none ring-2 ring-primary"
     />
   )
-}
+})
 
 function parseIntOrNull(text: string): number | null {
   const trimmed = text.trim()

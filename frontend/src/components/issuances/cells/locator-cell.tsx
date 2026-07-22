@@ -1,17 +1,21 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
-import { useGridContext } from "@/components/issuances/grid-context"
+import { memo, useEffect, useRef, useState } from "react"
+import { CellStateProps, useGridContext } from "@/components/issuances/grid-context"
 import { Direction } from "@/lib/grid-navigation"
 
 // Composite "Localizador" cell: same "/" convention as the Cia aérea field -
 // text before the slash is program_locator, text after it (optional) is
 // airline_locator (the PNR held directly with the operating airline).
-export function LocatorCell({ r, c }: { r: number; c: number }) {
-  const { rows, sel, editing, pendingChar, onCellClick, onSaveAndMove, onExitEdit, registerActiveCellSave } =
-    useGridContext()
-  const row = rows[r]
-  const isThisCellEditing = editing && sel.r === r && sel.c === c
+export const LocatorCell = memo(function LocatorCell({
+  r,
+  c,
+  row,
+  isEditing,
+  pendingChar,
+}: { r: number; c: number } & CellStateProps) {
+  const { onCellClick, onSaveAndMove, onExitEdit, registerActiveCellSave } = useGridContext()
+  const isThisCellEditing = isEditing
   // The "/" is only meaningful as typing syntax - kept in the edit buffer,
   // hidden from the read-only display (parentheses there instead).
   const editBufferValue = row.program_locator + (row.airline_locator ? `/${row.airline_locator}` : "")
@@ -101,4 +105,4 @@ export function LocatorCell({ r, c }: { r: number; c: number }) {
       className="w-full bg-transparent px-2 py-1.5 outline-none ring-2 ring-primary"
     />
   )
-}
+})

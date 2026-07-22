@@ -1,22 +1,20 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { memo, useEffect, useRef, useState } from "react"
 import { cn } from "@/lib/utils"
-import { useGridContext } from "@/components/issuances/grid-context"
+import { CellStateProps, useGridContext } from "@/components/issuances/grid-context"
 import { IssuanceRow } from "@/components/issuances/types"
 import { Direction } from "@/lib/grid-navigation"
 
-interface TextCellProps {
+interface TextCellProps extends CellStateProps {
   r: number
   c: number
   field: "main_passenger_name"
 }
 
-export function TextCell({ r, c, field }: TextCellProps) {
-  const { rows, sel, editing, pendingChar, onCellClick, onSaveAndMove, onExitEdit, registerActiveCellSave } =
-    useGridContext()
-  const row = rows[r]
-  const isThisCellEditing = editing && sel.r === r && sel.c === c
+export const TextCell = memo(function TextCell({ r, c, field, row, isEditing, pendingChar }: TextCellProps) {
+  const { onCellClick, onSaveAndMove, onExitEdit, registerActiveCellSave } = useGridContext()
+  const isThisCellEditing = isEditing
   const initialValue = row[field] ?? ""
 
   const [value, setValue] = useState(initialValue)
@@ -91,4 +89,4 @@ export function TextCell({ r, c, field }: TextCellProps) {
       )}
     />
   )
-}
+})

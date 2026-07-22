@@ -1,8 +1,8 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { memo, useEffect, useRef, useState } from "react"
 import { cn } from "@/lib/utils"
-import { useGridContext } from "@/components/issuances/grid-context"
+import { CellStateProps, useGridContext } from "@/components/issuances/grid-context"
 import { IssuanceStatus } from "@/schemas/issuance"
 import { Direction } from "@/lib/grid-navigation"
 
@@ -14,10 +14,14 @@ const STATUS_LABELS: Record<IssuanceStatus, string> = {
 
 const STATUS_OPTIONS: IssuanceStatus[] = ["incomplete", "complete", "cancelled"]
 
-export function StatusCell({ r, c }: { r: number; c: number }) {
-  const { rows, sel, editing, onCellClick, onSaveAndMove, onExitEdit, registerActiveCellSave } = useGridContext()
-  const row = rows[r]
-  const isThisCellEditing = editing && sel.r === r && sel.c === c
+export const StatusCell = memo(function StatusCell({
+  r,
+  c,
+  row,
+  isEditing,
+}: { r: number; c: number } & Pick<CellStateProps, "row" | "isEditing">) {
+  const { onCellClick, onSaveAndMove, onExitEdit, registerActiveCellSave } = useGridContext()
+  const isThisCellEditing = isEditing
 
   const [value, setValue] = useState<IssuanceStatus>(row.status)
   const selectRef = useRef<HTMLSelectElement>(null)
@@ -95,4 +99,4 @@ export function StatusCell({ r, c }: { r: number; c: number }) {
       ))}
     </select>
   )
-}
+})

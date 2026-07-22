@@ -1,8 +1,8 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { memo, useEffect, useRef, useState } from "react"
 import { cn } from "@/lib/utils"
-import { useGridContext } from "@/components/issuances/grid-context"
+import { CellStateProps, useGridContext } from "@/components/issuances/grid-context"
 import { IssuanceRow } from "@/components/issuances/types"
 import { Direction } from "@/lib/grid-navigation"
 import { LoyaltyProgramBadge } from "@/components/accounts/loyalty-program-badge"
@@ -28,12 +28,14 @@ function filterByName(options: Option[], typed: string): Option[] {
     })
 }
 
-export function CiaAereaCell({ r, c }: { r: number; c: number }) {
+export const CiaAereaCell = memo(function CiaAereaCell({
+  r,
+  c,
+  row,
+  isEditing,
+  pendingChar,
+}: { r: number; c: number } & CellStateProps) {
   const {
-    rows,
-    sel,
-    editing,
-    pendingChar,
     onCellClick,
     onSaveAndMove,
     onExitEdit,
@@ -41,8 +43,7 @@ export function CiaAereaCell({ r, c }: { r: number; c: number }) {
     loyaltyPrograms,
     airlines,
   } = useGridContext()
-  const row = rows[r]
-  const isThisCellEditing = editing && sel.r === r && sel.c === c
+  const isThisCellEditing = isEditing
 
   const currentProgram = loyaltyPrograms.find((lp) => lp.id === row.loyalty_program_id)
   const currentAirline = airlines.find((a) => a.id === row.airline_id)
@@ -290,4 +291,4 @@ export function CiaAereaCell({ r, c }: { r: number; c: number }) {
       )}
     </div>
   )
-}
+})

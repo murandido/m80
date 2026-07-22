@@ -1,14 +1,14 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { memo, useEffect, useRef, useState } from "react"
 import { cn } from "@/lib/utils"
-import { useGridContext } from "@/components/issuances/grid-context"
+import { CellStateProps, useGridContext } from "@/components/issuances/grid-context"
 import { IssuanceRow } from "@/components/issuances/types"
 import { Direction } from "@/lib/grid-navigation"
 import { Airport } from "@/schemas/airport"
 import { DropdownPortal } from "@/components/issuances/cells/dropdown-portal"
 
-interface AirportAutocompleteCellProps {
+interface AirportAutocompleteCellProps extends CellStateProps {
   r: number
   c: number
   field: "origin_iata_code" | "destination_iata_code"
@@ -45,20 +45,16 @@ function filterAirports(airports: Airport[], typed: string): Airport[] {
     .slice(0, MAX_RESULTS)
 }
 
-export function AirportAutocompleteCell({ r, c, field }: AirportAutocompleteCellProps) {
-  const {
-    rows,
-    sel,
-    editing,
-    pendingChar,
-    onCellClick,
-    onSaveAndMove,
-    onExitEdit,
-    registerActiveCellSave,
-    airports,
-  } = useGridContext()
-  const row = rows[r]
-  const isThisCellEditing = editing && sel.r === r && sel.c === c
+export const AirportAutocompleteCell = memo(function AirportAutocompleteCell({
+  r,
+  c,
+  field,
+  row,
+  isEditing,
+  pendingChar,
+}: AirportAutocompleteCellProps) {
+  const { onCellClick, onSaveAndMove, onExitEdit, registerActiveCellSave, airports } = useGridContext()
+  const isThisCellEditing = isEditing
   const displayValue = row[field] ?? ""
 
   const [text, setText] = useState(displayValue)
@@ -211,4 +207,4 @@ export function AirportAutocompleteCell({ r, c, field }: AirportAutocompleteCell
       )}
     </div>
   )
-}
+})

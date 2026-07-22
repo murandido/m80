@@ -1,15 +1,19 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
-import { useGridContext } from "@/components/issuances/grid-context"
+import { memo, useEffect, useRef, useState } from "react"
+import { CellStateProps, useGridContext } from "@/components/issuances/grid-context"
 import { Direction } from "@/lib/grid-navigation"
 import { applyDateMask, isCompleteDateMask, isoDateToMasked, maskedDateToISO } from "@/lib/date-mask"
 
-export function DateMaskCell({ r, c }: { r: number; c: number }) {
-  const { rows, sel, editing, pendingChar, onCellClick, onSaveAndMove, onExitEdit, registerActiveCellSave } =
-    useGridContext()
-  const row = rows[r]
-  const isThisCellEditing = editing && sel.r === r && sel.c === c
+export const DateMaskCell = memo(function DateMaskCell({
+  r,
+  c,
+  row,
+  isEditing,
+  pendingChar,
+}: { r: number; c: number } & CellStateProps) {
+  const { onCellClick, onSaveAndMove, onExitEdit, registerActiveCellSave } = useGridContext()
+  const isThisCellEditing = isEditing
   const displayValue = row.flight_date ? isoDateToMasked(row.flight_date) : ""
 
   const [text, setText] = useState(displayValue)
@@ -89,4 +93,4 @@ export function DateMaskCell({ r, c }: { r: number; c: number }) {
       className="w-full bg-transparent px-2 py-1.5 outline-none ring-2 ring-primary"
     />
   )
-}
+})

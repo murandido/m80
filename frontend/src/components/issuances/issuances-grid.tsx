@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useReducer, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react"
 import { Plus, Keyboard } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
@@ -17,7 +17,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
-import { GridProvider, GridReferenceData } from "@/components/issuances/grid-context"
+import { GridContextValue, GridProvider, GridReferenceData } from "@/components/issuances/grid-context"
 import { GridCell } from "@/components/issuances/grid-cell"
 import { RowActions } from "@/components/issuances/row-actions"
 import { AutosaveDot } from "@/components/issuances/autosave-dot"
@@ -138,6 +138,11 @@ export function IssuancesGrid({ initialIssuances, currentUserId, ...referenceDat
   // Lets the async account creation read the rows as they are when it resolves, not as
   // they were when it started.
   const rowsRef = useRef(rows)
+  // Mirrors the interaction state for the stable (useCallback) handlers exposed through the
+  // context: they read sel/sticky here instead of closing over the render's `interaction`,
+  // so their identity stays stable and the context value doesn't change on every selection
+  // move (which is what lets the memoized cells skip re-rendering).
+  const interactionRef = useRef(interaction)
   // Undo/redo history. Each entry is the inverse patch (the field values as they were
   // before a change) plus the row it targets. Every value mutation funnels through
   // applyPatch, which records the inverse here; Ctrl+Z/Ctrl+Y replay entries between the
@@ -161,6 +166,10 @@ export function IssuancesGrid({ initialIssuances, currentUserId, ...referenceDat
   }, [rows])
 
   useEffect(() => {
+    interactionRef.current = interaction
+  }, [interaction])
+
+  useEffect(() => {
     if (!interaction.editing) {
       // preventScroll: the catcher sits off-screen; focusing it must not yank
       // the viewport away from the cell the user is actually on.
@@ -179,261 +188,300 @@ export function IssuancesGrid({ initialIssuances, currentUserId, ...referenceDat
     cell?.scrollIntoView({ block: "nearest", inline: "nearest" })
   }, [interaction.sel.r, interaction.sel.c])
 
-  function updateRow(key: string, patch: Partial<IssuanceRow>) {
+  // Every handler below is wrapped in useCallback and reads volatile state via refs
+  // (rowsRef/interactionRef) or stable setters, so their identity never changes across
+  // renders. That keeps the memoized context value stable, which is the whole point of the
+  // split: the cells only re-render when their own props change, not on every keystroke.
+  const updateRow = useCallback((key: string, patch: Partial<IssuanceRow>) => {
     setRows((prev) => prev.map((row) => (row.key === key ? { ...row, ...patch } : row)))
-  }
+  }, [])
 
-  function removeRow(key: string) {
-    setRows((prev) => {
-      const next = prev.filter((row) => row.key !== key)
-      return next.length > 0 ? next : [makeDraftRow(currentUserId)]
-    })
-    setAccountClearedKeys((prev) => {
-      if (!prev.has(key)) return prev
-      const next = new Set(prev)
-      next.delete(key)
-      return next
-    })
-  }
+  const removeRow = useCallback(
+    (key: string) => {
+      setRows((prev) => {
+        const next = prev.filter((row) => row.key !== key)
+        return next.length > 0 ? next : [makeDraftRow(currentUserId)]
+      })
+      setAccountClearedKeys((prev) => {
+        if (!prev.has(key)) return prev
+        const next = new Set(prev)
+        next.delete(key)
+        return next
+      })
+    },
+    [currentUserId],
+  )
 
-  function flashSaveStatus(key: string, status: "success" | "error") {
-    // hasError outlives the flash: the dot resets to idle after 900ms, but a failed row
-    // stays flagged red until a later save succeeds and clears it here.
-    updateRow(key, { saveStatus: status, hasError: status === "error" })
-    setTimeout(() => updateRow(key, { saveStatus: "idle" }), 900)
-  }
+  const flashSaveStatus = useCallback(
+    (key: string, status: "success" | "error") => {
+      // hasError outlives the flash: the dot resets to idle after 900ms, but a failed row
+      // stays flagged red until a later save succeeds and clears it here.
+      updateRow(key, { saveStatus: status, hasError: status === "error" })
+      setTimeout(() => updateRow(key, { saveStatus: "idle" }), 900)
+    },
+    [updateRow],
+  )
 
   // The backend fills defaults the client can't know (airline from the loyalty program,
   // the default agency, issuer from the JWT) and derives `status`, so a created row is
   // re-hydrated from the response instead of being patched with just the new id. The
   // draft's key is kept - issuanceToRow would swap in the backend id, remounting the row
   // and dropping the user's cell selection mid-typing.
-  function reconcileCreatedRow(key: string, issuance: Issuance) {
+  const reconcileCreatedRow = useCallback((key: string, issuance: Issuance) => {
     setRows((prev) =>
       prev.map((row) =>
         row.key === key ? { ...issuanceToRow(issuance), key, saveStatus: row.saveStatus } : row,
       ),
     )
-  }
+  }, [])
 
-  async function persist(row: IssuanceRow, patch: Partial<IssuanceRow>) {
-    const merged = { ...row, ...patch }
+  // persistRef holds the latest persist so the recursive replay (queued patch after a
+  // create resolves) can call it without persist listing itself as a dependency.
+  const persistRef = useRef<(row: IssuanceRow, patch: Partial<IssuanceRow>) => Promise<void>>(null)
 
-    if (row.isDraft) {
-      if (creatingKeysRef.current.has(row.key)) {
-        queuedPatchesRef.current.set(row.key, { ...queuedPatchesRef.current.get(row.key), ...patch })
+  const persist = useCallback(
+    async (row: IssuanceRow, patch: Partial<IssuanceRow>) => {
+      const merged = { ...row, ...patch }
+
+      if (row.isDraft) {
+        if (creatingKeysRef.current.has(row.key)) {
+          queuedPatchesRef.current.set(row.key, { ...queuedPatchesRef.current.get(row.key), ...patch })
+          return
+        }
+
+        if (!draftIsReadyToCreate(merged)) return
+
+        creatingKeysRef.current.add(row.key)
+        updateRow(row.key, { saveStatus: "saving" })
+        const result = await createIssuanceAction({
+          program_locator: merged.program_locator,
+          loyalty_program_id: merged.loyalty_program_id!,
+          account_id: merged.account_id!,
+          account_nickname_id: merged.account_nickname_id ?? undefined,
+          points: merged.points!,
+          value_of_the_thousand: merged.value_of_the_thousand!,
+          airline_id: merged.airline_id ?? undefined,
+          agency_id: merged.agency_id ?? undefined,
+          issuer_id: merged.issuer_id ?? undefined,
+          // `||` and not `??`: the locator cell writes an empty string to mean "no airline
+          // locator", and a create has nothing to clear - the field is simply omitted.
+          airline_locator: merged.airline_locator || undefined,
+          main_passenger_name: merged.main_passenger_name ?? undefined,
+          origin_iata_code: merged.origin_iata_code ?? undefined,
+          destination_iata_code: merged.destination_iata_code ?? undefined,
+          taxes: merged.taxes ?? undefined,
+          flight_date: merged.flight_date ?? undefined,
+        }).finally(() => creatingKeysRef.current.delete(row.key))
+
+        const queued = queuedPatchesRef.current.get(row.key)
+        queuedPatchesRef.current.delete(row.key)
+
+        if ("error" in result) {
+          toast.error(result.error)
+          flashSaveStatus(row.key, "error")
+          // The row stays a draft holding those edits in local state, so the next cell
+          // save retries the create with them merged in - replaying them as a PATCH here
+          // would target an issuance that was never persisted.
+          return
+        }
+
+        reconcileCreatedRow(row.key, result.issuance)
+        flashSaveStatus(row.key, "success")
+
+        if (queued) {
+          await persistRef.current?.(
+            { ...merged, key: row.key, id: result.issuance.id, isDraft: false },
+            queued,
+          )
+        }
         return
       }
 
-      if (!draftIsReadyToCreate(merged)) return
-
-      creatingKeysRef.current.add(row.key)
       updateRow(row.key, { saveStatus: "saving" })
-      const result = await createIssuanceAction({
-        program_locator: merged.program_locator,
-        loyalty_program_id: merged.loyalty_program_id!,
-        account_id: merged.account_id!,
-        account_nickname_id: merged.account_nickname_id ?? undefined,
-        points: merged.points!,
-        value_of_the_thousand: merged.value_of_the_thousand!,
-        airline_id: merged.airline_id ?? undefined,
-        agency_id: merged.agency_id ?? undefined,
-        issuer_id: merged.issuer_id ?? undefined,
-        // `||` and not `??`: the locator cell writes an empty string to mean "no airline
-        // locator", and a create has nothing to clear - the field is simply omitted.
-        airline_locator: merged.airline_locator || undefined,
-        main_passenger_name: merged.main_passenger_name ?? undefined,
-        origin_iata_code: merged.origin_iata_code ?? undefined,
-        destination_iata_code: merged.destination_iata_code ?? undefined,
-        taxes: merged.taxes ?? undefined,
-        flight_date: merged.flight_date ?? undefined,
-      }).finally(() => creatingKeysRef.current.delete(row.key))
-
-      const queued = queuedPatchesRef.current.get(row.key)
-      queuedPatchesRef.current.delete(row.key)
+      const result = await updateIssuanceAction(
+        row.id!,
+        patch as z.infer<typeof updateIssuanceSchema.request>,
+      )
 
       if ("error" in result) {
         toast.error(result.error)
         flashSaveStatus(row.key, "error")
-        // The row stays a draft holding those edits in local state, so the next cell
-        // save retries the create with them merged in - replaying them as a PATCH here
-        // would target an issuance that was never persisted.
         return
       }
 
-      reconcileCreatedRow(row.key, result.issuance)
+      // Only `status` is taken from the response: it's the sole displayed field the server
+      // derives on its own, and a fuller merge risks a late reply clobbering a cell the
+      // user has edited since this save started.
+      if (result.issuance) updateRow(row.key, { status: result.issuance.status })
+
       flashSaveStatus(row.key, "success")
+    },
+    [updateRow, flashSaveStatus, reconcileCreatedRow],
+  )
+  persistRef.current = persist
 
-      if (queued) {
-        await persist({ ...merged, key: row.key, id: result.issuance.id, isDraft: false }, queued)
-      }
-      return
-    }
-
-    updateRow(row.key, { saveStatus: "saving" })
-    const result = await updateIssuanceAction(
-      row.id!,
-      patch as z.infer<typeof updateIssuanceSchema.request>,
-    )
-
-    if ("error" in result) {
-      toast.error(result.error)
-      flashSaveStatus(row.key, "error")
-      return
-    }
-
-    // Only `status` is taken from the response: it's the sole displayed field the server
-    // derives on its own, and a fuller merge risks a late reply clobbering a cell the
-    // user has edited since this save started.
-    if (result.issuance) updateRow(row.key, { status: result.issuance.status })
-
-    flashSaveStatus(row.key, "success")
-  }
-
-  function onCellClick(r: number, c: number) {
+  const onCellClick = useCallback((r: number, c: number) => {
     activeCellSaveRef.current?.()
     activeCellSaveRef.current = null
     const editable = c !== CALCULATED_COLUMN_INDEX
     dispatch({ type: "CLICK_CELL", r, c, editable })
-  }
+  }, [])
 
   // Applies a patch optimistically and persists it. Shared by the cell-save path and by
   // inline account creation, which lands its patch long after the cell has moved on -
   // both need the accountClearedKeys bookkeeping, or the account cell stays flagged red.
-  function applyPatch(row: IssuanceRow, patch: Partial<IssuanceRow>) {
-    if (Object.keys(patch).length === 0) return
+  const applyPatch = useCallback(
+    (row: IssuanceRow, patch: Partial<IssuanceRow>) => {
+      if (Object.keys(patch).length === 0) return
 
-    // Record the inverse (the fields as they were before this patch) so Ctrl+Z can
-    // replay it. `row` is the pre-patch state, so this is just its current values for
-    // the keys being changed. During a replay, historyModeRef routes the inverse to the
-    // opposite stack instead, which is what makes redo fall out for free.
-    const inverse = Object.fromEntries(
-      Object.keys(patch).map((key) => [key, row[key as keyof IssuanceRow]]),
-    ) as Partial<IssuanceRow>
-    if (historyModeRef.current === "record") {
-      undoStackRef.current.push({ key: row.key, patch: inverse })
-      if (undoStackRef.current.length > HISTORY_LIMIT) undoStackRef.current.shift()
-      redoStackRef.current = [] // a fresh edit invalidates the redo stack
-    } else if (historyModeRef.current === "undo") {
-      redoStackRef.current.push({ key: row.key, patch: inverse })
-    } else {
-      undoStackRef.current.push({ key: row.key, patch: inverse })
-    }
+      // Record the inverse (the fields as they were before this patch) so Ctrl+Z can
+      // replay it. `row` is the pre-patch state, so this is just its current values for
+      // the keys being changed. During a replay, historyModeRef routes the inverse to the
+      // opposite stack instead, which is what makes redo fall out for free.
+      const inverse = Object.fromEntries(
+        Object.keys(patch).map((key) => [key, row[key as keyof IssuanceRow]]),
+      ) as Partial<IssuanceRow>
+      if (historyModeRef.current === "record") {
+        undoStackRef.current.push({ key: row.key, patch: inverse })
+        if (undoStackRef.current.length > HISTORY_LIMIT) undoStackRef.current.shift()
+        redoStackRef.current = [] // a fresh edit invalidates the redo stack
+      } else if (historyModeRef.current === "undo") {
+        redoStackRef.current.push({ key: row.key, patch: inverse })
+      } else {
+        undoStackRef.current.push({ key: row.key, patch: inverse })
+      }
 
-    if ("account_id" in patch) {
-      setAccountClearedKeys((prev) => {
-        const next = new Set(prev)
-        if (patch.account_id === null) next.add(row.key)
-        else next.delete(row.key)
-        return next
-      })
-    }
-    updateRow(row.key, patch)
-    void persist(row, patch)
-  }
+      if ("account_id" in patch) {
+        setAccountClearedKeys((prev) => {
+          const next = new Set(prev)
+          if (patch.account_id === null) next.add(row.key)
+          else next.delete(row.key)
+          return next
+        })
+      }
+      updateRow(row.key, patch)
+      void persist(row, patch)
+    },
+    [updateRow, persist],
+  )
 
   // Replays one step off the undo (or redo) stack. Re-applying through applyPatch both
   // persists the reversal and captures the current values onto the opposite stack, so
   // redo needs no special-casing. Entries whose row no longer exists (a deleted row -
-  // structural changes are out of scope) are skipped so the stacks never dead-end.
-  function runHistory(mode: "undo" | "redo") {
-    const stack = mode === "undo" ? undoStackRef : redoStackRef
-    let entry = stack.current.pop()
-    while (entry && !rowsRef.current.some((r) => r.key === entry!.key)) {
-      entry = stack.current.pop()
-    }
-    if (!entry) return
+  // structural changes are out of scope) are skipped so the stacks never dead-end. Reads
+  // the current column from interactionRef, so it stays a stable identity like the rest.
+  const runHistory = useCallback(
+    (mode: "undo" | "redo") => {
+      const stack = mode === "undo" ? undoStackRef : redoStackRef
+      let entry = stack.current.pop()
+      while (entry && !rowsRef.current.some((r) => r.key === entry!.key)) {
+        entry = stack.current.pop()
+      }
+      if (!entry) return
 
-    const row = rowsRef.current.find((r) => r.key === entry!.key)
-    if (!row) return
+      const row = rowsRef.current.find((r) => r.key === entry!.key)
+      if (!row) return
 
-    historyModeRef.current = mode
-    applyPatch(row, entry.patch)
-    historyModeRef.current = "record"
+      historyModeRef.current = mode
+      applyPatch(row, entry.patch)
+      historyModeRef.current = "record"
 
-    // Move the selection onto the affected row (keeping the current column) so the change
-    // the user just undid or redid is on screen rather than happening off in another row.
-    const rowIndex = rowsRef.current.findIndex((r) => r.key === entry!.key)
-    if (rowIndex >= 0) dispatch({ type: "SELECT_ONLY", r: rowIndex, c: interaction.sel.c })
-  }
+      // Move the selection onto the affected row (keeping the current column) so the change
+      // the user just undid or redid is on screen rather than happening off in another row.
+      const rowIndex = rowsRef.current.findIndex((r) => r.key === entry!.key)
+      if (rowIndex >= 0) dispatch({ type: "SELECT_ONLY", r: rowIndex, c: interactionRef.current.sel.c })
+    },
+    [applyPatch],
+  )
 
-  function onSaveAndMove(r: number, patch: Partial<IssuanceRow>, direction: Direction | null) {
-    activeCellSaveRef.current = null
-    const row = rows[r]
-    if (!row) return
+  const onSaveAndMove = useCallback(
+    (r: number, patch: Partial<IssuanceRow>, direction: Direction | null) => {
+      activeCellSaveRef.current = null
+      const currentRows = rowsRef.current
+      const row = currentRows[r]
+      if (!row) return
 
-    applyPatch(row, patch)
+      applyPatch(row, patch)
 
-    if (direction === null) {
-      dispatch({ type: "EXIT_EDIT_ONLY" })
-      return
-    }
+      if (direction === null) {
+        dispatch({ type: "EXIT_EDIT_ONLY" })
+        return
+      }
 
-    const resolved = resolveNextCell(rows, interaction.sel, direction)
-    if (resolved.appendRow) {
-      setRows((prev) => [...prev, makeDraftRow(currentUserId)])
-    }
-    dispatch({ type: "MOVE", r: resolved.r, c: resolved.c, alsoEdit: interaction.sticky })
-  }
+      const { sel, sticky } = interactionRef.current
+      const resolved = resolveNextCell(currentRows, sel, direction)
+      if (resolved.appendRow) {
+        setRows((prev) => [...prev, makeDraftRow(currentUserId)])
+      }
+      dispatch({ type: "MOVE", r: resolved.r, c: resolved.c, alsoEdit: sticky })
+    },
+    [applyPatch, currentUserId],
+  )
 
-  async function createAccountForRow(rowKey: string, name: string) {
-    const row = rows.find((r) => r.key === rowKey)
-    if (!row?.loyalty_program_id) return
+  const createAccountForRow = useCallback(
+    async (rowKey: string, name: string) => {
+      const row = rowsRef.current.find((r) => r.key === rowKey)
+      if (!row?.loyalty_program_id) return
 
-    setPendingAccountLabels((prev) => ({ ...prev, [rowKey]: name }))
-    updateRow(rowKey, { saveStatus: "saving" })
+      setPendingAccountLabels((prev) => ({ ...prev, [rowKey]: name }))
+      updateRow(rowKey, { saveStatus: "saving" })
 
-    const result = await createAccountForIssuanceAction(name, row.loyalty_program_id)
+      const result = await createAccountForIssuanceAction(name, row.loyalty_program_id)
 
-    setPendingAccountLabels((prev) => {
-      const { [rowKey]: _removed, ...rest } = prev
-      return rest
-    })
+      setPendingAccountLabels((prev) => {
+        const { [rowKey]: _removed, ...rest } = prev
+        return rest
+      })
 
-    if ("error" in result) {
-      toast.error(result.error)
-      flashSaveStatus(rowKey, "error")
-      return
-    }
+      if ("error" in result) {
+        toast.error(result.error)
+        flashSaveStatus(rowKey, "error")
+        return
+      }
 
-    setCreatedAccounts((prev) => [...prev, result.account])
+      setCreatedAccounts((prev) => [...prev, result.account])
 
-    // Re-read the row: the await gave the operator time to keep editing, and applyPatch
-    // hands the row it is given to persist() as the pre-patch base.
-    const current = rowsRef.current.find((r) => r.key === rowKey)
-    if (!current) return
-    applyPatch(current, { account_id: result.account.id, account_nickname_id: result.nicknameId })
-  }
+      // Re-read the row: the await gave the operator time to keep editing, and applyPatch
+      // hands the row it is given to persist() as the pre-patch base.
+      const current = rowsRef.current.find((r) => r.key === rowKey)
+      if (!current) return
+      applyPatch(current, { account_id: result.account.id, account_nickname_id: result.nicknameId })
+    },
+    [applyPatch, updateRow, flashSaveStatus],
+  )
 
-  function onExitEdit() {
+  const onExitEdit = useCallback(() => {
     dispatch({ type: "ESC" })
-  }
+  }, [])
 
-  function registerActiveCellSave(save: (() => void) | null) {
+  const registerActiveCellSave = useCallback((save: (() => void) | null) => {
     activeCellSaveRef.current = save
-  }
+  }, [])
 
-  function requestSaveActiveCell() {
+  const requestSaveActiveCell = useCallback(() => {
     activeCellSaveRef.current?.()
     activeCellSaveRef.current = null
-  }
+  }, [])
 
-  async function onDeleteRow(r: number) {
-    const row = rows[r]
-    if (!row) return
+  const onDeleteRow = useCallback(
+    async (r: number) => {
+      const row = rowsRef.current[r]
+      if (!row) return
 
-    if (row.isDraft) {
+      if (row.isDraft) {
+        removeRow(row.key)
+        return
+      }
+
+      const result = await deleteIssuanceAction(row.id!)
+      if ("error" in result) {
+        toast.error(result.error)
+        return
+      }
       removeRow(row.key)
-      return
-    }
-
-    const result = await deleteIssuanceAction(row.id!)
-    if ("error" in result) {
-      toast.error(result.error)
-      return
-    }
-    removeRow(row.key)
-  }
+    },
+    [removeRow],
+  )
 
   // Keyboard entry point for deleting the active row. An untouched empty draft has nothing
   // to lose, so it is dropped without a prompt; anything else opens the confirm dialog.
@@ -617,27 +665,52 @@ export function IssuancesGrid({ initialIssuances, currentUserId, ...referenceDat
     if (text) dispatch({ type: "TYPE_REPLACE", char: text })
   }
 
+  // The context carries only referentially-stable data: reference lists, the memoized
+  // callbacks above and pendingAccountLabels (which changes only during inline account
+  // creation). The volatile per-cell state (row/isEditing/pendingChar) is passed as props
+  // in the render loop instead, so moving the selection doesn't invalidate this value and
+  // the memoized cells can skip re-rendering. Depends on the individual reference arrays,
+  // not the `referenceData` rest object, which is a fresh object every render.
+  const contextValue = useMemo<GridContextValue>(
+    () => ({
+      loyaltyPrograms: referenceData.loyaltyPrograms,
+      airlines: referenceData.airlines,
+      // Overrides the prop: includes accounts created inline this session.
+      accounts,
+      agencies: referenceData.agencies,
+      users: referenceData.users,
+      people: referenceData.people,
+      airports: referenceData.airports,
+      onCellClick,
+      onSaveAndMove,
+      onExitEdit,
+      registerActiveCellSave,
+      requestSaveActiveCell,
+      onDeleteRow,
+      createAccountForRow,
+      pendingAccountLabels,
+    }),
+    [
+      referenceData.loyaltyPrograms,
+      referenceData.airlines,
+      accounts,
+      referenceData.agencies,
+      referenceData.users,
+      referenceData.people,
+      referenceData.airports,
+      onCellClick,
+      onSaveAndMove,
+      onExitEdit,
+      registerActiveCellSave,
+      requestSaveActiveCell,
+      onDeleteRow,
+      createAccountForRow,
+      pendingAccountLabels,
+    ],
+  )
+
   return (
-    <GridProvider
-      value={{
-        ...referenceData,
-        // Overrides the prop: includes accounts created inline this session.
-        accounts,
-        rows,
-        sel: interaction.sel,
-        editing: interaction.editing,
-        sticky: interaction.sticky,
-        pendingChar: interaction.pendingChar,
-        onCellClick,
-        onSaveAndMove,
-        onExitEdit,
-        registerActiveCellSave,
-        requestSaveActiveCell,
-        onDeleteRow,
-        createAccountForRow: (rowKey, name) => void createAccountForRow(rowKey, name),
-        pendingAccountLabels,
-      }}
-    >
+    <GridProvider value={contextValue}>
       <div className="sticky top-0 z-10 flex items-center justify-end gap-2 bg-background py-2">
         <Popover>
           <PopoverTrigger asChild>
@@ -730,6 +803,8 @@ export function IssuancesGrid({ initialIssuances, currentUserId, ...referenceDat
                 {Array.from({ length: COLUMN_COUNT }, (_, c) => {
                   const accountNeedsPicking =
                     c === ACCOUNT_COLUMN_INDEX && accountClearedKeys.has(row.key)
+                  const isSelected = interaction.sel.r === r && interaction.sel.c === c
+                  const isEditing = isSelected && interaction.editing
                   return (
                     <TableCell
                       key={c}
@@ -743,9 +818,7 @@ export function IssuancesGrid({ initialIssuances, currentUserId, ...referenceDat
                         // scroll-mt clears the sticky header when scrollIntoView lands here.
                         "scroll-mt-9 whitespace-normal border-l p-0 first:border-l-0",
                         accountNeedsPicking && "bg-red-100",
-                        interaction.sel.r === r &&
-                          interaction.sel.c === c &&
-                          "ring-2 ring-inset ring-primary",
+                        isSelected && "ring-2 ring-inset ring-primary",
                       )}
                       title={
                         accountNeedsPicking
@@ -755,7 +828,17 @@ export function IssuancesGrid({ initialIssuances, currentUserId, ...referenceDat
                           : undefined
                       }
                     >
-                      <GridCell r={r} c={c} />
+                      {/* Volatile state as props: `row` (stable ref unless this row was
+                          edited), whether this cell is editing, and pendingChar only while
+                          it is. Every other cell gets identical props across a selection
+                          move, so its memoized GridCell skips re-rendering. */}
+                      <GridCell
+                        r={r}
+                        c={c}
+                        row={row}
+                        isEditing={isEditing}
+                        pendingChar={isEditing ? interaction.pendingChar : null}
+                      />
                     </TableCell>
                   )
                 })}
