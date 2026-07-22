@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react"
+import { type ReactNode, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react"
 import { Plus, Keyboard } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
@@ -59,6 +59,9 @@ interface IssuancesGridProps extends GridReferenceData {
   initialIssuances: Issuance[]
   // Defaults a newly created draft row's "Emissor" - still freely editable.
   currentUserId: string | null
+  // Rendered on the left of the sticky toolbar, sharing the row with the
+  // Atalhos/Nova emissão actions. Supplied by the page (the filter bar).
+  filters?: ReactNode
 }
 
 // One undoable step: the patch that restores a row to its prior state, keyed by the
@@ -102,11 +105,19 @@ function isUntouchedDraft(row: IssuanceRow): boolean {
   )
 }
 
-export function IssuancesGrid({ initialIssuances, currentUserId, ...referenceData }: IssuancesGridProps) {
-  const [rows, setRows] = useState<IssuanceRow[]>(() => {
-    const mapped = initialIssuances.map(issuanceToRow)
-    return mapped.length > 0 ? mapped : [makeDraftRow(currentUserId)]
-  })
+export function IssuancesGrid({
+  initialIssuances,
+  currentUserId,
+  filters,
+  ...referenceData
+}: IssuancesGridProps) {
+  // Start from exactly what the server returned - no seeded draft row. An empty
+  // result is a legitimate filtered outcome and gets an explicit empty-state below
+  // (a lone editable draft row here reads as a stray/phantom line). "Nova emissão"
+  // (handleAddRow / Ctrl+Enter) creates the first row on demand.
+  const [rows, setRows] = useState<IssuanceRow[]>(() =>
+    initialIssuances.map(issuanceToRow),
+  )
   const [interaction, dispatch] = useReducer(interactionReducer, initialInteractionState)
   const activeCellSaveRef = useRef<(() => void) | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -711,33 +722,36 @@ export function IssuancesGrid({ initialIssuances, currentUserId, ...referenceDat
 
   return (
     <GridProvider value={contextValue}>
-      <div className="sticky top-0 z-10 flex items-center justify-end gap-2 bg-background py-2">
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button type="button" variant="outline" size="sm">
-              <Keyboard className="h-4 w-4" />
-              Atalhos
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent align="end" className="w-80">
-            <p className="mb-2 text-sm font-medium">Atalhos de teclado</p>
-            <dl className="space-y-1">
-              {SHORTCUTS.map((shortcut) => (
-                <div
-                  key={shortcut.keys}
-                  className="flex items-baseline justify-between gap-3 text-xs"
-                >
-                  <dt className="text-muted-foreground">{shortcut.label}</dt>
-                  <dd className="shrink-0 font-mono text-[11px]">{shortcut.keys}</dd>
-                </div>
-              ))}
-            </dl>
-          </PopoverContent>
-        </Popover>
-        <Button type="button" size="sm" onClick={handleAddRow}>
-          <Plus className="h-4 w-4" />
-          Nova emissão
-        </Button>
+      <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-2 bg-background py-2">
+        {filters}
+        <div className="ml-auto flex items-center gap-2">
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button type="button" variant="outline">
+                <Keyboard className="h-4 w-4" />
+                Atalhos
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-80">
+              <p className="mb-2 text-sm font-medium">Atalhos de teclado</p>
+              <dl className="space-y-1">
+                {SHORTCUTS.map((shortcut) => (
+                  <div
+                    key={shortcut.keys}
+                    className="flex items-baseline justify-between gap-3 text-xs"
+                  >
+                    <dt className="text-muted-foreground">{shortcut.label}</dt>
+                    <dd className="shrink-0 font-mono text-[11px]">{shortcut.keys}</dd>
+                  </div>
+                ))}
+              </dl>
+            </PopoverContent>
+          </Popover>
+          <Button type="button" onClick={handleAddRow}>
+            <Plus className="h-4 w-4" />
+            Nova emissão
+          </Button>
+        </div>
       </div>
       <div
         ref={containerRef}
@@ -778,6 +792,19 @@ export function IssuancesGrid({ initialIssuances, currentUserId, ...referenceDat
             </TableRow>
           </TableHeader>
           <TableBody>
+            {rows.length === 0 && (
+              <TableRow className="hover:bg-transparent">
+                <TableCell
+                  colSpan={COLUMN_COUNT + 2}
+                  className="h-32 text-center text-sm text-muted-foreground"
+                >
+                  Nenhuma emissão encontrada para o período e filtros selecionados.
+                  <br />
+                  Ajuste os filtros ou clique em{" "}
+                  <span className="font-medium">Nova emissão</span> para cadastrar.
+                </TableCell>
+              </TableRow>
+            )}
             {rows.map((row, r) => (
               <TableRow
                 key={row.key}

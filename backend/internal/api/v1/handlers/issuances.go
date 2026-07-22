@@ -246,12 +246,65 @@ func preloadIssuanceAssociations(query *gorm.DB) *gorm.DB {
 		Preload("Agency")
 }
 
+// issuanceListTimezone is the timezone used to interpret the date_from/date_to
+// filters. created_at is stored in UTC, but operators think in local (Brazil)
+// calendar days, so "today" must be resolved against this zone, not UTC.
+const issuanceListTimezone = "America/Sao_Paulo"
+
+// applyIssuanceListFilters narrows an issuance list query by the optional query
+// params (issuer_id, account_id, loyalty_program_id, airline_id, date_from,
+// date_to). Every param is optional: an absent or empty one leaves that
+// dimension unfiltered, and each present filter is ANDed onto the query.
+// The date filters bound created_at to whole local calendar days.
+func applyIssuanceListFilters(query *gorm.DB, r *http.Request) *gorm.DB {
+	q := r.URL.Query()
+
+	for column, param := range map[string]string{
+		"issuer_id":          "issuer_id",
+		"account_id":         "account_id",
+		"loyalty_program_id": "loyalty_program_id",
+		"airline_id":         "airline_id",
+	} {
+		if value := q.Get(param); value != "" {
+			query = query.Where(column+" = ?", value)
+		}
+	}
+
+	// created_at is UTC in the DB; resolve local calendar days into UTC bounds so
+	// "today" matches the operator's day. Fall back to UTC if tzdata is missing.
+	loc, err := time.LoadLocation(issuanceListTimezone)
+	if err != nil {
+		loc = time.UTC
+	}
+
+	if from := q.Get("date_from"); from != "" {
+		if parsed, err := time.ParseInLocation("2006-01-02", from, loc); err == nil {
+			query = query.Where("created_at >= ?", parsed.UTC())
+		}
+	}
+	if to := q.Get("date_to"); to != "" {
+		if parsed, err := time.ParseInLocation("2006-01-02", to, loc); err == nil {
+			// Exclusive upper bound at the start of the next day so the whole
+			// "to" day is included.
+			query = query.Where("created_at < ?", parsed.AddDate(0, 0, 1).UTC())
+		}
+	}
+
+	return query
+}
+
 // GetIssuances handles the GET /issuances route.
 // @Summary      Listar emissões
-// @Description  Retorna todas as emissões ativas cadastradas no sistema (exclui as removidas).
+// @Description  Retorna as emissões ativas cadastradas no sistema (exclui as removidas). Aceita filtros opcionais por data de emissão, programa de fidelidade, cia aérea, conta e emissor.
 // @Tags         Emissões
 // @Produce      json
 // @Security     BearerAuth
+// @Param        date_from           query  string  false  "Data inicial da emissão (YYYY-MM-DD), inclusiva"
+// @Param        date_to             query  string  false  "Data final da emissão (YYYY-MM-DD), inclusiva"
+// @Param        loyalty_program_id  query  string  false  "UUID do programa de fidelidade"
+// @Param        airline_id          query  string  false  "UUID da cia aérea"
+// @Param        account_id          query  string  false  "UUID da conta"
+// @Param        issuer_id           query  string  false  "UUID do emissor (usuário)"
 // @Success      200  {object}  schemas.IssuanceListResponse
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao buscar emissões"
@@ -263,6 +316,7 @@ func (h *IssuanceHandler) GetIssuances(w http.ResponseWriter, r *http.Request) {
 		Preload("Flights", func(db *gorm.DB) *gorm.DB {
 			return db.Where("direction = ?", "outbound").Order("leg_order asc")
 		})
+	query = applyIssuanceListFilters(query, r).Order("created_at desc")
 
 	if err := query.Find(&issuances).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch issuances")
