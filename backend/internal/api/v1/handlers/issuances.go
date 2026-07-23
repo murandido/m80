@@ -3,8 +3,11 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,6 +17,7 @@ import (
 	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
+	"github.com/murandido/m-80-backend/internal/export"
 	"github.com/murandido/m-80-backend/internal/utils"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
@@ -380,6 +384,56 @@ func (h *IssuanceHandler) GetIssuances(w http.ResponseWriter, r *http.Request) {
 	}
 
 	utils.SendJSON(w, r, http.StatusOK, "Issuances fetched successfully", resp)
+}
+
+// GetIssuancesExport handles the GET /issuances/export route.
+// @Summary      Exportar emissões (.xlsx)
+// @Description  Gera uma planilha .xlsx das emissões filtradas, a partir do modelo padrão. Aceita os mesmos filtros da listagem (data, programa de fidelidade, cia aérea, conta e emissor).
+// @Tags         Emissões
+// @Produce      application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+// @Security     BearerAuth
+// @Param        date_from           query  string  false  "Data inicial da emissão (YYYY-MM-DD), inclusiva"
+// @Param        date_to             query  string  false  "Data final da emissão (YYYY-MM-DD), inclusiva"
+// @Param        loyalty_program_id  query  string  false  "UUID do programa de fidelidade"
+// @Param        airline_id          query  string  false  "UUID da cia aérea"
+// @Param        account_id          query  string  false  "UUID da conta"
+// @Param        issuer_id           query  string  false  "UUID do emissor (usuário)"
+// @Success      200  {file}    binary  "Planilha .xlsx das emissões filtradas"
+// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      500  {object}  schemas.ErrorResponse "Erro ao gerar a planilha"
+// @Router       /issuances/export [get]
+func (h *IssuanceHandler) GetIssuancesExport(w http.ResponseWriter, r *http.Request) {
+	var issuances []data.Issuance
+
+	// Same query as GetIssuances, plus the account holder needed to resolve the CONTA label
+	// (aliasless accounts fall back to the holder's name).
+	query := preloadIssuanceAssociations(h.DB).
+		Preload("Account.Holder").
+		Preload("Flights", func(db *gorm.DB) *gorm.DB {
+			return db.Where("direction = ?", "outbound").Order("leg_order asc")
+		})
+	query = applyIssuanceListFilters(query, r).Order("created_at desc")
+
+	if err := query.Find(&issuances).Error; err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch issuances")
+		return
+	}
+
+	content, err := export.BuildIssuancesXLSX(issuances)
+	if err != nil {
+		slog.Error("failed to build issuances export", "err", err)
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to build issuances export")
+		return
+	}
+
+	// Binary response: the standard JSON envelope does not apply, mirroring the PDF path.
+	filename := fmt.Sprintf("emissoes-%s.xlsx", time.Now().Format("2006-01-02"))
+	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+	w.Header().Set("Content-Length", strconv.Itoa(len(content)))
+	if _, err := w.Write(content); err != nil {
+		slog.Error("failed to write issuances export response", "err", err)
+	}
 }
 
 // GetIssuancesSummary handles the GET /issuances/summary route.

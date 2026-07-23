@@ -20,6 +20,9 @@ func RegisterIssuanceRoutes(r chi.Router, db *gorm.DB) {
 		// get issuances (resumo para listagem)
 		r.Get("/summary", issuanceHandler.GetIssuancesSummary)
 
+		// export filtered issuances as an .xlsx spreadsheet
+		r.Get("/export", issuanceHandler.GetIssuancesExport)
+
 		// get issuance
 		r.Get("/{id}", issuanceHandler.GetIssuance)
 

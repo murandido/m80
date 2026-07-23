@@ -1,7 +1,7 @@
 "use client"
 
 import { type ReactNode, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react"
-import { Plus, Keyboard } from "lucide-react"
+import { Plus, Keyboard, FileSpreadsheet } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -70,6 +70,9 @@ interface IssuancesGridProps extends GridReferenceData {
   // Rendered on the left of the sticky toolbar, sharing the row with the
   // Atalhos/Nova emissão actions. Supplied by the page (the filter bar).
   filters?: ReactNode
+  // Current filter query string (e.g. "date_from=...&issuer_id=..."), forwarded to the
+  // export endpoint so the downloaded .xlsx matches the filtered list on screen.
+  exportQuery: string
 }
 
 // One undoable step: the patch that restores a row to its prior state, keyed by the
@@ -117,6 +120,7 @@ export function IssuancesGrid({
   initialIssuances,
   currentUserId,
   filters,
+  exportQuery,
   ...referenceData
 }: IssuancesGridProps) {
   // Start from exactly what the server returned - no seeded draft row. An empty
@@ -831,6 +835,14 @@ export function IssuancesGrid({
               </dl>
             </PopoverContent>
           </Popover>
+          <Button asChild variant="outline">
+            {/* Native download: the backend sets the filename via Content-Disposition, and
+                exportQuery carries the same filters the page was rendered with. */}
+            <a href={`/api/issuances/export?${exportQuery}`} download>
+              <FileSpreadsheet className="h-4 w-4" />
+              Exportar
+            </a>
+          </Button>
           <Button type="button" onClick={handleAddRow}>
             <Plus className="h-4 w-4" />
             Nova emissão

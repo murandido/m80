@@ -23,6 +23,9 @@ yarn-error.log*
 .pnpm-debug.log*
 
 # Backend (Go)
+# Runtime-provisioned issuance spreadsheet template (downloaded on demand, not versioned)
+backend/assets/templates/*.xlsx
+
 # Binaries
 *.exe
 *.exe~
