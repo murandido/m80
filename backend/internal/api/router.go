@@ -18,7 +18,6 @@ func NewRouter(db *gorm.DB) *chi.Mux {
 
 	r.Use(chimiddleware.Logger)
 	r.Use(chimiddleware.Recoverer)
-	r.Use(chimiddleware.RealIP)
 
 	r.Use(middleware.CORS())
 	r.Use(middleware.RateLimit())
