@@ -8,11 +8,13 @@ import {
   ChevronRight,
   Contact,
   Building2,
+  HandCoins,
   Landmark,
   LayoutDashboard,
   MapPin,
   Plane,
   Ticket,
+  UserRound,
   Users,
 } from "lucide-react"
 import {
@@ -77,6 +79,8 @@ const navItems: NavEntry[] = [
   { title: "Aeroportos", url: "/dashboard/airports", icon: MapPin, adminOnly: true },
   { title: "Agências", url: "/dashboard/agencies", icon: Building2 },
   { title: "Emissões", url: "/dashboard/issuances", icon: Ticket },
+  { title: "Vendas", url: "/dashboard/sales", icon: HandCoins },
+  { title: "Clientes", url: "/dashboard/clients", icon: UserRound },
   {
     title: "Contas e Pessoas",
     icon: Contact,

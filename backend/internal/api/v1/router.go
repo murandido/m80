@@ -39,6 +39,7 @@ func NewRouter(db *gorm.DB, broker *events.Broker) chi.Router {
 		routes.RegisterAgencyRoutes(r, db)
 		routes.RegisterClientRoutes(r, db)
 		routes.RegisterIssuanceRoutes(r, db, broker)
+		routes.RegisterSaleRoutes(r, db, broker)
 		routes.RegisterAirportRoutes(r, db)
 		// SSE stream, behind the same auth as everything else in this group
 		routes.RegisterEventRoutes(r, broker)

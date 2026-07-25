@@ -10,6 +10,13 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
+import {
+  addDays,
+  dateRangeLabel,
+  formatYmd,
+  parseYmd,
+  startOfToday,
+} from "@/lib/date-range"
 import { LoyaltyProgramCombobox } from "@/components/loyalty-programs/loyalty-program-combobox"
 import { AirlineCombobox } from "@/components/airlines/airline-combobox"
 import { AccountCombobox } from "@/components/accounts/account-combobox"
@@ -43,47 +50,6 @@ interface IssuancesFilterBarProps {
   // Effective filters resolved by the server (defaults on a clean load, or the
   // exact URL values otherwise). Seed the controls from these.
   initialFilters: FilterState
-}
-
-// Local-date formatting/parsing kept in the browser timezone (the operator's day).
-// Avoids new Date("YYYY-MM-DD") which parses as UTC and can shift a day.
-function formatYmd(date: Date): string {
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, "0")
-  const day = String(date.getDate()).padStart(2, "0")
-  return `${year}-${month}-${day}`
-}
-
-function parseYmd(value: string): Date | undefined {
-  if (!value) return undefined
-  const [year, month, day] = value.split("-").map(Number)
-  if (!year || !month || !day) return undefined
-  return new Date(year, month - 1, day)
-}
-
-function formatBr(value: string): string {
-  const date = parseYmd(value)
-  if (!date) return ""
-  return date.toLocaleDateString("pt-BR")
-}
-
-function dateRangeLabel(from: string, to: string): string {
-  if (!from && !to) return "Qualquer data"
-  if (from && to && from === to) return formatBr(from)
-  if (from && to) return `${formatBr(from)} – ${formatBr(to)}`
-  if (from) return `A partir de ${formatBr(from)}`
-  return `Até ${formatBr(to)}`
-}
-
-function startOfToday(): Date {
-  const now = new Date()
-  return new Date(now.getFullYear(), now.getMonth(), now.getDate())
-}
-
-function addDays(date: Date, days: number): Date {
-  const copy = new Date(date)
-  copy.setDate(copy.getDate() + days)
-  return copy
 }
 
 export function IssuancesFilterBar({

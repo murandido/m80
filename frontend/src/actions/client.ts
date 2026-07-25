@@ -28,7 +28,15 @@ export async function createClientAction(
       return { error: parsed.data?.message || "Erro ao cadastrar cliente." }
     }
 
-    return { success: true }
+    // The created client is echoed back so callers that need to act on it right away -
+    // the sales combobox links it to the sale the moment it is created - don't have to
+    // refetch the whole list to find out its id.
+    const client = parsed.data?.data
+    if (!client) {
+      return { error: "Erro ao cadastrar cliente." }
+    }
+
+    return { success: true as const, client }
   } catch {
     return { error: "Erro de conexão com o servidor." }
   }

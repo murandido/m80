@@ -280,11 +280,6 @@ func preloadIssuanceAssociations(query *gorm.DB) *gorm.DB {
 		Preload("Agency")
 }
 
-// issuanceListTimezone is the timezone used to interpret the date_from/date_to
-// filters. created_at is stored in UTC, but operators think in local (Brazil)
-// calendar days, so "today" must be resolved against this zone, not UTC.
-const issuanceListTimezone = "America/Sao_Paulo"
-
 // applyIssuanceListFilters narrows an issuance list query by the optional query
 // params (issuer_id, account_id, loyalty_program_id, airline_id, date_from,
 // date_to). Every param is optional: an absent or empty one leaves that
@@ -316,29 +311,10 @@ func applyIssuanceListFilters(query *gorm.DB, r *http.Request) *gorm.DB {
 		}
 	}
 
-	// created_at/cancelled_at are UTC in the DB; resolve local calendar days into UTC
-	// bounds so "today" matches the operator's day. Fall back to UTC if tzdata is missing.
-	loc, err := time.LoadLocation(issuanceListTimezone)
-	if err != nil {
-		loc = time.UTC
-	}
-
+	// created_at/cancelled_at are UTC in the DB; parseDateRange resolves the local
+	// calendar days into UTC bounds so "today" matches the operator's day.
 	issuer := q.Get("issuer_id")
-	var from, to *time.Time
-	if v := q.Get("date_from"); v != "" {
-		if parsed, err := time.ParseInLocation("2006-01-02", v, loc); err == nil {
-			t := parsed.UTC()
-			from = &t
-		}
-	}
-	if v := q.Get("date_to"); v != "" {
-		if parsed, err := time.ParseInLocation("2006-01-02", v, loc); err == nil {
-			// Exclusive upper bound at the start of the next day so the whole
-			// "to" day is included.
-			t := parsed.AddDate(0, 0, 1).UTC()
-			to = &t
-		}
-	}
+	from, to := parseDateRange(r)
 
 	if issuer == "" && from == nil && to == nil {
 		return query
@@ -522,7 +498,7 @@ func (h *IssuanceHandler) GetIssuance(w http.ResponseWriter, r *http.Request) {
 
 // CreateIssuance handles the POST /issuances route
 // @Summary      Criar emissão
-// @Description  Cria uma nova emissão. issuer_id usa o usuário autenticado (JWT) se omitido, agency_id usa a agência padrão se omitido, e a emissão sempre nasce com complete=false. flight_date (YYYY-MM-DD) cria a data de partida da perna de ida principal. account_nickname_id é opcional e, quando informado, precisa pertencer à conta em account_id.
+// @Description  Cria uma nova emissão. issuer_id usa o usuário autenticado (JWT) se omitido, agency_id usa a agência padrão se omitido, e a emissão sempre nasce com complete=false. Uma venda em aberto (client_id=null, paid=false) é criada na mesma transação. flight_date (YYYY-MM-DD) cria a data de partida da perna de ida principal. account_nickname_id é opcional e, quando informado, precisa pertencer à conta em account_id.
 // @Tags         Emissões
 // @Accept       json
 // @Produce      json
@@ -620,6 +596,14 @@ func (h *IssuanceHandler) CreateIssuance(w http.ResponseWriter, r *http.Request)
 
 	err := h.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&issuance).Error; err != nil {
+			return err
+		}
+
+		// Every issuance is born owing money, so its sale is created in the same
+		// transaction rather than when the issuance is marked complete: the Vendas tab
+		// is the only place that tracks who still has to be charged, and an issuance
+		// with no sale row would simply never surface there.
+		if err := tx.Create(&data.Sale{IssuanceID: issuance.ID}).Error; err != nil {
 			return err
 		}
 
@@ -835,7 +819,7 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 
 // DeleteIssuance handles the DELETE /issuances/{id} route.
 // @Summary      Deletar emissão
-// @Description  Remove (soft delete) uma emissão, registra o audit log e reseta o pagamento da venda associada, se houver.
+// @Description  Remove (soft delete) uma emissão, registra o audit log e apaga a venda associada, se houver. Diferente do cancelamento, uma emissão deletada não deixa venda em aberto - ela some da aba de Vendas.
 // @Tags         Emissões
 // @Produce      json
 // @Security     BearerAuth
@@ -873,7 +857,11 @@ func (h *IssuanceHandler) DeleteIssuance(w http.ResponseWriter, r *http.Request)
 			return err
 		}
 
-		return tx.Model(&data.Sale{}).Where("issuance_id = ?", issuance.ID).Update("paid", false).Error
+		// Deleting an issuance undoes a mistake - the emission never should have been
+		// recorded - so there is nothing left to charge anyone for. The sale row goes
+		// with it, unlike a cancellation, where the sale survives (reopened) because the
+		// trip really happened and the money has to be given back.
+		return tx.Where("issuance_id = ?", issuance.ID).Delete(&data.Sale{}).Error
 	})
 
 	if err != nil {

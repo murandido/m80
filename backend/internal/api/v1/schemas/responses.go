@@ -222,6 +222,27 @@ type IssuancePassengerSingleResponse struct {
 	Data    IssuancePassengerResponse `json:"data"`
 }
 
+// SaleListResponse is the GET /sales route response
+type SaleListResponse struct {
+	Success bool           `json:"success" example:"true"`
+	Message string         `json:"message" example:"Vendas listadas com sucesso"`
+	Data    []SaleResponse `json:"data"`
+}
+
+// SaleSingleResponse is the response from single-sale routes
+type SaleSingleResponse struct {
+	Success bool         `json:"success" example:"true"`
+	Message string       `json:"message" example:"Venda atualizada com sucesso"`
+	Data    SaleResponse `json:"data"`
+}
+
+// SupplierBalanceListResponse is the GET /sales/suppliers route response
+type SupplierBalanceListResponse struct {
+	Success bool                      `json:"success" example:"true"`
+	Message string                    `json:"message" example:"Saldos por fornecedor calculados com sucesso"`
+	Data    []SupplierBalanceResponse `json:"data"`
+}
+
 // ErrorResponse is the standard API error response
 type ErrorResponse struct {
 	Success bool   `json:"success" example:"false"`

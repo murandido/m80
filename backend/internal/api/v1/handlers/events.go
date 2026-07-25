@@ -26,7 +26,7 @@ func NewEventHandler(broker *events.Broker) *EventHandler {
 
 // Stream handles the GET /events route.
 // @Summary      Stream de eventos (SSE)
-// @Description  Conexão Server-Sent Events de longa duração. Emite eventos nomeados (ex: issuance.created, issuance.updated, issuance.cancelled, issuance.deleted) cujo data é um JSON com o id do recurso afetado, além de comentários de heartbeat a cada 25s. O cliente deve usar EventSource, que já reconecta sozinho.
+// @Description  Conexão Server-Sent Events de longa duração. Emite eventos nomeados (ex: issuance.created, issuance.updated, issuance.cancelled, issuance.deleted, sale.updated) cujo data é um JSON com o id do recurso afetado, além de comentários de heartbeat a cada 25s. O cliente deve usar EventSource, que já reconecta sozinho.
 // @Tags         Eventos
 // @Produce      text/event-stream
 // @Security     BearerAuth
