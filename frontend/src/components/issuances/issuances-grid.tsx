@@ -23,7 +23,9 @@ import { RowActions } from "@/components/issuances/row-actions"
 import { AutosaveDot } from "@/components/issuances/autosave-dot"
 import { interactionReducer, initialInteractionState } from "@/components/issuances/interaction-reducer"
 import { IssuanceRow, issuanceToRow, makeDraftRow, draftIsReadyToCreate } from "@/components/issuances/types"
+import { reconcileRows } from "@/components/issuances/reconcile-rows"
 import { clearPatchForColumn } from "@/components/issuances/column-fields"
+import { useSSE } from "@/hooks/use-sse"
 import {
   ACCOUNT_COLUMN_INDEX,
   CALCULATED_COLUMN_INDEX,
@@ -33,7 +35,7 @@ import {
   resolveNextCell,
   Direction,
 } from "@/lib/grid-navigation"
-import { Issuance, updateIssuanceSchema } from "@/schemas/issuance"
+import { Issuance, getIssuancesSchema, updateIssuanceSchema } from "@/schemas/issuance"
 import { Account } from "@/schemas/account"
 import {
   createIssuanceAction,
@@ -70,9 +72,10 @@ interface IssuancesGridProps extends GridReferenceData {
   // Rendered on the left of the sticky toolbar, sharing the row with the
   // Atalhos/Nova emissão actions. Supplied by the page (the filter bar).
   filters?: ReactNode
-  // Current filter query string (e.g. "date_from=...&issuer_id=..."), forwarded to the
-  // export endpoint so the downloaded .xlsx matches the filtered list on screen.
-  exportQuery: string
+  // Current filter query string (e.g. "date_from=...&issuer_id=..."). Forwarded to the
+  // export endpoint so the downloaded .xlsx matches the filtered list on screen, and
+  // reused for the live refetch so an SSE-driven refresh applies the same filters.
+  filterQuery: string
 }
 
 // One undoable step: the patch that restores a row to its prior state, keyed by the
@@ -120,7 +123,7 @@ export function IssuancesGrid({
   initialIssuances,
   currentUserId,
   filters,
-  exportQuery,
+  filterQuery,
   ...referenceData
 }: IssuancesGridProps) {
   // Start from exactly what the server returned - no seeded draft row. An empty
@@ -348,6 +351,60 @@ export function IssuancesGrid({
     [updateRow, flashSaveStatus, reconcileCreatedRow],
   )
   persistRef.current = persist
+
+  // Live updates. Every issuance mutation in the system announces itself on the SSE
+  // stream, carrying only the affected id. The refresh below refetches the list with the
+  // filters this page was rendered with, rather than deciding on the client whether the
+  // changed row belongs on screen - those rules (the cancellation branch, the São Paulo
+  // calendar day) live on the server and are not worth duplicating here.
+  const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const refreshFromServer = useCallback(async () => {
+    let fresh: Issuance[]
+    try {
+      const res = await fetch(`/api/issuances?${filterQuery}`, { cache: "no-store" })
+      const parsed = getIssuancesSchema.response.safeParse(await res.json())
+      if (!res.ok || !parsed.success) return
+      fresh = parsed.data.data ?? []
+    } catch {
+      // Same posture as the page's own fetches: a failed refresh leaves the grid showing
+      // what it already has instead of blanking it out.
+      return
+    }
+
+    const { sel, editing } = interactionRef.current
+    const selectedKey = rowsRef.current[sel.r]?.key ?? null
+    const next = reconcileRows(rowsRef.current, fresh, editing ? selectedKey : null)
+    setRows(next)
+
+    // A row arriving above the selection shifts everything below it down. Follow the row
+    // the user was actually on, or a remote insert would silently move the cursor onto a
+    // different issuance.
+    const movedTo = next.findIndex((row) => row.key === selectedKey)
+    if (movedTo !== -1 && movedTo !== sel.r) {
+      dispatch({ type: "MOVE", r: movedTo, c: sel.c, alsoEdit: editing })
+    }
+  }, [filterQuery])
+
+  // Coalesces a burst - a batch of issuances created back to back - into one refetch.
+  const scheduleRefresh = useCallback(() => {
+    if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current)
+    refreshTimeoutRef.current = setTimeout(() => void refreshFromServer(), 300)
+  }, [refreshFromServer])
+
+  useEffect(
+    () => () => {
+      if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current)
+    },
+    [],
+  )
+
+  useSSE("/api/events", {
+    "issuance.created": scheduleRefresh,
+    "issuance.updated": scheduleRefresh,
+    "issuance.cancelled": scheduleRefresh,
+    "issuance.deleted": scheduleRefresh,
+  })
 
   const onCellClick = useCallback((r: number, c: number) => {
     activeCellSaveRef.current?.()
@@ -837,8 +894,8 @@ export function IssuancesGrid({
           </Popover>
           <Button asChild variant="outline">
             {/* Native download: the backend sets the filename via Content-Disposition, and
-                exportQuery carries the same filters the page was rendered with. */}
-            <a href={`/api/issuances/export?${exportQuery}`} download>
+                filterQuery carries the same filters the page was rendered with. */}
+            <a href={`/api/issuances/export?${filterQuery}`} download>
               <FileSpreadsheet className="h-4 w-4" />
               Exportar
             </a>

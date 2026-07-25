@@ -3,12 +3,14 @@ package routes
 import (
 	"github.com/go-chi/chi/v5"
 	"github.com/murandido/m-80-backend/internal/api/v1/handlers"
+	"github.com/murandido/m-80-backend/internal/events"
 	"gorm.io/gorm"
 )
 
-// RegisterIssuanceRoutes wires up the /issuances CRUD routes.
-func RegisterIssuanceRoutes(r chi.Router, db *gorm.DB) {
-	issuanceHandler := handlers.NewIssuanceHandler(db)
+// RegisterIssuanceRoutes wires up the /issuances CRUD routes. The broker is passed
+// down so each mutation can announce itself on the SSE stream.
+func RegisterIssuanceRoutes(r chi.Router, db *gorm.DB, broker *events.Broker) {
+	issuanceHandler := handlers.NewIssuanceHandler(db, broker)
 
 	r.Route("/issuances", func(r chi.Router) {
 		// create issuance

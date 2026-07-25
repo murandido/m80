@@ -9,11 +9,12 @@ import (
 	_ "github.com/murandido/m-80-backend/docs"
 	"github.com/murandido/m-80-backend/internal/api/middleware"
 	v1 "github.com/murandido/m-80-backend/internal/api/v1"
+	"github.com/murandido/m-80-backend/internal/events"
 	httpSwagger "github.com/swaggo/http-swagger"
 	"gorm.io/gorm"
 )
 
-func NewRouter(db *gorm.DB) *chi.Mux {
+func NewRouter(db *gorm.DB, broker *events.Broker) *chi.Mux {
 	r := chi.NewRouter()
 
 	r.Use(chimiddleware.Logger)
@@ -36,7 +37,7 @@ func NewRouter(db *gorm.DB) *chi.Mux {
 		httpSwagger.URL("http://localhost:8080/swagger/doc.json"),
 	))
 
-	r.Mount("/api/v1", v1.NewRouter(db))
+	r.Mount("/api/v1", v1.NewRouter(db, broker))
 
 	return r
 }

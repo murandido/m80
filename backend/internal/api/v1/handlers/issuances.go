@@ -17,6 +17,7 @@ import (
 	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
+	"github.com/murandido/m-80-backend/internal/events"
 	"github.com/murandido/m-80-backend/internal/export"
 	"github.com/murandido/m-80-backend/internal/utils"
 	"gorm.io/datatypes"
@@ -30,16 +31,39 @@ const (
 	auditActionDeleted   = "deleted"
 )
 
+// SSE event types published by this handler. The payload is always just the
+// affected issuance id: every connected panel refetches the list with its own
+// filters anyway, and the filter rules (the creation/cancellation OR branch,
+// the São Paulo timezone) only exist here on the server.
+const (
+	eventIssuanceCreated   = "issuance.created"
+	eventIssuanceUpdated   = "issuance.updated"
+	eventIssuanceCancelled = "issuance.cancelled"
+	eventIssuanceDeleted   = "issuance.deleted"
+)
+
 type IssuanceHandler struct {
 	DB        *gorm.DB
 	Validator *validator.Validate
+	Broker    *events.Broker
 }
 
-func NewIssuanceHandler(db *gorm.DB) *IssuanceHandler {
+func NewIssuanceHandler(db *gorm.DB, broker *events.Broker) *IssuanceHandler {
 	return &IssuanceHandler{
 		DB:        db,
 		Validator: validator.New(),
+		Broker:    broker,
 	}
+}
+
+// broadcastIssuance announces a persisted mutation on the SSE stream. It is only
+// ever called after the transaction committed, so no client can be told about a
+// change that later rolls back.
+func (h *IssuanceHandler) broadcastIssuance(eventType, issuanceID string) {
+	h.Broker.Broadcast(events.Event{
+		Type:    eventType,
+		Payload: map[string]string{"id": issuanceID},
+	})
 }
 
 func toIssuanceFlightResponse(flight data.IssuanceFlight) schemas.IssuanceFlightResponse {
@@ -632,6 +656,8 @@ func (h *IssuanceHandler) CreateIssuance(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	h.broadcastIssuance(eventIssuanceCreated, issuance.ID)
+
 	utils.SendJSON(w, r, http.StatusCreated, "Issuance created successfully", toIssuanceResponse(issuance))
 }
 
@@ -802,6 +828,8 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	h.broadcastIssuance(eventIssuanceUpdated, issuance.ID)
+
 	utils.SendJSON(w, r, http.StatusOK, "Issuance updated successfully", toIssuanceResponse(issuance))
 }
 
@@ -852,6 +880,8 @@ func (h *IssuanceHandler) DeleteIssuance(w http.ResponseWriter, r *http.Request)
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to delete issuance: "+err.Error())
 		return
 	}
+
+	h.broadcastIssuance(eventIssuanceDeleted, issuance.ID)
 
 	utils.SendJSON(w, r, http.StatusOK, "Issuance deleted successfully", nil)
 }
@@ -965,6 +995,8 @@ func (h *IssuanceHandler) CancelIssuance(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	h.broadcastIssuance(eventIssuanceCancelled, issuance.ID)
+
 	utils.SendJSON(w, r, http.StatusOK, "Issuance cancelled successfully", toIssuanceResponse(issuance))
 }
 
@@ -1075,6 +1107,10 @@ func (h *IssuanceHandler) UncancelIssuance(w http.ResponseWriter, r *http.Reques
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch restored issuance")
 		return
 	}
+
+	// An uncancel is an update from the panel's point of view: the row stays where
+	// it is and only its status and cancellation metadata change.
+	h.broadcastIssuance(eventIssuanceUpdated, issuance.ID)
 
 	utils.SendJSON(w, r, http.StatusOK, "Issuance cancellation reverted successfully", toIssuanceResponse(issuance))
 }

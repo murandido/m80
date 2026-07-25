@@ -197,7 +197,7 @@ export default async function IssuancesPage({
                 />
               }
               initialIssuances={issuances}
-              exportQuery={issuanceQuery.toString()}
+              filterQuery={issuanceQuery.toString()}
               loyaltyPrograms={loyaltyPrograms ?? []}
               airlines={airlines ?? []}
               accounts={accounts ?? []}

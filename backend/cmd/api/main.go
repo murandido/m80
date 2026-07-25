@@ -9,6 +9,7 @@ import (
 
 	"github.com/murandido/m-80-backend/internal/api"
 	"github.com/murandido/m-80-backend/internal/data"
+	"github.com/murandido/m-80-backend/internal/events"
 )
 
 // @title           M-80 API
@@ -44,8 +45,12 @@ func main() {
 		log.Fatal("❌ Failed to seed airports: ", err)
 	}
 
+	// One broker per process, threaded through the router the same way the DB is.
+	// It lives as long as the server, so connected clients survive across requests.
+	broker := events.NewBroker()
+
 	// config router
-	r := api.NewRouter(data.DB)
+	r := api.NewRouter(data.DB, broker)
 
 	port := os.Getenv("PORT")
 	if port == "" {
