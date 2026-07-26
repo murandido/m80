@@ -47,6 +47,9 @@ func NewRouter(db *gorm.DB, broker *events.Broker) chi.Router {
 		// GET /users is open to any authenticated user; its write routes are
 		// admin-gated inline within RegisterUserRoutes itself.
 		routes.RegisterUserRoutes(r, db)
+		// Pure admin-only proxy to the bot's internal API - the gate lives
+		// inside RegisterBotRoutes itself, same as the suppliers view above.
+		routes.RegisterBotRoutes(r)
 	})
 
 	return r

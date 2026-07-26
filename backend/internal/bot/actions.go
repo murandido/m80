@@ -16,7 +16,7 @@ func (b *Bot) SendMessage(chatID types.JID, text string) {
 		Conversation: proto.String(text),
 	}
 
-	_, err := b.Client.SendMessage(context.Background(), chatID, msg)
+	_, err := b.currentSession().Client.SendMessage(context.Background(), chatID, msg)
 	if err != nil {
 		// TODO: audit this error
 		fmt.Println("Error sending:", err)
@@ -36,7 +36,7 @@ func (b *Bot) ReplyMessage(originalMsg *events.Message, text string) {
 		},
 	}
 
-	_, err := b.Client.SendMessage(context.Background(), originalMsg.Info.Chat, msg)
+	_, err := b.currentSession().Client.SendMessage(context.Background(), originalMsg.Info.Chat, msg)
 	if err != nil {
 		// TODO: audit this error
 		fmt.Println("Error sending the reply:", err)
@@ -44,7 +44,7 @@ func (b *Bot) ReplyMessage(originalMsg *events.Message, text string) {
 }
 
 func (b *Bot) MarkMessageAsRead(evt *events.Message) {
-	err := b.Client.MarkRead(
+	err := b.currentSession().Client.MarkRead(
 		context.Background(),
 		[]types.MessageID{evt.Info.ID},
 		evt.Info.Timestamp,
@@ -59,7 +59,7 @@ func (b *Bot) MarkMessageAsRead(evt *events.Message) {
 
 // SendPresenceTyping send to the chat that the bot is typing
 func (b *Bot) SendPresenceTyping(evt *events.Message) {
-	err := b.Client.SendChatPresence(
+	err := b.currentSession().Client.SendChatPresence(
 		context.Background(),
 		evt.Info.Chat,
 		types.ChatPresenceComposing,

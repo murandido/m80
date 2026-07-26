@@ -5,6 +5,7 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import {
   Award,
+  Bot,
   ChevronRight,
   Contact,
   Building2,
@@ -77,6 +78,7 @@ const navItems: NavEntry[] = [
   { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
   { title: "Usuários", url: "/dashboard/users", icon: Users, adminOnly: true },
   { title: "Aeroportos", url: "/dashboard/airports", icon: MapPin, adminOnly: true },
+  { title: "Bot", url: "/dashboard/bot", icon: Bot, adminOnly: true },
   { title: "Agências", url: "/dashboard/agencies", icon: Building2 },
   { title: "Emissões", url: "/dashboard/issuances", icon: Ticket },
   { title: "Vendas", url: "/dashboard/sales", icon: HandCoins },

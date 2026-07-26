@@ -57,6 +57,23 @@ func main() {
 		port = "8080"
 	}
 
+	internalPort := os.Getenv("API_INTERNAL_PORT")
+	if internalPort == "" {
+		internalPort = "8090"
+	}
+
+	internalSrv := &http.Server{
+		Addr:              ":" + internalPort,
+		Handler:           newInternalRouter(broker),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	go func() {
+		fmt.Printf("🔥 Internal listener running on %s\n", internalPort)
+		if err := internalSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			panic(err)
+		}
+	}()
+
 	fmt.Printf("🔥 Http server running on %s\n", port)
 	srv := &http.Server{
 		Addr:              ":" + port,
