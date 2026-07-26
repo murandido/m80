@@ -12,10 +12,10 @@ import { getLoyaltyProgramsSchema, type LoyaltyProgram } from "@/schemas/loyalty
 import { getAccountsSchema, type Account } from "@/schemas/account"
 import { getPeopleSchema, type Person } from "@/schemas/person"
 import { SalesViewToggle } from "@/components/sales/sales-view-toggle"
-import { SalesPeriodFilter } from "@/components/sales/sales-period-filter"
+import { PeriodFilter } from "@/components/filters/period-filter"
 import { SalesFilterBar } from "@/components/sales/sales-filter-bar"
 import { SalesSuppliersTable } from "@/components/sales/sales-suppliers-table"
-import { SalesLiveRefresh } from "@/components/sales/sales-live-refresh"
+import { LiveRefresh } from "@/components/layout/live-refresh"
 import {
   buildSalesQuery,
   resolveSalesFilters,
@@ -80,7 +80,7 @@ export default async function SalesSuppliersPage({
 
   return (
     <div className="p-6 sm:p-8">
-      <SalesLiveRefresh />
+      <LiveRefresh />
       <div className="flex flex-col gap-4 sm:gap-6">
         <div className="flex items-center justify-between gap-4">
           <h1 className="text-lg font-semibold text-slate-800">Vendas</h1>
@@ -104,7 +104,7 @@ export default async function SalesSuppliersPage({
           clients={[]}
           initialFilters={effectiveFilters}
         >
-          <SalesPeriodFilter
+          <PeriodFilter
             dateFrom={period.date_from}
             dateTo={period.date_to}
             preset={period.preset}

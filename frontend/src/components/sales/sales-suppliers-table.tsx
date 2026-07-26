@@ -7,6 +7,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { formatPoints } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import type { SupplierBalance } from "@/schemas/sale"
 
@@ -15,10 +16,6 @@ interface SalesSuppliersTableProps {
 }
 
 const COLUMN_COUNT = 6
-
-function formatPoints(points: number): string {
-  return points.toLocaleString("pt-BR")
-}
 
 export function SalesSuppliersTable({ balances }: SalesSuppliersTableProps) {
   // Summed in the browser rather than asked of the API: the table does not paginate, so

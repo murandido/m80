@@ -1,11 +1,10 @@
 import {
-  PERIOD_PRESETS,
-  type PeriodPreset,
-  formatYmd,
-  parseYmd,
-  resolvePeriodRange,
-  startOfToday,
-} from "@/lib/date-range"
+  type PeriodSearchParams,
+  type ResolvedPeriod,
+  resolvePeriod,
+} from "@/lib/period-params"
+
+export type { ResolvedPeriod }
 
 // The dimensions both sales views can filter on, carried as URL query params. Empty string
 // means "not filtered" on that dimension - except agency_id, where empty means "the main
@@ -21,38 +20,13 @@ export const SALES_FILTER_KEYS = [
 
 export type SalesFilterState = Record<(typeof SALES_FILTER_KEYS)[number], string>
 
-// `period`/`reference` are what the user picked; date_from/date_to are the expansion the
-// API actually filters on, kept in the URL so a shared link reproduces the exact range.
-export type SalesSearchParams = Partial<
-  Record<(typeof SALES_FILTER_KEYS)[number] | "period" | "reference" | "date_from" | "date_to", string>
->
-
-export interface ResolvedPeriod {
-  preset: PeriodPreset
-  reference: string
-  date_from: string
-  date_to: string
-}
-
-function isPeriodPreset(value: string | undefined): value is PeriodPreset {
-  return PERIOD_PRESETS.includes(value as PeriodPreset)
-}
+export type SalesSearchParams = PeriodSearchParams &
+  Partial<Record<(typeof SALES_FILTER_KEYS)[number], string>>
 
 // Defaults to the current month: a single day is too narrow to be useful as a landing
 // view for "who still owes me money".
 export function resolveSalesPeriod(params: SalesSearchParams): ResolvedPeriod {
-  const preset = isPeriodPreset(params.period) ? params.period : "month"
-  const referenceDate = parseYmd(params.reference ?? "") ?? startOfToday()
-  const range = resolvePeriodRange(preset, referenceDate)
-
-  return {
-    preset,
-    reference: formatYmd(referenceDate),
-    // An explicit date_from/date_to in the URL wins, so a hand-edited range survives a
-    // reload instead of snapping back to the preset's expansion.
-    date_from: params.date_from || range.date_from,
-    date_to: params.date_to || range.date_to,
-  }
+  return resolvePeriod(params, "month")
 }
 
 export function resolveSalesFilters(params: SalesSearchParams): SalesFilterState {

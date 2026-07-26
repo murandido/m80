@@ -22,6 +22,7 @@ import { ClientCombobox } from "@/components/clients/client-combobox"
 import { updateSaleAction } from "@/actions/sale"
 import { createClientAction } from "@/actions/client"
 import { formatCurrencyBRL } from "@/lib/currency"
+import { formatPoints } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import type { Client } from "@/schemas/client"
 import type { Sale } from "@/schemas/sale"
@@ -32,10 +33,6 @@ interface SalesClientsTableProps {
 }
 
 const COLUMN_COUNT = 10
-
-function formatPoints(points: number): string {
-  return points.toLocaleString("pt-BR")
-}
 
 function formatDateTime(iso: string): string {
   return new Date(iso).toLocaleDateString("pt-BR")

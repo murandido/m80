@@ -19,7 +19,7 @@ import {
   startOfToday,
 } from "@/lib/date-range"
 
-interface SalesPeriodFilterProps {
+interface PeriodFilterProps {
   // The range the server actually applied, so the label never drifts from the data.
   dateFrom: string
   dateTo: string
@@ -29,12 +29,15 @@ interface SalesPeriodFilterProps {
   reference: string
 }
 
-export function SalesPeriodFilter({
+// Shared by every period-scoped report (Vendas and the Dashboard). It only ever writes
+// period/reference/date_from/date_to, merging into whatever else is already in the URL, so
+// each page can own its own filter keys alongside it.
+export function PeriodFilter({
   dateFrom,
   dateTo,
   preset,
   reference,
-}: SalesPeriodFilterProps) {
+}: PeriodFilterProps) {
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()

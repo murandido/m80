@@ -243,6 +243,13 @@ type SupplierBalanceListResponse struct {
 	Data    []SupplierBalanceResponse `json:"data"`
 }
 
+// DashboardSingleResponse is the GET /dashboard route response
+type DashboardSingleResponse struct {
+	Success bool              `json:"success" example:"true"`
+	Message string            `json:"message" example:"Dashboard calculado com sucesso"`
+	Data    DashboardResponse `json:"data"`
+}
+
 // ErrorResponse is the standard API error response
 type ErrorResponse struct {
 	Success bool   `json:"success" example:"false"`
