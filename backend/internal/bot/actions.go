@@ -43,6 +43,17 @@ func (b *Bot) ReplyMessage(originalMsg *events.Message, text string) {
 	}
 }
 
+// ReactMessage reacts to the original message with the given emoji.
+func (b *Bot) ReactMessage(evt *events.Message, emoji string) {
+	msg := b.currentSession().Client.BuildReaction(evt.Info.Chat, evt.Info.Sender, evt.Info.ID, emoji)
+
+	_, err := b.currentSession().Client.SendMessage(context.Background(), evt.Info.Chat, msg)
+	if err != nil {
+		// TODO: audit this error
+		fmt.Println("Error sending the reaction:", err)
+	}
+}
+
 func (b *Bot) MarkMessageAsRead(evt *events.Message) {
 	err := b.currentSession().Client.MarkRead(
 		context.Background(),

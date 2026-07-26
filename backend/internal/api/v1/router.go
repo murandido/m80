@@ -50,6 +50,10 @@ func NewRouter(db *gorm.DB, broker *events.Broker) chi.Router {
 		// Pure admin-only proxy to the bot's internal API - the gate lives
 		// inside RegisterBotRoutes itself, same as the suppliers view above.
 		routes.RegisterBotRoutes(r)
+		// Admin-only chat approval flow for !registrar-chat - a static
+		// "/bot/chats" child, never shadowed by RegisterBotRoutes' "/bot/*"
+		// catch-all proxy above (see RegisterListenedChatRoutes doc comment).
+		routes.RegisterListenedChatRoutes(r, db)
 	})
 
 	return r

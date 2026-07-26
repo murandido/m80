@@ -90,3 +90,52 @@ func TestValidateBRPhone(t *testing.T) {
 		})
 	}
 }
+
+func TestNormalizeBRPhone(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "empty",
+			input:    "",
+			expected: "",
+		},
+		{
+			name:     "already has the 9th digit",
+			input:    "11998887777",
+			expected: "11998887777",
+		},
+		{
+			name:     "mobile missing the 9th digit gets it inserted",
+			input:    "1198887777",
+			expected: "11998887777",
+		},
+		{
+			name:     "landline stays untouched",
+			input:    "1123456789",
+			expected: "1123456789",
+		},
+		{
+			name:     "with symbols, mobile missing the 9",
+			input:    "(11) 9888-7777",
+			expected: "11998887777",
+		},
+		{
+			name:     "too few digits passes through untouched",
+			input:    "123456",
+			expected: "123456",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := NormalizeBRPhone(test.input)
+
+			if test.expected != result {
+				t.Errorf("expected %s, got %s", test.expected, result)
+			}
+		})
+	}
+}

@@ -145,9 +145,12 @@ func create(t *testing.T, tx *gorm.DB, model any) {
 
 // createUser seeds a user with a unique, valid Brazilian phone (User.BeforeCreate
 // validates DDD + 9 digits), built from an atomic counter so seeds never collide.
+// The "1199" prefix keeps the seed a realistic mobile number: only local parts
+// starting with 6-9 carry the optional "nono dígito", so this is the only shape
+// for which dropping that digit is reversible - see utils.NormalizeBRPhone.
 func createUser(t *testing.T, tx *gorm.DB, name string) data.User {
 	t.Helper()
-	phone := fmt.Sprintf("119%08d", atomic.AddInt64(&phoneCounter, 1)%100000000)
+	phone := fmt.Sprintf("1199%07d", atomic.AddInt64(&phoneCounter, 1)%10000000)
 	user := data.User{Name: name, Phone: phone, Password: "irrelevant"}
 	create(t, tx, &user)
 	return user

@@ -12,6 +12,7 @@ import (
 
 	_ "github.com/lib/pq"
 	"github.com/murandido/m-80-backend/internal/bot"
+	"github.com/murandido/m-80-backend/internal/data"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/store/sqlstore"
@@ -50,7 +51,15 @@ func main() {
 
 	dbURL := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable", dbUser, dbPass, dbHost, dbPort, dbName)
 
-	// connect to the db
+	// connect to the shared app DB (internal/data models: users,
+	// listened_chats, ...) - separate from whatsmeow's own sqlstore below,
+	// which only holds session/device credentials. Reads the same DB_* env
+	// vars and runs golang-migrate itself; safe to run concurrently with
+	// cmd/api's own data.Connect() at boot, since golang-migrate takes a
+	// Postgres advisory lock around the migration run.
+	data.Connect()
+
+	// connect to whatsmeow's own session store
 	container, err := sqlstore.New(ctx, "postgres", dbURL, dbLog)
 	if err != nil {
 		panic(err)
@@ -88,7 +97,7 @@ func main() {
 
 	// instance the bot struct - pairing is now admin-triggered on demand via
 	// the internal HTTP API below, not auto-started here.
-	botInstance = bot.New(client, clientLog, newDeviceClient, notifyStatusCallback(clientLog))
+	botInstance = bot.New(client, clientLog, newDeviceClient, notifyStatusCallback(clientLog), data.DB, notifyChatRequestedCallback(clientLog))
 
 	client.AddEventHandler(botInstance.EventHandler)
 
@@ -140,17 +149,31 @@ func main() {
 // never blocks the whatsmeow event handler.
 func notifyStatusCallback(logger waLog.Logger) func() {
 	callbackURL := os.Getenv("BOT_STATUS_CALLBACK_URL")
-	return func() {
-		if callbackURL == "" {
+	return func() { postCallback(logger, callbackURL, "status change") }
+}
+
+// notifyChatRequestedCallback returns the hook internal/bot.Bot calls after
+// !registrar-chat creates or reopens a listened_chats row - same bridge as
+// notifyStatusCallback, just a different callback URL/endpoint on cmd/api's
+// internal listener.
+func notifyChatRequestedCallback(logger waLog.Logger) func() {
+	callbackURL := os.Getenv("BOT_CHAT_REQUESTED_CALLBACK_URL")
+	return func() { postCallback(logger, callbackURL, "chat request") }
+}
+
+// postCallback is the shared fire-and-forget POST behind both notify hooks
+// above: empty body, own goroutine so a slow/unreachable api never blocks the
+// whatsmeow event handler, no-op when the corresponding env var isn't set.
+func postCallback(logger waLog.Logger, callbackURL, description string) {
+	if callbackURL == "" {
+		return
+	}
+	go func() {
+		resp, err := http.Post(callbackURL, "application/json", bytes.NewReader(nil)) // #nosec G107 G704 -- callbackURL vem de env confiável, não de input de usuário
+		if err != nil {
+			logger.Warnf("failed to notify api of %s: %v", description, err)
 			return
 		}
-		go func() {
-			resp, err := http.Post(callbackURL, "application/json", bytes.NewReader(nil)) // #nosec G107 G704 -- callbackURL vem de BOT_STATUS_CALLBACK_URL (env confiável), não de input de usuário
-			if err != nil {
-				logger.Warnf("failed to notify api of status change: %v", err)
-				return
-			}
-			_ = resp.Body.Close()
-		}()
-	}
+		_ = resp.Body.Close()
+	}()
 }

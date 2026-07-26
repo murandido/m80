@@ -1,7 +1,7 @@
 package schemas
 
 type LoginRequest struct {
-	Phone    string `json:"phone" validate:"required,len=11"`
+	Phone    string `json:"phone" validate:"required"`
 	Password string `json:"password" validate:"required,min=6"`
 }
 

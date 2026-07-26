@@ -49,6 +49,9 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Normalized the same way users.phone is on create/update, so a login
+	// typed without Brazil's optional mobile "nono dígito" still matches.
+	req.Phone = utils.NormalizeBRPhone(req.Phone)
 	if !utils.ValidateBRPhone(req.Phone) {
 		utils.SendError(w, r, http.StatusBadRequest, "Invalid phone number")
 		return

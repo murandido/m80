@@ -1,12 +1,24 @@
 import { requireAdmin } from "@/actions/auth"
 import { getBotStatusAction } from "@/actions/bot"
+import {
+  getMonitoredListenedChatsAction,
+  getPendingListenedChatsAction,
+} from "@/actions/listened-chats"
 import { BotStatusCard } from "@/components/bot/bot-status-card"
+import { PendingChatsTable } from "@/components/bot/pending-chats-table"
+import { MonitoredChatsTable } from "@/components/bot/monitored-chats-table"
 
 export default async function BotPage() {
   await requireAdmin()
 
-  const result = await getBotStatusAction()
-  const initialStatus = "status" in result ? result.status : null
+  const [statusResult, pendingChatsResult, monitoredChatsResult] = await Promise.all([
+    getBotStatusAction(),
+    getPendingListenedChatsAction(),
+    getMonitoredListenedChatsAction(),
+  ])
+  const initialStatus = "status" in statusResult ? statusResult.status : null
+  const pendingChats = "chats" in pendingChatsResult ? pendingChatsResult.chats : []
+  const monitoredChats = "chats" in monitoredChatsResult ? monitoredChatsResult.chats : []
 
   return (
     <div className="p-6 sm:p-8">
@@ -15,6 +27,8 @@ export default async function BotPage() {
           Configuração do Bot
         </h1>
         <BotStatusCard initialStatus={initialStatus} />
+        <PendingChatsTable chats={pendingChats} />
+        <MonitoredChatsTable chats={monitoredChats} />
       </div>
     </div>
   )

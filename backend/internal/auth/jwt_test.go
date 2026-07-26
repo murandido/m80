@@ -10,9 +10,11 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	// jwtSecret is set at package init from os.Getenv — override it directly
-	// for a deterministic test secret before any test runs.
-	jwtSecret = []byte("test-secret-for-jwt-unit-tests!!")
+	// jwtSecret reads the environment on every call, so a deterministic test
+	// secret only has to be in place before the first token is signed.
+	if err := os.Setenv("JWT_SECRET", "test-secret-for-jwt-unit-tests!!"); err != nil {
+		panic(err)
+	}
 	os.Exit(m.Run())
 }
 
@@ -65,9 +67,7 @@ func TestGenerateToken_ExpiresInSevenDays(t *testing.T) {
 }
 
 func TestGenerateToken_EmptySecret(t *testing.T) {
-	saved := jwtSecret
-	jwtSecret = []byte{}
-	defer func() { jwtSecret = saved }()
+	t.Setenv("JWT_SECRET", "")
 
 	_, err := GenerateToken("u1", "11911112222", "user")
 	if err == nil {
@@ -100,7 +100,7 @@ func TestValidateToken_ExpiredToken(t *testing.T) {
 		"exp":     time.Now().Add(-1 * time.Hour).Unix(),
 		"iss":     "m-80-api",
 	}
-	expired, _ := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(jwtSecret)
+	expired, _ := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(jwtSecret())
 
 	_, err := ValidateToken(expired)
 	if err == nil {

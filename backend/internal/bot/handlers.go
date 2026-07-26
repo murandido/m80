@@ -15,19 +15,29 @@ func (b *Bot) EventHandler(evt interface{}) {
 			return
 		}
 
-		rawText := utils.GetText(v.Message)
+		// Read synchronously, right as the event arrives: whatsmeow
+		// dispatches OfflineSyncPreview/Completed and the backlog of
+		// *events.Message in between them in order, so this is the accurate
+		// point to decide whether this particular message is part of that
+		// backlog - not whenever the goroutine below happens to wake up.
+		isBacklog := b.offlineSyncing.Load()
 
 		go func() {
 			// delay to read the message
 			utils.SleepRandom(500, 1500)
 
-			b.MarkMessageAsRead(v)
-
-			if utils.IsCommand(rawText) {
-				b.RouteCommand(v, rawText)
-				return
-			}
+			b.processIncomingMessage(v, isBacklog)
 		}()
+
+	case *events.OfflineSyncPreview:
+		if v.Total > 0 {
+			b.offlineSyncing.Store(true)
+			b.Logger.Infof("catching up on %d message(s) missed while offline", v.Total)
+		}
+
+	case *events.OfflineSyncCompleted:
+		b.offlineSyncing.Store(false)
+		b.Logger.Infof("caught up on missed events (%d)", v.Count)
 
 	case *events.Connected:
 		jid := ""
@@ -69,4 +79,22 @@ func (b *Bot) EventHandler(evt interface{}) {
 		b.Logger.Infof("pair success for %s, waiting for reconnect", v.ID)
 	}
 
+}
+
+// processIncomingMessage marks the message read and, unless it arrived as
+// part of catching up on a backlog after reconnecting, routes it as a
+// command if it looks like one. Extracted out of EventHandler's *events.Message
+// case so tests can drive it directly without waiting on the randomized read
+// delay above.
+func (b *Bot) processIncomingMessage(v *events.Message, isBacklog bool) {
+	b.MarkMessageAsRead(v)
+
+	if isBacklog {
+		return
+	}
+
+	rawText := utils.GetText(v.Message)
+	if utils.IsCommand(rawText) {
+		b.RouteCommand(v, rawText)
+	}
 }

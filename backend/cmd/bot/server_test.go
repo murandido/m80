@@ -50,7 +50,7 @@ func newTestBot() *bot.Bot {
 	}
 	session.qrChan <- whatsmeow.QRChannelItem{Event: whatsmeow.QRChannelEventCode}
 
-	return bot.NewTestBot(session, func() *types.JID { return nil }, waLog.Noop, bot.NewStatusStore(func() {}))
+	return bot.NewTestBot(session, func() *types.JID { return nil }, waLog.Noop, bot.NewStatusStore(func() {}), nil, func() {})
 }
 
 func decodeBody(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {

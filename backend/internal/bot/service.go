@@ -3,18 +3,25 @@ package bot
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 	waLog "go.mau.fi/whatsmeow/util/log"
+	"gorm.io/gorm"
 )
 
 type ClientBase interface {
 	SendMessage(ctx context.Context, to types.JID, message *waE2E.Message, extra ...whatsmeow.SendRequestExtra) (resp whatsmeow.SendResponse, err error)
 	SendChatPresence(ctx context.Context, jid types.JID, state types.ChatPresence, media types.ChatPresenceMedia) error
 	MarkRead(ctx context.Context, ids []types.MessageID, timestamp time.Time, chat, sender types.JID, receiptTypeExtra ...types.ReceiptType) error
+	// BuildReaction and GetGroupInfo are both promoted automatically on
+	// sessionAdapter through its embedded *whatsmeow.Client - no adapter
+	// changes needed to satisfy either.
+	BuildReaction(chat, sender types.JID, id types.MessageID, reaction string) *waE2E.Message
+	GetGroupInfo(ctx context.Context, jid types.JID) (*types.GroupInfo, error)
 }
 
 // SessionClient is the subset of *whatsmeow.Client needed to drive the
@@ -86,6 +93,29 @@ type Bot struct {
 	Logger waLog.Logger
 	Status *StatusStore
 
+	// DB gives command handlers access to the shared GORM models
+	// (internal/data) - e.g. resolving a message sender to a users row, or
+	// creating a listened_chats entry. nil in tests that never exercise a
+	// DB-backed command.
+	DB *gorm.DB
+
+	// notifyChatRequested is called after a !registrar-chat command actually
+	// creates or reopens a listened_chats row, so cmd/bot can push that out
+	// over HTTP the same way it already does for status changes - see
+	// notifyChatRequestedCallback in cmd/bot/main.go. Never nil in practice;
+	// callers pass a no-op when nothing needs to react, same convention as
+	// StatusStore's notify.
+	notifyChatRequested func()
+
+	// offlineSyncing is true between *events.OfflineSyncPreview and
+	// *events.OfflineSyncCompleted - i.e. while whatsmeow is redelivering
+	// messages the bot missed while disconnected. Messages received during
+	// this window are marked read but never routed to a command (see
+	// processIncomingMessage in handlers.go): replying to a command sent
+	// hours ago while the bot was down isn't useful and can confuse whoever
+	// sent it.
+	offlineSyncing atomic.Bool
+
 	mu      sync.RWMutex
 	session deviceSession
 
@@ -93,12 +123,14 @@ type Bot struct {
 	cancelPair context.CancelFunc
 }
 
-func New(client *whatsmeow.Client, logger waLog.Logger, newDeviceClient func(ctx context.Context) (ClientBase, SessionClient, func() *types.JID, error), statusNotify func()) *Bot {
+func New(client *whatsmeow.Client, logger waLog.Logger, newDeviceClient func(ctx context.Context) (ClientBase, SessionClient, func() *types.JID, error), statusNotify func(), db *gorm.DB, notifyChatRequested func()) *Bot {
 	return &Bot{
-		newDeviceClient: newDeviceClient,
-		Logger:          logger,
-		Status:          NewStatusStore(statusNotify),
-		session:         sessionFor(client),
+		newDeviceClient:     newDeviceClient,
+		Logger:              logger,
+		Status:              NewStatusStore(statusNotify),
+		session:             sessionFor(client),
+		DB:                  db,
+		notifyChatRequested: notifyChatRequested,
 	}
 }
 
@@ -129,10 +161,12 @@ func (b *Bot) Disconnect() {
 // unexported session field directly the way internal/bot's own tests do.
 // Not for production use - internal/ already keeps this out of reach outside
 // this module.
-func NewTestBot(session SessionClient, getJID func() *types.JID, logger waLog.Logger, status *StatusStore) *Bot {
+func NewTestBot(session SessionClient, getJID func() *types.JID, logger waLog.Logger, status *StatusStore, db *gorm.DB, notifyChatRequested func()) *Bot {
 	return &Bot{
-		Logger: logger,
-		Status: status,
+		Logger:              logger,
+		Status:              status,
+		DB:                  db,
+		notifyChatRequested: notifyChatRequested,
 		session: deviceSession{
 			Session: session,
 			GetJID:  getJID,

@@ -27,7 +27,10 @@ func (u *User) BeforeCreate(tx *gorm.DB) (err error) {
 		u.ID = uuid.New().String()
 	}
 
-	// check the phone number
+	// normalize before validating: WhatsApp's JID doesn't reliably carry
+	// Brazil's optional mobile "nono dígito", so users.phone is kept in the
+	// one canonical form both the bot and the login flow compare against.
+	u.Phone = utils.NormalizeBRPhone(u.Phone)
 	if !utils.ValidateBRPhone(u.Phone) {
 		return errors.New("invalid phone number")
 	}
@@ -47,7 +50,8 @@ func (u *User) CheckPassword(password string) bool {
 }
 
 func (u *User) BeforeUpdate(tx *gorm.DB) (err error) {
-	// check the phone number
+	// normalize before validating - see BeforeCreate for why.
+	u.Phone = utils.NormalizeBRPhone(u.Phone)
 	if !utils.ValidateBRPhone(u.Phone) {
 		return errors.New("invalid phone number")
 	}

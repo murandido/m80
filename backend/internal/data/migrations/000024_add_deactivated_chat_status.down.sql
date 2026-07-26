@@ -1,0 +1,3 @@
+-- Postgres does not support removing a value from an enum type directly -
+-- that would require recreating chat_status without it and rewriting every
+-- dependent row. Forward-only migration, no-op down.

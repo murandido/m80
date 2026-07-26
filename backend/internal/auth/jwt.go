@@ -8,10 +8,18 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-var jwtSecret = []byte(os.Getenv("JWT_SECRET"))
+// jwtSecret reads the secret on every call instead of caching it at package
+// init: an init-time read is fixed before any test (or any caller) can set the
+// variable, which made the signing path impossible to exercise outside a fully
+// configured environment. The process environment doesn't change at runtime, so
+// this costs a lookup and changes nothing in production.
+func jwtSecret() []byte {
+	return []byte(os.Getenv("JWT_SECRET"))
+}
 
 func GenerateToken(userID, phone, role string) (string, error) {
-	if len(jwtSecret) == 0 {
+	secret := jwtSecret()
+	if len(secret) == 0 {
 		return "", errors.New("JWT secret not set in .env")
 	}
 
@@ -27,7 +35,7 @@ func GenerateToken(userID, phone, role string) (string, error) {
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(jwtSecret)
+	return token.SignedString(secret)
 }
 
 func ValidateToken(tokenString string) (jwt.MapClaims, error) {
@@ -36,7 +44,7 @@ func ValidateToken(tokenString string) (jwt.MapClaims, error) {
 			return nil, errors.New("unexpected signing method")
 		}
 
-		return jwtSecret, nil
+		return jwtSecret(), nil
 	})
 
 	if err != nil {
