@@ -2,6 +2,7 @@ package bot
 
 import (
 	"testing"
+	"time"
 
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
@@ -69,7 +70,7 @@ func TestProcessIncomingMessage_DuringBacklog_MarksReadButDoesNotRouteCommand(t 
 		},
 	}
 
-	b.processIncomingMessage(newPingEvent(), true)
+	b.processIncomingMessage(newPingEvent(), true, time.Now())
 
 	sendCalls, markReadCalls := client.calls()
 	if markReadCalls != 1 {
@@ -91,7 +92,7 @@ func TestProcessIncomingMessage_NotBacklog_RoutesCommandNormally(t *testing.T) {
 		},
 	}
 
-	b.processIncomingMessage(newPingEvent(), false)
+	b.processIncomingMessage(newPingEvent(), false, time.Now())
 
 	sendCalls, markReadCalls := client.calls()
 	if markReadCalls != 1 {

@@ -2,7 +2,9 @@ package bot
 
 import (
 	"context"
+	"time"
 
+	"github.com/murandido/m-80-backend/internal/bot/humanizer"
 	"github.com/murandido/m-80-backend/internal/utils"
 	"go.mau.fi/whatsmeow/types/events"
 )
@@ -22,11 +24,14 @@ func (b *Bot) EventHandler(evt interface{}) {
 		// backlog - not whenever the goroutine below happens to wake up.
 		isBacklog := b.offlineSyncing.Load()
 
-		go func() {
-			// delay to read the message
-			utils.SleepRandom(500, 1500)
+		// startedAt anchors the humanizer's response floor - captured here,
+		// as close to the message's actual arrival as possible.
+		startedAt := time.Now()
 
-			b.processIncomingMessage(v, isBacklog)
+		go func() {
+			humanizer.DelayMarkAsRead()
+
+			b.processIncomingMessage(v, isBacklog, startedAt)
 		}()
 
 	case *events.OfflineSyncPreview:
@@ -85,8 +90,10 @@ func (b *Bot) EventHandler(evt interface{}) {
 // part of catching up on a backlog after reconnecting, routes it as a
 // command if it looks like one. Extracted out of EventHandler's *events.Message
 // case so tests can drive it directly without waiting on the randomized read
-// delay above.
-func (b *Bot) processIncomingMessage(v *events.Message, isBacklog bool) {
+// delay above. startedAt is threaded through to RouteCommand so the
+// humanizer can enforce its response floor against the message's real
+// arrival time, not whenever a given command starts replying.
+func (b *Bot) processIncomingMessage(v *events.Message, isBacklog bool, startedAt time.Time) {
 	b.MarkMessageAsRead(v)
 
 	if isBacklog {
@@ -95,6 +102,6 @@ func (b *Bot) processIncomingMessage(v *events.Message, isBacklog bool) {
 
 	rawText := utils.GetText(v.Message)
 	if utils.IsCommand(rawText) {
-		b.RouteCommand(v, rawText)
+		b.RouteCommand(v, rawText, startedAt)
 	}
 }

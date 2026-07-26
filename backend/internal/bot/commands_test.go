@@ -223,7 +223,7 @@ func TestCmdRegistrarChat_KnownUser_CreatesPendingRowAndReactsOK(t *testing.T) {
 		chatJID := "1111111111"
 		evt := newRegistrarChatEvent(chatJID, "55"+phone)
 
-		b.cmdRegistrarChat(evt)
+		b.cmdRegistrarChat(evt, time.Now())
 
 		var chat data.ListenedChat
 		if err := tx.First(&chat, "chat_jid = ?", evt.Info.Chat.String()).Error; err != nil {
@@ -253,7 +253,7 @@ func TestCmdRegistrarChat_UnknownUser_SilentlyIgnored(t *testing.T) {
 		chatJID := "2222222222"
 		evt := newRegistrarChatEvent(chatJID, "5511900000000")
 
-		b.cmdRegistrarChat(evt)
+		b.cmdRegistrarChat(evt, time.Now())
 
 		if count := countListenedChats(t, tx, evt.Info.Chat.String()); count != 0 {
 			t.Fatalf("listened_chats rows: got %d, want 0", count)
@@ -274,8 +274,8 @@ func TestCmdRegistrarChat_AlreadyRequested_NoDuplicateSilentlyIgnored(t *testing
 		chatJID := "3333333333"
 		evt := newRegistrarChatEvent(chatJID, "55"+phone)
 
-		b.cmdRegistrarChat(evt)
-		b.cmdRegistrarChat(evt)
+		b.cmdRegistrarChat(evt, time.Now())
+		b.cmdRegistrarChat(evt, time.Now())
 
 		if count := countListenedChats(t, tx, evt.Info.Chat.String()); count != 1 {
 			t.Fatalf("listened_chats rows: got %d, want 1", count)
@@ -319,7 +319,7 @@ func TestCmdRegistrarChat_StoppedChat_ReopensAsNewPendingRequest(t *testing.T) {
 		b := newRegistrarChatBot(tx, client)
 		evt := newRegistrarChatEvent(chatJID, "55"+newPhone)
 
-		b.cmdRegistrarChat(evt)
+		b.cmdRegistrarChat(evt, time.Now())
 
 		if count := countListenedChats(t, tx, evt.Info.Chat.String()); count != 1 {
 			t.Fatalf("listened_chats rows: got %d, want 1 (reopened, not duplicated)", count)
@@ -359,7 +359,7 @@ func TestCmdRegistrarChat_DeniedChat_ReopensAsNewPendingRequest(t *testing.T) {
 		b := newRegistrarChatBot(tx, client)
 		evt := newRegistrarChatEvent(chatJID, "55"+phone)
 
-		b.cmdRegistrarChat(evt)
+		b.cmdRegistrarChat(evt, time.Now())
 
 		if count := countListenedChats(t, tx, evt.Info.Chat.String()); count != 1 {
 			t.Fatalf("listened_chats rows: got %d, want 1 (reopened, not duplicated)", count)
@@ -390,7 +390,7 @@ func TestCmdRegistrarChat_ActiveChat_StillBlocksSilently(t *testing.T) {
 		b := newRegistrarChatBot(tx, client)
 		evt := newRegistrarChatEvent(chatJID, "55"+phone)
 
-		b.cmdRegistrarChat(evt)
+		b.cmdRegistrarChat(evt, time.Now())
 
 		var reloaded data.ListenedChat
 		if err := tx.First(&reloaded, "id = ?", seeded.ID).Error; err != nil {
@@ -423,7 +423,7 @@ func TestCmdRegistrarChat_DeactivatedChat_StaysDeactivatedSilently(t *testing.T)
 		b := newRegistrarChatBot(tx, client)
 		evt := newRegistrarChatEvent(chatJID, "55"+newPhone)
 
-		b.cmdRegistrarChat(evt)
+		b.cmdRegistrarChat(evt, time.Now())
 
 		var reloaded data.ListenedChat
 		if err := tx.First(&reloaded, "id = ?", seeded.ID).Error; err != nil {
@@ -462,7 +462,7 @@ func TestCmdRegistrarChat_LIDAddressing_ResolvesViaSenderAlt(t *testing.T) {
 			},
 		}
 
-		b.cmdRegistrarChat(evt)
+		b.cmdRegistrarChat(evt, time.Now())
 
 		var chat data.ListenedChat
 		if err := tx.First(&chat, "chat_jid = ?", evt.Info.Chat.String()).Error; err != nil {
@@ -484,7 +484,7 @@ func TestCmdRegistrarChat_GroupChat_FriendlyNameFromGetGroupInfo(t *testing.T) {
 		chatJID := "8888888888"
 		evt := newRegistrarChatEvent(chatJID, "55"+phone)
 
-		b.cmdRegistrarChat(evt)
+		b.cmdRegistrarChat(evt, time.Now())
 
 		var chat data.ListenedChat
 		if err := tx.First(&chat, "chat_jid = ?", evt.Info.Chat.String()).Error; err != nil {
@@ -506,7 +506,7 @@ func TestCmdRegistrarChat_DMChat_FriendlyNameFromPushName(t *testing.T) {
 		chatJID := "9999999999"
 		evt := newRegistrarChatDMEvent(chatJID, "55"+phone, "Fulano de Tal")
 
-		b.cmdRegistrarChat(evt)
+		b.cmdRegistrarChat(evt, time.Now())
 
 		var chat data.ListenedChat
 		if err := tx.First(&chat, "chat_jid = ?", evt.Info.Chat.String()).Error; err != nil {
@@ -528,7 +528,7 @@ func TestCmdRegistrarChat_GetGroupInfoFails_FriendlyNameStaysNilRowStillCreated(
 		chatJID := "1010101010"
 		evt := newRegistrarChatEvent(chatJID, "55"+phone)
 
-		b.cmdRegistrarChat(evt)
+		b.cmdRegistrarChat(evt, time.Now())
 
 		var chat data.ListenedChat
 		if err := tx.First(&chat, "chat_jid = ?", evt.Info.Chat.String()).Error; err != nil {
@@ -557,13 +557,13 @@ func TestCmdRegistrarChat_NotifiesOnlyOnCreateAndReopen(t *testing.T) {
 		evt := newRegistrarChatEvent(chatJID, "55"+phone)
 
 		// 1st call: new row created -> notifies.
-		b.cmdRegistrarChat(evt)
+		b.cmdRegistrarChat(evt, time.Now())
 		if notifyCalls != 1 {
 			t.Fatalf("notify calls after create: got %d, want 1", notifyCalls)
 		}
 
 		// 2nd call: still pending -> blocked, must NOT notify again.
-		b.cmdRegistrarChat(evt)
+		b.cmdRegistrarChat(evt, time.Now())
 		if notifyCalls != 1 {
 			t.Fatalf("notify calls after duplicate (pending): got %d, want 1", notifyCalls)
 		}
@@ -578,14 +578,14 @@ func TestCmdRegistrarChat_NotifiesOnlyOnCreateAndReopen(t *testing.T) {
 			t.Fatalf("failed to deny chat: %v", err)
 		}
 
-		b.cmdRegistrarChat(evt)
+		b.cmdRegistrarChat(evt, time.Now())
 		if notifyCalls != 2 {
 			t.Fatalf("notify calls after reopen: got %d, want 2", notifyCalls)
 		}
 
 		// Unknown sender -> silently ignored, must NOT notify.
 		unknownEvt := newRegistrarChatEvent("1313131313", "5511900000001")
-		b.cmdRegistrarChat(unknownEvt)
+		b.cmdRegistrarChat(unknownEvt, time.Now())
 		if notifyCalls != 2 {
 			t.Fatalf("notify calls after unknown sender: got %d, want 2", notifyCalls)
 		}

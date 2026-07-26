@@ -4,24 +4,27 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
+	"github.com/murandido/m-80-backend/internal/bot/humanizer"
 	"github.com/murandido/m-80-backend/internal/data"
-	"github.com/murandido/m-80-backend/internal/utils"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	"gorm.io/gorm"
 )
 
-// RouteCommand routes the commands to their respective functions
-func (b *Bot) RouteCommand(evt *events.Message, text string) {
+// RouteCommand routes the commands to their respective functions. startedAt
+// is the message's arrival time, threaded through so each command can
+// enforce the humanizer's response floor right before its final reply.
+func (b *Bot) RouteCommand(evt *events.Message, text string, startedAt time.Time) {
 	cmd := strings.Split(strings.ToLower(strings.TrimSpace(text)), " ")
 
 	switch cmd[0] {
 	case "!ping":
-		b.cmdPing(evt)
+		b.cmdPing(evt, startedAt)
 
 	case "!registrar-chat":
-		b.cmdRegistrarChat(evt)
+		b.cmdRegistrarChat(evt, startedAt)
 
 	default:
 		return
@@ -29,13 +32,11 @@ func (b *Bot) RouteCommand(evt *events.Message, text string) {
 }
 
 // cmdPing just reply every "!ping" message
-func (b *Bot) cmdPing(evt *events.Message) {
-	utils.SleepRandom(300, 500)
-
+func (b *Bot) cmdPing(evt *events.Message, startedAt time.Time) {
 	b.SendPresenceTyping(evt)
+	humanizer.DelayComposing()
 
-	utils.SleepRandom(1000, 1500)
-
+	humanizer.EnforceResponseFloor(startedAt)
 	b.ReplyMessage(evt, "Pong! 🏓")
 }
 
@@ -43,7 +44,7 @@ func (b *Bot) cmdPing(evt *events.Message) {
 // user, and if found, creates a pending listened_chats entry for an admin to
 // approve or deny later. Reacts with an emoji instead of replying with text -
 // no response text is needed for this command.
-func (b *Bot) cmdRegistrarChat(evt *events.Message) {
+func (b *Bot) cmdRegistrarChat(evt *events.Message, startedAt time.Time) {
 	user, err := b.resolveSenderUser(evt)
 	if err != nil {
 		b.Logger.Errorf("registrar-chat: failed to resolve sender %s: %v", evt.Info.Sender, err)
@@ -94,6 +95,8 @@ func (b *Bot) cmdRegistrarChat(evt *events.Message) {
 			b.Logger.Errorf("registrar-chat: failed to reopen listened_chats row for %s: %v", chatJID, err)
 			return
 		}
+		humanizer.DelayReaction()
+		humanizer.EnforceResponseFloor(startedAt)
 		b.ReactMessage(evt, "✅")
 		b.notifyChatRequested()
 
@@ -109,6 +112,8 @@ func (b *Bot) cmdRegistrarChat(evt *events.Message) {
 			b.Logger.Errorf("registrar-chat: failed to create listened_chats row for %s: %v", chatJID, err)
 			return
 		}
+		humanizer.DelayReaction()
+		humanizer.EnforceResponseFloor(startedAt)
 		b.ReactMessage(evt, "✅")
 		b.notifyChatRequested()
 
