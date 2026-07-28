@@ -98,18 +98,19 @@ func (b *Bot) EventHandler(evt interface{}) {
 
 // processIncomingMessage marks the message read and, unless it arrived as
 // part of catching up on a backlog after reconnecting, routes it: an edit, a
-// command, an EMISSAO or an ALTERACAO. Extracted out of EventHandler's
-// *events.Message case so tests can drive it directly without waiting on the
-// randomized read delay above. startedAt is threaded through so the humanizer
-// can enforce its response floor against the message's real arrival time, not
-// whenever a given handler starts replying.
+// command, an EMISSAO, an ALTERACAO, a CANCELAMENTO or a DELETAR. Extracted
+// out of EventHandler's *events.Message case so tests can drive it directly
+// without waiting on the randomized read delay above. startedAt is threaded
+// through so the humanizer can enforce its response floor against the
+// message's real arrival time, not whenever a given handler starts replying.
 //
-// Neither EMISSAO nor ALTERACAO carries a "!" prefix - both are ordinary text
-// the operators were already writing among themselves - so unlike a command
-// they cannot be recognized by addressing alone. isEmissaoMessage and
-// isAlteracaoMessage are the cheap first filter; whether the bot may actually
-// act on the message is decided in the handler, which checks that the chat is
-// approved for monitoring before touching anything.
+// None of the four carries a "!" prefix - all are ordinary text the operators
+// were already writing among themselves - so unlike a command they cannot be
+// recognized by addressing alone. isEmissaoMessage, isAlteracaoMessage,
+// isCancelamentoMessage and isDeletarMessage are the cheap first filter;
+// whether the bot may actually act on the message is decided in the handler,
+// which checks that the chat is approved for monitoring before touching
+// anything.
 //
 // The edit case comes first because an edited EMISSAO still looks like an
 // EMISSAO: what makes it a correction rather than a new issuance is only that
@@ -136,6 +137,10 @@ func (b *Bot) processIncomingMessage(v *events.Message, isBacklog bool, startedA
 		b.handleEmissao(v, rawText, startedAt)
 	case isAlteracaoMessage(rawText):
 		b.handleAlteracao(v, rawText, startedAt)
+	case isCancelamentoMessage(rawText):
+		b.handleCancelamento(v, rawText, startedAt)
+	case isDeletarMessage(rawText):
+		b.handleDeletar(v, rawText, startedAt)
 	}
 }
 

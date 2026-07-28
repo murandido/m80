@@ -123,11 +123,12 @@ func (b *Bot) isListeningTo(chatJID string) (bool, error) {
 	return count > 0, err
 }
 
-// refusalText picks the text to send back for a rejected message - an EMISSAO
-// or an ALTERACAO, whether it failed at the parser or inside the transaction.
+// refusalText picks the text to send back for a rejected message - an EMISSAO,
+// an ALTERACAO, a CANCELAMENTO or a DELETAR, whether it failed at the parser
+// or inside the transaction.
 //
 // Only an operatorError is quoted as it stands - that type exists precisely to
-// mark a message as written for the group. The two typed failures the issuance
+// mark a message as written for the group. The typed failures the issuance
 // service can raise get their own wording, and anything else is answered
 // generically: a group chat is no place for a database error, and the real one
 // is already in the log.
@@ -144,6 +145,8 @@ func refusalText(locator string, err error) string {
 		return fmt.Sprintf("Já existe uma emissão ativa com o localizador %s", locator)
 	case errors.Is(err, issuancesvc.ErrNoDefaultAgency):
 		return "Nenhuma agência padrão está configurada no painel"
+	case errors.Is(err, issuancesvc.ErrIssuanceAlreadyCancelled):
+		return fmt.Sprintf("A emissão %s já está cancelada", locator)
 	default:
 		return "Não consegui registrar essa emissão, verifique com o suporte"
 	}

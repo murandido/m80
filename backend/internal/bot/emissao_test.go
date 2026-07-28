@@ -27,6 +27,11 @@ type emissaoScenario struct {
 	// Updated counts the issuance.updated bridge calls, which only a correction
 	// makes - see alteracao_test.go.
 	Updated *atomic.Int32
+	// Cancelled and Deleted count the issuance.cancelled/issuance.deleted bridge
+	// calls, which only CANCELAMENTO/DELETAR make - see cancelamento_test.go and
+	// deletar_test.go.
+	Cancelled *atomic.Int32
+	Deleted   *atomic.Int32
 }
 
 func newEmissaoScenario(t *testing.T, tx *gorm.DB, airline data.Airline) emissaoScenario {
@@ -50,14 +55,18 @@ func newEmissaoScenario(t *testing.T, tx *gorm.DB, airline data.Airline) emissao
 	client := &fakeClientBase{}
 	notify := &atomic.Int32{}
 	updated := &atomic.Int32{}
+	cancelled := &atomic.Int32{}
+	deleted := &atomic.Int32{}
 
 	bot := &Bot{
-		Logger:                waLog.Noop,
-		Status:                NewStatusStore(func() {}),
-		DB:                    tx,
-		notifyChatRequested:   func() {},
-		notifyIssuanceCreated: func() { notify.Add(1) },
-		notifyIssuanceUpdated: func() { updated.Add(1) },
+		Logger:                  waLog.Noop,
+		Status:                  NewStatusStore(func() {}),
+		DB:                      tx,
+		notifyChatRequested:     func() {},
+		notifyIssuanceCreated:   func() { notify.Add(1) },
+		notifyIssuanceUpdated:   func() { updated.Add(1) },
+		notifyIssuanceCancelled: func() { cancelled.Add(1) },
+		notifyIssuanceDeleted:   func() { deleted.Add(1) },
 		session: deviceSession{
 			Client: client,
 			GetJID: func() *types.JID { return nil },
@@ -72,6 +81,8 @@ func newEmissaoScenario(t *testing.T, tx *gorm.DB, airline data.Airline) emissao
 		ChatJID:        chatJID,
 		Notify:         notify,
 		Updated:        updated,
+		Cancelled:      cancelled,
+		Deleted:        deleted,
 	}
 }
 

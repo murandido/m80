@@ -28,12 +28,13 @@ import (
 	"gorm.io/gorm"
 )
 
-// The "created" action lives in internal/issuance instead - it is written by the
-// service that creates the issuance, which the bot shares with this handler.
+// The "created", "cancelled" and "deleted" actions live in internal/issuance
+// instead - they are written by the Create/Cancel/Delete rules the bot shares
+// with this handler. auditActionCancelled survives here only because
+// UncancelIssuance still queries it back out to decide what to restore.
 const (
 	auditActionCancelled = "cancelled"
 	auditActionRestored  = "restored"
-	auditActionDeleted   = "deleted"
 )
 
 // SSE event types published by this handler. The payload is always just the
@@ -796,23 +797,7 @@ func (h *IssuanceHandler) DeleteIssuance(w http.ResponseWriter, r *http.Request)
 	}
 
 	err := h.DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Delete(&issuance).Error; err != nil {
-			return err
-		}
-
-		if err := tx.Create(&data.AuditLog{
-			IssuanceID:  issuance.ID,
-			ChangedByID: userCtx.ID,
-			Action:      auditActionDeleted,
-		}).Error; err != nil {
-			return err
-		}
-
-		// Deleting an issuance undoes a mistake - the emission never should have been
-		// recorded - so there is nothing left to charge anyone for. The sale row goes
-		// with it, unlike a cancellation, where the sale survives (reopened) because the
-		// trip really happened and the money has to be given back.
-		return tx.Where("issuance_id = ?", issuance.ID).Delete(&data.Sale{}).Error
+		return issuancesvc.Delete(tx, issuance, userCtx.ID)
 	})
 
 	if err != nil {
@@ -870,56 +855,20 @@ func (h *IssuanceHandler) CancelIssuance(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if !issuance.Active {
+	err := h.DB.Transaction(func(tx *gorm.DB) error {
+		var txErr error
+		issuance, txErr = issuancesvc.Cancel(tx, issuance, issuancesvc.CancelInput{
+			RefundedPoints:  req.RefundedPoints,
+			RefundedTaxes:   req.RefundedTaxes,
+			CancellationFee: req.CancellationFee,
+		}, userCtx.ID)
+		return txErr
+	})
+
+	if errors.Is(err, issuancesvc.ErrIssuanceAlreadyCancelled) {
 		utils.SendError(w, r, http.StatusUnprocessableEntity, "issuance already cancelled")
 		return
 	}
-
-	now := time.Now()
-	issuance.Active = false
-	issuance.CancelledAt = &now
-	// Denormalize the canceller onto the row so the list filter can surface it in the
-	// canceller's flow (audit_logs also records it, but isn't joined by the list query).
-	cancelledBy := userCtx.ID
-	issuance.CancelledByID = &cancelledBy
-	issuance.RefundedPoints = req.RefundedPoints
-	issuance.RefundedTaxes = req.RefundedTaxes
-	issuance.CancellationFee = req.CancellationFee
-
-	err := h.DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Save(&issuance).Error; err != nil {
-			return err
-		}
-
-		// Only touch a paid sale: scoping on paid=true keeps this a no-op when there is
-		// no sale linked or it was already unpaid. RowsAffected records whether we actually
-		// flipped it, so UncancelIssuance can restore the exact prior state on a revert.
-		res := tx.Model(&data.Sale{}).
-			Where("issuance_id = ? AND paid = ?", issuance.ID, true).
-			Update("paid", false)
-		if res.Error != nil {
-			return res.Error
-		}
-
-		details, err := json.Marshal(map[string]any{
-			"refunded_points":  req.RefundedPoints,
-			"refunded_taxes":   req.RefundedTaxes,
-			"cancellation_fee": req.CancellationFee,
-			"cancelled_at":     now,
-			"sale_paid_reset":  res.RowsAffected > 0,
-		})
-		if err != nil {
-			return err
-		}
-
-		return tx.Create(&data.AuditLog{
-			IssuanceID:  issuance.ID,
-			ChangedByID: userCtx.ID,
-			Action:      auditActionCancelled,
-			Details:     datatypes.JSON(details),
-		}).Error
-	})
-
 	if err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to cancel issuance: "+err.Error())
 		return

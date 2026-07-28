@@ -98,10 +98,12 @@ func main() {
 	// instance the bot struct - pairing is now admin-triggered on demand via
 	// the internal HTTP API below, not auto-started here.
 	botInstance = bot.New(client, clientLog, newDeviceClient, data.DB, bot.Notifiers{
-		StatusChanged:   notifyStatusCallback(clientLog),
-		ChatRequested:   notifyChatRequestedCallback(clientLog),
-		IssuanceCreated: notifyIssuanceCreatedCallback(clientLog),
-		IssuanceUpdated: notifyIssuanceUpdatedCallback(clientLog),
+		StatusChanged:     notifyStatusCallback(clientLog),
+		ChatRequested:     notifyChatRequestedCallback(clientLog),
+		IssuanceCreated:   notifyIssuanceCreatedCallback(clientLog),
+		IssuanceUpdated:   notifyIssuanceUpdatedCallback(clientLog),
+		IssuanceCancelled: notifyIssuanceCancelledCallback(clientLog),
+		IssuanceDeleted:   notifyIssuanceDeletedCallback(clientLog),
 	})
 
 	client.AddEventHandler(botInstance.EventHandler)
@@ -180,6 +182,18 @@ func notifyIssuanceCreatedCallback(logger waLog.Logger) func() {
 func notifyIssuanceUpdatedCallback(logger waLog.Logger) func() {
 	callbackURL := os.Getenv("BOT_ISSUANCE_UPDATED_CALLBACK_URL")
 	return func() { postCallback(logger, callbackURL, "issuance update") }
+}
+
+// notifyIssuanceCancelledCallback is the same bridge for a CANCELAMENTO message.
+func notifyIssuanceCancelledCallback(logger waLog.Logger) func() {
+	callbackURL := os.Getenv("BOT_ISSUANCE_CANCELLED_CALLBACK_URL")
+	return func() { postCallback(logger, callbackURL, "issuance cancellation") }
+}
+
+// notifyIssuanceDeletedCallback is the same bridge for a DELETAR message.
+func notifyIssuanceDeletedCallback(logger waLog.Logger) func() {
+	callbackURL := os.Getenv("BOT_ISSUANCE_DELETED_CALLBACK_URL")
+	return func() { postCallback(logger, callbackURL, "issuance deletion") }
 }
 
 // postCallback is the shared fire-and-forget POST behind every notify hook

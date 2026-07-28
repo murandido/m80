@@ -28,4 +28,9 @@ var (
 	// miss them.
 	ErrLastNameRequired       = errors.New("this airline requires the main passenger's last name")
 	ErrPurchaseNumberRequired = errors.New("this airline requires the purchase number")
+
+	// ErrIssuanceAlreadyCancelled is raised by Cancel when the issuance handed
+	// to it is already inactive - cancelling it twice would overwrite whatever
+	// refund amounts the first cancellation recorded.
+	ErrIssuanceAlreadyCancelled = errors.New("issuance already cancelled")
 )

@@ -45,5 +45,19 @@ func newInternalRouter(broker *events.Broker) http.Handler {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
+	// A CANCELAMENTO message, broadcast as the same event the panel's own
+	// POST /issuances/{id}/cancel emits.
+	mux.HandleFunc("POST /internal/bot/issuance-cancelled", func(w http.ResponseWriter, r *http.Request) {
+		broker.Broadcast(events.Event{Type: "issuance.cancelled"})
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	// A DELETAR message, broadcast as the same event the panel's own
+	// DELETE /issuances/{id} emits.
+	mux.HandleFunc("POST /internal/bot/issuance-deleted", func(w http.ResponseWriter, r *http.Request) {
+		broker.Broadcast(events.Event{Type: "issuance.deleted"})
+		w.WriteHeader(http.StatusNoContent)
+	})
+
 	return mux
 }

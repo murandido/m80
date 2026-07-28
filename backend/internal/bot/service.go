@@ -124,6 +124,13 @@ type Bot struct {
 	// types, and the panel is free to treat them differently.
 	notifyIssuanceUpdated func()
 
+	// notifyIssuanceCancelled and notifyIssuanceDeleted are the same bridge for
+	// a CANCELAMENTO and a DELETAR message, respectively - separate hooks for
+	// the same reason as notifyIssuanceUpdated: each broadcasts its own SSE
+	// event type.
+	notifyIssuanceCancelled func()
+	notifyIssuanceDeleted   func()
+
 	// issued remembers which issuance each EMISSAO message created, so an edit
 	// of that message is understood as a correction of it. See issued_messages.go.
 	issued issuedMessages
@@ -150,10 +157,12 @@ type Bot struct {
 // waiting to be swapped by accident - and a swap here fails silently, since
 // every one of them has the same type and none returns anything.
 type Notifiers struct {
-	StatusChanged   func()
-	ChatRequested   func()
-	IssuanceCreated func()
-	IssuanceUpdated func()
+	StatusChanged     func()
+	ChatRequested     func()
+	IssuanceCreated   func()
+	IssuanceUpdated   func()
+	IssuanceCancelled func()
+	IssuanceDeleted   func()
 }
 
 // withDefaults fills the hooks nobody set with no-ops. A struct makes omitting
@@ -162,7 +171,10 @@ type Notifiers struct {
 func (n Notifiers) withDefaults() Notifiers {
 	noop := func() {}
 
-	for _, hook := range []*func(){&n.StatusChanged, &n.ChatRequested, &n.IssuanceCreated, &n.IssuanceUpdated} {
+	for _, hook := range []*func(){
+		&n.StatusChanged, &n.ChatRequested, &n.IssuanceCreated, &n.IssuanceUpdated,
+		&n.IssuanceCancelled, &n.IssuanceDeleted,
+	} {
 		if *hook == nil {
 			*hook = noop
 		}
@@ -174,14 +186,16 @@ func New(client *whatsmeow.Client, logger waLog.Logger, newDeviceClient func(ctx
 	notifiers = notifiers.withDefaults()
 
 	return &Bot{
-		newDeviceClient:       newDeviceClient,
-		Logger:                logger,
-		Status:                NewStatusStore(notifiers.StatusChanged),
-		session:               sessionFor(client),
-		DB:                    db,
-		notifyChatRequested:   notifiers.ChatRequested,
-		notifyIssuanceCreated: notifiers.IssuanceCreated,
-		notifyIssuanceUpdated: notifiers.IssuanceUpdated,
+		newDeviceClient:         newDeviceClient,
+		Logger:                  logger,
+		Status:                  NewStatusStore(notifiers.StatusChanged),
+		session:                 sessionFor(client),
+		DB:                      db,
+		notifyChatRequested:     notifiers.ChatRequested,
+		notifyIssuanceCreated:   notifiers.IssuanceCreated,
+		notifyIssuanceUpdated:   notifiers.IssuanceUpdated,
+		notifyIssuanceCancelled: notifiers.IssuanceCancelled,
+		notifyIssuanceDeleted:   notifiers.IssuanceDeleted,
 	}
 }
 
@@ -220,8 +234,10 @@ func NewTestBot(session SessionClient, getJID func() *types.JID, logger waLog.Lo
 		notifyChatRequested: notifyChatRequested,
 		// cmd/bot's HTTP handler tests never drive a message through, so there
 		// is nothing for these to notify about.
-		notifyIssuanceCreated: func() {},
-		notifyIssuanceUpdated: func() {},
+		notifyIssuanceCreated:   func() {},
+		notifyIssuanceUpdated:   func() {},
+		notifyIssuanceCancelled: func() {},
+		notifyIssuanceDeleted:   func() {},
 		session: deviceSession{
 			Session: session,
 			GetJID:  getJID,
