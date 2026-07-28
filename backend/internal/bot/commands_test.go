@@ -12,6 +12,7 @@ import (
 
 	"github.com/murandido/m-80-backend/internal/data"
 	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/proto/waCommon"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
@@ -105,12 +106,13 @@ func createUser(t *testing.T, tx *gorm.DB, phone string) data.User {
 }
 
 // fakeClientBase is a minimal bot.ClientBase double. It records every
-// reaction emoji sent (via SendMessage, since ReactMessage always routes
-// through BuildReaction + SendMessage) so tests can assert on it without
-// caring about the exact whatsmeow protobuf plumbing.
+// reaction emoji and every reply text sent (both go out through SendMessage,
+// since ReactMessage routes through BuildReaction + SendMessage) so tests can
+// assert on them without caring about the exact whatsmeow protobuf plumbing.
 type fakeClientBase struct {
 	mu            sync.Mutex
 	sentReactions []string
+	sentTexts     []string
 	sendCalls     int
 	markReadCalls int
 
@@ -118,6 +120,11 @@ type fakeClientBase struct {
 	// tests exercising the group-name resolution path.
 	groupInfo    *types.GroupInfo
 	groupInfoErr error
+
+	// openedEdit/openEditErr configure what DecryptSecretEncryptedMessage hands
+	// back, so the edit tests exercise the unwrap rather than real crypto.
+	openedEdit  *waE2E.Message
+	openEditErr error
 }
 
 func (f *fakeClientBase) SendMessage(_ context.Context, _ types.JID, message *waE2E.Message, _ ...whatsmeow.SendRequestExtra) (whatsmeow.SendResponse, error) {
@@ -126,6 +133,9 @@ func (f *fakeClientBase) SendMessage(_ context.Context, _ types.JID, message *wa
 	f.sendCalls++
 	if message.ReactionMessage != nil {
 		f.sentReactions = append(f.sentReactions, message.ReactionMessage.GetText())
+	}
+	if text := message.GetExtendedTextMessage().GetText(); text != "" {
+		f.sentTexts = append(f.sentTexts, text)
 	}
 	return whatsmeow.SendResponse{}, nil
 }
@@ -151,6 +161,32 @@ func (f *fakeClientBase) BuildReaction(_, _ types.JID, _ types.MessageID, reacti
 	return &waE2E.Message{ReactionMessage: &waE2E.ReactionMessage{Text: proto.String(reaction)}}
 }
 
+func (f *fakeClientBase) DecryptSecretEncryptedMessage(_ context.Context, _ *events.Message) (*waE2E.Message, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.openEditErr != nil {
+		return nil, f.openEditErr
+	}
+	return f.openedEdit, nil
+}
+
+// primeOpenedEdit sets what DecryptSecretEncryptedMessage will reveal: not the
+// text itself, but the second envelope WhatsApp seals inside the first - a
+// MESSAGE_EDIT protocol message naming the message being replaced.
+func (f *fakeClientBase) primeOpenedEdit(originalID, text string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.openedEdit = &waE2E.Message{
+		ProtocolMessage: &waE2E.ProtocolMessage{
+			Type: waE2E.ProtocolMessage_MESSAGE_EDIT.Enum(),
+			Key:  &waCommon.MessageKey{ID: proto.String(originalID)},
+			EditedMessage: &waE2E.Message{
+				ExtendedTextMessage: &waE2E.ExtendedTextMessage{Text: proto.String(text)},
+			},
+		},
+	}
+}
+
 func (f *fakeClientBase) GetGroupInfo(_ context.Context, _ types.JID) (*types.GroupInfo, error) {
 	if f.groupInfoErr != nil {
 		return nil, f.groupInfoErr
@@ -162,6 +198,16 @@ func (f *fakeClientBase) reactions() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string(nil), f.sentReactions...)
+}
+
+// lastText returns the most recent reply the bot sent, or "" if it only reacted.
+func (f *fakeClientBase) lastText() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.sentTexts) == 0 {
+		return ""
+	}
+	return f.sentTexts[len(f.sentTexts)-1]
 }
 
 func newRegistrarChatEvent(chatJID, senderPhone string) *events.Message {

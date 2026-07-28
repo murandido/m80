@@ -9,6 +9,7 @@ import (
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
+	"go.mau.fi/whatsmeow/types/events"
 	waLog "go.mau.fi/whatsmeow/util/log"
 	"gorm.io/gorm"
 )
@@ -22,6 +23,10 @@ type ClientBase interface {
 	// changes needed to satisfy either.
 	BuildReaction(chat, sender types.JID, id types.MessageID, reaction string) *waE2E.Message
 	GetGroupInfo(ctx context.Context, jid types.JID) (*types.GroupInfo, error)
+	// DecryptSecretEncryptedMessage opens the second envelope a live edit
+	// arrives in - see unwrapEdit. Promoted automatically on sessionAdapter,
+	// like the two above.
+	DecryptSecretEncryptedMessage(ctx context.Context, evt *events.Message) (*waE2E.Message, error)
 }
 
 // SessionClient is the subset of *whatsmeow.Client needed to drive the
@@ -113,6 +118,16 @@ type Bot struct {
 	// in its own process and cannot reach the SSE broker directly.
 	notifyIssuanceCreated func()
 
+	// notifyIssuanceUpdated is the equivalent for a correction - an ALTERACAO
+	// message or an edit of the original one. A separate hook rather than a
+	// reuse of the one above because the two broadcast different SSE event
+	// types, and the panel is free to treat them differently.
+	notifyIssuanceUpdated func()
+
+	// issued remembers which issuance each EMISSAO message created, so an edit
+	// of that message is understood as a correction of it. See issued_messages.go.
+	issued issuedMessages
+
 	// offlineSyncing is true between *events.OfflineSyncPreview and
 	// *events.OfflineSyncCompleted - i.e. while whatsmeow is redelivering
 	// messages the bot missed while disconnected. Messages received during
@@ -129,15 +144,44 @@ type Bot struct {
 	cancelPair context.CancelFunc
 }
 
-func New(client *whatsmeow.Client, logger waLog.Logger, newDeviceClient func(ctx context.Context) (ClientBase, SessionClient, func() *types.JID, error), statusNotify func(), db *gorm.DB, notifyChatRequested, notifyIssuanceCreated func()) *Bot {
+// Notifiers bundles the fire-and-forget hooks the bot calls after it changed
+// something the panel should see. They are grouped into a struct rather than
+// passed as four consecutive func() parameters, which is an argument order
+// waiting to be swapped by accident - and a swap here fails silently, since
+// every one of them has the same type and none returns anything.
+type Notifiers struct {
+	StatusChanged   func()
+	ChatRequested   func()
+	IssuanceCreated func()
+	IssuanceUpdated func()
+}
+
+// withDefaults fills the hooks nobody set with no-ops. A struct makes omitting
+// a field easy and invisible, and the call sites deliberately do not nil-check
+// on every use.
+func (n Notifiers) withDefaults() Notifiers {
+	noop := func() {}
+
+	for _, hook := range []*func(){&n.StatusChanged, &n.ChatRequested, &n.IssuanceCreated, &n.IssuanceUpdated} {
+		if *hook == nil {
+			*hook = noop
+		}
+	}
+	return n
+}
+
+func New(client *whatsmeow.Client, logger waLog.Logger, newDeviceClient func(ctx context.Context) (ClientBase, SessionClient, func() *types.JID, error), db *gorm.DB, notifiers Notifiers) *Bot {
+	notifiers = notifiers.withDefaults()
+
 	return &Bot{
 		newDeviceClient:       newDeviceClient,
 		Logger:                logger,
-		Status:                NewStatusStore(statusNotify),
+		Status:                NewStatusStore(notifiers.StatusChanged),
 		session:               sessionFor(client),
 		DB:                    db,
-		notifyChatRequested:   notifyChatRequested,
-		notifyIssuanceCreated: notifyIssuanceCreated,
+		notifyChatRequested:   notifiers.ChatRequested,
+		notifyIssuanceCreated: notifiers.IssuanceCreated,
+		notifyIssuanceUpdated: notifiers.IssuanceUpdated,
 	}
 }
 
@@ -175,8 +219,9 @@ func NewTestBot(session SessionClient, getJID func() *types.JID, logger waLog.Lo
 		DB:                  db,
 		notifyChatRequested: notifyChatRequested,
 		// cmd/bot's HTTP handler tests never drive a message through, so there
-		// is nothing for this to notify about.
+		// is nothing for these to notify about.
 		notifyIssuanceCreated: func() {},
+		notifyIssuanceUpdated: func() {},
 		session: deviceSession{
 			Session: session,
 			GetJID:  getJID,

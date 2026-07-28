@@ -138,6 +138,24 @@ func resolveEmissaoAirline(tx *gorm.DB, msg *emissaoMessage, program data.Loyalt
 // requires_purchase_number flags. They appear in that fixed order, so once the
 // flags are known the assignment is positional.
 func assignLine2Extras(airline data.Airline, extras []string) (lastName, purchaseNumber *string, err error) {
+	return assignExtras(airline, extras, true)
+}
+
+// assignCorrectionExtras reads the same fields out of an ALTERACAO's route line,
+// where an extra the airline requires but the message left out means "keep what
+// is stored" rather than "this message is incomplete". An operator fixing a typo
+// in the origin should not have to retype the surname to be allowed to.
+//
+// Everything else is identical, the positional order included - so a line with
+// one extra means the same thing in both messages.
+func assignCorrectionExtras(airline data.Airline, extras []string) (lastName, purchaseNumber *string, err error) {
+	return assignExtras(airline, extras, false)
+}
+
+// assignExtras carries the assignment both of the above share. demandRequired
+// separates them: it is the EMISSAO, which describes a whole issuance, that has
+// to insist on the fields the airline needs.
+func assignExtras(airline data.Airline, extras []string, demandRequired bool) (lastName, purchaseNumber *string, err error) {
 	remaining := extras
 	take := func() *string {
 		if len(remaining) == 0 {
@@ -149,12 +167,12 @@ func assignLine2Extras(airline data.Airline, extras []string) (lastName, purchas
 	}
 
 	if airline.RequiresLastName {
-		if lastName = take(); lastName == nil {
+		if lastName = take(); lastName == nil && demandRequired {
 			return nil, nil, operatorErrorf(issuancesvc.ErrLastNameRequired, "A %s exige o sobrenome do passageiro na linha 2", airline.Name)
 		}
 	}
 	if airline.RequiresPurchaseNumber {
-		if purchaseNumber = take(); purchaseNumber == nil {
+		if purchaseNumber = take(); purchaseNumber == nil && demandRequired {
 			return nil, nil, operatorErrorf(issuancesvc.ErrPurchaseNumberRequired, "A %s exige o número da compra na linha 2", airline.Name)
 		}
 	}

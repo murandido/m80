@@ -37,6 +37,7 @@ import {
 } from "@/lib/grid-navigation"
 import { Issuance, getIssuancesSchema, updateIssuanceSchema } from "@/schemas/issuance"
 import { Account } from "@/schemas/account"
+import { Agency } from "@/schemas/agency"
 import {
   createIssuanceAction,
   updateIssuanceAction,
@@ -64,6 +65,38 @@ const COLUMN_LABELS = [
   "Agência",
   "Status",
 ]
+
+// Overlays the records this session learned about on top of the server-rendered list. The
+// server wins on collision: its copy came from a full fetch, the overlay from whatever a
+// single issuance happened to carry.
+function mergeById<T extends { id: string }>(fromServer: T[], extra: T[]): T[] {
+  if (extra.length === 0) return fromServer
+
+  const byId = new Map(fromServer.map((item) => [item.id, item]))
+  for (const item of extra) {
+    if (!byId.has(item.id)) byId.set(item.id, item)
+  }
+  return [...byId.values()]
+}
+
+// Picks out the candidates neither list knows yet. Returns `known` itself when there are
+// none, so React bails out of the update instead of invalidating the grid context and
+// re-rendering every cell on a routine refetch.
+function absorb<T extends { id: string }>(
+  known: T[],
+  fromServer: T[],
+  candidates: (T | null | undefined)[],
+): T[] {
+  const seen = new Set([...known, ...fromServer].map((item) => item.id))
+
+  const added: T[] = []
+  for (const candidate of candidates) {
+    if (!candidate || seen.has(candidate.id)) continue
+    seen.add(candidate.id)
+    added.push(candidate)
+  }
+  return added.length > 0 ? [...known, ...added] : known
+}
 
 interface IssuancesGridProps extends GridReferenceData {
   initialIssuances: Issuance[]
@@ -159,10 +192,13 @@ export function IssuancesGrid({
   // by nature: the old account_id survives in the database (the column is NOT NULL), so a
   // reload brings it back and the highlight legitimately disappears.
   const [accountClearedKeys, setAccountClearedKeys] = useState(new Set<string>())
-  // Accounts created inline from the account cell. Kept alongside the prop rather than
-  // replacing it, so a later refresh of the server-fetched list doesn't get shadowed by
-  // a stale copy - the merge below dedupes when the same account arrives from both.
-  const [createdAccounts, setCreatedAccounts] = useState<Account[]>([])
+  // Accounts and agencies this session learned about after the page rendered: created
+  // inline from the account cell, or arrived embedded in a refetched issuance (see
+  // adoptReferences). Kept alongside the props rather than replacing them, so a later
+  // refresh of the server-fetched lists doesn't get shadowed by a stale copy - the merges
+  // below dedupe when the same record arrives from both.
+  const [extraAccounts, setExtraAccounts] = useState<Account[]>([])
+  const [extraAgencies, setExtraAgencies] = useState<Agency[]>([])
   const [pendingAccountLabels, setPendingAccountLabels] = useState<Record<string, string>>({})
   // Row index awaiting delete confirmation, driven by the Ctrl+Shift+Backspace shortcut.
   // Null means the confirm dialog is closed.
@@ -185,13 +221,14 @@ export function IssuancesGrid({
   const redoStackRef = useRef<HistoryEntry[]>([])
   const historyModeRef = useRef<"record" | "undo" | "redo">("record")
 
-  const accounts = useMemo(() => {
-    const byId = new Map(referenceData.accounts.map((account) => [account.id, account]))
-    for (const account of createdAccounts) {
-      if (!byId.has(account.id)) byId.set(account.id, account)
-    }
-    return [...byId.values()]
-  }, [referenceData.accounts, createdAccounts])
+  const accounts = useMemo(
+    () => mergeById(referenceData.accounts, extraAccounts),
+    [referenceData.accounts, extraAccounts],
+  )
+  const agencies = useMemo(
+    () => mergeById(referenceData.agencies, extraAgencies),
+    [referenceData.agencies, extraAgencies],
+  )
 
   useEffect(() => {
     rowsRef.current = rows
@@ -359,6 +396,25 @@ export function IssuancesGrid({
   // calendar day) live on the server and are not worth duplicating here.
   const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // A correction from the bot can point at an account or an agency created after this page
+  // rendered - the ALTERACAO flow conjures both from an unknown alias. The reference lists
+  // are props of the Server Component and stay as they loaded, so without this the account
+  // cell has no name to show and reads as empty until a reload.
+  //
+  // Nothing is fetched for it: GET /issuances already embeds account (with its nicknames)
+  // and agency on every row, so the record is sitting in the response we just parsed.
+  const adoptReferences = useCallback(
+    (fresh: Issuance[]) => {
+      setExtraAccounts((prev) =>
+        absorb(prev, referenceData.accounts, fresh.map((issuance) => issuance.account)),
+      )
+      setExtraAgencies((prev) =>
+        absorb(prev, referenceData.agencies, fresh.map((issuance) => issuance.agency)),
+      )
+    },
+    [referenceData.accounts, referenceData.agencies],
+  )
+
   const refreshFromServer = useCallback(async () => {
     let fresh: Issuance[]
     try {
@@ -372,6 +428,8 @@ export function IssuancesGrid({
       return
     }
 
+    adoptReferences(fresh)
+
     const { sel, editing } = interactionRef.current
     const selectedKey = rowsRef.current[sel.r]?.key ?? null
     const next = reconcileRows(rowsRef.current, fresh, editing ? selectedKey : null)
@@ -384,7 +442,7 @@ export function IssuancesGrid({
     if (movedTo !== -1 && movedTo !== sel.r) {
       dispatch({ type: "MOVE", r: movedTo, c: sel.c, alsoEdit: editing })
     }
-  }, [filterQuery])
+  }, [filterQuery, adoptReferences])
 
   // Coalesces a burst - a batch of issuances created back to back - into one refetch.
   const scheduleRefresh = useCallback(() => {
@@ -527,7 +585,7 @@ export function IssuancesGrid({
         return
       }
 
-      setCreatedAccounts((prev) => [...prev, result.account])
+      setExtraAccounts((prev) => [...prev, result.account])
 
       // Re-read the row: the await gave the operator time to keep editing, and applyPatch
       // hands the row it is given to persist() as the pre-patch base.
@@ -827,9 +885,10 @@ export function IssuancesGrid({
     () => ({
       loyaltyPrograms: referenceData.loyaltyPrograms,
       airlines: referenceData.airlines,
-      // Overrides the prop: includes accounts created inline this session.
+      // Override the props: both include the records this session picked up after the
+      // page rendered - created inline, or adopted from a refetched issuance.
       accounts,
-      agencies: referenceData.agencies,
+      agencies,
       users: referenceData.users,
       people: referenceData.people,
       airports: referenceData.airports,
@@ -848,7 +907,7 @@ export function IssuancesGrid({
       referenceData.loyaltyPrograms,
       referenceData.airlines,
       accounts,
-      referenceData.agencies,
+      agencies,
       referenceData.users,
       referenceData.people,
       referenceData.airports,

@@ -37,5 +37,13 @@ func newInternalRouter(broker *events.Broker) http.Handler {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
+	// A correction from WhatsApp - an ALTERACAO message or an edit of the
+	// original EMISSAO - broadcast as the same event the panel's own PATCH
+	// emits, for the same reason as the create above.
+	mux.HandleFunc("POST /internal/bot/issuance-updated", func(w http.ResponseWriter, r *http.Request) {
+		broker.Broadcast(events.Event{Type: "issuance.updated"})
+		w.WriteHeader(http.StatusNoContent)
+	})
+
 	return mux
 }

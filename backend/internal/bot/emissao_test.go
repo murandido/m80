@@ -24,6 +24,9 @@ type emissaoScenario struct {
 	User    data.User
 	ChatJID string
 	Notify  *atomic.Int32
+	// Updated counts the issuance.updated bridge calls, which only a correction
+	// makes - see alteracao_test.go.
+	Updated *atomic.Int32
 }
 
 func newEmissaoScenario(t *testing.T, tx *gorm.DB, airline data.Airline) emissaoScenario {
@@ -46,6 +49,7 @@ func newEmissaoScenario(t *testing.T, tx *gorm.DB, airline data.Airline) emissao
 
 	client := &fakeClientBase{}
 	notify := &atomic.Int32{}
+	updated := &atomic.Int32{}
 
 	bot := &Bot{
 		Logger:                waLog.Noop,
@@ -53,6 +57,7 @@ func newEmissaoScenario(t *testing.T, tx *gorm.DB, airline data.Airline) emissao
 		DB:                    tx,
 		notifyChatRequested:   func() {},
 		notifyIssuanceCreated: func() { notify.Add(1) },
+		notifyIssuanceUpdated: func() { updated.Add(1) },
 		session: deviceSession{
 			Client: client,
 			GetJID: func() *types.JID { return nil },
@@ -66,6 +71,7 @@ func newEmissaoScenario(t *testing.T, tx *gorm.DB, airline data.Airline) emissao
 		User:           user,
 		ChatJID:        chatJID,
 		Notify:         notify,
+		Updated:        updated,
 	}
 }
 
@@ -97,6 +103,13 @@ func (s emissaoScenario) text(extraLines ...string) string {
 }
 
 func (s emissaoScenario) event() *events.Message {
+	return s.eventWithID("test-emissao-id")
+}
+
+// eventWithID is the same message from the same sender under a chosen id, which
+// the edit tests need: an edit is recognised by the id of the message it
+// replaced.
+func (s emissaoScenario) eventWithID(id string) *events.Message {
 	return &events.Message{
 		Info: types.MessageInfo{
 			MessageSource: types.MessageSource{
@@ -104,7 +117,7 @@ func (s emissaoScenario) event() *events.Message {
 				Sender:         types.NewJID("55"+s.User.Phone, types.DefaultUserServer),
 				AddressingMode: types.AddressingModePN,
 			},
-			ID: types.MessageID("test-emissao-id"),
+			ID: types.MessageID(id),
 		},
 	}
 }

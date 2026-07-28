@@ -97,8 +97,12 @@ func main() {
 
 	// instance the bot struct - pairing is now admin-triggered on demand via
 	// the internal HTTP API below, not auto-started here.
-	botInstance = bot.New(client, clientLog, newDeviceClient, notifyStatusCallback(clientLog), data.DB,
-		notifyChatRequestedCallback(clientLog), notifyIssuanceCreatedCallback(clientLog))
+	botInstance = bot.New(client, clientLog, newDeviceClient, data.DB, bot.Notifiers{
+		StatusChanged:   notifyStatusCallback(clientLog),
+		ChatRequested:   notifyChatRequestedCallback(clientLog),
+		IssuanceCreated: notifyIssuanceCreatedCallback(clientLog),
+		IssuanceUpdated: notifyIssuanceUpdatedCallback(clientLog),
+	})
 
 	client.AddEventHandler(botInstance.EventHandler)
 
@@ -169,6 +173,13 @@ func notifyChatRequestedCallback(logger waLog.Logger) func() {
 func notifyIssuanceCreatedCallback(logger waLog.Logger) func() {
 	callbackURL := os.Getenv("BOT_ISSUANCE_CREATED_CALLBACK_URL")
 	return func() { postCallback(logger, callbackURL, "issuance creation") }
+}
+
+// notifyIssuanceUpdatedCallback is the same bridge for a correction - an
+// ALTERACAO message, or an edit of the EMISSAO that created the issuance.
+func notifyIssuanceUpdatedCallback(logger waLog.Logger) func() {
+	callbackURL := os.Getenv("BOT_ISSUANCE_UPDATED_CALLBACK_URL")
+	return func() { postCallback(logger, callbackURL, "issuance update") }
 }
 
 // postCallback is the shared fire-and-forget POST behind every notify hook

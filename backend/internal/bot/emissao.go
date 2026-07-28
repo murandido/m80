@@ -25,32 +25,15 @@ import (
 // bot merely happens to be in should not get a reaction telling them the bot is
 // reading - the same reasoning as cmdRegistrarChat's silent branches.
 func (b *Bot) handleEmissao(evt *events.Message, text string, startedAt time.Time) {
-	chatJID := evt.Info.Chat.String()
-
-	listening, err := b.isListeningTo(chatJID)
-	if err != nil {
-		b.Logger.Errorf("emissao: failed to check listened_chats for %s: %v", chatJID, err)
-		return
-	}
-	if !listening {
-		b.Logger.Infof("emissao: chat %s is not approved for monitoring, ignoring", chatJID)
-		return
-	}
-
-	user, err := b.resolveSenderUser(evt)
-	if err != nil {
-		b.Logger.Errorf("emissao: failed to resolve sender %s: %v", evt.Info.Sender, err)
-		return
-	}
-	if user == nil {
-		b.Logger.Infof("emissao: sender %s is not a known user, ignoring", evt.Info.Sender)
+	user, allowed := b.authorizeSender(evt, "emissao")
+	if !allowed {
 		return
 	}
 
 	msg, err := parseEmissao(text)
 	if err != nil {
 		b.Logger.Infof("emissao: could not parse a message from %s: %v", user.Name, err)
-		b.replyEmissaoError(evt, startedAt, emissaoErrorReply("", err))
+		b.refuse(evt, startedAt, refusalText("", err))
 		return
 	}
 
@@ -70,9 +53,13 @@ func (b *Bot) handleEmissao(evt *events.Message, text string, startedAt time.Tim
 
 	if err != nil {
 		b.Logger.Errorf("emissao: failed to register %s from %s: %v", msg.ProgramLocator, user.Name, err)
-		b.replyEmissaoError(evt, startedAt, emissaoErrorReply(msg.ProgramLocator, err))
+		b.refuse(evt, startedAt, refusalText(msg.ProgramLocator, err))
 		return
 	}
+
+	// Remember which issuance this message produced, so editing it later is
+	// recognised as a correction of that issuance rather than a new EMISSAO.
+	b.issued.remember(evt.Info.ID, issuedMessage{IssuanceID: created.ID, ProgramLocator: msg.ProgramLocator})
 
 	b.Logger.Infof("emissao: registered issuance %s (%s) from %s", created.ID, msg.ProgramLocator, user.Name)
 
@@ -84,12 +71,44 @@ func (b *Bot) handleEmissao(evt *events.Message, text string, startedAt time.Tim
 	// the bot reports for duty, so a confirmation line saying what everyone can
 	// already see is just noise in the scrollback. 🚀 means understood and done;
 	// only a refusal earns a message, because that carries something a reaction
-	// cannot - see replyEmissaoError.
+	// cannot - see refuse.
 	humanizer.DelayReaction()
 	humanizer.EnforceResponseFloor(startedAt)
 	b.ReactMessage(evt, "🚀")
 
 	b.notifyIssuanceCreated()
+}
+
+// authorizeSender applies the two gates every unaddressed message has to pass
+// before the bot acts on it, and returns the user who sent it. Shared by EMISSAO
+// and ALTERACAO because the reasoning is identical for both, and so is the
+// silence: neither refusal produces a reaction or a reply, so nobody typing in a
+// group the bot merely happens to be in learns that it reads.
+//
+// flow only labels the log lines.
+func (b *Bot) authorizeSender(evt *events.Message, flow string) (*data.User, bool) {
+	chatJID := evt.Info.Chat.String()
+
+	listening, err := b.isListeningTo(chatJID)
+	if err != nil {
+		b.Logger.Errorf("%s: failed to check listened_chats for %s: %v", flow, chatJID, err)
+		return nil, false
+	}
+	if !listening {
+		b.Logger.Infof("%s: chat %s is not approved for monitoring, ignoring", flow, chatJID)
+		return nil, false
+	}
+
+	user, err := b.resolveSenderUser(evt)
+	if err != nil {
+		b.Logger.Errorf("%s: failed to resolve sender %s: %v", flow, evt.Info.Sender, err)
+		return nil, false
+	}
+	if user == nil {
+		b.Logger.Infof("%s: sender %s is not a known user, ignoring", flow, evt.Info.Sender)
+		return nil, false
+	}
+	return user, true
 }
 
 // isListeningTo reports whether the chat was approved by an admin and is
@@ -104,8 +123,8 @@ func (b *Bot) isListeningTo(chatJID string) (bool, error) {
 	return count > 0, err
 }
 
-// emissaoErrorReply picks the text to send back for a rejected message, whether
-// it failed at the parser or inside the transaction.
+// refusalText picks the text to send back for a rejected message - an EMISSAO
+// or an ALTERACAO, whether it failed at the parser or inside the transaction.
 //
 // Only an operatorError is quoted as it stands - that type exists precisely to
 // mark a message as written for the group. The two typed failures the issuance
@@ -114,7 +133,7 @@ func (b *Bot) isListeningTo(chatJID string) (bool, error) {
 // is already in the log.
 //
 // locator is empty when the message never parsed far enough to have one.
-func emissaoErrorReply(locator string, err error) string {
+func refusalText(locator string, err error) string {
 	var operator operatorError
 	if errors.As(err, &operator) {
 		return operator.Error()
@@ -130,10 +149,10 @@ func emissaoErrorReply(locator string, err error) string {
 	}
 }
 
-// replyEmissaoError answers a rejected message. It reacts with ❌ as well as
-// replying so the failure is visible at a glance when scrolling back through a
-// busy group, where the reply itself may be far from the message it refers to.
-func (b *Bot) replyEmissaoError(evt *events.Message, startedAt time.Time, message string) {
+// refuse answers a rejected message. It reacts with ❌ as well as replying so
+// the failure is visible at a glance when scrolling back through a busy group,
+// where the reply itself may be far from the message it refers to.
+func (b *Bot) refuse(evt *events.Message, startedAt time.Time, message string) {
 	humanizer.DelayReaction()
 	humanizer.EnforceResponseFloor(startedAt)
 	b.ReactMessage(evt, "❌")
