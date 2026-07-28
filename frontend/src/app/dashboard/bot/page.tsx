@@ -1,4 +1,4 @@
-import { requireAdmin } from "@/actions/auth"
+import { requireAdmin } from "@/lib/session"
 import { getBotStatusAction } from "@/actions/bot"
 import {
   getMonitoredListenedChatsAction,

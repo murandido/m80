@@ -2,6 +2,8 @@ package middleware
 
 import (
 	"context"
+	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -44,9 +46,21 @@ func RequireAuth(db *gorm.DB) func(handler http.Handler) http.Handler {
 				return
 			}
 
+			// "The user is gone" and "I could not ask" are different answers and
+			// must not share a status. Every error used to become a 401, so a
+			// dropped connection, a statement timeout or a lock held by someone
+			// working in psql read to the panel as an expired session - and the
+			// panel logs out on 401. A signed, unexpired token is still valid
+			// when the database hiccups; say the truth (503) and let it retry.
 			var user data.User
-			if err := db.Select("id", "role").First(&user, "id = ?", userId).Error; err != nil {
+			err = db.Select("id", "role").First(&user, "id = ?", userId).Error
+			switch {
+			case errors.Is(err, gorm.ErrRecordNotFound):
 				utils.SendError(w, r, http.StatusUnauthorized, "Access denied: User no longer exists or was deactivated")
+				return
+			case err != nil:
+				slog.Error("auth: failed to load the authenticated user", "user_id", userId, "err", err)
+				utils.SendError(w, r, http.StatusServiceUnavailable, "Serviço temporariamente indisponível")
 				return
 			}
 

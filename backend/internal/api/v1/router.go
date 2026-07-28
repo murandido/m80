@@ -15,8 +15,10 @@ func NewRouter(db *gorm.DB, broker *events.Broker) chi.Router {
 	authHandler := handlers.NewAuthHandler(db)
 
 	r.Route("/auth", func(r chi.Router) {
-		// public routes
-		r.Post("/login", authHandler.Login)
+		// public routes - login carries its own, much stricter per-IP limit on top
+		// of the router-wide one, since it is the only route where an unauthenticated
+		// caller can guess at something (see middleware.LoginRateLimit).
+		r.With(middleware.LoginRateLimit()).Post("/login", authHandler.Login)
 
 		// private routes
 		r.Group(func(r chi.Router) {

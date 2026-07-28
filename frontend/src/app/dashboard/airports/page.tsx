@@ -1,7 +1,7 @@
 import { cookies } from "next/headers"
 import { Separator } from "@/components/ui/separator"
 import { env } from "@/lib/env"
-import { requireAdmin } from "@/actions/auth"
+import { requireAdmin } from "@/lib/session"
 import { Airport, listAirportsSchema } from "@/schemas/airport"
 import { CreateAirportForm } from "@/components/airports/create-airport-form"
 import { AirportCard } from "@/components/airports/airport-card"

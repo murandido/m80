@@ -1,7 +1,7 @@
 import { cookies } from "next/headers"
 import { Separator } from "@/components/ui/separator"
 import { env } from "@/lib/env"
-import { requireAdmin } from "@/actions/auth"
+import { requireAdmin } from "@/lib/session"
 import { getUsersSchema, getMeSchema, User } from "@/schemas/user"
 import { UserCard } from "@/components/users/user-card"
 import { CreateUserForm } from "@/components/users/create-user-form"

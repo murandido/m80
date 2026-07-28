@@ -1,4 +1,4 @@
-import { getSessionUser, verifySession } from "@/actions/auth"
+import { getSessionUser, verifySession } from "@/lib/session"
 import { DashboardShell } from "@/components/layout/dashboard-shell"
 
 export default async function DashboardLayout({
