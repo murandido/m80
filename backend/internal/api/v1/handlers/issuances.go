@@ -13,19 +13,24 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/events"
 	"github.com/murandido/m-80-backend/internal/export"
+
+	// Aliased because "issuance" is the local variable name for a data.Issuance
+	// throughout this file - importing it unaliased would shadow the package in
+	// every handler that holds one.
+	issuancesvc "github.com/murandido/m-80-backend/internal/issuance"
 	"github.com/murandido/m-80-backend/internal/utils"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
+// The "created" action lives in internal/issuance instead - it is written by the
+// service that creates the issuance, which the bot shares with this handler.
 const (
-	auditActionCreated   = "created"
 	auditActionCancelled = "cancelled"
 	auditActionRestored  = "restored"
 	auditActionDeleted   = "deleted"
@@ -222,49 +227,33 @@ func toIssuanceSummaryResponse(issuance data.Issuance) schemas.IssuanceSummaryRe
 	return resp
 }
 
-// upsertPrimaryOutboundFlight creates or updates the leg_order=1 outbound leg with the
-// only field this simplified UI collects - the departure date. flight_number/arrival_at/etc.
-// are left nil rather than filled with placeholder data. Shared by create and update so
-// a date typed before the issuance exists is persisted the same way as one edited after.
-func upsertPrimaryOutboundFlight(tx *gorm.DB, issuanceID string, departureAt time.Time) error {
-	var flight data.IssuanceFlight
-	err := tx.Where("issuance_id = ? AND direction = ? AND leg_order = ?", issuanceID, "outbound", 1).
-		First(&flight).Error
-
+// issuanceErrorResponse maps the issuance service's typed errors onto the exact
+// status and message this API has always returned for them, so extracting the
+// service out of these handlers changed no response the panel can observe. The
+// capitalized messages are spelled out here rather than taken from err.Error()
+// because Go error strings are conventionally uncapitalized. Returns (0, "") for
+// an error the service doesn't classify - the caller then falls back to its own
+// 500.
+func issuanceErrorResponse(err error) (int, string) {
 	switch {
-	case errors.Is(err, gorm.ErrRecordNotFound):
-		flight = data.IssuanceFlight{
-			IssuanceID:  issuanceID,
-			Direction:   "outbound",
-			LegOrder:    1,
-			DepartureAt: departureAt,
-		}
-		return tx.Create(&flight).Error
-	case err != nil:
-		return err
+	case errors.Is(err, issuancesvc.ErrLoyaltyProgramNotFound):
+		return http.StatusBadRequest, "Loyalty program not found"
+	case errors.Is(err, issuancesvc.ErrIssuerNotFound):
+		return http.StatusBadRequest, "Issuer not found"
+	case errors.Is(err, issuancesvc.ErrNoDefaultAgency):
+		return http.StatusInternalServerError, "No default agency configured"
+	case errors.Is(err, issuancesvc.ErrAccountNicknameNotFound),
+		errors.Is(err, issuancesvc.ErrAccountNicknameMismatch),
+		errors.Is(err, issuancesvc.ErrAirportNotFound):
+		return http.StatusBadRequest, err.Error()
+	case errors.Is(err, issuancesvc.ErrLastNameRequired),
+		errors.Is(err, issuancesvc.ErrPurchaseNumberRequired):
+		return http.StatusUnprocessableEntity, err.Error()
+	case errors.Is(err, issuancesvc.ErrProgramLocatorTaken):
+		return http.StatusUnprocessableEntity, "Program locator já está em uso por uma emissão ativa"
 	default:
-		flight.DepartureAt = departureAt
-		return tx.Save(&flight).Error
+		return 0, ""
 	}
-}
-
-// validateAccountNickname checks that the chosen alias actually belongs to the chosen
-// account. Both ids arrive from the client independently, so without this a typo (or a
-// stale grid row) could persist an issuance labelled with another account's alias.
-// A nil nicknameID is valid: accounts with no registered alias are still issuable.
-func validateAccountNickname(db *gorm.DB, accountID string, nicknameID *string) error {
-	if nicknameID == nil {
-		return nil
-	}
-
-	var nickname data.AccountNickname
-	if err := db.First(&nickname, "id = ?", *nicknameID).Error; err != nil {
-		return errors.New("account nickname not found")
-	}
-	if nickname.AccountID != accountID {
-		return errors.New("account nickname does not belong to the given account")
-	}
-	return nil
 }
 
 // preloadIssuanceAssociations applies the standard set of preloads used by the
@@ -505,7 +494,7 @@ func (h *IssuanceHandler) GetIssuance(w http.ResponseWriter, r *http.Request) {
 // @Security     BearerAuth
 // @Param        payload body schemas.CreateIssuanceRequest true "Dados da nova emissão"
 // @Success      201  {object}  schemas.IssuanceSingleResponse
-// @Failure      400  {object}  schemas.ErrorResponse "Payload inválido, flight_date com formato inválido ou apelido que não pertence à conta"
+// @Failure      400  {object}  schemas.ErrorResponse "Payload inválido, flight_date com formato inválido, código IATA inexistente ou apelido que não pertence à conta"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      422  {object}  schemas.ErrorResponse "Program locator já está em uso por uma emissão ativa"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao criar emissão"
@@ -528,12 +517,19 @@ func (h *IssuanceHandler) CreateIssuance(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if err := validateAccountNickname(h.DB, req.AccountID, req.AccountNicknameID); err != nil {
-		utils.SendError(w, r, http.StatusBadRequest, err.Error())
-		return
+	var flightDate *time.Time
+	if req.FlightDate != nil {
+		parsed, err := time.Parse("2006-01-02", *req.FlightDate)
+		if err != nil {
+			utils.SendError(w, r, http.StatusBadRequest, "Invalid flight_date")
+			return
+		}
+		flightDate = &parsed
 	}
 
-	issuance := data.Issuance{
+	// Complete is deliberately not part of the input: an issuance created from
+	// the panel always starts incomplete and is finished later from the grid.
+	created, err := issuancesvc.Create(h.DB, issuancesvc.CreateInput{
 		LoyaltyProgramID:    req.LoyaltyProgramID,
 		ProgramLocator:      req.ProgramLocator,
 		AirlineLocator:      req.AirlineLocator,
@@ -549,81 +545,15 @@ func (h *IssuanceHandler) CreateIssuance(w http.ResponseWriter, r *http.Request)
 		AccountNicknameID:   req.AccountNicknameID,
 		Observation:         req.Observation,
 		AdditionalServices:  req.AdditionalServices,
-		IssuerID:            userCtx.ID,
-		Complete:            false,
-	}
-
-	if req.AirlineID != nil {
-		issuance.AirlineID = *req.AirlineID
-	} else {
-		var loyaltyProgram data.LoyaltyProgram
-		if err := h.DB.First(&loyaltyProgram, "id = ?", req.LoyaltyProgramID).Error; err != nil {
-			utils.SendError(w, r, http.StatusBadRequest, "Loyalty program not found")
-			return
-		}
-		issuance.AirlineID = loyaltyProgram.DefaultAirlineID
-	}
-
-	if req.AgencyID != nil {
-		issuance.AgencyID = *req.AgencyID
-	} else {
-		var defaultAgency data.Agency
-		if err := h.DB.Where("is_default = ?", true).First(&defaultAgency).Error; err != nil {
-			utils.SendError(w, r, http.StatusInternalServerError, "No default agency configured")
-			return
-		}
-		issuance.AgencyID = defaultAgency.ID
-	}
-
-	if req.IssuerID != nil {
-		var issuer data.User
-		if err := h.DB.First(&issuer, "id = ?", *req.IssuerID).Error; err != nil {
-			utils.SendError(w, r, http.StatusBadRequest, "Issuer not found")
-			return
-		}
-		issuance.IssuerID = *req.IssuerID
-	}
-
-	var flightDate *time.Time
-	if req.FlightDate != nil {
-		parsed, err := time.Parse("2006-01-02", *req.FlightDate)
-		if err != nil {
-			utils.SendError(w, r, http.StatusBadRequest, "Invalid flight_date")
-			return
-		}
-		flightDate = &parsed
-	}
-
-	err := h.DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(&issuance).Error; err != nil {
-			return err
-		}
-
-		// Every issuance is born owing money, so its sale is created in the same
-		// transaction rather than when the issuance is marked complete: the Vendas tab
-		// is the only place that tracks who still has to be charged, and an issuance
-		// with no sale row would simply never surface there.
-		if err := tx.Create(&data.Sale{IssuanceID: issuance.ID}).Error; err != nil {
-			return err
-		}
-
-		if flightDate != nil {
-			if err := upsertPrimaryOutboundFlight(tx, issuance.ID, *flightDate); err != nil {
-				return err
-			}
-		}
-
-		return tx.Create(&data.AuditLog{
-			IssuanceID:  issuance.ID,
-			ChangedByID: userCtx.ID,
-			Action:      auditActionCreated,
-		}).Error
-	})
+		AirlineID:           req.AirlineID,
+		AgencyID:            req.AgencyID,
+		IssuerID:            req.IssuerID,
+		FlightDate:          flightDate,
+	}, userCtx.ID)
 
 	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == postgresUniqueViolation {
-			utils.SendError(w, r, http.StatusUnprocessableEntity, "Program locator já está em uso por uma emissão ativa")
+		if status, message := issuanceErrorResponse(err); status != 0 {
+			utils.SendError(w, r, status, message)
 			return
 		}
 
@@ -635,14 +565,14 @@ func (h *IssuanceHandler) CreateIssuance(w http.ResponseWriter, r *http.Request)
 		Preload("Flights", func(db *gorm.DB) *gorm.DB {
 			return db.Where("direction = ?", "outbound").Order("leg_order asc")
 		}).
-		First(&issuance, "id = ?", issuance.ID).Error; err != nil {
+		First(&created, "id = ?", created.ID).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch created issuance")
 		return
 	}
 
-	h.broadcastIssuance(eventIssuanceCreated, issuance.ID)
+	h.broadcastIssuance(eventIssuanceCreated, created.ID)
 
-	utils.SendJSON(w, r, http.StatusCreated, "Issuance created successfully", toIssuanceResponse(issuance))
+	utils.SendJSON(w, r, http.StatusCreated, "Issuance created successfully", toIssuanceResponse(created))
 }
 
 // UpdateIssuance handles the PATCH /issuances/{id} route
@@ -655,10 +585,10 @@ func (h *IssuanceHandler) CreateIssuance(w http.ResponseWriter, r *http.Request)
 // @Param        id      path  string                       true  "UUID da emissão"
 // @Param        payload body  schemas.UpdateIssuanceRequest true  "Campos a atualizar"
 // @Success      200  {object}  schemas.IssuanceSingleResponse
-// @Failure      400  {object}  schemas.ErrorResponse "Payload inválido ou flight_date com formato inválido"
+// @Failure      400  {object}  schemas.ErrorResponse "Payload inválido, flight_date com formato inválido ou código IATA inexistente"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      404  {object}  schemas.ErrorResponse "Emissão não encontrada"
-// @Failure      422  {object}  schemas.ErrorResponse "Program locator já está em uso por uma emissão ativa"
+// @Failure      422  {object}  schemas.ErrorResponse "Program locator já está em uso, ou a emissão foi marcada como completa sem um campo que a cia aérea exige"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao atualizar emissão"
 // @Router       /issuances/{id} [patch]
 func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request) {
@@ -715,7 +645,7 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 	// *string field cannot otherwise express clearing the alias, since JSON null and an
 	// absent key both decode to nil.
 	if req.AccountID != nil {
-		if err := validateAccountNickname(h.DB, *req.AccountID, req.AccountNicknameID); err != nil {
+		if err := issuancesvc.ValidateAccountNickname(h.DB, *req.AccountID, req.AccountNicknameID); err != nil {
 			utils.SendError(w, r, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -781,6 +711,27 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 	}
 
 	err := h.DB.Transaction(func(tx *gorm.DB) error {
+		// The airline's requires_last_name/requires_purchase_number flags are
+		// enforced here rather than on create so the grid's autosave keeps
+		// working: a draft row is POSTed the moment its five mandatory fields
+		// are filled, well before a passenger name exists. Completing the
+		// issuance is the operator's explicit "this is finished" action, and
+		// what gets checked is the merged state above - not the incoming patch,
+		// which may not carry the passenger name at all.
+		if issuance.Complete {
+			var airline data.Airline
+			if err := tx.First(&airline, "id = ?", issuance.AirlineID).Error; err != nil {
+				return err
+			}
+			if err := issuancesvc.ValidateAirlineRequirements(airline, issuance.MainPassengerName, issuance.LatamPurchaseNumber); err != nil {
+				return err
+			}
+		}
+
+		if err := issuancesvc.ValidateAirportCodes(tx, issuance.OriginIATACode, issuance.DestinationIATACode); err != nil {
+			return err
+		}
+
 		if err := tx.Save(&issuance).Error; err != nil {
 			return err
 		}
@@ -789,13 +740,13 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 			return nil
 		}
 
-		return upsertPrimaryOutboundFlight(tx, issuance.ID, *flightDate)
+		return issuancesvc.UpsertPrimaryOutboundFlight(tx, issuance.ID, *flightDate)
 	})
 
 	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == postgresUniqueViolation {
-			utils.SendError(w, r, http.StatusUnprocessableEntity, "Program locator já está em uso por uma emissão ativa")
+		err = issuancesvc.TranslateWriteError(err)
+		if status, message := issuanceErrorResponse(err); status != 0 {
+			utils.SendError(w, r, status, message)
 			return
 		}
 

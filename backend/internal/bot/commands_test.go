@@ -239,7 +239,7 @@ func TestCmdRegistrarChat_KnownUser_CreatesPendingRowAndReactsOK(t *testing.T) {
 			t.Fatal("active: got true, want false")
 		}
 
-		if got := client.reactions(); len(got) != 1 || got[0] != "✅" {
+		if got := client.reactions(); len(got) != 1 || got[0] != "🚀" {
 			t.Fatalf("reactions: got %v, want [✅]", got)
 		}
 	})
@@ -280,7 +280,7 @@ func TestCmdRegistrarChat_AlreadyRequested_NoDuplicateSilentlyIgnored(t *testing
 		if count := countListenedChats(t, tx, evt.Info.Chat.String()); count != 1 {
 			t.Fatalf("listened_chats rows: got %d, want 1", count)
 		}
-		if got := client.reactions(); len(got) != 1 || got[0] != "✅" {
+		if got := client.reactions(); len(got) != 1 || got[0] != "🚀" {
 			t.Fatalf("reactions: got %v, want [✅] - a duplicate while still pending is ignored silently", got)
 		}
 		_ = user
@@ -341,7 +341,7 @@ func TestCmdRegistrarChat_StoppedChat_ReopensAsNewPendingRequest(t *testing.T) {
 		if reloaded.ApprovedByID != nil {
 			t.Fatalf("approved_by_id: got %v, want nil", reloaded.ApprovedByID)
 		}
-		if got := client.reactions(); len(got) != 1 || got[0] != "✅" {
+		if got := client.reactions(); len(got) != 1 || got[0] != "🚀" {
 			t.Fatalf("reactions: got %v, want [✅]", got)
 		}
 	})
@@ -372,7 +372,7 @@ func TestCmdRegistrarChat_DeniedChat_ReopensAsNewPendingRequest(t *testing.T) {
 		if reloaded.Status != "pending" {
 			t.Fatalf("status: got %q, want %q", reloaded.Status, "pending")
 		}
-		if got := client.reactions(); len(got) != 1 || got[0] != "✅" {
+		if got := client.reactions(); len(got) != 1 || got[0] != "🚀" {
 			t.Fatalf("reactions: got %v, want [✅]", got)
 		}
 	})
@@ -537,7 +537,7 @@ func TestCmdRegistrarChat_GetGroupInfoFails_FriendlyNameStaysNilRowStillCreated(
 		if chat.FriendlyName != nil {
 			t.Fatalf("friendly_name: got %v, want nil", chat.FriendlyName)
 		}
-		if got := client.reactions(); len(got) != 1 || got[0] != "✅" {
+		if got := client.reactions(); len(got) != 1 || got[0] != "🚀" {
 			t.Fatalf("reactions: got %v, want [✅] - a group-info failure must not block the command", got)
 		}
 	})

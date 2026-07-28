@@ -107,6 +107,12 @@ type Bot struct {
 	// StatusStore's notify.
 	notifyChatRequested func()
 
+	// notifyIssuanceCreated is the same bridge for an EMISSAO message that
+	// persisted an issuance, so the panel's grid refreshes without anyone
+	// reloading it. Called only after the transaction committed: the bot runs
+	// in its own process and cannot reach the SSE broker directly.
+	notifyIssuanceCreated func()
+
 	// offlineSyncing is true between *events.OfflineSyncPreview and
 	// *events.OfflineSyncCompleted - i.e. while whatsmeow is redelivering
 	// messages the bot missed while disconnected. Messages received during
@@ -123,14 +129,15 @@ type Bot struct {
 	cancelPair context.CancelFunc
 }
 
-func New(client *whatsmeow.Client, logger waLog.Logger, newDeviceClient func(ctx context.Context) (ClientBase, SessionClient, func() *types.JID, error), statusNotify func(), db *gorm.DB, notifyChatRequested func()) *Bot {
+func New(client *whatsmeow.Client, logger waLog.Logger, newDeviceClient func(ctx context.Context) (ClientBase, SessionClient, func() *types.JID, error), statusNotify func(), db *gorm.DB, notifyChatRequested, notifyIssuanceCreated func()) *Bot {
 	return &Bot{
-		newDeviceClient:     newDeviceClient,
-		Logger:              logger,
-		Status:              NewStatusStore(statusNotify),
-		session:             sessionFor(client),
-		DB:                  db,
-		notifyChatRequested: notifyChatRequested,
+		newDeviceClient:       newDeviceClient,
+		Logger:                logger,
+		Status:                NewStatusStore(statusNotify),
+		session:               sessionFor(client),
+		DB:                    db,
+		notifyChatRequested:   notifyChatRequested,
+		notifyIssuanceCreated: notifyIssuanceCreated,
 	}
 }
 
@@ -167,6 +174,9 @@ func NewTestBot(session SessionClient, getJID func() *types.JID, logger waLog.Lo
 		Status:              status,
 		DB:                  db,
 		notifyChatRequested: notifyChatRequested,
+		// cmd/bot's HTTP handler tests never drive a message through, so there
+		// is nothing for this to notify about.
+		notifyIssuanceCreated: func() {},
 		session: deviceSession{
 			Session: session,
 			GetJID:  getJID,

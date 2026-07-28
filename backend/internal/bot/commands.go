@@ -44,6 +44,9 @@ func (b *Bot) cmdPing(evt *events.Message, startedAt time.Time) {
 // user, and if found, creates a pending listened_chats entry for an admin to
 // approve or deny later. Reacts with an emoji instead of replying with text -
 // no response text is needed for this command.
+//
+// 🚀 is the bot's one success reaction, shared with EMISSAO: understood and
+// done. (✅ is reserved for "read it", which nothing needs to say yet.)
 func (b *Bot) cmdRegistrarChat(evt *events.Message, startedAt time.Time) {
 	user, err := b.resolveSenderUser(evt)
 	if err != nil {
@@ -97,7 +100,7 @@ func (b *Bot) cmdRegistrarChat(evt *events.Message, startedAt time.Time) {
 		}
 		humanizer.DelayReaction()
 		humanizer.EnforceResponseFloor(startedAt)
-		b.ReactMessage(evt, "✅")
+		b.ReactMessage(evt, "🚀")
 		b.notifyChatRequested()
 
 	case errors.Is(err, gorm.ErrRecordNotFound):
@@ -114,7 +117,7 @@ func (b *Bot) cmdRegistrarChat(evt *events.Message, startedAt time.Time) {
 		}
 		humanizer.DelayReaction()
 		humanizer.EnforceResponseFloor(startedAt)
-		b.ReactMessage(evt, "✅")
+		b.ReactMessage(evt, "🚀")
 		b.notifyChatRequested()
 
 	default:

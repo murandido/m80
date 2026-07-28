@@ -87,12 +87,18 @@ func (b *Bot) EventHandler(evt interface{}) {
 }
 
 // processIncomingMessage marks the message read and, unless it arrived as
-// part of catching up on a backlog after reconnecting, routes it as a
-// command if it looks like one. Extracted out of EventHandler's *events.Message
-// case so tests can drive it directly without waiting on the randomized read
-// delay above. startedAt is threaded through to RouteCommand so the
-// humanizer can enforce its response floor against the message's real
-// arrival time, not whenever a given command starts replying.
+// part of catching up on a backlog after reconnecting, routes it: as a
+// command if it looks like one, or as an EMISSAO if it looks like that.
+// Extracted out of EventHandler's *events.Message case so tests can drive it
+// directly without waiting on the randomized read delay above. startedAt is
+// threaded through so the humanizer can enforce its response floor against the
+// message's real arrival time, not whenever a given handler starts replying.
+//
+// An EMISSAO carries no "!" prefix - it is ordinary text the operators were
+// already writing among themselves - so unlike a command it cannot be
+// recognized by addressing alone. isEmissaoMessage is the cheap first filter;
+// whether the bot may actually act on it is decided in handleEmissao, which
+// checks that the chat is approved for monitoring before touching anything.
 func (b *Bot) processIncomingMessage(v *events.Message, isBacklog bool, startedAt time.Time) {
 	b.MarkMessageAsRead(v)
 
@@ -101,7 +107,11 @@ func (b *Bot) processIncomingMessage(v *events.Message, isBacklog bool, startedA
 	}
 
 	rawText := utils.GetText(v.Message)
-	if utils.IsCommand(rawText) {
+
+	switch {
+	case utils.IsCommand(rawText):
 		b.RouteCommand(v, rawText, startedAt)
+	case isEmissaoMessage(rawText):
+		b.handleEmissao(v, rawText, startedAt)
 	}
 }

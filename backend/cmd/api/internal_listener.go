@@ -27,5 +27,15 @@ func newInternalRouter(broker *events.Broker) http.Handler {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
+	// Same event type the issuance handlers broadcast, so the grid reacts to a
+	// row created from WhatsApp exactly as it does to one created in the panel.
+	// The panel's own broadcast carries the issuance id; this one carries
+	// nothing, and that costs nothing either - the browser refetches with its
+	// own filters regardless of the payload.
+	mux.HandleFunc("POST /internal/bot/issuance-created", func(w http.ResponseWriter, r *http.Request) {
+		broker.Broadcast(events.Event{Type: "issuance.created"})
+		w.WriteHeader(http.StatusNoContent)
+	})
+
 	return mux
 }

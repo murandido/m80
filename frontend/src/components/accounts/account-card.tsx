@@ -32,7 +32,12 @@ export function AccountCard({ account, people, loyaltyPrograms }: AccountCardPro
   const holder = people.find((p) => p.id === account.holder_id)
   const administrator = people.find((p) => p.id === account.administrator_id)
 
-  const title = holder?.name ?? account.login ?? "Conta sem titular"
+  // Same fallback order as accountLabel in account-combobox.tsx, so one account
+  // does not read as two different things depending on the screen. The alias
+  // matters: an account the bot created from a WhatsApp message has no login, and
+  // showing "Conta sem titular" hides the one name anybody would recognise it by.
+  const title =
+    holder?.name ?? account.login ?? account.nicknames[0]?.nickname ?? "Conta sem titular"
   const subtitle = [account.login, administrator?.name && `Admin: ${administrator.name}`]
     .filter(Boolean)
     .join(" · ")

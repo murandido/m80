@@ -97,7 +97,8 @@ func main() {
 
 	// instance the bot struct - pairing is now admin-triggered on demand via
 	// the internal HTTP API below, not auto-started here.
-	botInstance = bot.New(client, clientLog, newDeviceClient, notifyStatusCallback(clientLog), data.DB, notifyChatRequestedCallback(clientLog))
+	botInstance = bot.New(client, clientLog, newDeviceClient, notifyStatusCallback(clientLog), data.DB,
+		notifyChatRequestedCallback(clientLog), notifyIssuanceCreatedCallback(clientLog))
 
 	client.AddEventHandler(botInstance.EventHandler)
 
@@ -161,7 +162,16 @@ func notifyChatRequestedCallback(logger waLog.Logger) func() {
 	return func() { postCallback(logger, callbackURL, "chat request") }
 }
 
-// postCallback is the shared fire-and-forget POST behind both notify hooks
+// notifyIssuanceCreatedCallback returns the hook internal/bot.Bot calls after an
+// EMISSAO message persisted an issuance, so the panel's grid picks it up over
+// SSE without anyone reloading. Same bridge as the two above, since the bot runs
+// in its own process and has no access to cmd/api's broker.
+func notifyIssuanceCreatedCallback(logger waLog.Logger) func() {
+	callbackURL := os.Getenv("BOT_ISSUANCE_CREATED_CALLBACK_URL")
+	return func() { postCallback(logger, callbackURL, "issuance creation") }
+}
+
+// postCallback is the shared fire-and-forget POST behind every notify hook
 // above: empty body, own goroutine so a slow/unreachable api never blocks the
 // whatsmeow event handler, no-op when the corresponding env var isn't set.
 func postCallback(logger waLog.Logger, callbackURL, description string) {
