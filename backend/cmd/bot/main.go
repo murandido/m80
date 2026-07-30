@@ -144,6 +144,10 @@ func main() {
 	defer cancel()
 	_ = srv.Shutdown(shutdownCtx)
 
+	// drain the per-chat queues before dropping the socket, so a message the
+	// bot already reacted to isn't left half-processed - see bot.Shutdown
+	botInstance.Shutdown(shutdownCtx)
+
 	// disconnect the bot - through botInstance, not the local client var,
 	// since RecreateSession may have swapped in a different one since boot
 	botInstance.Disconnect()

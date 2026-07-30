@@ -2,29 +2,32 @@ package bot
 
 import (
 	"context"
-	"fmt"
 
+	"github.com/murandido/m-80-backend/internal/bot/humanizer"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/protobuf/proto"
 )
 
-// SendMessage sends a message to a specific chat JID
-func (b *Bot) SendMessage(chatID types.JID, text string) {
+// SendMessage sends a message to a specific chat JID, unattached to any message
+// in it - which is what a message about something that no longer exists needs,
+// since there is nothing left to quote or react to.
+func (b *Bot) SendMessage(ctx context.Context, chatID types.JID, text string) {
 	msg := &waE2E.Message{
 		Conversation: proto.String(text),
 	}
 
-	_, err := b.currentSession().Client.SendMessage(context.Background(), chatID, msg)
-	if err != nil {
-		// TODO: audit this error
-		fmt.Println("Error sending:", err)
+	if _, err := b.currentSession().Client.SendMessage(ctx, chatID, msg); err != nil {
+		b.Logger.Errorf("failed to send a message to %s: %v", chatID, err)
 	}
 }
 
-// ReplyMessage replies quoting the original message
-func (b *Bot) ReplyMessage(originalMsg *events.Message, text string) {
+// ReplyMessage replies quoting the original message.
+//
+// Like every other visible action, it runs on the job's own context: a job that
+// was cancelled halfway must not still be typing into the group afterwards.
+func (b *Bot) ReplyMessage(ctx context.Context, originalMsg *events.Message, text string) {
 	msg := &waE2E.Message{
 		ExtendedTextMessage: &waE2E.ExtendedTextMessage{
 			Text: proto.String(text),
@@ -36,48 +39,95 @@ func (b *Bot) ReplyMessage(originalMsg *events.Message, text string) {
 		},
 	}
 
-	_, err := b.currentSession().Client.SendMessage(context.Background(), originalMsg.Info.Chat, msg)
+	_, err := b.currentSession().Client.SendMessage(ctx, originalMsg.Info.Chat, msg)
 	if err != nil {
-		// TODO: audit this error
-		fmt.Println("Error sending the reply:", err)
+		b.Logger.Errorf("failed to reply to message %s in %s: %v", originalMsg.Info.ID, originalMsg.Info.Chat, err)
 	}
 }
 
 // ReactMessage reacts to the original message with the given emoji.
-func (b *Bot) ReactMessage(evt *events.Message, emoji string) {
+//
+// A reaction replaces whatever the bot reacted with before - WhatsApp keeps one
+// per sender per message, it does not stack them - which is what makes ✅ → 🕐 →
+// 🚀 read as a single progress indicator rather than three marks.
+//
+// Failures are logged rather than swallowed: now that a reaction is the first
+// thing the bot does, one that never lands is the difference between "the bot
+// ignored me" and "the bot is down", and the group cannot tell those apart
+// without this line in the log.
+func (b *Bot) ReactMessage(ctx context.Context, evt *events.Message, emoji string) {
 	msg := b.currentSession().Client.BuildReaction(evt.Info.Chat, evt.Info.Sender, evt.Info.ID, emoji)
 
-	_, err := b.currentSession().Client.SendMessage(context.Background(), evt.Info.Chat, msg)
+	_, err := b.currentSession().Client.SendMessage(ctx, evt.Info.Chat, msg)
 	if err != nil {
-		// TODO: audit this error
-		fmt.Println("Error sending the reaction:", err)
+		b.Logger.Errorf("failed to react %s to message %s in %s: %v", emoji, evt.Info.ID, evt.Info.Chat, err)
 	}
 }
 
-func (b *Bot) MarkMessageAsRead(evt *events.Message) {
+// acknowledge is the bot's first answer to a message it is allowed to act on:
+// ✅, "I saw this". It comes before any work, and before knowing whether the work
+// will succeed, so it is the one reaction that never says anything about the
+// outcome.
+//
+// It is only ever sent after the gate has passed. Someone typing in a group the
+// bot merely happens to be in must not learn that it reads - which is why a
+// rejected gate produces no reaction at all, not even this one.
+func (b *Bot) acknowledge(ctx context.Context, evt *events.Message) {
+	humanizer.DelayReaction()
+	b.ReactMessage(ctx, evt, "✅")
+}
+
+// markQueued replaces the ✅ with 🕐: accepted, waiting its turn behind the other
+// work in this chat. It is skipped by anything that deliberately bypasses the
+// queue, because a clock there would claim a wait that never happens.
+func (b *Bot) markQueued(ctx context.Context, evt *events.Message) {
+	humanizer.DelayReaction()
+	b.ReactMessage(ctx, evt, "🕐")
+}
+
+// closeInterrupted takes the 🕐 off a message whose job was stopped, and does
+// nothing for any other ending.
+//
+// ❌ with no text, which is the one place that combination appears. The refusal
+// text always explains something the operator could not have known; here they
+// already know, because stopping the job is what they just asked for. What they
+// cannot see without this is *which* pending message the DELETAR caught, since
+// the 🚀 lands on the DELETAR itself and the clock would otherwise stay on the
+// message it interrupted forever.
+//
+// Deliberately on a fresh context: the job's own was cancelled, and sending the
+// reaction on it would cancel the reaction too.
+func (b *Bot) closeInterrupted(j *job) {
+	if !j.wasInterrupted() {
+		return
+	}
+
+	humanizer.DelayReaction()
+	b.ReactMessage(context.Background(), j.evt, "❌")
+}
+
+func (b *Bot) MarkMessageAsRead(ctx context.Context, evt *events.Message) {
 	err := b.currentSession().Client.MarkRead(
-		context.Background(),
+		ctx,
 		[]types.MessageID{evt.Info.ID},
 		evt.Info.Timestamp,
 		evt.Info.Chat,
 		evt.Info.Sender,
 	)
 	if err != nil {
-		// TODO: audit this error
-		fmt.Println("Error marking message as read:", err)
+		b.Logger.Errorf("failed to mark message %s in %s as read: %v", evt.Info.ID, evt.Info.Chat, err)
 	}
 }
 
 // SendPresenceTyping send to the chat that the bot is typing
-func (b *Bot) SendPresenceTyping(evt *events.Message) {
+func (b *Bot) SendPresenceTyping(ctx context.Context, evt *events.Message) {
 	err := b.currentSession().Client.SendChatPresence(
-		context.Background(),
+		ctx,
 		evt.Info.Chat,
 		types.ChatPresenceComposing,
 		types.ChatPresenceMediaText,
 	)
-	// TODO: audit this error
 	if err != nil {
-		fmt.Println("Error sendind typing presence:", err)
+		b.Logger.Errorf("failed to send a typing presence to %s: %v", evt.Info.Chat, err)
 	}
 }

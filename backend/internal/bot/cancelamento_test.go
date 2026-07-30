@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -59,7 +60,7 @@ func TestHandleCancelamento_FullRefundWhenNoLine2(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		s := newCorrectionScenario(t, tx, data.Airline{})
 
-		s.Bot.handleCancelamento(s.event(), s.cancelamento(), time.Now())
+		s.Bot.handleCancelamento(context.Background(), s.event(), s.cancelamento(), time.Now())
 
 		assertCancelRocket(t, s)
 
@@ -86,7 +87,7 @@ func TestHandleCancelamento_PartialRefund(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		s := newCorrectionScenario(t, tx, data.Airline{})
 
-		s.Bot.handleCancelamento(s.event(), s.cancelamento("0k + 50 tx"), time.Now())
+		s.Bot.handleCancelamento(context.Background(), s.event(), s.cancelamento("0k + 50 tx"), time.Now())
 
 		assertCancelRocket(t, s)
 
@@ -111,7 +112,7 @@ func TestHandleCancelamento_ResetsPaidSale(t *testing.T) {
 			t.Fatalf("failed to mark the sale paid: %v", err)
 		}
 
-		s.Bot.handleCancelamento(s.event(), s.cancelamento("30k + 50 multa"), time.Now())
+		s.Bot.handleCancelamento(context.Background(), s.event(), s.cancelamento("30k + 50 multa"), time.Now())
 
 		assertCancelRocket(t, s)
 
@@ -140,13 +141,13 @@ func TestHandleCancelamento_SecondCancelOnSameLocatorIsRefused(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		s := newCorrectionScenario(t, tx, data.Airline{})
 
-		s.Bot.handleCancelamento(s.event(), s.cancelamento(), time.Now())
+		s.Bot.handleCancelamento(context.Background(), s.event(), s.cancelamento(), time.Now())
 		assertCancelRocket(t, s)
 
 		s.Client.reset()
 		s.Cancelled.Store(0)
 
-		s.Bot.handleCancelamento(s.event(), s.cancelamento(), time.Now())
+		s.Bot.handleCancelamento(context.Background(), s.event(), s.cancelamento(), time.Now())
 		assertCancelRefused(t, s, "Não encontrei")
 	})
 }
@@ -155,7 +156,7 @@ func TestHandleCancelamento_LocatorNotFoundIsRefused(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		s := newCorrectionScenario(t, tx, data.Airline{})
 
-		s.Bot.handleCancelamento(s.event(), "CANCELAMENTO - NAOEXISTE", time.Now())
+		s.Bot.handleCancelamento(context.Background(), s.event(), "CANCELAMENTO - NAOEXISTE", time.Now())
 
 		assertCancelRefused(t, s, "Não encontrei")
 	})
@@ -172,7 +173,7 @@ func TestHandleCancelamento_IgnoresChatsThatWereNotApproved(t *testing.T) {
 			t.Fatalf("failed to stop monitoring the chat: %v", err)
 		}
 
-		s.Bot.handleCancelamento(s.event(), s.cancelamento(), time.Now())
+		s.Bot.handleCancelamento(context.Background(), s.event(), s.cancelamento(), time.Now())
 
 		assertCancelSilence(t, s)
 		if !s.reload(t, tx).Active {
@@ -214,7 +215,7 @@ func TestHandleCancelamento_Refusals(t *testing.T) {
 			runInTx(t, func(tx *gorm.DB) {
 				s := newCorrectionScenario(t, tx, data.Airline{})
 
-				s.Bot.handleCancelamento(s.event(), tt.message(s), time.Now())
+				s.Bot.handleCancelamento(context.Background(), s.event(), tt.message(s), time.Now())
 
 				assertCancelRefused(t, s, tt.mentions)
 				if !s.reload(t, tx).Active {

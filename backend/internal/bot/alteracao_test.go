@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -34,7 +35,7 @@ func newCorrectionScenario(t *testing.T, tx *gorm.DB, airline data.Airline) corr
 func correctionFrom(t *testing.T, tx *gorm.DB, s emissaoScenario, text string) correctionScenario {
 	t.Helper()
 
-	s.Bot.handleEmissao(s.event(), text, time.Now())
+	s.Bot.handleEmissao(context.Background(), s.event(), text, time.Now())
 
 	locator := "PL" + s.Suffix
 	var issuance data.Issuance
@@ -168,7 +169,7 @@ func TestHandleAlteracao_CorrectsTheAmounts(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		s := newCorrectionScenario(t, tx, data.Airline{})
 
-		s.Bot.handleAlteracao(s.event(), s.alteracao("50k * 33,00 + 100 tx = 1.750,00"), time.Now())
+		s.Bot.handleAlteracao(context.Background(), s.event(), s.alteracao("50k * 33,00 + 100 tx = 1.750,00"), time.Now())
 
 		corrected := s.reload(t, tx)
 		if corrected.Points != 50000 {
@@ -203,7 +204,7 @@ func TestHandleAlteracao_ResolvesTheAccountAndAdministrator(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		s := newCorrectionScenario(t, tx, data.Airline{})
 
-		s.Bot.handleAlteracao(s.event(), s.alteracao("ContaNova"+s.Suffix+" - Wilmara"+s.Suffix), time.Now())
+		s.Bot.handleAlteracao(context.Background(), s.event(), s.alteracao("ContaNova"+s.Suffix+" - Wilmara"+s.Suffix), time.Now())
 
 		assertRocket(t, s)
 
@@ -233,7 +234,7 @@ func TestHandleAlteracao_ChangesTheObservation(t *testing.T) {
 		preset := data.ObservationPreset{Code: "ACORDO" + s.Suffix, Text: "Acordo comercial"}
 		seed(t, tx, &preset)
 
-		s.Bot.handleAlteracao(s.event(), s.alteracao(preset.Code), time.Now())
+		s.Bot.handleAlteracao(context.Background(), s.event(), s.alteracao(preset.Code), time.Now())
 
 		assertRocket(t, s)
 
@@ -250,7 +251,7 @@ func TestHandleAlteracao_ABareWordThatIsNoPresetIsAnAccount(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		s := newCorrectionScenario(t, tx, data.Airline{})
 
-		s.Bot.handleAlteracao(s.event(), s.alteracao("OutraConta"+s.Suffix), time.Now())
+		s.Bot.handleAlteracao(context.Background(), s.event(), s.alteracao("OutraConta"+s.Suffix), time.Now())
 
 		assertRocket(t, s)
 
@@ -269,7 +270,7 @@ func TestHandleAlteracao_ChangesTheRoute(t *testing.T) {
 		s := newCorrectionScenario(t, tx, data.Airline{})
 		seedAirport(t, tx, "GRU", "Guarulhos")
 
-		s.Bot.handleAlteracao(s.event(), s.alteracao("GRU - SILVA"), time.Now())
+		s.Bot.handleAlteracao(context.Background(), s.event(), s.alteracao("GRU - SILVA"), time.Now())
 
 		assertRocket(t, s)
 
@@ -297,7 +298,7 @@ func TestHandleAlteracao_AThreeLetterAliasIsNotAnAirport(t *testing.T) {
 			Nickname:         "Bia",
 		})
 
-		s.Bot.handleAlteracao(s.event(), s.alteracao("Bia"), time.Now())
+		s.Bot.handleAlteracao(context.Background(), s.event(), s.alteracao("Bia"), time.Now())
 
 		assertRocket(t, s)
 
@@ -318,7 +319,7 @@ func TestHandleAlteracao_LineOrderDoesNotMatter(t *testing.T) {
 		s := newCorrectionScenario(t, tx, data.Airline{})
 		seedAirport(t, tx, "GRU", "Guarulhos")
 
-		s.Bot.handleAlteracao(s.event(),
+		s.Bot.handleAlteracao(context.Background(), s.event(),
 			s.alteracao("GRU", "50k * 33,00 + 100 tx = 1.750,00"), time.Now())
 
 		assertRocket(t, s)
@@ -346,7 +347,7 @@ func TestHandleAlteracao_CorrectsTheOriginAlone(t *testing.T) {
 		// carries it - and the correction below is what leaves it out.
 		s := correctionFrom(t, tx, base, strings.Replace(base.text(), "\nCNF\n", "\nCNF - SILVA\n", 1))
 
-		s.Bot.handleAlteracao(s.event(), s.alteracao("GRU"), time.Now())
+		s.Bot.handleAlteracao(context.Background(), s.event(), s.alteracao("GRU"), time.Now())
 
 		assertRocket(t, s)
 
@@ -367,7 +368,7 @@ func TestHandleAlteracao_ARepeatedMessageChangesNothing(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		s := newCorrectionScenario(t, tx, data.Airline{})
 
-		s.Bot.handleAlteracao(s.event(), s.alteracao("31k * 16,5 + 189,22 tx = 700,72"), time.Now())
+		s.Bot.handleAlteracao(context.Background(), s.event(), s.alteracao("31k * 16,5 + 189,22 tx = 700,72"), time.Now())
 
 		assertRocketWithoutChange(t, s)
 		if _, logged := updateAudit(t, tx, s.Issuance.ID); logged {
@@ -391,7 +392,7 @@ func TestHandleAlteracao_RefusesARouteOnACompleteIssuance(t *testing.T) {
 		}
 
 		t.Run("route alone is refused", func(t *testing.T) {
-			s.Bot.handleAlteracao(s.event(), s.alteracao("GRU"), time.Now())
+			s.Bot.handleAlteracao(context.Background(), s.event(), s.alteracao("GRU"), time.Now())
 
 			assertRefused(t, s, "já está completa")
 			if origin := s.reload(t, tx).OriginIATACode; origin == nil || *origin != "CNF" {
@@ -403,7 +404,7 @@ func TestHandleAlteracao_RefusesARouteOnACompleteIssuance(t *testing.T) {
 			s.Client.reset()
 			s.Updated.Store(0)
 
-			s.Bot.handleAlteracao(s.event(),
+			s.Bot.handleAlteracao(context.Background(), s.event(),
 				s.alteracao("GRU", "50k * 33,00 + 100 tx = 1.750,00"), time.Now())
 
 			assertRefused(t, s, "já está completa")
@@ -456,7 +457,7 @@ func TestHandleAlteracao_Refusals(t *testing.T) {
 			runInTx(t, func(tx *gorm.DB) {
 				s := newCorrectionScenario(t, tx, data.Airline{})
 
-				s.Bot.handleAlteracao(s.event(), tt.message(s), time.Now())
+				s.Bot.handleAlteracao(context.Background(), s.event(), tt.message(s), time.Now())
 
 				assertRefused(t, s, tt.mentions)
 				if s.reload(t, tx).Points != 31000 {
@@ -477,7 +478,7 @@ func TestHandleAlteracao_ACancelledIssuanceIsRefused(t *testing.T) {
 			t.Fatalf("failed to cancel the issuance: %v", err)
 		}
 
-		s.Bot.handleAlteracao(s.event(), s.alteracao("50k * 33,00 + 100 tx = 1.750,00"), time.Now())
+		s.Bot.handleAlteracao(context.Background(), s.event(), s.alteracao("50k * 33,00 + 100 tx = 1.750,00"), time.Now())
 
 		assertRefused(t, s, "está cancelada")
 		if s.reload(t, tx).Points != 31000 {
@@ -497,7 +498,7 @@ func TestHandleAlteracao_IgnoresChatsThatWereNotApproved(t *testing.T) {
 			t.Fatalf("failed to stop monitoring the chat: %v", err)
 		}
 
-		s.Bot.handleAlteracao(s.event(), s.alteracao("50k * 33,00 + 100 tx = 1.750,00"), time.Now())
+		s.Bot.handleAlteracao(context.Background(), s.event(), s.alteracao("50k * 33,00 + 100 tx = 1.750,00"), time.Now())
 
 		assertSilence(t, s)
 		if s.reload(t, tx).Points != 31000 {
@@ -514,7 +515,7 @@ func TestHandleAlteracao_RollsBackAutoCreatedRecords(t *testing.T) {
 
 		// The account line resolves first and conjures an account; the amounts
 		// line then fails the checksum.
-		s.Bot.handleAlteracao(s.event(),
+		s.Bot.handleAlteracao(context.Background(), s.event(),
 			s.alteracao("ContaFantasma"+s.Suffix, "50k * 33,00 + 100 tx = 999,99"), time.Now())
 
 		assertRefused(t, s, "não fecham")

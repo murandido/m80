@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -116,6 +117,12 @@ type fakeClientBase struct {
 	sendCalls     int
 	markReadCalls int
 
+	// trace is every visible action in the order it happened, which is what the
+	// queue tests assert on: whether two jobs of one chat interleaved, and which
+	// message each reply was quoting. The other recorders above are per-kind and
+	// cannot answer either question.
+	trace []string
+
 	// groupInfo/groupInfoErr configure GetGroupInfo's canned response, for
 	// tests exercising the group-name resolution path.
 	groupInfo    *types.GroupInfo
@@ -133,14 +140,24 @@ func (f *fakeClientBase) SendMessage(_ context.Context, _ types.JID, message *wa
 	f.sendCalls++
 	if message.ReactionMessage != nil {
 		f.sentReactions = append(f.sentReactions, message.ReactionMessage.GetText())
+		// The target id rides along in the key so the trace can tell whose
+		// progress indicator moved - three messages in flight at once produce
+		// three interleaved ✅/🕐 pairs, and only the id separates them.
+		f.trace = append(f.trace, "react:"+message.ReactionMessage.GetText()+":"+message.ReactionMessage.GetKey().GetID())
 	}
 	if text := message.GetExtendedTextMessage().GetText(); text != "" {
 		f.sentTexts = append(f.sentTexts, text)
+		// The quoted id is what makes replies to identical commands ("!ping")
+		// tellable apart, which is the only way to assert queue ordering.
+		f.trace = append(f.trace, "reply:"+message.GetExtendedTextMessage().GetContextInfo().GetStanzaID())
 	}
 	return whatsmeow.SendResponse{}, nil
 }
 
 func (f *fakeClientBase) SendChatPresence(_ context.Context, _ types.JID, _ types.ChatPresence, _ types.ChatPresenceMedia) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.trace = append(f.trace, "presence")
 	return nil
 }
 
@@ -148,7 +165,27 @@ func (f *fakeClientBase) MarkRead(_ context.Context, _ []types.MessageID, _ time
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.markReadCalls++
+	f.trace = append(f.trace, "read")
 	return nil
+}
+
+// traceMatching returns the recorded actions whose prefix is one of want, in
+// order - so a test can look at just the presence/reply rhythm of the worker
+// without the read receipts the intake goroutines interleave into it.
+func (f *fakeClientBase) traceMatching(want ...string) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	var kept []string
+	for _, entry := range f.trace {
+		for _, prefix := range want {
+			if strings.HasPrefix(entry, prefix) {
+				kept = append(kept, entry)
+				break
+			}
+		}
+	}
+	return kept
 }
 
 func (f *fakeClientBase) calls() (sendCalls, markReadCalls int) {
@@ -157,8 +194,11 @@ func (f *fakeClientBase) calls() (sendCalls, markReadCalls int) {
 	return f.sendCalls, f.markReadCalls
 }
 
-func (f *fakeClientBase) BuildReaction(_, _ types.JID, _ types.MessageID, reaction string) *waE2E.Message {
-	return &waE2E.Message{ReactionMessage: &waE2E.ReactionMessage{Text: proto.String(reaction)}}
+func (f *fakeClientBase) BuildReaction(_, _ types.JID, id types.MessageID, reaction string) *waE2E.Message {
+	return &waE2E.Message{ReactionMessage: &waE2E.ReactionMessage{
+		Text: proto.String(reaction),
+		Key:  &waCommon.MessageKey{ID: proto.String(string(id))},
+	}}
 }
 
 func (f *fakeClientBase) DecryptSecretEncryptedMessage(_ context.Context, _ *events.Message) (*waE2E.Message, error) {
@@ -269,7 +309,7 @@ func TestCmdRegistrarChat_KnownUser_CreatesPendingRowAndReactsOK(t *testing.T) {
 		chatJID := "1111111111"
 		evt := newRegistrarChatEvent(chatJID, "55"+phone)
 
-		b.cmdRegistrarChat(evt, time.Now())
+		b.cmdRegistrarChat(context.Background(), evt, time.Now())
 
 		var chat data.ListenedChat
 		if err := tx.First(&chat, "chat_jid = ?", evt.Info.Chat.String()).Error; err != nil {
@@ -299,7 +339,7 @@ func TestCmdRegistrarChat_UnknownUser_SilentlyIgnored(t *testing.T) {
 		chatJID := "2222222222"
 		evt := newRegistrarChatEvent(chatJID, "5511900000000")
 
-		b.cmdRegistrarChat(evt, time.Now())
+		b.cmdRegistrarChat(context.Background(), evt, time.Now())
 
 		if count := countListenedChats(t, tx, evt.Info.Chat.String()); count != 0 {
 			t.Fatalf("listened_chats rows: got %d, want 0", count)
@@ -320,14 +360,20 @@ func TestCmdRegistrarChat_AlreadyRequested_NoDuplicateSilentlyIgnored(t *testing
 		chatJID := "3333333333"
 		evt := newRegistrarChatEvent(chatJID, "55"+phone)
 
-		b.cmdRegistrarChat(evt, time.Now())
-		b.cmdRegistrarChat(evt, time.Now())
+		b.cmdRegistrarChat(context.Background(), evt, time.Now())
+		b.cmdRegistrarChat(context.Background(), evt, time.Now())
 
 		if count := countListenedChats(t, tx, evt.Info.Chat.String()); count != 1 {
 			t.Fatalf("listened_chats rows: got %d, want 1", count)
 		}
-		if got := client.reactions(); len(got) != 1 || got[0] != "🚀" {
-			t.Fatalf("reactions: got %v, want [✅] - a duplicate while still pending is ignored silently", got)
+		// The duplicate writes nothing but still answers 🚀. It used to answer
+		// nothing at all; that stopped being possible once intake acknowledges
+		// the message with ✅ and 🕐, which would otherwise never resolve.
+		if got := client.reactions(); len(got) != 2 || got[0] != "🚀" || got[1] != "🚀" {
+			t.Fatalf("reactions: got %v, want [🚀 🚀] - a duplicate is already-true, not a failure", got)
+		}
+		if text := client.lastText(); text != "" {
+			t.Fatalf("text: got %q, want none - 🚀 says everything a duplicate needs", text)
 		}
 		_ = user
 	})
@@ -365,7 +411,7 @@ func TestCmdRegistrarChat_StoppedChat_ReopensAsNewPendingRequest(t *testing.T) {
 		b := newRegistrarChatBot(tx, client)
 		evt := newRegistrarChatEvent(chatJID, "55"+newPhone)
 
-		b.cmdRegistrarChat(evt, time.Now())
+		b.cmdRegistrarChat(context.Background(), evt, time.Now())
 
 		if count := countListenedChats(t, tx, evt.Info.Chat.String()); count != 1 {
 			t.Fatalf("listened_chats rows: got %d, want 1 (reopened, not duplicated)", count)
@@ -405,7 +451,7 @@ func TestCmdRegistrarChat_DeniedChat_ReopensAsNewPendingRequest(t *testing.T) {
 		b := newRegistrarChatBot(tx, client)
 		evt := newRegistrarChatEvent(chatJID, "55"+phone)
 
-		b.cmdRegistrarChat(evt, time.Now())
+		b.cmdRegistrarChat(context.Background(), evt, time.Now())
 
 		if count := countListenedChats(t, tx, evt.Info.Chat.String()); count != 1 {
 			t.Fatalf("listened_chats rows: got %d, want 1 (reopened, not duplicated)", count)
@@ -424,7 +470,11 @@ func TestCmdRegistrarChat_DeniedChat_ReopensAsNewPendingRequest(t *testing.T) {
 	})
 }
 
-func TestCmdRegistrarChat_ActiveChat_StillBlocksSilently(t *testing.T) {
+// An already-monitored chat is left exactly as it is. It answers 🚀 rather than
+// nothing, for the same reason a duplicate pending request does: intake already
+// promised an answer with ✅ and 🕐, and "the chat is already being monitored"
+// is the state the sender asked for.
+func TestCmdRegistrarChat_ActiveChat_ChangesNothingAndSaysItIsDone(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		phone := fmt.Sprintf("119%08d", atomic.AddInt64(&phoneCounter, 1)%100000000)
 		requester := createUser(t, tx, phone)
@@ -436,7 +486,7 @@ func TestCmdRegistrarChat_ActiveChat_StillBlocksSilently(t *testing.T) {
 		b := newRegistrarChatBot(tx, client)
 		evt := newRegistrarChatEvent(chatJID, "55"+phone)
 
-		b.cmdRegistrarChat(evt, time.Now())
+		b.cmdRegistrarChat(context.Background(), evt, time.Now())
 
 		var reloaded data.ListenedChat
 		if err := tx.First(&reloaded, "id = ?", seeded.ID).Error; err != nil {
@@ -445,8 +495,8 @@ func TestCmdRegistrarChat_ActiveChat_StillBlocksSilently(t *testing.T) {
 		if reloaded.Status != "approved" || !reloaded.Active {
 			t.Fatalf("chat should be untouched: got status=%q active=%v", reloaded.Status, reloaded.Active)
 		}
-		if got := client.reactions(); len(got) != 0 {
-			t.Fatalf("reactions: got %v, want none - an already-monitored chat is ignored silently", got)
+		if got := client.reactions(); len(got) != 1 || got[0] != "🚀" {
+			t.Fatalf("reactions: got %v, want [🚀] - already monitored is already true", got)
 		}
 	})
 }
@@ -454,8 +504,9 @@ func TestCmdRegistrarChat_ActiveChat_StillBlocksSilently(t *testing.T) {
 // A permanently deactivated chat (DeactivateListenedChat) never reopens on
 // its own - unlike a soft-stopped one (StopListenedChat), which still does
 // (see TestCmdRegistrarChat_StoppedChat_ReopensAsNewPendingRequest above,
-// unchanged).
-func TestCmdRegistrarChat_DeactivatedChat_StaysDeactivatedSilently(t *testing.T) {
+// unchanged). The refusal is spoken rather than silent: 🚀 would claim the
+// chat is now pending approval when nothing was written at all.
+func TestCmdRegistrarChat_DeactivatedChat_StaysDeactivatedAndSaysSo(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		originalPhone := fmt.Sprintf("119%08d", atomic.AddInt64(&phoneCounter, 1)%100000000)
 		originalRequester := createUser(t, tx, originalPhone)
@@ -469,7 +520,7 @@ func TestCmdRegistrarChat_DeactivatedChat_StaysDeactivatedSilently(t *testing.T)
 		b := newRegistrarChatBot(tx, client)
 		evt := newRegistrarChatEvent(chatJID, "55"+newPhone)
 
-		b.cmdRegistrarChat(evt, time.Now())
+		b.cmdRegistrarChat(context.Background(), evt, time.Now())
 
 		var reloaded data.ListenedChat
 		if err := tx.First(&reloaded, "id = ?", seeded.ID).Error; err != nil {
@@ -481,8 +532,11 @@ func TestCmdRegistrarChat_DeactivatedChat_StaysDeactivatedSilently(t *testing.T)
 		if reloaded.RequestedByID != originalRequester.ID {
 			t.Fatalf("requested_by_id should be untouched: got %q, want %q", reloaded.RequestedByID, originalRequester.ID)
 		}
-		if got := client.reactions(); len(got) != 0 {
-			t.Fatalf("reactions: got %v, want none - a deactivated chat never reopens on its own", got)
+		if got := client.reactions(); len(got) != 1 || got[0] != "❌" {
+			t.Fatalf("reactions: got %v, want [❌] - a deactivated chat never reopens on its own", got)
+		}
+		if text := client.lastText(); !strings.Contains(text, "painel") {
+			t.Fatalf("text: got %q, want it to point at the panel as the only way back", text)
 		}
 		_ = newRequester
 	})
@@ -508,7 +562,7 @@ func TestCmdRegistrarChat_LIDAddressing_ResolvesViaSenderAlt(t *testing.T) {
 			},
 		}
 
-		b.cmdRegistrarChat(evt, time.Now())
+		b.cmdRegistrarChat(context.Background(), evt, time.Now())
 
 		var chat data.ListenedChat
 		if err := tx.First(&chat, "chat_jid = ?", evt.Info.Chat.String()).Error; err != nil {
@@ -530,7 +584,7 @@ func TestCmdRegistrarChat_GroupChat_FriendlyNameFromGetGroupInfo(t *testing.T) {
 		chatJID := "8888888888"
 		evt := newRegistrarChatEvent(chatJID, "55"+phone)
 
-		b.cmdRegistrarChat(evt, time.Now())
+		b.cmdRegistrarChat(context.Background(), evt, time.Now())
 
 		var chat data.ListenedChat
 		if err := tx.First(&chat, "chat_jid = ?", evt.Info.Chat.String()).Error; err != nil {
@@ -552,7 +606,7 @@ func TestCmdRegistrarChat_DMChat_FriendlyNameFromPushName(t *testing.T) {
 		chatJID := "9999999999"
 		evt := newRegistrarChatDMEvent(chatJID, "55"+phone, "Fulano de Tal")
 
-		b.cmdRegistrarChat(evt, time.Now())
+		b.cmdRegistrarChat(context.Background(), evt, time.Now())
 
 		var chat data.ListenedChat
 		if err := tx.First(&chat, "chat_jid = ?", evt.Info.Chat.String()).Error; err != nil {
@@ -574,7 +628,7 @@ func TestCmdRegistrarChat_GetGroupInfoFails_FriendlyNameStaysNilRowStillCreated(
 		chatJID := "1010101010"
 		evt := newRegistrarChatEvent(chatJID, "55"+phone)
 
-		b.cmdRegistrarChat(evt, time.Now())
+		b.cmdRegistrarChat(context.Background(), evt, time.Now())
 
 		var chat data.ListenedChat
 		if err := tx.First(&chat, "chat_jid = ?", evt.Info.Chat.String()).Error; err != nil {
@@ -603,13 +657,13 @@ func TestCmdRegistrarChat_NotifiesOnlyOnCreateAndReopen(t *testing.T) {
 		evt := newRegistrarChatEvent(chatJID, "55"+phone)
 
 		// 1st call: new row created -> notifies.
-		b.cmdRegistrarChat(evt, time.Now())
+		b.cmdRegistrarChat(context.Background(), evt, time.Now())
 		if notifyCalls != 1 {
 			t.Fatalf("notify calls after create: got %d, want 1", notifyCalls)
 		}
 
 		// 2nd call: still pending -> blocked, must NOT notify again.
-		b.cmdRegistrarChat(evt, time.Now())
+		b.cmdRegistrarChat(context.Background(), evt, time.Now())
 		if notifyCalls != 1 {
 			t.Fatalf("notify calls after duplicate (pending): got %d, want 1", notifyCalls)
 		}
@@ -624,14 +678,14 @@ func TestCmdRegistrarChat_NotifiesOnlyOnCreateAndReopen(t *testing.T) {
 			t.Fatalf("failed to deny chat: %v", err)
 		}
 
-		b.cmdRegistrarChat(evt, time.Now())
+		b.cmdRegistrarChat(context.Background(), evt, time.Now())
 		if notifyCalls != 2 {
 			t.Fatalf("notify calls after reopen: got %d, want 2", notifyCalls)
 		}
 
 		// Unknown sender -> silently ignored, must NOT notify.
 		unknownEvt := newRegistrarChatEvent("1313131313", "5511900000001")
-		b.cmdRegistrarChat(unknownEvt, time.Now())
+		b.cmdRegistrarChat(context.Background(), unknownEvt, time.Now())
 		if notifyCalls != 2 {
 			t.Fatalf("notify calls after unknown sender: got %d, want 2", notifyCalls)
 		}

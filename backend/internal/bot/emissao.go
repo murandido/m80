@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -24,7 +25,7 @@ import (
 // Neither of those produces a visible response. Someone typing in a chat the
 // bot merely happens to be in should not get a reaction telling them the bot is
 // reading - the same reasoning as cmdRegistrarChat's silent branches.
-func (b *Bot) handleEmissao(evt *events.Message, text string, startedAt time.Time) {
+func (b *Bot) handleEmissao(ctx context.Context, evt *events.Message, text string, startedAt time.Time) {
 	user, allowed := b.authorizeSender(evt, "emissao")
 	if !allowed {
 		return
@@ -33,7 +34,7 @@ func (b *Bot) handleEmissao(evt *events.Message, text string, startedAt time.Tim
 	msg, err := parseEmissao(text)
 	if err != nil {
 		b.Logger.Infof("emissao: could not parse a message from %s: %v", user.Name, err)
-		b.refuse(evt, startedAt, refusalText("", err))
+		b.refuse(ctx, evt, startedAt, refusalText("", err))
 		return
 	}
 
@@ -41,7 +42,7 @@ func (b *Bot) handleEmissao(evt *events.Message, text string, startedAt time.Tim
 	// from a nickname must not survive a message that turns out to be
 	// unpersistable, or the panel fills up with orphans nobody asked for.
 	var created data.Issuance
-	err = b.DB.Transaction(func(tx *gorm.DB) error {
+	err = b.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		input, err := resolveEmissao(tx, msg)
 		if err != nil {
 			return err
@@ -53,7 +54,7 @@ func (b *Bot) handleEmissao(evt *events.Message, text string, startedAt time.Tim
 
 	if err != nil {
 		b.Logger.Errorf("emissao: failed to register %s from %s: %v", msg.ProgramLocator, user.Name, err)
-		b.refuse(evt, startedAt, refusalText(msg.ProgramLocator, err))
+		b.refuse(ctx, evt, startedAt, refusalText(msg.ProgramLocator, err))
 		return
 	}
 
@@ -74,7 +75,7 @@ func (b *Bot) handleEmissao(evt *events.Message, text string, startedAt time.Tim
 	// cannot - see refuse.
 	humanizer.DelayReaction()
 	humanizer.EnforceResponseFloor(startedAt)
-	b.ReactMessage(evt, "🚀")
+	b.ReactMessage(ctx, evt, "🚀")
 
 	b.notifyIssuanceCreated()
 }
@@ -155,9 +156,20 @@ func refusalText(locator string, err error) string {
 // refuse answers a rejected message. It reacts with ❌ as well as replying so
 // the failure is visible at a glance when scrolling back through a busy group,
 // where the reply itself may be far from the message it refers to.
-func (b *Bot) refuse(evt *events.Message, startedAt time.Time, message string) {
+//
+// A cancelled job is the one failure that says nothing. Its transaction was
+// rolled back by whoever cancelled it - a DELETAR, or the operator deleting the
+// message - and that person's own message is what answers the group. Telling
+// them separately that the work they cancelled did not go through would be
+// noise, and "Não consegui registrar essa emissão" would be an outright lie.
+func (b *Bot) refuse(ctx context.Context, evt *events.Message, startedAt time.Time, message string) {
+	if ctx.Err() != nil {
+		b.Logger.Infof("message %s was cancelled, not answering: %s", evt.Info.ID, message)
+		return
+	}
+
 	humanizer.DelayReaction()
 	humanizer.EnforceResponseFloor(startedAt)
-	b.ReactMessage(evt, "❌")
-	b.ReplyMessage(evt, message)
+	b.ReactMessage(ctx, evt, "❌")
+	b.ReplyMessage(ctx, evt, message)
 }

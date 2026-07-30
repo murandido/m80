@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"context"
 	"errors"
 	"time"
 
@@ -17,30 +18,28 @@ import (
 //
 // An edit of ordinary conversation is ignored, exactly as the original would
 // have been.
-func (b *Bot) handleMessageEdit(evt *events.Message, text string, startedAt time.Time) {
+func (b *Bot) handleMessageEdit(ctx context.Context, evt *events.Message, text string, startedAt time.Time) {
 	switch {
 	case isAlteracaoMessage(text):
 		// An edited ALTERACAO needs no special treatment: its own line 1 says
 		// which issuance it corrects, edit or not.
-		b.handleAlteracao(evt, text, startedAt)
+		b.handleAlteracao(ctx, evt, text, startedAt)
 	case isEmissaoMessage(text):
-		b.handleEditedEmissao(evt, text, startedAt)
+		b.handleEditedEmissao(ctx, evt, text, startedAt)
 	default:
-		// Ignoring is right, but doing it without a word is what made a broken
-		// unwrap indistinguishable from an edit of ordinary chatter. The two are
-		// logged apart, and neither quotes the group's text back into the log.
-		if text == "" {
-			b.Logger.Warnf("edicao: edit %s carried no readable text - the payload was not unwrapped", evt.Info.ID)
-		} else {
-			b.Logger.Infof("edicao: edit %s is neither an EMISSAO nor an ALTERACAO, ignoring", evt.Info.ID)
-		}
+		// Unreachable through intake, which turns these away in classify -
+		// along with the log line that tells "I could not read the text" apart
+		// from "I read it and it is not ours". Kept because this function is
+		// still reachable directly, and reacting to an edit the bot does not
+		// understand would be worse than ignoring it.
+		b.Logger.Infof("edicao: edit %s is neither an EMISSAO nor an ALTERACAO, ignoring", evt.Info.ID)
 	}
 }
 
 // handleEditedEmissao treats the rewritten EMISSAO as a restatement of the whole
 // issuance: every field the message carries is applied, and one it no longer
 // carries is cleared - see alteracaoFields.Full.
-func (b *Bot) handleEditedEmissao(evt *events.Message, text string, startedAt time.Time) {
+func (b *Bot) handleEditedEmissao(ctx context.Context, evt *events.Message, text string, startedAt time.Time) {
 	user, allowed := b.authorizeSender(evt, "edicao")
 	if !allowed {
 		return
@@ -49,7 +48,7 @@ func (b *Bot) handleEditedEmissao(evt *events.Message, text string, startedAt ti
 	msg, err := parseEmissao(text)
 	if err != nil {
 		b.Logger.Infof("edicao: could not parse an edited message from %s: %v", user.Name, err)
-		b.refuse(evt, startedAt, refusalText("", err))
+		b.refuse(ctx, evt, startedAt, refusalText("", err))
 		return
 	}
 
@@ -62,14 +61,14 @@ func (b *Bot) handleEditedEmissao(evt *events.Message, text string, startedAt ti
 	if known && remembered.ProgramLocator != msg.ProgramLocator {
 		b.Logger.Infof("edicao: %s tried to change the locator of %s to %s",
 			user.Name, remembered.ProgramLocator, msg.ProgramLocator)
-		b.refuse(evt, startedAt, "Não é possível alterar o PNR de uma emissão já salva")
+		b.refuse(ctx, evt, startedAt, "Não é possível alterar o PNR de uma emissão já salva")
 		return
 	}
 
 	issuance, found, err := b.locateEditedIssuance(remembered, known, msg.ProgramLocator)
 	if err != nil {
 		b.Logger.Errorf("edicao: failed to look up the issuance behind an edit from %s: %v", user.Name, err)
-		b.refuse(evt, startedAt, refusalText(msg.ProgramLocator, err))
+		b.refuse(ctx, evt, startedAt, refusalText(msg.ProgramLocator, err))
 		return
 	}
 
@@ -78,18 +77,18 @@ func (b *Bot) handleEditedEmissao(evt *events.Message, text string, startedAt ti
 	// exactly what they are asking for.
 	if !found {
 		b.Logger.Infof("edicao: no issuance behind the edited message, registering %s as a new one", msg.ProgramLocator)
-		b.handleEmissao(evt, text, startedAt)
+		b.handleEmissao(ctx, evt, text, startedAt)
 		return
 	}
 
 	if issuance.CancelledAt != nil {
-		b.refuse(evt, startedAt, operatorErrorf(nil,
+		b.refuse(ctx, evt, startedAt, operatorErrorf(nil,
 			"A emissão %s está cancelada e não pode ser corrigida", msg.ProgramLocator).Error())
 		return
 	}
 
 	var outcome correctionOutcome
-	err = b.DB.Transaction(func(tx *gorm.DB) error {
+	err = b.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// resolveEmissao already turns a full message into resolved ids, aliases
 		// and all - reusing it is what keeps an edited EMISSAO meaning exactly
 		// what the original one meant.
@@ -104,11 +103,11 @@ func (b *Bot) handleEditedEmissao(evt *events.Message, text string, startedAt ti
 
 	if err != nil {
 		b.Logger.Errorf("edicao: failed to correct %s for %s: %v", msg.ProgramLocator, user.Name, err)
-		b.refuse(evt, startedAt, refusalText(msg.ProgramLocator, err))
+		b.refuse(ctx, evt, startedAt, refusalText(msg.ProgramLocator, err))
 		return
 	}
 
-	b.answerCorrection(evt, startedAt, msg.ProgramLocator, outcome)
+	b.answerCorrection(ctx, evt, startedAt, msg.ProgramLocator, outcome)
 }
 
 // locateEditedIssuance finds the issuance an edit refers to, preferring the one

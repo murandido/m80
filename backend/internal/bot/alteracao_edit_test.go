@@ -1,7 +1,9 @@
 package bot
 
 import (
+	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -160,7 +162,7 @@ func TestProcessIncomingMessage_RoutesAnEditedEmissaoAsACorrection(t *testing.T)
 		s := newEmissaoScenario(t, tx, data.Airline{})
 
 		original := s.eventWithID("original-id")
-		s.Bot.handleEmissao(original, s.text(), time.Now())
+		s.Bot.handleEmissao(context.Background(), original, s.text(), time.Now())
 		s.Client.reset()
 
 		corrected := strings.Replace(s.text(), "31k * 16,5 + 189,22 tx = 700,72",
@@ -195,7 +197,7 @@ func TestHandleMessageEdit_RefusesANewLocator(t *testing.T) {
 		// newCorrectionScenario sent the base EMISSAO under the default id, so
 		// that is the message being edited.
 		retyped := strings.Replace(s.text(), "PL"+s.Suffix, "OUTRO"+s.Suffix, 1)
-		s.Bot.handleMessageEdit(s.event(), retyped, time.Now())
+		s.Bot.handleMessageEdit(context.Background(), s.event(), retyped, time.Now())
 
 		assertRefused(t, s, "Não é possível alterar o PNR")
 
@@ -221,7 +223,7 @@ func TestHandleMessageEdit_FallsBackToTheLocatorWhenTheMapForgot(t *testing.T) {
 
 		corrected := strings.Replace(s.text(), "31k * 16,5 + 189,22 tx = 700,72",
 			"50k * 33,00 + 100 tx = 1.750,00", 1)
-		s.Bot.handleMessageEdit(s.eventWithID("forgotten-id"), corrected, time.Now())
+		s.Bot.handleMessageEdit(context.Background(), s.eventWithID("forgotten-id"), corrected, time.Now())
 
 		assertRocket(t, s)
 		if points := s.reload(t, tx).Points; points != 50000 {
@@ -238,7 +240,7 @@ func TestHandleMessageEdit_RegistersAMessageTheBotHadRefused(t *testing.T) {
 		s := newEmissaoScenario(t, tx, data.Airline{})
 
 		// The bot never saw this id succeed, and no issuance carries the locator.
-		s.Bot.handleMessageEdit(s.eventWithID("refused-id"), s.text(), time.Now())
+		s.Bot.handleMessageEdit(context.Background(), s.eventWithID("refused-id"), s.text(), time.Now())
 
 		var issuance data.Issuance
 		if err := tx.Where("program_locator = ?", "PL"+s.Suffix).First(&issuance).Error; err != nil {
@@ -262,7 +264,7 @@ func TestHandleMessageEdit_ClearsWhatTheEditRemoved(t *testing.T) {
 		preset := data.ObservationPreset{Code: "ACORDO" + s.Suffix, Text: "Acordo comercial"}
 		seed(t, tx, &preset)
 
-		s.Bot.handleEmissao(s.event(), s.text(preset.Code), time.Now())
+		s.Bot.handleEmissao(context.Background(), s.event(), s.text(preset.Code), time.Now())
 		s.Client.reset()
 
 		var before data.Issuance
@@ -273,7 +275,7 @@ func TestHandleMessageEdit_ClearsWhatTheEditRemoved(t *testing.T) {
 			t.Fatal("the base message did not record the observation, so there is nothing to clear")
 		}
 
-		s.Bot.handleMessageEdit(s.event(), s.text(), time.Now())
+		s.Bot.handleMessageEdit(context.Background(), s.event(), s.text(), time.Now())
 
 		var after data.Issuance
 		if err := tx.First(&after, "id = ?", before.ID).Error; err != nil {
@@ -290,8 +292,100 @@ func TestHandleMessageEdit_IgnoresOrdinaryText(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		s := newCorrectionScenario(t, tx, data.Airline{})
 
-		s.Bot.handleMessageEdit(s.event(), "quis dizer amanhã, não hoje", time.Now())
+		s.Bot.handleMessageEdit(context.Background(), s.event(), "quis dizer amanhã, não hoje", time.Now())
 
 		assertSilence(t, s)
+	})
+}
+
+// State 1 of the edit table: the message was edited while its job was still
+// queued. The job carries the new content and keeps its place in line; the edit
+// itself produces no second job, so the issuance is written once, from the
+// corrected text.
+func TestSupersede_EditOfAQueuedJobRewritesItInPlace(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		s := newEmissaoScenario(t, tx, data.Airline{})
+		locator := "PL" + s.Suffix
+
+		queued := s.Bot.admit(queuedMessage{
+			evt:       s.messageEvent(s.text()),
+			startedAt: time.Now(),
+		})
+		<-queued.acked
+		s.Client.reset()
+
+		corrected := strings.Replace(s.text(), "31k * 16,5 + 189,22 tx = 700,72",
+			"50k * 33,00 + 100 tx = 1.750,00", 1)
+		edit := editOf(s.Client, s.messageEvent(corrected), "test-emissao-id", corrected)
+
+		replacement := s.Bot.admit(queuedMessage{evt: edit, startedAt: time.Now()})
+		<-replacement.acked
+
+		if replacement.kind != kindNone {
+			t.Fatalf("the edit produced a job of kind %v, want none - it rewrote the queued one", replacement.kind)
+		}
+		if got := s.Client.reactions(); !reflect.DeepEqual(got, []string{"✅", "🕐"}) {
+			t.Fatalf("reactions: got %v, want [✅ 🕐] on the message being edited", got)
+		}
+
+		text, kind, gotLocator := queued.payload()
+		if kind != kindEmissao || gotLocator != locator {
+			t.Fatalf("queued job now: kind=%v locator=%q, want an EMISSAO for %s", kind, gotLocator, locator)
+		}
+		if !strings.Contains(text, "50k") {
+			t.Fatalf("queued job text was not replaced: %q", text)
+		}
+
+		// Running it writes the corrected numbers, once.
+		s.Bot.executeJob(queued)
+
+		var issuances []data.Issuance
+		if err := tx.Where("program_locator = ?", locator).Find(&issuances).Error; err != nil {
+			t.Fatalf("failed to read the issuances: %v", err)
+		}
+		if len(issuances) != 1 {
+			t.Fatalf("found %d issuance(s), want exactly one", len(issuances))
+		}
+		if issuances[0].Points != 50000 {
+			t.Fatalf("points = %d, want the edited 50000 - the original content must never have run", issuances[0].Points)
+		}
+	})
+}
+
+// State 2: the job was already running. There is no place in line left to keep,
+// so it is cancelled and the edit is handled as an ordinary correction - which
+// registers the issuance when the rollback got there first, and corrects it when
+// the commit did.
+func TestSupersede_EditOfARunningJobCancelsIt(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		s := newEmissaoScenario(t, tx, data.Airline{})
+
+		running := s.Bot.admit(queuedMessage{
+			evt:       s.messageEvent(s.text()),
+			startedAt: time.Now(),
+		})
+		<-running.acked
+		if _, live := running.begin(context.Background()); !live {
+			t.Fatal("the job should have begun")
+		}
+
+		if superseded := s.Bot.supersede(running.evt, s.text()); superseded {
+			t.Fatal("an edit of a running job must not be swallowed - it has to run as a correction")
+		}
+		if !running.isCancelled() {
+			t.Fatal("the running job should have been cancelled")
+		}
+	})
+}
+
+// State 3, unchanged: no live job behind the message, so the edit is a
+// correction of what is saved. Guards the fall-through.
+func TestSupersede_EditWithNoLiveJobIsLeftToTheCorrectionPath(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		s := newEmissaoScenario(t, tx, data.Airline{})
+
+		if s.Bot.supersede(s.event(), s.text()) {
+			t.Fatal("nothing is in flight, so there is nothing to supersede")
+		}
 	})
 }

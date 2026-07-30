@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"context"
 	"errors"
 	"time"
 
@@ -14,7 +15,7 @@ import (
 // handleCancelamento cancels the issuance a CANCELAMENTO message names. Same
 // gates as EMISSAO and ALTERACAO - see authorizeSender - and the same
 // silence on a failed gate.
-func (b *Bot) handleCancelamento(evt *events.Message, text string, startedAt time.Time) {
+func (b *Bot) handleCancelamento(ctx context.Context, evt *events.Message, text string, startedAt time.Time) {
 	user, allowed := b.authorizeSender(evt, "cancelamento")
 	if !allowed {
 		return
@@ -23,14 +24,14 @@ func (b *Bot) handleCancelamento(evt *events.Message, text string, startedAt tim
 	msg, err := parseCancelamento(text)
 	if err != nil {
 		b.Logger.Infof("cancelamento: could not parse a message from %s: %v", user.Name, err)
-		b.refuse(evt, startedAt, refusalText("", err))
+		b.refuse(ctx, evt, startedAt, refusalText("", err))
 		return
 	}
 
 	// Finding the issuance and cancelling it share one transaction: nothing
 	// about this can be split across two, the way EMISSAO's resolve+create
 	// sometimes conjures an account that has to survive on its own.
-	err = b.DB.Transaction(func(tx *gorm.DB) error {
+	err = b.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		issuance, err := findIssuanceToCancel(tx, msg.ProgramLocator)
 		if err != nil {
 			return err
@@ -42,7 +43,7 @@ func (b *Bot) handleCancelamento(evt *events.Message, text string, startedAt tim
 
 	if err != nil {
 		b.Logger.Errorf("cancelamento: failed to cancel %s for %s: %v", msg.ProgramLocator, user.Name, err)
-		b.refuse(evt, startedAt, refusalText(msg.ProgramLocator, err))
+		b.refuse(ctx, evt, startedAt, refusalText(msg.ProgramLocator, err))
 		return
 	}
 
@@ -50,7 +51,7 @@ func (b *Bot) handleCancelamento(evt *events.Message, text string, startedAt tim
 
 	humanizer.DelayReaction()
 	humanizer.EnforceResponseFloor(startedAt)
-	b.ReactMessage(evt, "🚀")
+	b.ReactMessage(ctx, evt, "🚀")
 
 	b.notifyIssuanceCancelled()
 }

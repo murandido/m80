@@ -1,6 +1,7 @@
 package bot
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"time"
@@ -21,7 +22,7 @@ const auditActionUpdated = "updated"
 // handleAlteracao corrects an issuance from an ALTERACAO message. It passes
 // through exactly the same gates as an EMISSAO, for the same reasons - see
 // authorizeSender.
-func (b *Bot) handleAlteracao(evt *events.Message, text string, startedAt time.Time) {
+func (b *Bot) handleAlteracao(ctx context.Context, evt *events.Message, text string, startedAt time.Time) {
 	user, allowed := b.authorizeSender(evt, "alteracao")
 	if !allowed {
 		return
@@ -30,7 +31,7 @@ func (b *Bot) handleAlteracao(evt *events.Message, text string, startedAt time.T
 	msg, err := parseAlteracao(text)
 	if err != nil {
 		b.Logger.Infof("alteracao: could not parse a message from %s: %v", user.Name, err)
-		b.refuse(evt, startedAt, refusalText("", err))
+		b.refuse(ctx, evt, startedAt, refusalText("", err))
 		return
 	}
 
@@ -38,7 +39,7 @@ func (b *Bot) handleAlteracao(evt *events.Message, text string, startedAt time.T
 	// an account conjured from an unknown alias must not outlive a correction that
 	// fails afterwards.
 	var outcome correctionOutcome
-	err = b.DB.Transaction(func(tx *gorm.DB) error {
+	err = b.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		issuance, err := findIssuanceToCorrect(tx, msg.ProgramLocator)
 		if err != nil {
 			return err
@@ -55,11 +56,11 @@ func (b *Bot) handleAlteracao(evt *events.Message, text string, startedAt time.T
 
 	if err != nil {
 		b.Logger.Errorf("alteracao: failed to correct %s for %s: %v", msg.ProgramLocator, user.Name, err)
-		b.refuse(evt, startedAt, refusalText(msg.ProgramLocator, err))
+		b.refuse(ctx, evt, startedAt, refusalText(msg.ProgramLocator, err))
 		return
 	}
 
-	b.answerCorrection(evt, startedAt, msg.ProgramLocator, outcome)
+	b.answerCorrection(ctx, evt, startedAt, msg.ProgramLocator, outcome)
 }
 
 // correctionOutcome is what actually happened, which is not always what the
@@ -77,7 +78,7 @@ type correctionOutcome struct {
 // a message that draws no reaction is indistinguishable from a bot that is down,
 // and "what you asked for is already true" is a success, not a failure - it just
 // has nothing to write down, so no audit entry and no SSE event follow it.
-func (b *Bot) answerCorrection(evt *events.Message, startedAt time.Time, locator string, outcome correctionOutcome) {
+func (b *Bot) answerCorrection(ctx context.Context, evt *events.Message, startedAt time.Time, locator string, outcome correctionOutcome) {
 	if outcome.Changed {
 		b.Logger.Infof("alteracao: corrected issuance %s", locator)
 	} else {
@@ -86,7 +87,7 @@ func (b *Bot) answerCorrection(evt *events.Message, startedAt time.Time, locator
 
 	humanizer.DelayReaction()
 	humanizer.EnforceResponseFloor(startedAt)
-	b.ReactMessage(evt, "🚀")
+	b.ReactMessage(ctx, evt, "🚀")
 
 	if outcome.Changed {
 		b.notifyIssuanceUpdated()

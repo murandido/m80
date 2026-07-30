@@ -138,11 +138,24 @@ type Bot struct {
 	// offlineSyncing is true between *events.OfflineSyncPreview and
 	// *events.OfflineSyncCompleted - i.e. while whatsmeow is redelivering
 	// messages the bot missed while disconnected. Messages received during
-	// this window are marked read but never routed to a command (see
-	// processIncomingMessage in handlers.go): replying to a command sent
-	// hours ago while the bot was down isn't useful and can confuse whoever
-	// sent it.
+	// this window are marked read but never routed to a command (see admit in
+	// handlers.go): replying to a command sent hours ago while the bot was
+	// down isn't useful and can confuse whoever sent it.
 	offlineSyncing atomic.Bool
+
+	// dispatch owns one serialized queue per chat - see queue.go. Built
+	// lazily rather than in New so that every Bot has one, including the
+	// struct literals the tests build directly; there is nothing to configure
+	// and nothing to fail, so an explicit constructor argument would only be
+	// one more thing to forget.
+	dispatchOnce sync.Once
+	dispatch     *dispatcher
+
+	// jobRegistry indexes the work in progress by message id and by locator,
+	// and holds the per-PNR lock - see pnr_lock.go. Lazy for the same reason as
+	// the dispatcher above.
+	jobsOnce    sync.Once
+	jobRegistry *jobRegistry
 
 	mu      sync.RWMutex
 	session deviceSession
@@ -211,6 +224,20 @@ func (b *Bot) currentSession() deviceSession {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	return b.session
+}
+
+// queue returns the dispatcher, starting it on first use.
+func (b *Bot) queue() *dispatcher {
+	b.dispatchOnce.Do(func() { b.dispatch = newDispatcher(b) })
+	return b.dispatch
+}
+
+// Shutdown stops accepting new messages and waits for the ones already
+// admitted to finish, or for ctx to expire. Call it before Disconnect: a job
+// killed halfway leaves the operator with a message the bot reacted to and
+// never acted on.
+func (b *Bot) Shutdown(ctx context.Context) {
+	b.queue().Stop(ctx)
 }
 
 // Disconnect closes the currently active session. Exposed for cmd/bot's
