@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation"
 import { Controller, useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
-import { Building2, Plane, Tag, X, Save } from "lucide-react"
+import { Building2, Hash, Palette, Plane, Tag, X, Save } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Field, FieldError, FieldLabel } from "@/components/ui/field"
 import {
@@ -35,6 +35,8 @@ export function CreateAirlineForm() {
       traveos_supported: false,
       requires_last_name: false,
       requires_purchase_number: false,
+      traveos_airline_id: "",
+      brand_color: "",
     },
   })
 
@@ -268,6 +270,78 @@ export function CreateAirlineForm() {
                             Não
                           </Button>
                         </div>
+                      </>
+                    )}
+                  />
+                </div>
+
+                {/* traveos_airline_id */}
+                <div className="flex flex-col gap-1 text-sm">
+                  <Controller
+                    name="traveos_airline_id"
+                    control={form.control}
+                    render={({ field, fieldState }) => (
+                      <>
+                        <FieldLabel htmlFor="traveos_airline_id">ID na Traveos</FieldLabel>
+                        <InputGroup className="bg-slate-200">
+                          <InputGroupInput
+                            {...field}
+                            id="traveos_airline_id"
+                            type="text"
+                            inputMode="numeric"
+                            aria-invalid={fieldState.invalid}
+                            placeholder="1"
+                            disabled={isPending}
+                          />
+                          <InputGroupAddon align="inline-end">
+                            <Hash className="text-foreground h-4 w-4" />
+                          </InputGroupAddon>
+                        </InputGroup>
+                        <p className="text-muted-foreground text-xs">
+                          Id da cia no catálogo da Traveos, exigido em toda emissão. Sem ele a
+                          busca de dados é recusada, mesmo com &quot;Suporta Traveos&quot; ligado.
+                        </p>
+                        {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
+                      </>
+                    )}
+                  />
+                </div>
+
+                {/* brand_color */}
+                <div className="flex flex-col gap-1 text-sm">
+                  <Controller
+                    name="brand_color"
+                    control={form.control}
+                    render={({ field, fieldState }) => (
+                      <>
+                        <FieldLabel htmlFor="brand_color">Cor da marca</FieldLabel>
+                        <InputGroup className="bg-slate-200">
+                          <InputGroupInput
+                            {...field}
+                            id="brand_color"
+                            type="text"
+                            aria-invalid={fieldState.invalid}
+                            placeholder="#E30613"
+                            disabled={isPending}
+                          />
+                          <InputGroupAddon align="inline-end">
+                            {/* The swatch is the real feedback here - a hex code tells nobody
+                                what colour it is. */}
+                            {/^#[0-9a-fA-F]{6}$/.test(field.value.trim()) ? (
+                              <span
+                                aria-hidden
+                                className="h-4 w-4 rounded-sm border border-slate-400"
+                                style={{ backgroundColor: field.value.trim() }}
+                              />
+                            ) : (
+                              <Palette className="text-foreground h-4 w-4" />
+                            )}
+                          </InputGroupAddon>
+                        </InputGroup>
+                        <p className="text-muted-foreground text-xs">
+                          Usada no bilhete. Formato #RRGGBB.
+                        </p>
+                        {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
                       </>
                     )}
                   />

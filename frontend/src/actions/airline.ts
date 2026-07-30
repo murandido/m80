@@ -2,7 +2,11 @@
 
 import { cookies } from "next/headers"
 import { env } from "@/lib/env"
-import { createAirlineSchema, updateAirlineSchema } from "@/schemas/airline"
+import {
+  createAirlineSchema,
+  toAirlineRequestPayload,
+  updateAirlineSchema,
+} from "@/schemas/airline"
 import { z } from "zod"
 
 export async function createAirlineAction(
@@ -18,7 +22,7 @@ export async function createAirlineAction(
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify(data),
+      body: JSON.stringify(toAirlineRequestPayload(data)),
     })
 
     const json = await res.json()
@@ -48,7 +52,7 @@ export async function updateAirlineAction(
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify(data),
+      body: JSON.stringify(toAirlineRequestPayload(data)),
     })
 
     const json = await res.json()

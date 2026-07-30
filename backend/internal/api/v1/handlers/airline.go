@@ -34,6 +34,8 @@ func toAirlineResponse(airline data.Airline) schemas.AirlineResponse {
 		TraveosSupported:       airline.TraveosSupported,
 		RequiresLastName:       airline.RequiresLastName,
 		RequiresPurchaseNumber: airline.RequiresPurchaseNumber,
+		TraveosAirlineID:       airline.TraveosAirlineID,
+		BrandColor:             airline.BrandColor,
 		CreatedAt:              airline.CreatedAt,
 		UpdatedAt:              airline.UpdatedAt,
 	}
@@ -80,6 +82,8 @@ func (h *AirlineHandler) CreateAirline(w http.ResponseWriter, r *http.Request) {
 	if req.RequiresPurchaseNumber != nil {
 		airline.RequiresPurchaseNumber = *req.RequiresPurchaseNumber
 	}
+	airline.TraveosAirlineID = req.TraveosAirlineID
+	airline.BrandColor = req.BrandColor
 
 	if err := h.DB.Create(&airline).Error; err != nil {
 		var pgErr *pgconn.PgError
@@ -175,6 +179,15 @@ func (h *AirlineHandler) UpdateAirline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// This handler did not validate before brand_color existed, because every
+	// field was a free-form optional. brand_color is different: it reaches the
+	// ticket's stylesheet, so a malformed value has to be refused here rather
+	// than relying on the template's escaping alone.
+	if err := h.Validator.Struct(req); err != nil {
+		utils.SendError(w, r, http.StatusBadRequest, "Validation failed: "+err.Error())
+		return
+	}
+
 	if req.Name != nil {
 		airline.Name = *req.Name
 	}
@@ -189,6 +202,12 @@ func (h *AirlineHandler) UpdateAirline(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.RequiresPurchaseNumber != nil {
 		airline.RequiresPurchaseNumber = *req.RequiresPurchaseNumber
+	}
+	if req.TraveosAirlineID != nil {
+		airline.TraveosAirlineID = req.TraveosAirlineID
+	}
+	if req.BrandColor != nil {
+		airline.BrandColor = req.BrandColor
 	}
 
 	if err := h.DB.Save(&airline).Error; err != nil {
