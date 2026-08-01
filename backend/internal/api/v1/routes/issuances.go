@@ -44,6 +44,11 @@ func RegisterIssuanceRoutes(r chi.Router, db *gorm.DB, broker *events.Broker, tr
 		// pull the itinerary from Traveos, issuing the ticket there first if needed
 		r.Post("/{id}/traveos-sync", issuanceHandler.SyncIssuanceWithTraveos)
 
+		// the passenger's ticket - the same document twice, as the page the panel
+		// shows and as the file it downloads
+		r.Get("/{id}/ticket", issuanceHandler.GetIssuanceTicket)
+		r.Get("/{id}/pdf", issuanceHandler.GetIssuanceTicketPDF)
+
 		// passengers sub-resource
 		RegisterIssuancePassengerRoutes(r, db)
 	})

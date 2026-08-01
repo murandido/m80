@@ -1,7 +1,8 @@
 "use client"
 
 import { useState } from "react"
-import { CloudDownload, RotateCcw, Trash2 } from "lucide-react"
+import Link from "next/link"
+import { CloudDownload, RotateCcw, Ticket, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Spinner } from "@/components/ui/spinner"
@@ -34,9 +35,14 @@ export function RowActions({ r, row }: { r: number; row: IssuanceRow }) {
   // again", which is the only route a reschedule has into the system. Cancelled rows
   // are excluded because there is nothing left to keep in sync.
   const canSyncWithTraveos = !row.isDraft && row.status !== "cancelled"
+  // The ticket, on the other hand, IS gated on traveos_synced_at - and not on `complete`,
+  // which anyone can tick on the grid. A ticket built from a hand-ticked row would have no
+  // flights and no passengers: a blank document handed to a passenger.
+  const canOpenTicket = !row.isDraft && row.traveos_synced_at !== null
 
   return (
     <div className="flex items-center justify-end gap-0.5">
+      {canOpenTicket && <TicketButton row={row} />}
       {canSyncWithTraveos && <TraveosSyncButton r={r} row={row} />}
       {canCancel && <CancelIssuanceButton r={r} />}
       {canRevert && <RevertCancellationButton r={r} />}
@@ -179,6 +185,25 @@ function TraveosSyncButton({ r, row }: { r: number; row: IssuanceRow }) {
           className={cn("h-3.5 w-3.5", alreadySynced ? "text-slate-500" : "text-sky-600")}
         />
       )}
+    </Button>
+  )
+}
+
+// Opens the ticket page, which is where the PDF download lives too. A link and not an
+// action: nothing is mutated, and a real anchor is what lets the operator open it in a
+// new tab, which is what they do when checking one booking against another.
+function TicketButton({ row }: { row: IssuanceRow }) {
+  return (
+    <Button
+      asChild
+      variant="ghost"
+      size="icon"
+      title="Ver bilhete"
+      className="h-6 w-6 opacity-0 transition-opacity group-hover/row:opacity-100"
+    >
+      <Link href={`/dashboard/issuances/${row.key}/ticket`}>
+        <Ticket className="h-3.5 w-3.5 text-violet-600" />
+      </Link>
     </Button>
   )
 }
