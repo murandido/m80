@@ -132,12 +132,41 @@ type fakeClientBase struct {
 	// back, so the edit tests exercise the unwrap rather than real crypto.
 	openedEdit  *waE2E.Message
 	openEditErr error
+
+	// uploadCalls/uploaded/uploadErr cover the document path - see Upload below.
+	uploadCalls int
+	uploaded    []int
+	uploadErr   error
+	// lastDocumentMessage is the DocumentMessage of the most recent send, so a
+	// test can check the keys the file needs rather than only that a send
+	// happened.
+	lastDocumentMessage *waE2E.DocumentMessage
+}
+
+// uploaded records the file bytes handed to Upload, so the pdf-mode tests can
+// assert that a real document went out rather than only that a send happened.
+func (f *fakeClientBase) Upload(_ context.Context, plaintext []byte, _ whatsmeow.MediaType) (whatsmeow.UploadResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.uploadCalls++
+	f.uploaded = append(f.uploaded, len(plaintext))
+	if f.uploadErr != nil {
+		return whatsmeow.UploadResponse{}, f.uploadErr
+	}
+	return whatsmeow.UploadResponse{
+		URL:        "https://example.invalid/upload",
+		DirectPath: "/upload",
+		FileLength: uint64(len(plaintext)),
+	}, nil
 }
 
 func (f *fakeClientBase) SendMessage(_ context.Context, _ types.JID, message *waE2E.Message, _ ...whatsmeow.SendRequestExtra) (whatsmeow.SendResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.sendCalls++
+	if message.DocumentMessage != nil {
+		f.lastDocumentMessage = message.DocumentMessage
+	}
 	if message.ReactionMessage != nil {
 		f.sentReactions = append(f.sentReactions, message.ReactionMessage.GetText())
 		// The target id rides along in the key so the trace can tell whose

@@ -31,15 +31,17 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
+import { Switch } from "@/components/ui/switch"
 import {
   deactivateListenedChatAction,
   reactivateListenedChatAction,
+  setListenedChatPDFModeAction,
   stopListenedChatAction,
 } from "@/actions/listened-chats"
 import { cn } from "@/lib/utils"
 import type { ListenedChat } from "@/schemas/listened-chats"
 
-const COLUMN_COUNT = 3
+const COLUMN_COUNT = 4
 
 function formatDateTime(iso: string): string {
   return new Date(iso).toLocaleString("pt-BR")
@@ -92,6 +94,7 @@ export function MonitoredChatsTable({ chats }: { chats: ListenedChat[] }) {
               <TableRow>
                 <TableHead>Chat</TableHead>
                 <TableHead>Aprovado por</TableHead>
+                <TableHead className="w-28 text-center">Modo PDF</TableHead>
                 <TableHead className="w-32 text-right">Ações</TableHead>
               </TableRow>
             </TableHeader>
@@ -129,6 +132,9 @@ export function MonitoredChatsTable({ chats }: { chats: ListenedChat[] }) {
                           {formatDateTime(chat.updated_at)}
                         </span>
                       </div>
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <PDFModeSwitch chat={chat} disabled={isSaving || isDeactivated} />
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center justify-end gap-1">
@@ -248,5 +254,45 @@ export function MonitoredChatsTable({ chats }: { chats: ListenedChat[] }) {
         </div>
       </CardContent>
     </Card>
+  )
+}
+
+// With this on, the bot posts the ticket PDF into the chat after every EMISSAO it
+// managed to complete from Traveos. Off for a deactivated chat, where there is no
+// emission to attach anything to.
+//
+// It writes the same column as the bot's !pdf command, so the switch is optimistic
+// only until the server answers: someone may have flipped it from WhatsApp a second
+// ago, and router.refresh() is what brings that back.
+function PDFModeSwitch({ chat, disabled }: { chat: ListenedChat; disabled: boolean }) {
+  const router = useRouter()
+  const [enabled, setEnabled] = useState(chat.pdf_mode)
+  const [isSaving, setIsSaving] = useState(false)
+
+  async function handleChange(next: boolean) {
+    setEnabled(next)
+    setIsSaving(true)
+
+    const result = await setListenedChatPDFModeAction(chat.id, next)
+    setIsSaving(false)
+
+    if ("error" in result) {
+      setEnabled(!next)
+      toast.error(result.error)
+      return
+    }
+
+    setEnabled(result.chat.pdf_mode)
+    toast.success(result.chat.pdf_mode ? "Modo PDF ligado." : "Modo PDF desligado.")
+    router.refresh()
+  }
+
+  return (
+    <Switch
+      checked={enabled}
+      disabled={disabled || isSaving}
+      aria-label="Modo PDF"
+      onCheckedChange={(next) => void handleChange(next)}
+    />
   )
 }

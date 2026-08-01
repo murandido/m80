@@ -2,8 +2,10 @@ package bot
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/murandido/m-80-backend/internal/bot/humanizer"
+	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
@@ -130,4 +132,40 @@ func (b *Bot) SendPresenceTyping(ctx context.Context, evt *events.Message) {
 	if err != nil {
 		b.Logger.Errorf("failed to send a typing presence to %s: %v", evt.Info.Chat, err)
 	}
+}
+
+// SendDocument sends a file as a reply to the message that produced it.
+//
+// Two steps, and the first one is easy to miss: WhatsApp does not accept file
+// bytes inside a message. They are uploaded to its media servers first, and the
+// message carries only the resulting keys - drop any one of them and the
+// recipient sees a document that will not open.
+func (b *Bot) SendDocument(ctx context.Context, originalMsg *events.Message, content []byte, fileName, mimeType string) error {
+	uploaded, err := b.currentSession().Client.Upload(ctx, content, whatsmeow.MediaDocument)
+	if err != nil {
+		return fmt.Errorf("uploading %s: %w", fileName, err)
+	}
+
+	msg := &waE2E.Message{
+		DocumentMessage: &waE2E.DocumentMessage{
+			URL:           proto.String(uploaded.URL),
+			DirectPath:    proto.String(uploaded.DirectPath),
+			MediaKey:      uploaded.MediaKey,
+			FileEncSHA256: uploaded.FileEncSHA256,
+			FileSHA256:    uploaded.FileSHA256,
+			FileLength:    proto.Uint64(uploaded.FileLength),
+			Mimetype:      proto.String(mimeType),
+			FileName:      proto.String(fileName),
+			ContextInfo: &waE2E.ContextInfo{
+				StanzaID:      proto.String(originalMsg.Info.ID),
+				Participant:   proto.String(originalMsg.Info.Sender.String()),
+				QuotedMessage: originalMsg.Message,
+			},
+		},
+	}
+
+	if _, err := b.currentSession().Client.SendMessage(ctx, originalMsg.Info.Chat, msg); err != nil {
+		return fmt.Errorf("sending %s to %s: %w", fileName, originalMsg.Info.Chat, err)
+	}
+	return nil
 }

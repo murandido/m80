@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -26,6 +27,7 @@ func toListenedChatResponse(chat data.ListenedChat) schemas.ListenedChatResponse
 		FriendlyName:  chat.FriendlyName,
 		Status:        chat.Status,
 		Active:        chat.Active,
+		PDFMode:       chat.PDFMode,
 		RequestedByID: chat.RequestedByID,
 		ApprovedByID:  chat.ApprovedByID,
 		CreatedAt:     chat.CreatedAt,
@@ -298,4 +300,54 @@ func (h *ListenedChatHandler) decideListenedChat(w http.ResponseWriter, r *http.
 	}
 
 	utils.SendJSON(w, r, http.StatusOK, "Chat atualizado com sucesso", toListenedChatResponse(chat))
+}
+
+// SetListenedChatPDFMode handles the PATCH /bot/chats/{id}/pdf-mode route
+// @Summary      Ligar ou desligar o modo PDF de um chat
+// @Description  Com o modo PDF ligado, o bot manda o bilhete em PDF no chat depois de cada emissão que ele conseguiu completar na Traveos. É a mesma coluna que o comando !pdf escreve, então painel e WhatsApp são dois caminhos para a mesma configuração. Apenas administradores podem acessar.
+// @Tags         Bot
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id       path  string                     true  "UUID do listened_chats"
+// @Param        request  body  schemas.SetPDFModeRequest  true  "Estado desejado"
+// @Success      200  {object}  schemas.ListenedChatSingleResponse
+// @Failure      400  {object}  schemas.ErrorResponse "Corpo inválido"
+// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a administradores"
+// @Failure      404  {object}  schemas.ErrorResponse "Chat não encontrado"
+// @Failure      500  {object}  schemas.ErrorResponse "Erro ao salvar a configuração"
+// @Router       /bot/chats/{id}/pdf-mode [patch]
+func (h *ListenedChatHandler) SetListenedChatPDFMode(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	var req schemas.SetPDFModeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		utils.SendError(w, r, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	// A pointer, and checked: a missing "enabled" would otherwise decode to false
+	// and silently turn the mode off for a chat nobody asked about.
+	if req.Enabled == nil {
+		utils.SendError(w, r, http.StatusBadRequest, "O campo enabled é obrigatório")
+		return
+	}
+
+	var chat data.ListenedChat
+	if err := h.DB.First(&chat, "id = ?", id).Error; err != nil {
+		utils.SendError(w, r, http.StatusNotFound, "Chat not found")
+		return
+	}
+
+	if err := h.DB.Model(&chat).Update("pdf_mode", *req.Enabled).Error; err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to update chat: "+err.Error())
+		return
+	}
+
+	if err := h.DB.Preload("RequestedBy").Preload("ApprovedBy").First(&chat, "id = ?", chat.ID).Error; err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch updated chat")
+		return
+	}
+
+	utils.SendJSON(w, r, http.StatusOK, "Modo PDF atualizado", toListenedChatResponse(chat))
 }

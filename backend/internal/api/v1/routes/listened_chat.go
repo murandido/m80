@@ -27,5 +27,8 @@ func RegisterListenedChatRoutes(r chi.Router, db *gorm.DB) {
 		r.Post("/{id}/stop", h.StopListenedChat)
 		r.Post("/{id}/deactivate", h.DeactivateListenedChat)
 		r.Post("/{id}/reactivate", h.ReactivateListenedChat)
+
+		// the other half of the bot's !pdf command - same column, two ways in
+		r.Patch("/{id}/pdf-mode", h.SetListenedChatPDFMode)
 	})
 }

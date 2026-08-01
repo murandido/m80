@@ -21,7 +21,11 @@ type ListenedChat struct {
 	// turned an explicit Active:false on create into active = true - exactly
 	// what a pending, not-yet-approved chat must never be. The column keeps its
 	// DEFAULT TRUE in the migration for inserts that don't go through GORM.
-	Active    bool      `gorm:"not null" json:"active"`
+	Active bool `gorm:"not null" json:"active"`
+	// PDFMode makes the bot send the ticket as a PDF after an EMISSAO it managed
+	// to complete from Traveos. Same reasoning as Active above for the missing
+	// `default` tag: an explicit false has to survive the write.
+	PDFMode   bool      `gorm:"column:pdf_mode;not null" json:"pdf_mode"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }

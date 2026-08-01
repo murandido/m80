@@ -89,6 +89,14 @@ func (b *Bot) handleEmissao(ctx context.Context, evt *events.Message, text strin
 	humanizer.DelayReaction()
 	humanizer.EnforceResponseFloor(startedAt)
 	b.ReactMessage(ctx, evt, successReaction(outcome))
+
+	// The file comes after the answer, never as part of it: rendering and
+	// uploading a PDF must not be able to turn a successful EMISSAO into a ⚠️.
+	// Only a fetched itinerary produces one - there is no ticket to draw from an
+	// issuance the vendor never confirmed.
+	if outcome == traveosFetched {
+		b.sendTicketPDF(ctx, evt, created.ID)
+	}
 }
 
 // successReaction picks between "done" and "saved, but incomplete".

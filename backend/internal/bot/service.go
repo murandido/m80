@@ -28,6 +28,11 @@ type ClientBase interface {
 	// arrives in - see unwrapEdit. Promoted automatically on sessionAdapter,
 	// like the two above.
 	DecryptSecretEncryptedMessage(ctx context.Context, evt *events.Message) (*waE2E.Message, error)
+	// Upload pushes the ticket PDF to WhatsApp's media servers and returns the
+	// keys a DocumentMessage has to carry - see SendDocument. Part of this
+	// interface, rather than reached through the concrete client, so the pdf-mode
+	// tests can drive the send without a real upload.
+	Upload(ctx context.Context, plaintext []byte, appInfo whatsmeow.MediaType) (whatsmeow.UploadResponse, error)
 }
 
 // SessionClient is the subset of *whatsmeow.Client needed to drive the

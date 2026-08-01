@@ -20,6 +20,7 @@ import (
 const (
 	cmdNamePing          = "!ping"
 	cmdNameRegistrarChat = "!registrar-chat"
+	cmdNamePDF           = "!pdf"
 )
 
 // commandName is the leading word of a command, lowercased. "" for a message
@@ -35,7 +36,7 @@ func commandName(text string) string {
 // isKnownCommand reports whether this is a command the bot answers.
 func isKnownCommand(text string) bool {
 	switch commandName(text) {
-	case cmdNamePing, cmdNameRegistrarChat:
+	case cmdNamePing, cmdNameRegistrarChat, cmdNamePDF:
 		return true
 	default:
 		return false
@@ -52,6 +53,9 @@ func (b *Bot) RouteCommand(ctx context.Context, evt *events.Message, text string
 
 	case cmdNameRegistrarChat:
 		b.cmdRegistrarChat(ctx, evt, startedAt)
+
+	case cmdNamePDF:
+		b.cmdPDF(ctx, evt, text, startedAt)
 
 	default:
 		// Unreachable: intake only admits known commands. Kept so adding a

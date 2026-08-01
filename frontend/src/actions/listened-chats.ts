@@ -8,6 +8,7 @@ import {
   getMonitoredListenedChatsSchema,
   getPendingListenedChatsSchema,
   reactivateListenedChatSchema,
+  setPDFModeSchema,
   stopListenedChatSchema,
 } from "@/schemas/listened-chats"
 import type { ListenedChat } from "@/schemas/listened-chats"
@@ -138,4 +139,36 @@ export async function deactivateListenedChatAction(id: string) {
 
 export async function reactivateListenedChatAction(id: string) {
   return postChatAction(id, "reactivate", reactivateListenedChatSchema, "Erro ao reativar o chat.")
+}
+
+// Explicit on/off rather than a toggle, because the !pdf command writes the same
+// column: a toggle here would flip whatever someone had just set from WhatsApp.
+export async function setListenedChatPDFModeAction(
+  id: string,
+  enabled: boolean,
+): Promise<{ error: string } | { chat: ListenedChat }> {
+  const cookieStore = await cookies()
+  const token = cookieStore.get("auth_token")?.value
+
+  try {
+    const res = await fetch(`${env.BACKEND_URL}/api/v1/bot/chats/${id}/pdf-mode`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ enabled }),
+    })
+
+    const json = await res.json()
+    const parsed = setPDFModeSchema.response.safeParse(json)
+
+    if (!res.ok || !parsed.data?.data) {
+      return { error: parsed.data?.message || "Erro ao salvar o modo PDF." }
+    }
+
+    return { chat: parsed.data.data }
+  } catch {
+    return { error: "Erro de conexão com o servidor." }
+  }
 }
