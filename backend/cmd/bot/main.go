@@ -13,6 +13,8 @@ import (
 	_ "github.com/lib/pq"
 	"github.com/murandido/m-80-backend/internal/bot"
 	"github.com/murandido/m-80-backend/internal/data"
+	issuancesvc "github.com/murandido/m-80-backend/internal/issuance"
+	"github.com/murandido/m-80-backend/internal/traveos"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/store/sqlstore"
@@ -95,9 +97,22 @@ func main() {
 		return c, s, j, nil
 	}
 
+	// A missing or broken Traveos configuration must not stop the bot from
+	// booting: registering the issuance is the part the group depends on, and it
+	// works without the vendor. The variable is typed as the interface, not as
+	// *traveos.Client, so that "no client" really is a nil interface - a nil
+	// *traveos.Client stored in an interface is not nil, and the bot's own check
+	// would miss it.
+	var traveosClient issuancesvc.TraveosClient
+	if built, err := traveos.New(); err != nil {
+		clientLog.Warnf("traveos integration is disabled, issuances will stay incomplete: %v", err)
+	} else {
+		traveosClient = built
+	}
+
 	// instance the bot struct - pairing is now admin-triggered on demand via
 	// the internal HTTP API below, not auto-started here.
-	botInstance = bot.New(client, clientLog, newDeviceClient, data.DB, bot.Notifiers{
+	botInstance = bot.New(client, clientLog, newDeviceClient, data.DB, traveosClient, bot.Notifiers{
 		StatusChanged:     notifyStatusCallback(clientLog),
 		ChatRequested:     notifyChatRequestedCallback(clientLog),
 		IssuanceCreated:   notifyIssuanceCreatedCallback(clientLog),

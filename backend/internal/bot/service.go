@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	issuancesvc "github.com/murandido/m-80-backend/internal/issuance"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
@@ -104,6 +105,17 @@ type Bot struct {
 	// DB-backed command.
 	DB *gorm.DB
 
+	// Traveos fetches the real itinerary after an EMISSAO. It is the consumer
+	// interface declared in internal/issuance, not the concrete client, so a
+	// test can drive the success, the failure and the unsupported-airline paths
+	// without a live vendor - and so the bot never learns anything about the
+	// vendor's HTTP.
+	//
+	// nil is a supported state, not a bug: it is what cmd/bot leaves behind when
+	// TRAVEOS_EMAIL/TRAVEOS_PASSWORD are missing, and the bot has to keep
+	// registering issuances without them. See syncTraveos.
+	Traveos issuancesvc.TraveosClient
+
 	// notifyChatRequested is called after a !registrar-chat command actually
 	// creates or reopens a listened_chats row, so cmd/bot can push that out
 	// over HTTP the same way it already does for status changes - see
@@ -195,7 +207,7 @@ func (n Notifiers) withDefaults() Notifiers {
 	return n
 }
 
-func New(client *whatsmeow.Client, logger waLog.Logger, newDeviceClient func(ctx context.Context) (ClientBase, SessionClient, func() *types.JID, error), db *gorm.DB, notifiers Notifiers) *Bot {
+func New(client *whatsmeow.Client, logger waLog.Logger, newDeviceClient func(ctx context.Context) (ClientBase, SessionClient, func() *types.JID, error), db *gorm.DB, traveosClient issuancesvc.TraveosClient, notifiers Notifiers) *Bot {
 	notifiers = notifiers.withDefaults()
 
 	return &Bot{
@@ -204,6 +216,7 @@ func New(client *whatsmeow.Client, logger waLog.Logger, newDeviceClient func(ctx
 		Status:                  NewStatusStore(notifiers.StatusChanged),
 		session:                 sessionFor(client),
 		DB:                      db,
+		Traveos:                 traveosClient,
 		notifyChatRequested:     notifiers.ChatRequested,
 		notifyIssuanceCreated:   notifiers.IssuanceCreated,
 		notifyIssuanceUpdated:   notifiers.IssuanceUpdated,

@@ -69,6 +69,16 @@ type correctionOutcome struct {
 	// Changed is false when the merged issuance came out identical to the one
 	// already stored - a message sent twice, or one restating what was there.
 	Changed bool
+
+	// IssuanceID is the row the correction landed on, so the caller can hand it
+	// to Traveos without looking it up again.
+	IssuanceID string
+
+	// RetryTraveos is true when the correction moved one of the fields Traveos is
+	// asked with, on an issuance that is still incomplete. That combination is
+	// the operator fixing the very input that made the fetch fail, so it earns a
+	// second attempt; anything else does not.
+	RetryTraveos bool
 }
 
 // answerCorrection replies to a correction that went through. Same vocabulary as
@@ -85,13 +95,25 @@ func (b *Bot) answerCorrection(ctx context.Context, evt *events.Message, started
 		b.Logger.Infof("alteracao: %s was already in the state the message asked for, nothing to do", locator)
 	}
 
-	humanizer.DelayReaction()
-	humanizer.EnforceResponseFloor(startedAt)
-	b.ReactMessage(ctx, evt, "🚀")
+	// The operator fixed one of the fields Traveos is asked with, on an issuance
+	// that never got its itinerary - so this is the retry, and it is why the
+	// correction path reacts ⚠️ too. force stays false: the ticket may or may not
+	// already exist at the vendor, and that is precisely what the search-first
+	// path is there to work out.
+	fetched := traveosSkipped
+	if outcome.RetryTraveos {
+		fetched = b.syncTraveos(ctx, "alteracao", outcome.IssuanceID, locator, false)
+	}
 
-	if outcome.Changed {
+	// One event for both writes. The panel reloads the row either way, so firing
+	// twice would only make it do it twice.
+	if outcome.Changed || fetched == traveosFetched {
 		b.notifyIssuanceUpdated()
 	}
+
+	humanizer.DelayReaction()
+	humanizer.EnforceResponseFloor(startedAt)
+	b.ReactMessage(ctx, evt, successReaction(fetched))
 }
 
 // findIssuanceToCorrect locates the issuance a locator names. The partial unique
@@ -129,7 +151,7 @@ func applyCorrection(tx *gorm.DB, issuance data.Issuance, fields alteracaoFields
 
 	details := diffIssuance(issuance, corrected)
 	if details == nil {
-		return correctionOutcome{}, nil
+		return correctionOutcome{IssuanceID: issuance.ID}, nil
 	}
 
 	// Same completion boundary the panel enforces in UpdateIssuance: what is
@@ -163,7 +185,42 @@ func applyCorrection(tx *gorm.DB, issuance data.Issuance, fields alteracaoFields
 		return correctionOutcome{}, err
 	}
 
-	return correctionOutcome{Changed: true}, nil
+	return correctionOutcome{
+		Changed:      true,
+		IssuanceID:   corrected.ID,
+		RetryTraveos: !corrected.Complete && movedATraveosInput(details),
+	}, nil
+}
+
+// traveosInputColumns are the columns whose values are handed to Traveos when the
+// itinerary is fetched - see issuance.findOrEmit. A correction that moves any of
+// them is a correction that could turn a failed fetch into a working one.
+//
+// airline_locator and airline_id are in the list for the same reason as the three
+// obvious ones: the locator sent to the vendor is the airline's PNR whenever we
+// have it, and the airline decides which vendor-side airline id is used at all.
+var traveosInputColumns = []string{
+	"airline_id",
+	"airline_locator",
+	"origin_iata_code",
+	"main_passenger_name",
+	"latam_purchase_number",
+}
+
+// movedATraveosInput reads the audit details this correction is about to write,
+// rather than re-deriving the comparison: whatever ends up in the history is
+// exactly what changed, so the two can never drift apart.
+func movedATraveosInput(details map[string]any) bool {
+	after, ok := details["after"].(map[string]any)
+	if !ok {
+		return false
+	}
+	for _, column := range traveosInputColumns {
+		if _, moved := after[column]; moved {
+			return true
+		}
+	}
+	return false
 }
 
 // mergeCorrection writes the resolved fields onto the issuance.

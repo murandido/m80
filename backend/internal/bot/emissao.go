@@ -64,6 +64,19 @@ func (b *Bot) handleEmissao(ctx context.Context, evt *events.Message, text strin
 
 	b.Logger.Infof("emissao: registered issuance %s (%s) from %s", created.ID, msg.ProgramLocator, user.Name)
 
+	// The panel hears about the partial row before Traveos is even asked. The
+	// fetch can take a minute or more, and a grid that shows nothing for that long
+	// looks like a bot that swallowed the message.
+	b.notifyIssuanceCreated()
+
+	// force=false: this is the first fetch for a brand new issuance, so the mode
+	// that refuses to touch an already-synced one is exactly right. The deliberate
+	// "the flight changed" refetch is the panel's button, never a message.
+	outcome := b.syncTraveos(ctx, "emissao", created.ID, msg.ProgramLocator, false)
+	if outcome == traveosFetched {
+		b.notifyIssuanceUpdated()
+	}
+
 	// Only now, after the transaction committed and with the work done, does the
 	// humanizer come in: it exists to pace what the group can see, never the
 	// database work above.
@@ -71,13 +84,19 @@ func (b *Bot) handleEmissao(ctx context.Context, evt *events.Message, text strin
 	// A reaction and nothing else. The group is where the team works, not where
 	// the bot reports for duty, so a confirmation line saying what everyone can
 	// already see is just noise in the scrollback. 🚀 means understood and done;
-	// only a refusal earns a message, because that carries something a reaction
-	// cannot - see refuse.
+	// ⚠️ means saved but incomplete (see reactionPartial); only a refusal earns a
+	// message, because that carries something a reaction cannot - see refuse.
 	humanizer.DelayReaction()
 	humanizer.EnforceResponseFloor(startedAt)
-	b.ReactMessage(ctx, evt, "🚀")
+	b.ReactMessage(ctx, evt, successReaction(outcome))
+}
 
-	b.notifyIssuanceCreated()
+// successReaction picks between "done" and "saved, but incomplete".
+func successReaction(outcome traveosOutcome) string {
+	if outcome.ok() {
+		return "🚀"
+	}
+	return reactionPartial
 }
 
 // authorizeSender applies the two gates every unaddressed message has to pass
