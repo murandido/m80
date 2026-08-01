@@ -119,6 +119,12 @@ type IssuanceResponse struct {
 	AgencyID            string                   `json:"agency_id"`
 	Agency              *AgencyResponse          `json:"agency,omitempty"`
 	Complete            bool                     `json:"complete"`
+	// TraveosSyncedAt separates "complete because Traveos confirmed the itinerary"
+	// from "complete because someone ticked it on the grid". The panel needs the
+	// distinction to know whether a ticket can be rendered at all, and the
+	// timestamp rather than a flag because the operator's real question is how
+	// stale the data is.
+	TraveosSyncedAt *time.Time `json:"traveos_synced_at"`
 	// Status is derived: "incomplete" | "complete" | "cancelled".
 	Status             string                      `json:"status" example:"incomplete"`
 	Flights            []IssuanceFlightResponse    `json:"flights,omitempty"`
@@ -154,6 +160,7 @@ type IssuanceSummaryResponse struct {
 	AccountLogin        *string    `json:"account_login"`
 	IssuerName          string     `json:"issuer_name"`
 	AgencyName          string     `json:"agency_name"`
+	TraveosSyncedAt     *time.Time `json:"traveos_synced_at"`
 	// Status is derived: "incomplete" | "complete" | "cancelled".
 	Status string `json:"status" example:"incomplete"`
 }

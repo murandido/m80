@@ -31,13 +31,18 @@ type Issuance struct {
 	// AccountNicknameID records which of the account's aliases the operator picked.
 	// It is a FK rather than a copied string so renaming an alias propagates to past
 	// issuances instead of leaving them showing a stale name.
-	AccountNicknameID  *string             `gorm:"column:account_nickname_id;type:uuid" json:"account_nickname_id"`
-	AccountNickname    *AccountNickname    `gorm:"foreignKey:AccountNicknameID;references:ID" json:"account_nickname,omitempty"`
-	IssuerID           string              `gorm:"column:issuer_id;type:uuid;not null" json:"issuer_id"`
-	Issuer             *User               `gorm:"foreignKey:IssuerID;references:ID" json:"issuer,omitempty"`
-	AgencyID           string              `gorm:"column:agency_id;type:uuid;not null" json:"agency_id"`
-	Agency             *Agency             `gorm:"foreignKey:AgencyID;references:ID" json:"agency,omitempty"`
-	Complete           bool                `gorm:"not null;default:false" json:"complete"`
+	AccountNicknameID *string          `gorm:"column:account_nickname_id;type:uuid" json:"account_nickname_id"`
+	AccountNickname   *AccountNickname `gorm:"foreignKey:AccountNicknameID;references:ID" json:"account_nickname,omitempty"`
+	IssuerID          string           `gorm:"column:issuer_id;type:uuid;not null" json:"issuer_id"`
+	Issuer            *User            `gorm:"foreignKey:IssuerID;references:ID" json:"issuer,omitempty"`
+	AgencyID          string           `gorm:"column:agency_id;type:uuid;not null" json:"agency_id"`
+	Agency            *Agency          `gorm:"foreignKey:AgencyID;references:ID" json:"agency,omitempty"`
+	Complete          bool             `gorm:"not null;default:false" json:"complete"`
+	// TraveosSyncedAt is when the itinerary was last pulled from Traveos. It is
+	// what separates "complete because the airline confirmed it" from "complete
+	// because someone ticked it on the grid" - only the former has passengers and
+	// flights that came from the source, and only the former can render a ticket.
+	TraveosSyncedAt    *time.Time          `gorm:"column:traveos_synced_at" json:"traveos_synced_at"`
 	Flights            []IssuanceFlight    `gorm:"foreignKey:IssuanceID;references:ID" json:"flights,omitempty"`
 	Passengers         []IssuancePassenger `gorm:"foreignKey:IssuanceID;references:ID" json:"passengers,omitempty"`
 	AdditionalServices datatypes.JSON      `gorm:"column:additional_services;type:jsonb" json:"additional_services"`

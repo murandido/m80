@@ -44,6 +44,7 @@ import {
   deleteIssuanceAction,
   cancelIssuanceAction,
   uncancelIssuanceAction,
+  syncIssuanceWithTraveosAction,
 } from "@/actions/issuance"
 import { CancelIssuanceInput } from "@/schemas/issuance"
 import { createAccountForIssuanceAction } from "@/actions/account"
@@ -200,6 +201,9 @@ export function IssuancesGrid({
   const [extraAccounts, setExtraAccounts] = useState<Account[]>([])
   const [extraAgencies, setExtraAgencies] = useState<Agency[]>([])
   const [pendingAccountLabels, setPendingAccountLabels] = useState<Record<string, string>>({})
+  // Keyed by row key rather than index: a Traveos sync can run for minutes, and the
+  // row can move as the list reorders or reconciles while it is in flight.
+  const [syncingRowKeys, setSyncingRowKeys] = useState<Record<string, true>>({})
   // Row index awaiting delete confirmation, driven by the Ctrl+Shift+Backspace shortcut.
   // Null means the confirm dialog is closed.
   const [pendingDeleteRow, setPendingDeleteRow] = useState<number | null>(null)
@@ -683,6 +687,50 @@ export function IssuancesGrid({
     [updateRow],
   )
 
+  // Pulls the itinerary from Traveos. Deliberately available on rows that are already
+  // synced: pressing it there is not a retry, it is "the flight changed, fetch the new
+  // data", which is the only way a reschedule reaches the system.
+  const onSyncRowWithTraveos = useCallback(
+    async (r: number) => {
+      const row = rowsRef.current[r]
+      if (!row || row.isDraft || !row.id) {
+        return { error: "Emissão ainda não foi salva." }
+      }
+      if (syncingRowKeys[row.key]) {
+        return { error: "Já estou puxando os dados dessa emissão." }
+      }
+
+      setSyncingRowKeys((prev) => ({ ...prev, [row.key]: true }))
+      try {
+        const result = await syncIssuanceWithTraveosAction(row.id)
+        if ("error" in result) {
+          return { error: result.error ?? "Erro ao puxar dados da Traveos." }
+        }
+
+        // The sync rewrites passengers, flights, route and trip type, so the fields the
+        // grid shows are taken from the response rather than guessed at. Only the ones
+        // this grid renders are applied - the itinerary itself lives on the ticket page.
+        const issuance = result.issuance
+        updateRow(row.key, {
+          status: issuance?.status ?? "complete",
+          traveos_synced_at: issuance?.traveos_synced_at ?? new Date().toISOString(),
+          main_passenger_name: issuance?.main_passenger_name ?? row.main_passenger_name,
+          origin_iata_code: issuance?.origin_iata_code ?? row.origin_iata_code,
+          destination_iata_code: issuance?.destination_iata_code ?? row.destination_iata_code,
+          flight_date: issuance?.flights?.[0]?.departure_at.slice(0, 10) ?? row.flight_date,
+        })
+        return { success: true as const }
+      } finally {
+        setSyncingRowKeys((prev) => {
+          const next = { ...prev }
+          delete next[row.key]
+          return next
+        })
+      }
+    },
+    [syncingRowKeys, updateRow],
+  )
+
   // Keyboard entry point for deleting the active row. An untouched empty draft has nothing
   // to lose, so it is dropped without a prompt; anything else opens the confirm dialog.
   function requestRowDelete(r: number) {
@@ -900,8 +948,10 @@ export function IssuancesGrid({
       onDeleteRow,
       onCancelRow,
       onUncancelRow,
+      onSyncRowWithTraveos,
       createAccountForRow,
       pendingAccountLabels,
+      syncingRowKeys,
     }),
     [
       referenceData.loyaltyPrograms,
@@ -919,8 +969,10 @@ export function IssuancesGrid({
       onDeleteRow,
       onCancelRow,
       onUncancelRow,
+      onSyncRowWithTraveos,
       createAccountForRow,
       pendingAccountLabels,
+      syncingRowKeys,
     ],
   )
 

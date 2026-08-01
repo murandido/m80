@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/events"
 	"github.com/murandido/m-80-backend/internal/export"
+	"github.com/murandido/m-80-backend/internal/traveos"
 
 	// Aliased because "issuance" is the local variable name for a data.Issuance
 	// throughout this file - importing it unaliased would shadow the package in
@@ -52,10 +54,15 @@ type IssuanceHandler struct {
 	DB        *gorm.DB
 	Validator *validator.Validate
 	Broker    *events.Broker
+	// Traveos is nil when the process started without vendor credentials. Layer 3
+	// is opt-in per airline, so that is a supported state, not a fatal one - the
+	// routes that need it answer 503 and everything else works untouched.
+	Traveos *traveos.Client
 }
 
-func NewIssuanceHandler(db *gorm.DB, broker *events.Broker) *IssuanceHandler {
+func NewIssuanceHandler(db *gorm.DB, broker *events.Broker, traveosClient *traveos.Client) *IssuanceHandler {
 	return &IssuanceHandler{
+		Traveos:   traveosClient,
 		DB:        db,
 		Validator: validator.New(),
 		Broker:    broker,
@@ -107,6 +114,7 @@ func toIssuanceResponse(issuance data.Issuance) schemas.IssuanceResponse {
 		IssuerID:            issuance.IssuerID,
 		AgencyID:            issuance.AgencyID,
 		Complete:            issuance.Complete,
+		TraveosSyncedAt:     issuance.TraveosSyncedAt,
 		Status:              deriveIssuanceStatus(issuance.Complete, issuance.CancelledAt),
 		AdditionalServices:  issuance.AdditionalServices,
 		Observation:         issuance.Observation,
@@ -203,6 +211,7 @@ func toIssuanceSummaryResponse(issuance data.Issuance) schemas.IssuanceSummaryRe
 		Points:              issuance.Points,
 		ValueOfTheThousand:  issuance.ValueOfTheThousand,
 		Taxes:               issuance.Taxes,
+		TraveosSyncedAt:     issuance.TraveosSyncedAt,
 		Status:              status,
 	}
 
@@ -1001,4 +1010,110 @@ func (h *IssuanceHandler) UncancelIssuance(w http.ResponseWriter, r *http.Reques
 	h.broadcastIssuance(eventIssuanceUpdated, issuance.ID)
 
 	utils.SendJSON(w, r, http.StatusOK, "Issuance cancellation reverted successfully", toIssuanceResponse(issuance))
+}
+
+// traveosSyncTimeout bounds the whole sync, not one HTTP call. Issuing a ticket
+// alone can take up to 120s because Traveos drives the airline's own website, and
+// the sync may issue *and* then read - so the budget has to cover both plus the
+// database work, with room to spare rather than cutting a real emission short.
+const traveosSyncTimeout = 3 * time.Minute
+
+// SyncIssuanceWithTraveos handles the POST /issuances/{id}/traveos-sync route.
+// @Summary      Puxar dados da Traveos
+// @Description  Busca o bilhete na Traveos (emitindo lá primeiro, se ainda não existir) e grava passageiros, voos, assentos, bagagens, rota e tipo de viagem na emissão, marcando-a como completa. Sempre força: uma emissão já sincronizada é repuxada de propósito, porque é assim que uma alteração de voo entra no sistema.
+// @Tags         Emissões
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id  path  string  true  "UUID da emissão"
+// @Success      200  {object}  schemas.IssuanceSingleResponse
+// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      404  {object}  schemas.ErrorResponse "Emissão não encontrada"
+// @Failure      422  {object}  schemas.ErrorResponse "A cia aérea não usa Traveos, ou não tem o id da Traveos configurado"
+// @Failure      502  {object}  schemas.ErrorResponse "A Traveos recusou ou falhou"
+// @Failure      503  {object}  schemas.ErrorResponse "Integração com a Traveos não configurada neste servidor"
+// @Router       /issuances/{id}/traveos-sync [post]
+func (h *IssuanceHandler) SyncIssuanceWithTraveos(w http.ResponseWriter, r *http.Request) {
+	if h.Traveos == nil {
+		// 503 and not 401: the panel deletes the session cookie on a 401, so a
+		// misconfigured integration would log every operator out (see
+		// middleware.RequireAuth for the same reasoning about database hiccups).
+		utils.SendError(w, r, http.StatusServiceUnavailable,
+			"A integração com a Traveos não está configurada neste servidor")
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+
+	// force is always true here. This route is only ever reached by an operator
+	// pressing the button, and a deliberate press on an already-synced issuance
+	// means "the flight changed, fetch it again" - not "retry a failure". That is
+	// also why nothing here refuses a complete issuance: the silent-ignore rule
+	// that protects origin/last-name/purchase-number from accidental edits is
+	// about editing fields, and this is a resync. Different intent, different rule.
+	ctx, cancel := context.WithTimeout(r.Context(), traveosSyncTimeout)
+	defer cancel()
+
+	if err := issuancesvc.Sync(ctx, h.DB, h.Traveos, id, true); err != nil {
+		h.respondToTraveosSyncError(w, r, id, err)
+		return
+	}
+
+	var issuance data.Issuance
+	if err := preloadIssuanceAssociations(h.DB).
+		Preload("Flights", func(db *gorm.DB) *gorm.DB {
+			return db.Where("direction = ?", "outbound").Order("leg_order asc")
+		}).
+		First(&issuance, "id = ?", id).Error; err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch synced issuance")
+		return
+	}
+
+	h.broadcastIssuance(eventIssuanceUpdated, issuance.ID)
+
+	utils.SendJSON(w, r, http.StatusOK, "Issuance synced with Traveos successfully", toIssuanceResponse(issuance))
+}
+
+// respondToTraveosSyncError turns a sync failure into a response an operator can
+// act on - or honestly cannot.
+//
+// The important line is the last one. Every Traveos emission failure except an
+// unknown airlineId arrives as the same opaque 500: a wrong locator, a given name
+// where the surname belongs, an airline with no scraper, and the airline's site
+// being down are indistinguishable. So the message says what happened and stops
+// there, and the real error goes to the log. Inventing a cause would send someone
+// looking in the wrong place.
+func (h *IssuanceHandler) respondToTraveosSyncError(w http.ResponseWriter, r *http.Request, id string, err error) {
+	switch {
+	case errors.Is(err, issuancesvc.ErrIssuanceNotFound):
+		utils.SendError(w, r, http.StatusNotFound, "Issuance not found")
+
+	case errors.Is(err, issuancesvc.ErrAirlineNotSupported):
+		utils.SendError(w, r, http.StatusUnprocessableEntity,
+			"Essa companhia aérea não está integrada com a Traveos")
+
+	case errors.Is(err, issuancesvc.ErrAirlineNotMapped):
+		// Nameable and fixable, unlike everything below: someone has to go set the
+		// airline's Traveos id.
+		utils.SendError(w, r, http.StatusUnprocessableEntity,
+			"Essa companhia aérea não tem o ID da Traveos configurado")
+
+	case errors.Is(err, issuancesvc.ErrLocatorMissing):
+		utils.SendError(w, r, http.StatusUnprocessableEntity,
+			"A emissão não tem localizador para consultar")
+
+	case errors.Is(err, traveos.ErrAirlineNotFound):
+		utils.SendError(w, r, http.StatusUnprocessableEntity,
+			"A Traveos não reconhece o ID configurado para essa companhia aérea")
+
+	case errors.Is(err, issuancesvc.ErrTicketNotFoundAfterEmission):
+		slog.Error("traveos reported a successful emission but the ticket is not listed",
+			"issuance_id", id, "err", err)
+		utils.SendError(w, r, http.StatusBadGateway,
+			"A Traveos confirmou a emissão mas não devolveu o bilhete. Confira lá antes de tentar de novo")
+
+	default:
+		slog.Error("failed to sync an issuance with traveos", "issuance_id", id, "err", err)
+		utils.SendError(w, r, http.StatusBadGateway,
+			"Não consegui puxar os dados da Traveos para essa emissão")
+	}
 }

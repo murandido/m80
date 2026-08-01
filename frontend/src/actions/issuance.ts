@@ -3,11 +3,12 @@
 import { cookies } from "next/headers"
 import { env } from "@/lib/env"
 import {
-  createIssuanceSchema,
-  updateIssuanceSchema,
-  deleteIssuanceSchema,
   cancelIssuanceSchema,
+  createIssuanceSchema,
+  deleteIssuanceSchema,
+  syncIssuanceWithTraveosSchema,
   uncancelIssuanceSchema,
+  updateIssuanceSchema,
 } from "@/schemas/issuance"
 import { z } from "zod"
 
@@ -123,6 +124,43 @@ export async function uncancelIssuanceAction(issuanceId: string) {
 
     if (!res.ok) {
       return { error: parsed.data?.message || "Erro ao reverter cancelamento." }
+    }
+
+    return { success: true as const, issuance: parsed.data?.data }
+  } catch {
+    return { error: "Erro de conexão com o servidor." }
+  }
+}
+
+export async function syncIssuanceWithTraveosAction(issuanceId: string) {
+  const cookieStore = await cookies()
+  const token = cookieStore.get("auth_token")?.value
+
+  try {
+    const res = await fetch(
+      `${env.BACKEND_URL}/api/v1/issuances/${issuanceId}/traveos-sync`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        // Traveos drives the airline's own website, so issuing a ticket there takes
+        // tens of seconds and the backend allows up to three minutes for the whole
+        // sync. Next's default fetch has no timeout, which is what we want here -
+        // but the cache must be off, or a repeat refetch could be served from it.
+        cache: "no-store",
+      },
+    )
+
+    const json = await res.json()
+    const parsed = syncIssuanceWithTraveosSchema.response.safeParse(json)
+
+    if (!res.ok) {
+      // The backend's message is deliberately vague for the common failure, because
+      // Traveos answers almost every one of them identically. Pass it through rather
+      // than dressing it up.
+      return { error: parsed.data?.message || "Erro ao puxar dados da Traveos." }
     }
 
     return { success: true as const, issuance: parsed.data?.data }

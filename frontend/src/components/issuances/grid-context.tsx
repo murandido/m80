@@ -57,6 +57,14 @@ export interface GridContextValue extends GridReferenceData {
   // Reverts the cancellation at row r (POST /issuances/{id}/uncancel), flipping it back to
   // its derived status (complete/incomplete) and clearing the cancellation metadata locally.
   onUncancelRow: (r: number) => Promise<{ success: true } | { error: string }>
+  // Pulls the itinerary from Traveos for row r (POST /issuances/{id}/traveos-sync),
+  // issuing the ticket there first if it does not exist yet. Available on any saved,
+  // non-cancelled row - including one already synced, because that is how a changed
+  // flight gets picked up.
+  onSyncRowWithTraveos: (r: number) => Promise<{ success: true } | { error: string }>
+  // Row keys with a Traveos sync in flight. The call can take minutes, so the row is
+  // locked and marked while it runs rather than left looking idle.
+  syncingRowKeys: Record<string, true>
 
   // Creates a Person, an Account on the row's loyalty program and a nickname, all from
   // a name typed into the account cell that matched nothing, then points the row at the

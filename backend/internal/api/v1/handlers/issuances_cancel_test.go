@@ -166,7 +166,7 @@ type cancelResponse struct {
 // callCancel drives CancelIssuance directly, injecting the chi {id} param and the
 // authenticated user the same way the real middleware chain would.
 func callCancel(tx *gorm.DB, id, userID, body string) *httptest.ResponseRecorder {
-	handler := NewIssuanceHandler(tx, events.NewBroker())
+	handler := NewIssuanceHandler(tx, events.NewBroker(), nil)
 
 	var reqBody *strings.Reader
 	if body == "" {
@@ -379,7 +379,7 @@ type listResponse struct {
 // query params, no auth context) and returns the set of issuance ids it returned.
 func callGetIssuances(t *testing.T, tx *gorm.DB, query string) map[string]bool {
 	t.Helper()
-	handler := NewIssuanceHandler(tx, events.NewBroker())
+	handler := NewIssuanceHandler(tx, events.NewBroker(), nil)
 	req := httptest.NewRequest(http.MethodGet, "/issuances?"+query, nil)
 	rec := httptest.NewRecorder()
 	handler.GetIssuances(rec, req)
@@ -458,7 +458,7 @@ func TestGetIssuances_ActiveTodaySurfacesByCreator(t *testing.T) {
 
 // callUncancel drives UncancelIssuance directly, mirroring callCancel's param/auth injection.
 func callUncancel(tx *gorm.DB, id, userID string) *httptest.ResponseRecorder {
-	handler := NewIssuanceHandler(tx, events.NewBroker())
+	handler := NewIssuanceHandler(tx, events.NewBroker(), nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/issuances/"+id+"/uncancel", nil)
 

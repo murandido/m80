@@ -19,7 +19,7 @@ func TestCORS_AllowsEveryVerbTheRouterRegisters(t *testing.T) {
 	// only store it), and the CORS middleware answers preflights before the auth
 	// middleware or any handler gets to run. The broker has to be real, though - the
 	// SSE route subscribes to it at request time.
-	router := NewRouter(nil, events.NewBroker())
+	router := NewRouter(nil, events.NewBroker(), nil)
 
 	// One representative route per verb is enough - CORS is configured globally, not
 	// per route. The route is kept only to make a failure message actionable.

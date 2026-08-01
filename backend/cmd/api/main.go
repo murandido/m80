@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/murandido/m-80-backend/internal/api"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/events"
+	"github.com/murandido/m-80-backend/internal/traveos"
 )
 
 // @title           M-80 API
@@ -49,8 +51,19 @@ func main() {
 	// It lives as long as the server, so connected clients survive across requests.
 	broker := events.NewBroker()
 
+	// The Traveos client is optional at startup, unlike the database. Layer 3 is
+	// opt-in per airline, so missing credentials must not stop the panel from
+	// booting - the routes that need it answer 503 instead. A warning rather than
+	// silence, because "the refetch button does nothing" is otherwise a long
+	// afternoon.
+	traveosClient, err := traveos.New()
+	if err != nil {
+		slog.Warn("traveos integration is disabled", "err", err)
+		traveosClient = nil
+	}
+
 	// config router
-	r := api.NewRouter(data.DB, broker)
+	r := api.NewRouter(data.DB, broker, traveosClient)
 
 	port := os.Getenv("PORT")
 	if port == "" {

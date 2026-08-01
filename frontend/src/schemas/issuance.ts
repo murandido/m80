@@ -54,6 +54,9 @@ export const issuanceSchema = z.object({
   agency_id: z.string(),
   agency: agencySchema.nullish(),
   complete: z.boolean(),
+  // Set only when the itinerary came from Traveos, which is what separates it from
+  // an issuance someone marked complete by hand. Gates the ticket page and the PDF.
+  traveos_synced_at: z.string().nullish(),
   status: issuanceStatusSchema,
   flights: z.array(issuanceFlightSchema).nullish(),
   observation: z.string().nullable(),
@@ -168,6 +171,18 @@ export type CancelIssuanceInput = z.infer<typeof cancelIssuanceSchema.request>
 // Revert a cancellation - no request body; the backend restores active=true, clears the
 // cancellation metadata and puts the linked sale back to its pre-cancel state.
 export const uncancelIssuanceSchema = {
+  response: z.object({
+    success: z.boolean(),
+    message: z.string(),
+    data: issuanceSchema.nullish(),
+  }),
+}
+
+// POST /issuances/{id}/traveos-sync takes no body: the route always forces the
+// refetch, because the only thing that reaches it is an operator pressing the
+// button, and a deliberate press on an already-synced row means "the flight
+// changed", not "retry".
+export const syncIssuanceWithTraveosSchema = {
   response: z.object({
     success: z.boolean(),
     message: z.string(),

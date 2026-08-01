@@ -33,4 +33,35 @@ var (
 	// to it is already inactive - cancelling it twice would overwrite whatever
 	// refund amounts the first cancellation recorded.
 	ErrIssuanceAlreadyCancelled = errors.New("issuance already cancelled")
+
+	// The rest are raised by Sync. None of them describe a Traveos failure: the
+	// vendor's own errors keep their sentinels from internal/traveos, and the bot
+	// in particular must not turn one into a claim about the cause, because every
+	// emission failure but one arrives as the same opaque 500.
+	ErrIssuanceNotFound = errors.New("issuance not found")
+
+	// ErrAirlineNotSupported means someone turned Traveos off for this carrier -
+	// a choice, not a gap. Distinct from ErrAirlineNotMapped, which is a gap
+	// someone can go and fill.
+	ErrAirlineNotSupported = errors.New("this airline is not integrated with traveos")
+
+	// ErrAirlineNotMapped is always wrapped with the airline's name, since the fix
+	// is to go and set its traveos_airline_id.
+	ErrAirlineNotMapped = errors.New("this airline has no traveos id configured")
+
+	// ErrLocatorMissing should be unreachable - program_locator is NOT NULL - but
+	// a blank string would make us search Traveos for nothing and then issue a
+	// ticket with an empty locator.
+	ErrLocatorMissing = errors.New("issuance has no locator to look up")
+
+	// ErrTicketNotFoundAfterEmission is the awkward case: Traveos reported the
+	// emission as successful but the ticket is not in its own list. A record may
+	// exist on their side, so this is deliberately not treated as a plain failure
+	// that invites an immediate retry - that would risk a duplicate.
+	ErrTicketNotFoundAfterEmission = errors.New("traveos issued the ticket but it is not in the ticket list")
+
+	// ErrFlightMissingDeparture aborts the sync rather than writing a zero date
+	// into issuance_flights.departure_at, which is NOT NULL. A leg with no
+	// departure time is not a flight anyone can travel on.
+	ErrFlightMissingDeparture = errors.New("traveos returned a flight with no departure time")
 )

@@ -105,7 +105,7 @@ func findSale(sales []schemas.SaleResponse, id string) *schemas.SaleResponse {
 // callCreateIssuance drives CreateIssuance with the authenticated user injected the same
 // way the middleware chain would.
 func callCreateIssuance(tx *gorm.DB, userID, body string) *httptest.ResponseRecorder {
-	handler := NewIssuanceHandler(tx, events.NewBroker())
+	handler := NewIssuanceHandler(tx, events.NewBroker(), nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/issuances", strings.NewReader(body))
 	ctx := context.WithValue(req.Context(), middleware.UserContextKey, data.User{ID: userID, Role: "admin"})
@@ -159,7 +159,7 @@ func TestDeleteIssuance_DeletesSale(t *testing.T) {
 		sale := data.Sale{IssuanceID: issuance.ID, Paid: true}
 		create(t, tx, &sale)
 
-		handler := NewIssuanceHandler(tx, events.NewBroker())
+		handler := NewIssuanceHandler(tx, events.NewBroker(), nil)
 		req := httptest.NewRequest(http.MethodDelete, "/issuances/"+issuance.ID, nil)
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("id", issuance.ID)

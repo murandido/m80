@@ -1,0 +1,406 @@
+package issuance
+
+import (
+	"errors"
+	"log/slog"
+	"strings"
+	"time"
+
+	"github.com/murandido/m-80-backend/internal/data"
+	"github.com/murandido/m-80-backend/internal/traveos"
+	"gorm.io/datatypes"
+	"gorm.io/gorm"
+)
+
+// courtesyTitles are the honorifics some airlines append to the given name.
+// AMERICAN puts "MS"/"MR" at the end of `nome` for every passenger; nobody else
+// observed does.
+var courtesyTitles = map[string]bool{
+	"MR": true, "MRS": true, "MS": true, "MISS": true,
+	"DR": true, "DRA": true, "SR": true, "SRA": true, "SRTA": true,
+}
+
+// applyTraveosData writes the fetched itinerary over whatever the issuance had.
+//
+// Replace rather than merge, and in one transaction: a resync has to converge on
+// what the airline says now, so a leg that no longer exists in the booking must
+// disappear from our copy instead of lingering next to its replacement.
+func applyTraveosData(
+	tx *gorm.DB,
+	issuance *data.Issuance,
+	airline *data.Airline,
+	ticket *traveos.TicketItem,
+	details *traveos.TicketData,
+) error {
+	if err := deleteExistingItinerary(tx, issuance.ID); err != nil {
+		return err
+	}
+
+	flights, err := insertFlights(tx, issuance.ID, details)
+	if err != nil {
+		return err
+	}
+
+	if err := insertPassengers(tx, issuance.ID, details, flights); err != nil {
+		return err
+	}
+
+	applyIssuanceFields(tx, issuance, details, flights)
+
+	// Backfill the brand colour from the ticket when the airline has none yet. The
+	// catalog is the tidier source, but this arrives free with data we already
+	// fetched, and a ticket with no colour renders in a generic blue nobody chose.
+	if airline.BrandColor == nil && ticket.Airline.PrimaryColor != "" {
+		colour := strings.ToUpper(strings.TrimSpace(ticket.Airline.PrimaryColor))
+		if isHexColour(colour) {
+			airline.BrandColor = &colour
+			if err := tx.Model(airline).Update("brand_color", colour).Error; err != nil {
+				return err
+			}
+		}
+	}
+
+	return tx.Save(issuance).Error
+}
+
+// deleteExistingItinerary clears the three itinerary tables for this issuance,
+// children first: issuance_passenger_flights has no cascade from either parent,
+// so deleting passengers before their join rows would leave orphans behind.
+func deleteExistingItinerary(tx *gorm.DB, issuanceID string) error {
+	if err := tx.Exec(`
+		DELETE FROM issuance_passenger_flights
+		WHERE passenger_id IN (SELECT id FROM issuance_passengers WHERE issuance_id = ?)
+		   OR flight_id     IN (SELECT id FROM issuance_flights     WHERE issuance_id = ?)`,
+		issuanceID, issuanceID).Error; err != nil {
+		return err
+	}
+	if err := tx.Where("issuance_id = ?", issuanceID).Delete(&data.IssuancePassenger{}).Error; err != nil {
+		return err
+	}
+	return tx.Where("issuance_id = ?", issuanceID).Delete(&data.IssuanceFlight{}).Error
+}
+
+// insertedFlights indexes the persisted legs by direction, in the order Traveos
+// returned them, because that ordering is what the seat arrays are aligned with.
+type insertedFlights struct {
+	outbound []data.IssuanceFlight
+	inbound  []data.IssuanceFlight
+}
+
+func (f insertedFlights) all() []data.IssuanceFlight {
+	return append(append([]data.IssuanceFlight{}, f.outbound...), f.inbound...)
+}
+
+func insertFlights(tx *gorm.DB, issuanceID string, details *traveos.TicketData) (insertedFlights, error) {
+	var inserted insertedFlights
+
+	for _, spec := range []struct {
+		direction string
+		legs      []traveos.Flight
+		target    *[]data.IssuanceFlight
+	}{
+		{"outbound", details.Flights.Outbound, &inserted.outbound},
+		{"inbound", details.Flights.Inbound, &inserted.inbound},
+	} {
+		for index, leg := range spec.legs {
+			// departure_at is NOT NULL, and a zero time would write a ticket dated
+			// year 1. Better to refuse the whole sync: a flight with no departure is
+			// not a flight anyone can travel on.
+			if leg.DepartureAt.IsZero() {
+				return insertedFlights{}, ErrFlightMissingDeparture
+			}
+
+			flight := data.IssuanceFlight{
+				IssuanceID:  issuanceID,
+				Direction:   spec.direction,
+				LegOrder:    index + 1,
+				DepartureAt: leg.DepartureAt.Time,
+			}
+			if number := strings.TrimSpace(leg.Number); number != "" {
+				flight.FlightNumber = &number
+			}
+			if cabin := strings.TrimSpace(leg.Cabin); cabin != "" {
+				// Copied verbatim, including the vendor's own broken unicode escapes
+				// ("Econu00f4mica"). Rewriting it would be inventing data.
+				flight.Cabin = &cabin
+			}
+			if !leg.ArrivalAt.IsZero() {
+				arrival := leg.ArrivalAt.Time
+				flight.ArrivalAt = &arrival
+			}
+			if leg.Duration > 0 {
+				duration := int(leg.Duration)
+				flight.DurationMin = &duration
+			}
+			flight.OriginIATACode = resolveAirportCode(tx, firstNonEmpty(leg.OriginDetails.IATA, leg.OriginIATA))
+			flight.DestinationIATACode = resolveAirportCode(tx, firstNonEmpty(leg.DestinationDetails.IATA, leg.DestinationIATA))
+
+			if err := tx.Create(&flight).Error; err != nil {
+				return insertedFlights{}, err
+			}
+			*spec.target = append(*spec.target, flight)
+		}
+	}
+
+	return inserted, nil
+}
+
+// resolveAirportCode returns the code only if it exists in our airports table.
+//
+// Both columns are FKs to airports.iata_code, so an airport we have never seeded
+// would abort the insert with a raw 23503 and take the whole itinerary down with
+// it. The seed covers 7917 airports and every code the five test tickets
+// returned, but "every airport Traveos will ever name" is not a promise anyone
+// can make. Losing one foreign key is a far better outcome than losing the
+// itinerary, so an unknown code is dropped and logged.
+func resolveAirportCode(tx *gorm.DB, code string) *string {
+	code = strings.ToUpper(strings.TrimSpace(code))
+	if code == "" {
+		return nil
+	}
+
+	var airport data.Airport
+	err := tx.Select("iata_code").First(&airport, "iata_code = ?", code).Error
+	if err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			slog.Error("traveos: failed to look up an airport", "iata", code, "err", err)
+			return nil
+		}
+		slog.Warn("traveos: airport is not in the airports table, leaving the leg without it",
+			"iata", code)
+		return nil
+	}
+	return &code
+}
+
+func insertPassengers(
+	tx *gorm.DB,
+	issuanceID string,
+	details *traveos.TicketData,
+	flights insertedFlights,
+) error {
+	for index, source := range details.Emission.Passengers {
+		passenger := data.IssuancePassenger{
+			IssuanceID: issuanceID,
+			FirstName:  cleanGivenName(source.FirstName),
+			LastName:   strings.TrimSpace(source.LastName),
+			Type:       normalisePassengerType(source.Type),
+			// Position 0 is the main passenger, in the order Traveos listed them.
+			Position: index,
+		}
+
+		// first_name and last_name are both NOT NULL. A passenger with neither is
+		// not something to persist, but one of the two missing is common enough
+		// (some airlines return an empty surname) that a placeholder beats
+		// refusing the whole ticket.
+		if passenger.FirstName == "" && passenger.LastName == "" {
+			slog.Warn("traveos: skipping a passenger with no name at all",
+				"issuance_id", issuanceID, "position", index)
+			continue
+		}
+		if passenger.FirstName == "" {
+			passenger.FirstName = "-"
+		}
+		if passenger.LastName == "" {
+			passenger.LastName = "-"
+		}
+
+		// Assigned in the clear: the model's BeforeSave hook encrypts it (AES-256-GCM).
+		// Encrypting here as well would double-wrap it and the AfterFind decrypt would
+		// hand back ciphertext.
+		if source.Document != nil {
+			if document := strings.TrimSpace(*source.Document); document != "" {
+				passenger.Document = &document
+			}
+		}
+
+		if err := tx.Create(&passenger).Error; err != nil {
+			return err
+		}
+
+		if err := insertPassengerFlights(tx, passenger, source, flights); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// insertPassengerFlights writes the per-passenger, per-leg seat and baggage row.
+//
+// The two sources are shaped differently, and this is the trap the reverse
+// engineering write-up originally got wrong:
+//
+//   - assentos.ida[] IS positionally aligned with the flight legs - LATAM sends
+//     [null, null] for two legs, AMERICAN sends ["36D"] for one.
+//   - bagagens.ida[] is NOT. Its entries are entitlement classes (carry-on,
+//     checked), not legs: GOL sends [1, 0] for a single-leg ticket and AVIANCA
+//     sends two objects (10kg, 23kg) for one leg. Indexing it by leg reads the
+//     wrong entitlement on a short itinerary and runs off the end on a long one.
+//
+// So the seat is taken by index and the baggage is the summed entitlement for
+// that direction, repeated across that direction's legs.
+func insertPassengerFlights(
+	tx *gorm.DB,
+	passenger data.IssuancePassenger,
+	source traveos.Passenger,
+	flights insertedFlights,
+) error {
+	for _, spec := range []struct {
+		legs    []data.IssuanceFlight
+		seats   []*string
+		baggage []traveos.BaggageAllowance
+	}{
+		{flights.outbound, source.Seats.Outbound, source.Baggage.Outbound},
+		{flights.inbound, source.Seats.Inbound, source.Baggage.Inbound},
+	} {
+		quantity := totalBaggage(spec.baggage)
+
+		for index, leg := range spec.legs {
+			link := data.IssuancePassengerFlight{
+				PassengerID: passenger.ID,
+				FlightID:    leg.ID,
+				BaggageQty:  &quantity,
+			}
+			if index < len(spec.seats) && spec.seats[index] != nil {
+				if seat := strings.TrimSpace(*spec.seats[index]); seat != "" {
+					link.Seat = &seat
+				}
+			}
+			if err := tx.Create(&link).Error; err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// totalBaggage sums the entitlements for one direction. See
+// insertPassengerFlights for why this is a sum and not an index.
+func totalBaggage(allowances []traveos.BaggageAllowance) int {
+	total := 0
+	for _, allowance := range allowances {
+		total += allowance.Quantity
+	}
+	return total
+}
+
+// applyIssuanceFields fills in the columns the operator's own input never
+// carries. Errors here are not fatal: every field it touches is nullable, and a
+// missing route is a smaller loss than a rejected itinerary.
+func applyIssuanceFields(
+	tx *gorm.DB,
+	issuance *data.Issuance,
+	details *traveos.TicketData,
+	flights insertedFlights,
+) {
+	tripType := deriveTripType(details)
+	issuance.TripType = &tripType
+
+	legs := flights.all()
+	if len(legs) > 0 {
+		// First origin and last destination across the whole itinerary, which for a
+		// round trip means both ends are the same airport - that is correct: these
+		// two columns describe the journey, not the outbound leg.
+		if code := legs[0].OriginIATACode; code != nil {
+			issuance.OriginIATACode = code
+		}
+		if code := legs[len(legs)-1].DestinationIATACode; code != nil {
+			issuance.DestinationIATACode = code
+		}
+	}
+
+	if len(details.Emission.Passengers) > 0 {
+		main := details.Emission.Passengers[0]
+		if name := strings.TrimSpace(cleanGivenName(main.FirstName) + " " + strings.TrimSpace(main.LastName)); name != "" {
+			issuance.MainPassengerName = &name
+		}
+	}
+
+	if number := strings.TrimSpace(details.Emission.PurchaseNumber); number != "" {
+		issuance.LatamPurchaseNumber = &number
+	}
+
+	// Stored verbatim: three mutually incompatible shapes across airlines
+	// (assistance slots, paid extras, an empty array) and nothing on our side
+	// reads it structurally, so normalising it would be invented work.
+	if len(details.Emission.AdditionalServices) > 0 {
+		issuance.AdditionalServices = datatypes.JSON(details.Emission.AdditionalServices)
+	}
+
+	now := time.Now()
+	issuance.TraveosSyncedAt = &now
+	// The airline confirmed the itinerary - that is exactly what complete means.
+	issuance.Complete = true
+}
+
+// deriveTripType maps the vendor's vocabulary onto our trip_type enum.
+//
+// Note that multi-leg is not a trip type at Traveos: tripType only distinguishes
+// one-way from round-trip, and a multi-leg itinerary shows up as
+// arguments.multitrechos instead. Our enum has all three, so the flag has to be
+// checked separately - and it is checked first, because a multi-leg journey is
+// more specific than "one way".
+func deriveTripType(details *traveos.TicketData) string {
+	if bool(details.Emission.Arguments.MultiLeg) {
+		return "multi_leg"
+	}
+	if len(details.Flights.Inbound) > 0 || details.Emission.TripType == "ida_e_volta" {
+		return "round_trip"
+	}
+	return "one_way"
+}
+
+// cleanGivenName strips a trailing courtesy title from the given name.
+//
+// AMERICAN appends "MS"/"MR" to every passenger's `nome`, which then reads
+// "FERNANDA CRISTINA MS" on the ticket. Only the last token of the given name is
+// a candidate: that is where the airline puts it, and the surname is never
+// touched, because a real name could legitimately be one of these words and
+// eating it would be worse than leaving an honorific in.
+func cleanGivenName(name string) string {
+	tokens := strings.Fields(strings.TrimSpace(name))
+	if len(tokens) > 1 {
+		last := strings.ToUpper(strings.TrimRight(tokens[len(tokens)-1], "."))
+		if courtesyTitles[last] {
+			tokens = tokens[:len(tokens)-1]
+		}
+	}
+	return strings.Join(tokens, " ")
+}
+
+// normalisePassengerType keeps the value inside the passenger_type enum. The
+// vendor uses the same three codes, but it is free text on their side and a
+// value outside the enum would abort the insert.
+func normalisePassengerType(value string) string {
+	switch strings.ToUpper(strings.TrimSpace(value)) {
+	case "CHD":
+		return "CHD"
+	case "INF":
+		return "INF"
+	default:
+		return "ADT"
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func isHexColour(value string) bool {
+	if len(value) != 7 || value[0] != '#' {
+		return false
+	}
+	for _, c := range value[1:] {
+		isDigit := c >= '0' && c <= '9'
+		isHex := c >= 'A' && c <= 'F'
+		if !isDigit && !isHex {
+			return false
+		}
+	}
+	return true
+}

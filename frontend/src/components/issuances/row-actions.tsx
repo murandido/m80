@@ -1,8 +1,11 @@
 "use client"
 
-import { RotateCcw, Trash2 } from "lucide-react"
+import { useState } from "react"
+import { CloudDownload, RotateCcw, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
+import { Spinner } from "@/components/ui/spinner"
+import { cn } from "@/lib/utils"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -26,9 +29,15 @@ export function RowActions({ r, row }: { r: number; row: IssuanceRow }) {
   const canCancel = !row.isDraft && row.status !== "cancelled"
   // The inverse: a persisted, cancelled row can be reverted back to active.
   const canRevert = !row.isDraft && row.status === "cancelled"
+  // Note what is NOT a condition here: traveos_synced_at. Pressing this on a row that
+  // already has Traveos data is the point - it means "the flight changed, fetch it
+  // again", which is the only route a reschedule has into the system. Cancelled rows
+  // are excluded because there is nothing left to keep in sync.
+  const canSyncWithTraveos = !row.isDraft && row.status !== "cancelled"
 
   return (
     <div className="flex items-center justify-end gap-0.5">
+      {canSyncWithTraveos && <TraveosSyncButton r={r} row={row} />}
       {canCancel && <CancelIssuanceButton r={r} />}
       {canRevert && <RevertCancellationButton r={r} />}
       <AlertDialog>
@@ -105,5 +114,71 @@ function RevertCancellationButton({ r }: { r: number }) {
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
+  )
+}
+
+// Pulls the itinerary from Traveos. No confirmation dialog: on an unsynced row this is
+// the expected next step, and on a synced one it overwrites data that came from the
+// airline with fresher data from the same airline - neither is a decision worth a modal.
+//
+// It can run for minutes, because Traveos drives the airline's own website to issue the
+// ticket. So unlike the other row actions, the button stays visible (not hover-only)
+// while it works, and the toast is raised on the way in rather than only at the end.
+function TraveosSyncButton({ r, row }: { r: number; row: IssuanceRow }) {
+  const { onSyncRowWithTraveos, syncingRowKeys } = useGridContext()
+  const [isPending, setIsPending] = useState(false)
+  const isSyncing = isPending || Boolean(syncingRowKeys[row.key])
+
+  const alreadySynced = row.traveos_synced_at !== null
+
+  async function handleSync() {
+    if (isSyncing) return
+    setIsPending(true)
+    // Said up front because the wait is long enough that a silent button reads as
+    // broken, and the operator may well walk away from it.
+    toast.info(
+      alreadySynced
+        ? "Atualizando os dados do voo na Traveos. Isso pode levar alguns minutos."
+        : "Puxando os dados na Traveos. Isso pode levar alguns minutos.",
+    )
+    try {
+      const result = await onSyncRowWithTraveos(r)
+      if ("error" in result) {
+        toast.error(result.error)
+        return
+      }
+      toast.success("Dados da Traveos atualizados.")
+    } finally {
+      setIsPending(false)
+    }
+  }
+
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      disabled={isSyncing}
+      title={
+        alreadySynced
+          ? "Atualizar dados do voo na Traveos"
+          : "Puxar dados da Traveos"
+      }
+      onClick={() => void handleSync()}
+      className={cn(
+        "h-6 w-6 transition-opacity",
+        // Hover-only like its neighbours, except while it runs: hiding a button that
+        // is still working would make the operator wonder whether they pressed it.
+        isSyncing ? "opacity-100" : "opacity-0 group-hover/row:opacity-100",
+      )}
+    >
+      {isSyncing ? (
+        <Spinner className="h-3.5 w-3.5" />
+      ) : (
+        <CloudDownload
+          className={cn("h-3.5 w-3.5", alreadySynced ? "text-slate-500" : "text-sky-600")}
+        />
+      )}
+    </Button>
   )
 }
