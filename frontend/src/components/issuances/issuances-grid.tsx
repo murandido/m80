@@ -24,6 +24,8 @@ import { AutosaveDot } from "@/components/issuances/autosave-dot"
 import { interactionReducer, initialInteractionState } from "@/components/issuances/interaction-reducer"
 import { IssuanceRow, issuanceToRow, makeDraftRow, draftIsReadyToCreate } from "@/components/issuances/types"
 import { reconcileRows } from "@/components/issuances/reconcile-rows"
+import { hasAirlineMinimumFields } from "@/components/issuances/autocomplete"
+import { useAutocompletePreference } from "@/hooks/use-autocomplete-preference"
 import { clearPatchForColumn } from "@/components/issuances/column-fields"
 import { useSSE } from "@/hooks/use-sse"
 import {
@@ -204,6 +206,18 @@ export function IssuancesGrid({
   // Keyed by row key rather than index: a Traveos sync can run for minutes, and the
   // row can move as the list reorders or reconciles while it is in flight.
   const [syncingRowKeys, setSyncingRowKeys] = useState<Record<string, true>>({})
+  // Row keys the autocomplete has already fired for. A ref and not state: it must
+  // never trigger a render, and it has to be read fresh inside an async callback.
+  //
+  // This set is what stands between one issuance and several real tickets at the
+  // vendor. Every blur re-runs the same check, so without it a row that has its
+  // minimum fields would fire again on each one.
+  const autocompleteAttemptedRef = useRef<Set<string>>(new Set())
+  const [autocompleteEnabled] = useAutocompletePreference()
+  // Read inside async callbacks, which must see the toggle as it is when they run
+  // rather than as it was when they were created.
+  const autocompleteEnabledRef = useRef(autocompleteEnabled)
+  autocompleteEnabledRef.current = autocompleteEnabled
   // Row index awaiting delete confirmation, driven by the Ctrl+Shift+Backspace shortcut.
   // Null means the confirm dialog is closed.
   const [pendingDeleteRow, setPendingDeleteRow] = useState<number | null>(null)
@@ -215,6 +229,9 @@ export function IssuancesGrid({
   // so their identity stays stable and the context value doesn't change on every selection
   // move (which is what lets the memoized cells skip re-rendering).
   const interactionRef = useRef(interaction)
+  // Mirrors syncingRowKeys for the stable callbacks, same reason as interactionRef:
+  // onCellClick must not change identity every time a sync starts or ends.
+  const syncingRowKeysRef = useRef(syncingRowKeys)
   // Undo/redo history. Each entry is the inverse patch (the field values as they were
   // before a change) plus the row it targets. Every value mutation funnels through
   // applyPatch, which records the inverse here; Ctrl+Z/Ctrl+Y replay entries between the
@@ -233,6 +250,10 @@ export function IssuancesGrid({
     () => mergeById(referenceData.agencies, extraAgencies),
     [referenceData.agencies, extraAgencies],
   )
+
+  useEffect(() => {
+    syncingRowKeysRef.current = syncingRowKeys
+  }, [syncingRowKeys])
 
   useEffect(() => {
     rowsRef.current = rows
@@ -311,6 +332,9 @@ export function IssuancesGrid({
   // persistRef holds the latest persist so the recursive replay (queued patch after a
   // create resolves) can call it without persist listing itself as a dependency.
   const persistRef = useRef<(row: IssuanceRow, patch: Partial<IssuanceRow>) => Promise<void>>(null)
+  // maybeAutocomplete is defined further down (it needs onSyncRowWithTraveos), so
+  // persist reaches it through a ref rather than the two being reordered.
+  const maybeAutocompleteRef = useRef<((rowKey: string) => void) | null>(null)
 
   const persist = useCallback(
     async (row: IssuanceRow, patch: Partial<IssuanceRow>) => {
@@ -360,6 +384,7 @@ export function IssuancesGrid({
 
         reconcileCreatedRow(row.key, result.issuance)
         flashSaveStatus(row.key, "success")
+        maybeAutocompleteRef.current?.(row.key)
 
         if (queued) {
           await persistRef.current?.(
@@ -388,6 +413,7 @@ export function IssuancesGrid({
       if (result.issuance) updateRow(row.key, { status: result.issuance.status })
 
       flashSaveStatus(row.key, "success")
+      maybeAutocompleteRef.current?.(row.key)
     },
     [updateRow, flashSaveStatus, reconcileCreatedRow],
   )
@@ -473,7 +499,14 @@ export function IssuancesGrid({
     activeCellSaveRef.current = null
     // A cancelled issuance is terminal: its cells select (so they can be read/copied) but
     // never enter edit mode. The calculated column is likewise never editable.
-    const editable = c !== CALCULATED_COLUMN_INDEX && rowsRef.current[r]?.status !== "cancelled"
+    // A row with a Traveos fetch in flight is locked too: the fetch overwrites the
+    // route and the passenger, so anything typed into it now would be replaced
+    // seconds later without the operator seeing why.
+    const row = rowsRef.current[r]
+    const editable =
+      c !== CALCULATED_COLUMN_INDEX &&
+      row?.status !== "cancelled" &&
+      !(row && syncingRowKeysRef.current[row.key])
     dispatch({ type: "CLICK_CELL", r, c, editable })
   }, [])
 
@@ -730,6 +763,43 @@ export function IssuancesGrid({
     },
     [syncingRowKeys, updateRow],
   )
+
+  // Fires the same sync the button does, on its own, once a row has everything the
+  // airline needs. force=false is implied: the endpoint refuses nothing here because
+  // the row has no Traveos data yet, and a row that does is filtered out below.
+  //
+  // Three guards, and each one prevents a real ticket being issued at the vendor for
+  // nothing: the operator opted in, this row has never been tried, and the airline's
+  // own minimum fields are actually filled.
+  const maybeAutocomplete = useCallback(
+    (rowKey: string) => {
+      if (!autocompleteEnabledRef.current) return
+
+      const index = rowsRef.current.findIndex((candidate) => candidate.key === rowKey)
+      const row = rowsRef.current[index]
+      if (!row || row.isDraft || !row.id) return
+      if (row.status === "cancelled" || row.traveos_synced_at) return
+      if (autocompleteAttemptedRef.current.has(row.key)) return
+
+      const airline = referenceData.airlines.find((candidate) => candidate.id === row.airline_id)
+      if (!airline || !airline.traveos_supported) return
+      if (!hasAirlineMinimumFields(row, airline)) return
+
+      autocompleteAttemptedRef.current.add(row.key)
+      void onSyncRowWithTraveos(index).then((result) => {
+        if ("error" in result) {
+          // Left in the attempted set on purpose. Whatever went wrong will go wrong
+          // again on the next blur, and the operator has an explicit button for when
+          // they have actually changed something.
+          toast.error(result.error)
+          return
+        }
+        toast.success("Dados da Traveos preenchidos.")
+      })
+    },
+    [referenceData.airlines, onSyncRowWithTraveos],
+  )
+  maybeAutocompleteRef.current = maybeAutocomplete
 
   // Keyboard entry point for deleting the active row. An untouched empty draft has nothing
   // to lose, so it is dropped without a prompt; anything else opens the confirm dialog.
@@ -1078,6 +1148,8 @@ export function IssuancesGrid({
                   // for a failed save so the two states are never confused.
                   row.status === "cancelled" && "bg-muted/40 text-muted-foreground hover:bg-muted/40",
                   row.hasError && "bg-red-50 hover:bg-red-50",
+                  // Locked while Traveos is being read - see onCellClick.
+                  syncingRowKeys[row.key] && "bg-sky-50/60 hover:bg-sky-50/60",
                 )}
               >
                 <TableCell

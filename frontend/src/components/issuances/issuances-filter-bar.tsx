@@ -9,7 +9,9 @@ import { Calendar } from "@/components/ui/calendar"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Switch } from "@/components/ui/switch"
 import { cn } from "@/lib/utils"
+import { useAutocompletePreference } from "@/hooks/use-autocomplete-preference"
 import {
   addDays,
   dateRangeLabel,
@@ -269,6 +271,8 @@ export function IssuancesFilterBar({
         />
       </div>
 
+      <AutocompleteToggle />
+
       {hasAnyFilter && (
         <Button
           type="button"
@@ -283,5 +287,30 @@ export function IssuancesFilterBar({
         </Button>
       )}
     </div>
+  )
+}
+
+// Opt-in, and off by default. With it on, a row fetches from Traveos by itself as
+// soon as it has the minimum fields the airline needs - which is a real emission
+// at the vendor, so it must never happen because someone opened the page.
+//
+// The product doc describes this as fully automatic with no control at all. The
+// toggle is the deliberate difference: the operator fixing yesterday's numbers is
+// editing the same fields as the one entering a new booking, and the vendor cannot
+// tell those two apart.
+function AutocompleteToggle() {
+  const [enabled, setEnabled] = useAutocompletePreference()
+
+  return (
+    <label className="ml-auto flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+      <Switch
+        checked={enabled}
+        onCheckedChange={setEnabled}
+        aria-label="Autocompletar dados"
+      />
+      <span title="Puxa os dados da Traveos sozinho assim que a linha tiver o mínimo que a companhia exige">
+        Autocompletar dados
+      </span>
+    </label>
   )
 }
