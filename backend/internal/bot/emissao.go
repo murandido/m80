@@ -72,7 +72,7 @@ func (b *Bot) handleEmissao(ctx context.Context, evt *events.Message, text strin
 	// force=false: this is the first fetch for a brand new issuance, so the mode
 	// that refuses to touch an already-synced one is exactly right. The deliberate
 	// "the flight changed" refetch is the panel's button, never a message.
-	outcome := b.syncTraveos(ctx, "emissao", created.ID, msg.ProgramLocator, false)
+	outcome := b.syncTraveos(ctx, evt, "emissao", created.ID, msg.ProgramLocator, false)
 	if outcome == traveosFetched {
 		b.notifyIssuanceUpdated()
 	}

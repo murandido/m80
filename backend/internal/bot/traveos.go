@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	issuancesvc "github.com/murandido/m-80-backend/internal/issuance"
+	"go.mau.fi/whatsmeow/types/events"
 )
 
 // reactionPartial is the bot's answer when the issuance was registered but
@@ -19,6 +20,18 @@ import (
 // an honest "saved, but incomplete": the row is on the grid, and the refetch
 // button on the panel is one click away.
 const reactionPartial = "⚠️"
+
+// reactionFetching is shown while the bot is actually talking to Traveos.
+//
+// It exists because 🕐 means "queued, waiting its turn", and leaving that up for
+// the whole fetch reads as a bot that hung with the message stuck in the queue
+// forever. The vendor call routinely takes dozens of seconds and is allowed 120,
+// which is far longer than anything else the group ever waits on - long enough
+// that silence is indistinguishable from a crash.
+//
+// ⏳ instead of 🕐 on purpose: the hourglass is work in progress, the clock is a
+// wait. They are different facts and the group can act on the difference.
+const reactionFetching = "⏳"
 
 // traveosOutcome separates "nothing happened, and that is fine" from "nothing
 // happened, and the operator needs to know". Both leave the issuance incomplete,
@@ -46,13 +59,29 @@ func (o traveosOutcome) ok() bool { return o != traveosFailed }
 // guards money and not just database consistency - a second message about the
 // same locator emitting a second real ticket at the vendor is the failure this
 // prevents.
-func (b *Bot) syncTraveos(ctx context.Context, flow, issuanceID, locator string, force bool) traveosOutcome {
+func (b *Bot) syncTraveos(
+	ctx context.Context,
+	evt *events.Message,
+	flow, issuanceID, locator string,
+	force bool,
+) traveosOutcome {
 	// No credentials configured. That is a deployment choice, not something wrong
 	// with this issuance, so it must not put a warning on every message the group
 	// sends - it goes to the log and the issuance stays as the operator typed it.
 	if b.Traveos == nil {
 		b.Logger.Infof("%s: traveos is not configured, leaving %s incomplete", flow, locator)
 		return traveosSkipped
+	}
+
+	// Announced here rather than at the call sites so both triggers - the EMISSAO
+	// and the correction that retries it - say the same thing, and so nothing can
+	// claim a vendor call that is not about to happen. No humanizer delay: this is
+	// a progress indicator, and pacing it would defeat the point.
+	//
+	// The caller replaces it with 🚀 or ⚠️ when this returns, so no path leaves the
+	// hourglass up. A cancelled ctx skips it, like every other visible reaction.
+	if evt != nil {
+		b.ReactMessage(ctx, evt, reactionFetching)
 	}
 
 	err := issuancesvc.Sync(ctx, b.DB, b.Traveos, issuanceID, force)

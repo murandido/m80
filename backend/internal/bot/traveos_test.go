@@ -52,6 +52,27 @@ func (s *stubTraveos) VerifyTicket(_ context.Context, _ int) (*traveos.VerifyTic
 // workingTraveos answers as if the ticket were already there - the common case
 // once the airline has confirmed the booking, and the one that requires no
 // emission at all.
+// assertFetchThen pins the reaction sequence around a Traveos fetch: the
+// hourglass while the vendor is being asked, then the outcome replacing it.
+//
+// The order is the whole property. ⏳ left as the last reaction is the failure
+// this guards against - the group would be looking at a message that claims the
+// bot is still working on something it finished, which is exactly the confusion
+// the hourglass was added to remove.
+func assertFetchThen(t *testing.T, reactions []string, want string) {
+	t.Helper()
+
+	if len(reactions) != 2 {
+		t.Fatalf("reactions = %v, want exactly [%s %s]", reactions, reactionFetching, want)
+	}
+	if reactions[0] != reactionFetching {
+		t.Errorf("first reaction = %q, want %s while the vendor is being asked", reactions[0], reactionFetching)
+	}
+	if reactions[1] != want {
+		t.Errorf("final reaction = %q, want %q", reactions[1], want)
+	}
+}
+
 func workingTraveos() *stubTraveos {
 	departure := time.Date(2026, 8, 1, 14, 24, 0, 0, time.UTC)
 
@@ -110,9 +131,7 @@ func TestHandleEmissao_CompletesTheIssuanceFromTraveos(t *testing.T) {
 		assertIssuanceRowCount(t, tx, "issuance_flights", issuance.ID, 1)
 		assertIssuanceRowCount(t, tx, "issuance_passengers", issuance.ID, 1)
 
-		if reactions := s.Client.reactions(); len(reactions) != 1 || reactions[0] != "🚀" {
-			t.Fatalf("reactions = %v, want a single 🚀", reactions)
-		}
+		assertFetchThen(t, s.Client.reactions(), "🚀")
 
 		// Found, so never issued. Emitting a ticket that already exists creates a
 		// second real record at the vendor, with nothing on their side to stop it.
@@ -157,13 +176,12 @@ func TestHandleEmissao_WarnsAndKeepsThePartialIssuanceWhenTraveosFails(t *testin
 			t.Error("traveos_synced_at was stamped on an issuance that never got its itinerary")
 		}
 
-		if reactions := s.Client.reactions(); len(reactions) != 1 || reactions[0] != reactionPartial {
-			t.Fatalf("reactions = %v, want a single %s", reactions, reactionPartial)
-		}
+		assertFetchThen(t, s.Client.reactions(), reactionPartial)
 		// No text. Traveos answers nearly every failure with the same opaque 500,
-		// so any reason the bot put in the group would be invented.
-		if sends, _ := s.Client.calls(); sends != 1 {
-			t.Errorf("the bot sent %d message(s), want 1 - the reaction alone, no explanation", sends)
+		// so any reason the bot put in the group would be invented. Two sends, both
+		// reactions: the hourglass and the outcome that replaces it.
+		if sends, _ := s.Client.calls(); sends != 2 {
+			t.Errorf("the bot sent %d message(s), want 2 reactions and no explanation", sends)
 		}
 		if got := s.Updated.Load(); got != 0 {
 			t.Errorf("notifyIssuanceUpdated called %d time(s) for a fetch that wrote nothing, want 0", got)
@@ -181,9 +199,7 @@ func TestHandleEmissao_AnUnsupportedAirlineIsNotAWarning(t *testing.T) {
 
 		s.Bot.handleEmissao(context.Background(), s.event(), s.text(), time.Now())
 
-		if reactions := s.Client.reactions(); len(reactions) != 1 || reactions[0] != "🚀" {
-			t.Fatalf("reactions = %v, want a single 🚀", reactions)
-		}
+		assertFetchThen(t, s.Client.reactions(), "🚀")
 		if got := vendor.findCalls.Load(); got != 0 {
 			t.Errorf("the vendor was searched %d time(s) for an unsupported airline, want 0", got)
 		}
@@ -200,8 +216,11 @@ func TestHandleEmissao_ReactsNormallyWithNoTraveosConfigured(t *testing.T) {
 
 		s.Bot.handleEmissao(context.Background(), s.event(), s.text(), time.Now())
 
+		// No hourglass here, unlike every other path: it announces a vendor call,
+		// and there is no vendor to call. Claiming otherwise would show the group a
+		// fetch that never happened.
 		if reactions := s.Client.reactions(); len(reactions) != 1 || reactions[0] != "🚀" {
-			t.Fatalf("reactions = %v, want a single 🚀", reactions)
+			t.Fatalf("reactions = %v, want a single 🚀 with no vendor configured", reactions)
 		}
 	})
 }
@@ -219,7 +238,7 @@ func TestSyncTraveosReportsACancelledJobAsAFailureWithoutBlamingTheVendor(t *tes
 		// Cancelled work is not a Traveos problem. It still counts as "not
 		// complete", but the log line has to say so - whoever cancelled the job is
 		// the one who owes the group an answer.
-		if got := s.Bot.syncTraveos(ctx, "test", "does-not-matter", "ABC123", false); got != traveosFailed {
+		if got := s.Bot.syncTraveos(ctx, nil, "test", "does-not-matter", "ABC123", false); got != traveosFailed {
 			t.Fatalf("outcome = %v, want traveosFailed", got)
 		}
 	})

@@ -102,7 +102,7 @@ func (b *Bot) answerCorrection(ctx context.Context, evt *events.Message, started
 	// path is there to work out.
 	fetched := traveosSkipped
 	if outcome.RetryTraveos {
-		fetched = b.syncTraveos(ctx, "alteracao", outcome.IssuanceID, locator, false)
+		fetched = b.syncTraveos(ctx, evt, "alteracao", outcome.IssuanceID, locator, false)
 	}
 
 	// One event for both writes. The panel reloads the row either way, so firing
