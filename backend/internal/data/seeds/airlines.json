@@ -1,0 +1,129 @@
+[
+  {
+    "code": "LATAM",
+    "name": "LATAM",
+    "traveos_airline_id": 1,
+    "brand_color": "#10004F",
+    "traveos_supported": true,
+    "requires_last_name": true,
+    "requires_purchase_number": true,
+    "aliases": [
+      "LA",
+      "LATAM AIRLINES",
+      "TAM"
+    ]
+  },
+  {
+    "code": "AZUL",
+    "name": "AZUL",
+    "traveos_airline_id": 2,
+    "brand_color": "#54B1E3",
+    "traveos_supported": true,
+    "aliases": [
+      "AD",
+      "AZ",
+      "AZUL LINHAS AEREAS"
+    ]
+  },
+  {
+    "code": "GOL",
+    "name": "GOL",
+    "traveos_airline_id": 3,
+    "brand_color": "#FF5E00",
+    "traveos_supported": true,
+    "requires_last_name": true,
+    "aliases": [
+      "G3",
+      "GOL LINHAS AEREAS"
+    ]
+  },
+  {
+    "code": "AA",
+    "name": "AMERICAN AIRLINES",
+    "traveos_airline_id": 90,
+    "brand_color": "#005A9C",
+    "traveos_supported": true,
+    "requires_last_name": true,
+    "aliases": [
+      "AMERICAN",
+      "AMERICAN ARILINES"
+    ]
+  },
+  {
+    "code": "AVIANCA",
+    "name": "AVIANCA",
+    "traveos_airline_id": 101,
+    "brand_color": "#FF0000",
+    "traveos_supported": true,
+    "requires_last_name": true,
+    "aliases": [
+      "AV"
+    ]
+  },
+  {
+    "code": "TAP",
+    "name": "TAP AIR PORTUGAL",
+    "traveos_airline_id": 83,
+    "brand_color": "#BED62F",
+    "traveos_supported": true,
+    "requires_last_name": true,
+    "aliases": [
+      "TP",
+      "TAP PORTUGAL"
+    ]
+  },
+  {
+    "code": "AIREUROPA",
+    "name": "AIR EUROPA",
+    "traveos_airline_id": 112,
+    "brand_color": "#2D69E1",
+    "aliases": [
+      "UX"
+    ]
+  },
+  {
+    "code": "AZULVIAGENS",
+    "name": "AZUL VIAGENS",
+    "traveos_airline_id": 113,
+    "brand_color": "#54B1E3",
+    "aliases": []
+  },
+  {
+    "code": "IBERIA",
+    "name": "IBERIA",
+    "traveos_airline_id": 49,
+    "brand_color": "#ED1C24",
+    "aliases": [
+      "IB"
+    ]
+  },
+  {
+    "code": "COPA",
+    "name": "COPA AIRLINES",
+    "traveos_airline_id": 68,
+    "brand_color": "#003366",
+    "traveos_supported": true,
+    "requires_last_name": true,
+    "aliases": [
+      "CM"
+    ]
+  },
+  {
+    "code": "UNITED",
+    "name": "UNITED AIRLINES",
+    "traveos_airline_id": 85,
+    "brand_color": "#002855",
+    "aliases": [
+      "UA"
+    ]
+  },
+  {
+    "code": "QATAR",
+    "name": "QATAR AIRWAYS",
+    "traveos_airline_id": 87,
+    "brand_color": "#660033",
+    "aliases": [
+      "QR"
+    ]
+  }
+]

@@ -47,6 +47,15 @@ func main() {
 		log.Fatal("❌ Failed to seed airports: ", err)
 	}
 
+	// Airlines before loyalty programs: loyalty_programs.default_airline_id is NOT
+	// NULL and is resolved from the airline code.
+	if err := data.SeedAirlines(data.DB); err != nil {
+		log.Fatal("❌ Failed to seed airlines: ", err)
+	}
+	if err := data.SeedLoyaltyPrograms(data.DB); err != nil {
+		log.Fatal("❌ Failed to seed loyalty programs: ", err)
+	}
+
 	// One broker per process, threaded through the router the same way the DB is.
 	// It lives as long as the server, so connected clients survive across requests.
 	broker := events.NewBroker()

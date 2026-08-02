@@ -1,0 +1,30 @@
+[
+  {
+    "code": "SMILES",
+    "name": "Smiles",
+    "default_airline_code": "GOL",
+    "color": "#FF6B00",
+    "aliases": []
+  },
+  {
+    "code": "LATAM",
+    "name": "LATAM Pass",
+    "default_airline_code": "LATAM",
+    "color": "#E30613",
+    "aliases": ["LATAMPASS", "LATAM PASS"]
+  },
+  {
+    "code": "AZUL",
+    "name": "Azul",
+    "default_airline_code": "AZUL",
+    "color": "#0067B1",
+    "aliases": ["TUDOAZUL", "TUDO AZUL"]
+  },
+  {
+    "code": "AA",
+    "name": "AA",
+    "default_airline_code": "AA",
+    "color": "#0078D2",
+    "aliases": ["AADVANTAGE", "AMERICAN"]
+  }
+]

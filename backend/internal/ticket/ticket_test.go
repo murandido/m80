@@ -31,7 +31,7 @@ func roundTrip() (data.Issuance, map[string][]data.IssuancePassengerFlight) {
 		AirlineLocator: strptr("ABC123"),
 		Airline: &data.Airline{
 			Name:       "GOL",
-			Code:       "G3",
+			Code:       "GOL",
 			BrandColor: &colour,
 		},
 		Flights: []data.IssuanceFlight{
