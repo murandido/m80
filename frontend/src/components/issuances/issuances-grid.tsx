@@ -363,6 +363,7 @@ export function IssuancesGrid({
           // `||` and not `??`: the locator cell writes an empty string to mean "no airline
           // locator", and a create has nothing to clear - the field is simply omitted.
           airline_locator: merged.airline_locator || undefined,
+          latam_purchase_number: merged.latam_purchase_number || undefined,
           main_passenger_name: merged.main_passenger_name ?? undefined,
           origin_iata_code: merged.origin_iata_code ?? undefined,
           destination_iata_code: merged.destination_iata_code ?? undefined,

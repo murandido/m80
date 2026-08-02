@@ -16,6 +16,10 @@ export interface IssuanceRow {
   airline_id: string | null
   program_locator: string
   airline_locator: string | null
+  // The airline's own order number, which some airlines (LATAM) key their booking on
+  // instead of the locator. Edited through the Localizador cell rather than a column
+  // of its own - see locator-cell.tsx.
+  latam_purchase_number: string | null
   flight_date: string | null // ISO YYYY-MM-DD
   main_passenger_name: string | null
   origin_iata_code: string | null
@@ -58,6 +62,7 @@ export function issuanceToRow(issuance: Issuance): IssuanceRow {
     airline_id: issuance.airline_id,
     program_locator: issuance.program_locator,
     airline_locator: issuance.airline_locator,
+    latam_purchase_number: issuance.latam_purchase_number,
     flight_date: outboundFlight ? outboundFlight.departure_at.slice(0, 10) : null,
     main_passenger_name: issuance.main_passenger_name,
     origin_iata_code: issuance.origin_iata_code,
@@ -96,6 +101,7 @@ export function makeDraftRow(
     airline_id: null,
     program_locator: "",
     airline_locator: null,
+    latam_purchase_number: null,
     flight_date: null,
     main_passenger_name: null,
     origin_iata_code: null,

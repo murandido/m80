@@ -665,8 +665,15 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 	if req.AgencyID != nil {
 		issuance.AgencyID = *req.AgencyID
 	}
+	// Same empty-string-means-cleared convention as AirlineLocator above, and for the
+	// same reason: the Localizador cell sends all three of its fields on every save,
+	// so it needs a value that says "the operator removed this".
 	if req.LatamPurchaseNumber != nil {
-		issuance.LatamPurchaseNumber = req.LatamPurchaseNumber
+		if *req.LatamPurchaseNumber == "" {
+			issuance.LatamPurchaseNumber = nil
+		} else {
+			issuance.LatamPurchaseNumber = req.LatamPurchaseNumber
+		}
 	}
 	if req.MainPassengerName != nil {
 		issuance.MainPassengerName = req.MainPassengerName

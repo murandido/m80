@@ -18,7 +18,9 @@ export function clearPatchForColumn(c: number): Partial<IssuanceRow> | null {
       }
     case 1:
       // program_locator is non-nullable, so it clears to "" rather than null.
-      return { program_locator: "", airline_locator: "" }
+      // latam_purchase_number goes with them: the Localizador cell is where it is
+      // typed, so leaving it behind would strand a value with no way to see it.
+      return { program_locator: "", airline_locator: "", latam_purchase_number: "" }
     case 2:
       return { flight_date: null }
     case 3:
