@@ -1028,7 +1028,7 @@ const traveosSyncTimeout = 3 * time.Minute
 // @Success      200  {object}  schemas.IssuanceSingleResponse
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      404  {object}  schemas.ErrorResponse "Emissão não encontrada"
-// @Failure      422  {object}  schemas.ErrorResponse "A cia aérea não usa Traveos, ou não tem o id da Traveos configurado"
+// @Failure      422  {object}  schemas.ErrorResponse "A cia aérea não usa Traveos, não tem o id da Traveos configurado, ou a emissão não tem um campo que a cia exige"
 // @Failure      502  {object}  schemas.ErrorResponse "A Traveos recusou ou falhou"
 // @Failure      503  {object}  schemas.ErrorResponse "Integração com a Traveos não configurada neste servidor"
 // @Router       /issuances/{id}/traveos-sync [post]
@@ -1100,6 +1100,17 @@ func (h *IssuanceHandler) respondToTraveosSyncError(w http.ResponseWriter, r *ht
 	case errors.Is(err, issuancesvc.ErrLocatorMissing):
 		utils.SendError(w, r, http.StatusUnprocessableEntity,
 			"A emissão não tem localizador para consultar")
+
+	// Also nameable, and the reason the sync refused before spending anything: the
+	// vendor's emission is not idempotent, so asking it with one of these fields
+	// empty would create a real ticket and still answer the opaque 500 below.
+	case errors.Is(err, issuancesvc.ErrLastNameRequired):
+		utils.SendError(w, r, http.StatusUnprocessableEntity,
+			"Essa companhia aérea exige o sobrenome do passageiro para consultar o bilhete")
+
+	case errors.Is(err, issuancesvc.ErrPurchaseNumberRequired):
+		utils.SendError(w, r, http.StatusUnprocessableEntity,
+			"Essa companhia aérea exige o número da compra para consultar o bilhete")
 
 	case errors.Is(err, traveos.ErrAirlineNotFound):
 		utils.SendError(w, r, http.StatusUnprocessableEntity,
