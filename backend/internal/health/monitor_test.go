@@ -101,13 +101,17 @@ func TestMonitorNotifiesWhenOnlyTheDetailChanged(t *testing.T) {
 		return "disconnected", nil
 	})
 
-	waitFor(t, func() bool { return monitor.Get().Bot.Detail == "disconnected" })
+	// Wait on the notification, not on the snapshot: record publishes the new
+	// detail while still holding the lock and calls notify after releasing it,
+	// so a wait on the detail alone can read the counter in the gap between the
+	// two and see one notification that is about to become two.
+	waitFor(t, func() bool { return notifications.Load() == 2 })
 
+	if got := monitor.Get().Bot.Detail; got != "disconnected" {
+		t.Errorf("bot detail = %q, want the session state from the second probe", got)
+	}
 	if monitor.Get().Bot.State != StateUp {
 		t.Error("the bot process answered, so it is up regardless of the session state")
-	}
-	if got := notifications.Load(); got != 2 {
-		t.Errorf("expected 2 notifications (unknown->connected, connected->disconnected), got %d", got)
 	}
 }
 

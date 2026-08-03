@@ -116,7 +116,24 @@ type PassengerTrip struct {
 	// Inbound mirrors the little plane in the card's rail, the same way
 	// Journey.Inbound mirrors the one in the journey header.
 	Inbound bool
-	Baggage string
+	Baggage []Allowance
+}
+
+// Allowance is one baggage entitlement as the ticket draws it: an icon, a
+// quantity and a label underneath saying which bag that is.
+type Allowance struct {
+	// Label identifies the entitlement. It is the weight when the airline gave
+	// one ("10kg"), because a weight is the most specific thing that can be said
+	// about a bag; when it did not, it is the kind ("Mão"/"Despachada"), which
+	// the array position knows. What it is never allowed to be is a count of
+	// pieces - the number beside it already says that, and repeating it leaves
+	// the passenger with no idea which of the two bags the row is about.
+	Label    string
+	Quantity int
+	// CarryOn picks the backpack over the suitcase. It is the vendor's own array
+	// position, not a deduction from the weight - the first entitlement of a
+	// direction is the cabin bag, and guessing from "10kg" would be a guess.
+	CarryOn bool
 }
 
 type Seat struct {
@@ -141,7 +158,11 @@ func Render(model ViewModel) (string, error) {
 // Flights and Passengers already loaded, each passenger's join rows included -
 // this package runs no queries, so that the caller controls exactly one round
 // trip to the database and the template can never trigger a lazy load mid-render.
-func FromIssuance(issuance data.Issuance, seats map[string][]data.IssuancePassengerFlight) ViewModel {
+func FromIssuance(
+	issuance data.Issuance,
+	seats map[string][]data.IssuancePassengerFlight,
+	baggage map[string][]data.IssuancePassengerBaggage,
+) ViewModel {
 	model := ViewModel{
 		Locator: issuance.ProgramLocator,
 		Brand:   defaultBrand,
@@ -166,7 +187,7 @@ func FromIssuance(issuance data.Issuance, seats map[string][]data.IssuancePassen
 
 	outbound, inbound := splitByDirection(issuance.Flights)
 	model.Journeys = buildJourneys(outbound, inbound)
-	model.Passengers = buildPassengers(issuance.Passengers, outbound, inbound, seats)
+	model.Passengers = buildPassengers(issuance.Passengers, outbound, inbound, seats, baggage)
 	model.PageHeightMM = pageHeightMM(model)
 
 	return model
@@ -333,20 +354,23 @@ func buildPassengers(
 	passengers []data.IssuancePassenger,
 	outbound, inbound []data.IssuanceFlight,
 	seats map[string][]data.IssuancePassengerFlight,
+	baggage map[string][]data.IssuancePassengerBaggage,
 ) []Passenger {
 	built := make([]Passenger, 0, len(passengers))
 
 	for _, passenger := range passengers {
 		byFlight := indexByFlight(seats[passenger.ID])
+		byDirection := indexByDirection(baggage[passenger.ID])
 
 		person := Passenger{Name: strings.TrimSpace(passenger.FirstName + " " + passenger.LastName)}
 		for _, spec := range []struct {
-			label   string
-			legs    []data.IssuanceFlight
-			inbound bool
+			label     string
+			direction string
+			legs      []data.IssuanceFlight
+			inbound   bool
 		}{
-			{"Ida", outbound, false},
-			{"Volta", inbound, true},
+			{"Ida", "outbound", outbound, false},
+			{"Volta", "inbound", inbound, true},
 		} {
 			if len(spec.legs) == 0 {
 				continue
@@ -355,7 +379,7 @@ func buildPassengers(
 				Label:   spec.label,
 				Seats:   buildSeats(spec.legs, byFlight),
 				Inbound: spec.inbound,
-				Baggage: baggageLabel(spec.legs, byFlight),
+				Baggage: buildAllowances(byDirection[spec.direction]),
 			})
 		}
 		built = append(built, person)
@@ -384,18 +408,61 @@ func buildSeats(legs []data.IssuanceFlight, byFlight map[string]data.IssuancePas
 	return built
 }
 
-// baggageLabel is the entitlement for one direction. It is stored per leg but is
-// not per leg in the source - Traveos reports baggage as an entitlement for the
-// whole direction, so every leg of a direction carries the same number and
-// showing it once is what matches the booking.
-func baggageLabel(legs []data.IssuanceFlight, byFlight map[string]data.IssuancePassengerFlight) string {
-	for _, leg := range legs {
-		row, ok := byFlight[leg.ID]
-		if ok && row.BaggageQty != nil {
-			return pluralize(*row.BaggageQty, "bagagem", "bagagens")
+func indexByDirection(rows []data.IssuancePassengerBaggage) map[string][]data.IssuancePassengerBaggage {
+	byDirection := make(map[string][]data.IssuancePassengerBaggage, 2)
+	for _, row := range rows {
+		byDirection[row.Direction] = append(byDirection[row.Direction], row)
+	}
+	// The rows are written in array order but nothing in the schema promises the
+	// read comes back that way, and the order is what picks the icons.
+	for direction := range byDirection {
+		sortByPosition(byDirection[direction])
+	}
+	return byDirection
+}
+
+func sortByPosition(rows []data.IssuancePassengerBaggage) {
+	for i := 1; i < len(rows); i++ {
+		for j := i; j > 0 && rows[j].Position < rows[j-1].Position; j-- {
+			rows[j], rows[j-1] = rows[j-1], rows[j]
 		}
 	}
-	return pluralize(0, "bagagem", "bagagens")
+}
+
+// buildAllowances turns one direction's entitlements into the cards the ticket
+// draws. A quantity of zero is kept on purpose: "23kg: 0" says the airline
+// offers checked baggage and this passenger did not buy any, which is what the
+// operator is looking for. Dropping it would read as "this fare has no checked
+// bag at all".
+//
+// A passenger with no baggage rows at all - an airline that reported none, or an
+// issuance synced before this table existed - falls back to a single "0
+// bagagens", which is the label the ticket has always shown. That case is the
+// one place a count is the right label: there is no entitlement to name.
+func buildAllowances(rows []data.IssuancePassengerBaggage) []Allowance {
+	if len(rows) == 0 {
+		return []Allowance{{Label: pluralize(0, "bagagem", "bagagens"), CarryOn: true}}
+	}
+
+	built := make([]Allowance, 0, len(rows))
+	for _, row := range rows {
+		allowance := Allowance{Quantity: row.Quantity, CarryOn: row.Position == 0}
+		if row.Weight != nil {
+			allowance.Label = strings.TrimSpace(*row.Weight)
+		}
+		if allowance.Label == "" {
+			// GOL sends `[1, 0]` - two counts and no weights at all. The kind of
+			// bag is still known, because it is the array position, and naming it
+			// is the whole point of the line: "1 bagagem" under a backpack icon
+			// says nothing the number above it did not already say.
+			allowance.Label = "Despachada"
+			if allowance.CarryOn {
+				allowance.Label = "Mão"
+			}
+		}
+		built = append(built, allowance)
+	}
+	return built
 }
 
 // logoFor returns the airline's inline SVG, or nothing when we have no artwork

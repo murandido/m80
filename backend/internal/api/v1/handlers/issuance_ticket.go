@@ -89,7 +89,7 @@ func (h *IssuanceHandler) GetIssuanceTicketPDF(w http.ResponseWriter, r *http.Re
 func (h *IssuanceHandler) renderTicket(w http.ResponseWriter, r *http.Request) (document, locator string, ok bool) {
 	id := chi.URLParam(r, "id")
 
-	issuance, seats, err := loadIssuanceForTicket(h.DB, id)
+	issuance, seats, baggage, err := loadIssuanceForTicket(h.DB, id)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			utils.SendError(w, r, http.StatusNotFound, "Issuance not found")
@@ -109,7 +109,7 @@ func (h *IssuanceHandler) renderTicket(w http.ResponseWriter, r *http.Request) (
 		return "", "", false
 	}
 
-	document, err = ticket.Render(ticket.FromIssuance(issuance, seats))
+	document, err = ticket.Render(ticket.FromIssuance(issuance, seats, baggage))
 	if err != nil {
 		slog.Error("failed to render the ticket", "issuance_id", id, "err", err)
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to render ticket")
@@ -123,15 +123,20 @@ func (h *IssuanceHandler) renderTicket(w http.ResponseWriter, r *http.Request) (
 	return document, locator, true
 }
 
-// loadIssuanceForTicket fetches everything the ticket draws in two queries: the
-// issuance with its airline, flights (both directions, with airport names) and
-// passengers, then the seat/baggage join rows for those passengers.
+// loadIssuanceForTicket fetches everything the ticket draws in three queries:
+// the issuance with its airline, flights (both directions, with airport names)
+// and passengers, then the seat rows and the baggage rows for those passengers.
 //
-// The join rows are fetched separately and handed to the ticket package as a
-// map rather than preloaded through the passengers, because GORM would emit one
-// query per passenger for a nested has-many - four passengers on a round trip is
-// then nine queries for one page.
-func loadIssuanceForTicket(db *gorm.DB, id string) (data.Issuance, map[string][]data.IssuancePassengerFlight, error) {
+// The child rows are fetched separately and handed to the ticket package as
+// maps rather than preloaded through the passengers, because GORM would emit
+// one query per passenger for a nested has-many - four passengers on a round
+// trip is then nine queries for one page.
+func loadIssuanceForTicket(db *gorm.DB, id string) (
+	data.Issuance,
+	map[string][]data.IssuancePassengerFlight,
+	map[string][]data.IssuancePassengerBaggage,
+	error,
+) {
 	var issuance data.Issuance
 
 	err := db.
@@ -146,7 +151,7 @@ func loadIssuanceForTicket(db *gorm.DB, id string) (data.Issuance, map[string][]
 		}).
 		First(&issuance, "id = ?", id).Error
 	if err != nil {
-		return issuance, nil, err
+		return issuance, nil, nil, err
 	}
 
 	passengerIDs := make([]string, 0, len(issuance.Passengers))
@@ -155,16 +160,27 @@ func loadIssuanceForTicket(db *gorm.DB, id string) (data.Issuance, map[string][]
 	}
 
 	seats := make(map[string][]data.IssuancePassengerFlight, len(passengerIDs))
+	baggage := make(map[string][]data.IssuancePassengerBaggage, len(passengerIDs))
 	if len(passengerIDs) == 0 {
-		return issuance, seats, nil
+		return issuance, seats, baggage, nil
 	}
 
 	var rows []data.IssuancePassengerFlight
 	if err := db.Where("passenger_id IN ?", passengerIDs).Find(&rows).Error; err != nil {
-		return issuance, nil, err
+		return issuance, nil, nil, err
 	}
 	for _, row := range rows {
 		seats[row.PassengerID] = append(seats[row.PassengerID], row)
 	}
-	return issuance, seats, nil
+
+	var allowances []data.IssuancePassengerBaggage
+	if err := db.Where("passenger_id IN ?", passengerIDs).
+		Order("direction asc, position asc").
+		Find(&allowances).Error; err != nil {
+		return issuance, nil, nil, err
+	}
+	for _, row := range allowances {
+		baggage[row.PassengerID] = append(baggage[row.PassengerID], row)
+	}
+	return issuance, seats, baggage, nil
 }

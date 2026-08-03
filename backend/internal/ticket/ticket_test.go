@@ -12,7 +12,6 @@ import (
 // and actually mean something in `go test ./...`.
 
 func strptr(value string) *string { return &value }
-func intptr(value int) *int       { return &value }
 
 func departure(day, hour int) time.Time {
 	return time.Date(2026, 8, day, hour, 24, 0, 0, time.UTC)
@@ -21,7 +20,11 @@ func departure(day, hour int) time.Time {
 // roundTrip is a two-leg outbound plus a one-leg inbound, with one passenger who
 // has a seat on the first leg and none on the second - which is the mix that
 // exercises every conditional in the template at once.
-func roundTrip() (data.Issuance, map[string][]data.IssuancePassengerFlight) {
+func roundTrip() (
+	data.Issuance,
+	map[string][]data.IssuancePassengerFlight,
+	map[string][]data.IssuancePassengerBaggage,
+) {
 	arrival := departure(20, 8)
 	colour := "#ff5e00"
 
@@ -60,12 +63,23 @@ func roundTrip() (data.Issuance, map[string][]data.IssuancePassengerFlight) {
 
 	seats := map[string][]data.IssuancePassengerFlight{
 		"pax-1": {
-			{PassengerID: "pax-1", FlightID: "leg-1", Seat: strptr("12A"), BaggageQty: intptr(2)},
-			{PassengerID: "pax-1", FlightID: "leg-2", BaggageQty: intptr(2)},
-			{PassengerID: "pax-1", FlightID: "leg-3", Seat: strptr("3C"), BaggageQty: intptr(1)},
+			{PassengerID: "pax-1", FlightID: "leg-1", Seat: strptr("12A")},
+			{PassengerID: "pax-1", FlightID: "leg-2"},
+			{PassengerID: "pax-1", FlightID: "leg-3", Seat: strptr("3C")},
 		},
 	}
-	return issuance, seats
+
+	// The shape AVIANCA and TAP send: two entitlement classes for the whole
+	// direction, the second one unbought. The return has only the cabin bag,
+	// which is what a one-sided fare looks like.
+	baggage := map[string][]data.IssuancePassengerBaggage{
+		"pax-1": {
+			{PassengerID: "pax-1", Direction: "outbound", Position: 0, Weight: strptr("10kg"), Quantity: 1},
+			{PassengerID: "pax-1", Direction: "outbound", Position: 1, Weight: strptr("23kg"), Quantity: 0},
+			{PassengerID: "pax-1", Direction: "inbound", Position: 0, Weight: strptr("10kg"), Quantity: 1},
+		},
+	}
+	return issuance, seats, baggage
 }
 
 func TestFromIssuanceSplitsAndOrdersTheJourneys(t *testing.T) {
@@ -120,9 +134,9 @@ func TestFromIssuancePrefersTheAirlineLocator(t *testing.T) {
 		t.Errorf("locator = %q, want the airline PNR ABC123", model.Locator)
 	}
 
-	issuance, seats := roundTrip()
+	issuance, seats, baggage := roundTrip()
 	issuance.AirlineLocator = nil
-	if got := FromIssuance(issuance, seats).Locator; got != "PLOCAT" {
+	if got := FromIssuance(issuance, seats, baggage).Locator; got != "PLOCAT" {
 		t.Errorf("locator = %q, want the program locator as fallback", got)
 	}
 }
@@ -163,25 +177,93 @@ func TestFromIssuanceBuildsOneSeatPerLegAndMarksTheMissingOnes(t *testing.T) {
 	}
 }
 
-func TestFromIssuanceReportsBaggageOncePerDirection(t *testing.T) {
-	// Traveos reports baggage as an entitlement for the whole direction, not per
-	// leg - every leg carries the same number, so showing it per leg would tell
-	// the passenger they have twice what they booked.
+func TestFromIssuanceKeepsEachBaggageClassApart(t *testing.T) {
+	// Two entitlement classes for one direction are not one number. Summing them
+	// - which is what the old baggage_qty column could hold - threw the weights
+	// away and merged "one cabin bag" with "no checked bag" into "1".
 	model := FromIssuance(roundTrip())
 
-	if got := model.Passengers[0].Trips[0].Baggage; got != "2 bagagens" {
-		t.Errorf("outbound baggage = %q, want \"2 bagagens\"", got)
+	outbound := model.Passengers[0].Trips[0].Baggage
+	if len(outbound) != 2 {
+		t.Fatalf("outbound allowances = %d, want one per class", len(outbound))
 	}
-	if got := model.Passengers[0].Trips[1].Baggage; got != "1 bagagem" {
-		t.Errorf("inbound baggage = %q, want the singular", got)
+	if outbound[0] != (Allowance{Label: "10kg", Quantity: 1, CarryOn: true}) {
+		t.Errorf("first allowance = %+v, want the 10kg carry-on", outbound[0])
+	}
+	// Quantity zero is information - the airline offers it and the passenger did
+	// not buy it - so it is drawn, not dropped.
+	if outbound[1] != (Allowance{Label: "23kg", Quantity: 0}) {
+		t.Errorf("second allowance = %+v, want the unbought 23kg", outbound[1])
+	}
+
+	if inbound := model.Passengers[0].Trips[1].Baggage; len(inbound) != 1 {
+		t.Errorf("inbound allowances = %d, want the one class that direction has", len(inbound))
+	}
+}
+
+func TestFromIssuanceMarksOnlyTheFirstAllowanceAsCarryOn(t *testing.T) {
+	// The icon comes from the vendor's array position, never from the weight.
+	// A fare whose first class is heavy is still the cabin bag of that fare.
+	issuance, seats, baggage := roundTrip()
+	baggage["pax-1"] = []data.IssuancePassengerBaggage{
+		{PassengerID: "pax-1", Direction: "outbound", Position: 1, Weight: strptr("23kg"), Quantity: 2},
+		{PassengerID: "pax-1", Direction: "outbound", Position: 0, Weight: strptr("32kg"), Quantity: 1},
+	}
+
+	outbound := FromIssuance(issuance, seats, baggage).Passengers[0].Trips[0].Baggage
+	if len(outbound) != 2 {
+		t.Fatalf("allowances = %d, want 2", len(outbound))
+	}
+	// Read back in position order even though they arrived reversed.
+	if !outbound[0].CarryOn || outbound[0].Label != "32kg" {
+		t.Errorf("first allowance = %+v, want position 0 as the carry-on", outbound[0])
+	}
+	if outbound[1].CarryOn {
+		t.Errorf("second allowance = %+v, want it drawn as checked", outbound[1])
+	}
+}
+
+// GOL sends two bare counts and no weight at all. "1 bagagem" under a backpack
+// icon repeats the number beside it and names nothing, so the label falls back
+// to the kind of bag - which the array position knows.
+func TestFromIssuanceNamesTheKindWhenTheAirlineSentNoWeight(t *testing.T) {
+	issuance, seats, baggage := roundTrip()
+	baggage["pax-1"] = []data.IssuancePassengerBaggage{
+		{PassengerID: "pax-1", Direction: "outbound", Position: 0, Quantity: 1},
+		{PassengerID: "pax-1", Direction: "outbound", Position: 1, Quantity: 0},
+	}
+
+	outbound := FromIssuance(issuance, seats, baggage).Passengers[0].Trips[0].Baggage
+	if len(outbound) != 2 {
+		t.Fatalf("allowances = %d, want 2", len(outbound))
+	}
+	if outbound[0].Label != "Mão" {
+		t.Errorf("first label = %q, want the carry-on named", outbound[0].Label)
+	}
+	if outbound[1].Label != "Despachada" {
+		t.Errorf("second label = %q, want the checked bag named", outbound[1].Label)
+	}
+}
+
+func TestFromIssuanceFallsBackWhenTheAirlineReportedNoBaggage(t *testing.T) {
+	// Issuances synced before this table existed have no rows at all. An empty
+	// baggage column reads as a rendering bug, so they get the label the ticket
+	// has always shown.
+	issuance, seats, _ := roundTrip()
+
+	trips := FromIssuance(issuance, seats, nil).Passengers[0].Trips
+	for _, trip := range trips {
+		if len(trip.Baggage) != 1 || trip.Baggage[0].Quantity != 0 || trip.Baggage[0].Label != "0 bagagens" {
+			t.Errorf("%s baggage = %+v, want a single empty allowance", trip.Label, trip.Baggage)
+		}
 	}
 }
 
 func TestFromIssuanceOmitsTheReturnOnAOneWayTicket(t *testing.T) {
-	issuance, seats := roundTrip()
+	issuance, seats, baggage := roundTrip()
 	issuance.Flights = issuance.Flights[:2] // both outbound legs, no inbound
 
-	model := FromIssuance(issuance, seats)
+	model := FromIssuance(issuance, seats, baggage)
 	if len(model.Journeys) != 1 {
 		t.Fatalf("journeys = %d, want 1", len(model.Journeys))
 	}
@@ -219,18 +301,18 @@ func TestContrastColour(t *testing.T) {
 }
 
 func TestRenderProducesTheDocumentAndEscapesOperatorText(t *testing.T) {
-	issuance, seats := roundTrip()
+	issuance, seats, baggage := roundTrip()
 	// Passenger names are typed by an operator, so the template has to escape
 	// them. html/template does it by construction; this pins that the field is
 	// not accidentally passed through as template.HTML one day.
 	issuance.Passengers[0].LastName = `PRADO<script>alert(1)</script>`
 
-	document, err := Render(FromIssuance(issuance, seats))
+	document, err := Render(FromIssuance(issuance, seats, baggage))
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
 
-	for _, want := range []string{"ABC123", "IDA", "VOLTA", "Confins (CNF)", "12A", "2 bagagens"} {
+	for _, want := range []string{"ABC123", "IDA", "VOLTA", "Confins (CNF)", "12A", "10kg", "23kg"} {
 		if !strings.Contains(document, want) {
 			t.Errorf("the document does not mention %q", want)
 		}
@@ -257,9 +339,9 @@ func TestRenderUsesTheAirlineLogoAndFallsBackToItsName(t *testing.T) {
 		t.Error("the GOL logo was not embedded")
 	}
 
-	issuance, seats := roundTrip()
+	issuance, seats, baggage := roundTrip()
 	issuance.Airline.Code = "XX" // an airline we have no artwork for
-	document, err = Render(FromIssuance(issuance, seats))
+	document, err = Render(FromIssuance(issuance, seats, baggage))
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
@@ -271,10 +353,10 @@ func TestRenderUsesTheAirlineLogoAndFallsBackToItsName(t *testing.T) {
 func TestFromIssuanceSurvivesAnIssuanceWithNoAirlineLoaded(t *testing.T) {
 	// Defensive rather than reachable through the handler, which preloads it.
 	// The alternative is a nil dereference halfway through a rendered page.
-	issuance, seats := roundTrip()
+	issuance, seats, baggage := roundTrip()
 	issuance.Airline = nil
 
-	model := FromIssuance(issuance, seats)
+	model := FromIssuance(issuance, seats, baggage)
 	if model.Brand != defaultBrand {
 		t.Errorf("brand = %q, want the default %q", model.Brand, defaultBrand)
 	}

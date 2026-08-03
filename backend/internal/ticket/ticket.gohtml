@@ -40,6 +40,18 @@ cannot read currentColor here (see rule 4 above).
 {{- define "personIcon" -}}
 <svg class="personIcon" viewBox="0 0 24 24"><path fill="{{ . }}" d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm0 2c-4 0-8 2-8 4.5V21h16v-2.5c0-2.5-4-4.5-8-4.5z"/></svg>
 {{- end -}}
+{{- /*
+Two baggage glyphs, not one drawn twice: the passenger reads the difference
+between the cabin bag and the checked bag from the shape, before reading the
+weight under it. Which one a card gets is the vendor's array position, never a
+guess from the weight.
+*/ -}}
+{{- define "backpackIcon" -}}
+<svg class="baggageIcon" viewBox="0 0 24 24"><path fill="{{ . }}" d="M9 2h6a1 1 0 0 1 1 1v1.6A6 6 0 0 1 20 10v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V10a6 6 0 0 1 4-5.4V3a1 1 0 0 1 1-1zm1 2.1c.3 0 .7-.1 1-.1h2c.3 0 .7 0 1 .1V4h-4v.1zM8 11v3h8v-3H8zm1.5 5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1 0-1z"/></svg>
+{{- end -}}
+{{- define "suitcaseIcon" -}}
+<svg class="baggageIcon" viewBox="0 0 24 24"><path fill="{{ . }}" d="M9 2h6a2 2 0 0 1 2 2v2h1a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V9a3 3 0 0 1 3-3h1V4a2 2 0 0 1 2-2zm0 4h6V4H9v2zM8 9v10h1.5V9H8zm6.5 0v10H16V9h-1.5z"/></svg>
+{{- end -}}
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -232,12 +244,18 @@ cannot read currentColor here (see rule 4 above).
     border-radius: 12px;
     vertical-align: top;
   }
-  .tripInner { display: table; width: 100%; }
+  /* table-layout: fixed so the declared column widths are honoured. With auto
+     layout the browser reallocates by content and hands the baggage column more
+     than it asked for, squeezing the seat chips onto a second line. */
+  .tripInner { display: table; width: 100%; table-layout: fixed; }
   .tripCellRail {
     display: table-cell;
-    width: 34px;
+    /* 40px of text with 4px of breathing room, not 34 with 7: under
+       table-layout: fixed the column is exactly what it declares, and "Volta"
+       does not fit in 34. */
+    width: 40px;
     background: var(--rail);
-    padding: 8px 7px;
+    padding: 8px 4px;
     border-right: 1px solid var(--neutral-200);
     font-size: 11px;
     font-weight: 500;
@@ -246,13 +264,15 @@ cannot read currentColor here (see rule 4 above).
   }
   .railPlane { display: block; width: 14px; height: 14px; margin: 4px auto 0; }
   .tripCellSeats { display: table-cell; padding: 8px 14px; vertical-align: middle; }
-  /* A percentage, not the fixed 190px it used to be: on a round trip each card
-     is only half the page wide, and a fixed column that fits one card overflows
-     two. */
+  /* 130px, sized to the widest thing that can land here: two entitlements whose
+     labels are words ("Mão", "Despachada") rather than short weights. A
+     percentage cannot do this job - it is a share of a card that is full width
+     on a one-way ticket and half width on a round trip, so the share that fits
+     one wraps the other. */
   .tripCellBaggage {
     display: table-cell;
-    width: 42%;
-    padding: 8px 14px;
+    width: 130px;
+    padding: 8px 10px;
     border-left: 1px solid var(--neutral-300);
     vertical-align: middle;
   }
@@ -263,7 +283,32 @@ cannot read currentColor here (see rule 4 above).
   .trechoLabel { display: block; font-size: 10px; font-weight: 500; color: var(--neutral-500); }
   .seatValue { display: block; font-size: 13px; font-weight: 600; color: var(--neutral-600); }
   .seatValue.placeholder { color: var(--seat-placeholder); font-weight: 400; }
-  .baggageValue { font-size: 13px; font-weight: 600; color: var(--neutral-600); }
+  /* One entitlement per box, laid out side by side. The boxes are inline-block
+     rather than table cells because a direction has one or two of them and they
+     should sit next to each other at their own width, not split the column. */
+  .baggageItem {
+    display: inline-block;
+    padding: 0 6px 0 0;
+    margin-right: 4px;
+    /* The label is a weight ("23kg") on most airlines and a word ("Despachada")
+       on the ones that send no weight. Without this the longer word wraps and
+       the two entitlements stack instead of sitting side by side. */
+    white-space: nowrap;
+    border-right: 1px solid var(--neutral-300);
+    text-align: center;
+    vertical-align: top;
+  }
+  .baggageItem:last-child { border-right: 0; margin-right: 0; padding-right: 0; }
+  .baggageIcon { display: inline-block; width: 15px; height: 15px; vertical-align: middle; }
+  .baggageCount {
+    display: inline-block;
+    margin-left: 4px;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--neutral-600);
+    vertical-align: middle;
+  }
+  .baggageWeight { display: block; font-size: 9px; color: var(--neutral-500); }
 
   /* ----------------------------------------------------------- informações */
 
@@ -355,8 +400,14 @@ cannot read currentColor here (see rule 4 above).
             {{ end }}
           </div>
           <div class="tripCellBaggage">
-            <div class="baggageLabel">Bagagem</div>
-            <span class="baggageValue">{{ .Baggage }}</span>
+            <div class="baggageLabel">Bagagens</div>
+            {{ range .Baggage }}
+            <span class="baggageItem">
+              {{ if .CarryOn }}{{ template "backpackIcon" $brand }}{{ else }}{{ template "suitcaseIcon" $brand }}{{ end }}
+              <span class="baggageCount">{{ .Quantity }}</span>
+              <span class="baggageWeight">{{ .Label }}</span>
+            </span>
+            {{ end }}
           </div>
         </div>
       </div>

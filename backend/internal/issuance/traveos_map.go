@@ -63,9 +63,11 @@ func applyTraveosData(
 	return tx.Save(issuance).Error
 }
 
-// deleteExistingItinerary clears the three itinerary tables for this issuance,
+// deleteExistingItinerary clears the itinerary tables for this issuance,
 // children first: issuance_passenger_flights has no cascade from either parent,
 // so deleting passengers before their join rows would leave orphans behind.
+// issuance_passenger_baggage is not listed because it does cascade from the
+// passenger - it has a single parent, so the database can clean it up itself.
 func deleteExistingItinerary(tx *gorm.DB, issuanceID string) error {
 	if err := tx.Exec(`
 		DELETE FROM issuance_passenger_flights
@@ -225,7 +227,7 @@ func insertPassengers(
 	return nil
 }
 
-// insertPassengerFlights writes the per-passenger, per-leg seat and baggage row.
+// insertPassengerFlights writes the per-passenger seat and baggage rows.
 //
 // The two sources are shaped differently, and this is the trap the reverse
 // engineering write-up originally got wrong:
@@ -237,8 +239,11 @@ func insertPassengers(
 //     sends two objects (10kg, 23kg) for one leg. Indexing it by leg reads the
 //     wrong entitlement on a short itinerary and runs off the end on a long one.
 //
-// So the seat is taken by index and the baggage is the summed entitlement for
-// that direction, repeated across that direction's legs.
+// So they go to different tables. The seat is taken by index and written per
+// leg; the baggage is written once per direction, one row per entitlement, in
+// the vendor's own array order. It used to be summed into a single integer per
+// leg, which fit the old column but destroyed exactly what the ticket needs to
+// show: two classes with different weights are not one number.
 func insertPassengerFlights(
 	tx *gorm.DB,
 	passenger data.IssuancePassenger,
@@ -246,20 +251,18 @@ func insertPassengerFlights(
 	flights insertedFlights,
 ) error {
 	for _, spec := range []struct {
-		legs    []data.IssuanceFlight
-		seats   []*string
-		baggage []traveos.BaggageAllowance
+		direction string
+		legs      []data.IssuanceFlight
+		seats     []*string
+		baggage   []traveos.BaggageAllowance
 	}{
-		{flights.outbound, source.Seats.Outbound, source.Baggage.Outbound},
-		{flights.inbound, source.Seats.Inbound, source.Baggage.Inbound},
+		{"outbound", flights.outbound, source.Seats.Outbound, source.Baggage.Outbound},
+		{"inbound", flights.inbound, source.Seats.Inbound, source.Baggage.Inbound},
 	} {
-		quantity := totalBaggage(spec.baggage)
-
 		for index, leg := range spec.legs {
 			link := data.IssuancePassengerFlight{
 				PassengerID: passenger.ID,
 				FlightID:    leg.ID,
-				BaggageQty:  &quantity,
 			}
 			if index < len(spec.seats) && spec.seats[index] != nil {
 				if seat := strings.TrimSpace(*spec.seats[index]); seat != "" {
@@ -270,18 +273,28 @@ func insertPassengerFlights(
 				return err
 			}
 		}
+
+		// A direction with no legs has no baggage either - writing rows for it
+		// would put a return entitlement on a one-way ticket.
+		if len(spec.legs) == 0 {
+			continue
+		}
+		for position, allowance := range spec.baggage {
+			row := data.IssuancePassengerBaggage{
+				PassengerID: passenger.ID,
+				Direction:   spec.direction,
+				Position:    position,
+				Quantity:    allowance.Quantity,
+			}
+			if weight := strings.TrimSpace(allowance.Weight); weight != "" {
+				row.Weight = &weight
+			}
+			if err := tx.Create(&row).Error; err != nil {
+				return err
+			}
+		}
 	}
 	return nil
-}
-
-// totalBaggage sums the entitlements for one direction. See
-// insertPassengerFlights for why this is a sum and not an index.
-func totalBaggage(allowances []traveos.BaggageAllowance) int {
-	total := 0
-	for _, allowance := range allowances {
-		total += allowance.Quantity
-	}
-	return total
 }
 
 // applyIssuanceFields fills in the columns the operator's own input never

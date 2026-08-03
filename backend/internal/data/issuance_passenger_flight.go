@@ -12,7 +12,6 @@ type IssuancePassengerFlight struct {
 	FlightID    string             `gorm:"column:flight_id;type:uuid;not null" json:"flight_id"`
 	Flight      *IssuanceFlight    `gorm:"foreignKey:FlightID;references:ID" json:"flight,omitempty"`
 	Seat        *string            `json:"seat"`
-	BaggageQty  *int               `gorm:"column:baggage_qty;default:0" json:"baggage_qty"`
 }
 
 func (ipf *IssuancePassengerFlight) BeforeCreate(tx *gorm.DB) error {

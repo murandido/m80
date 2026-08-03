@@ -36,7 +36,7 @@ func (b *Bot) sendTicketPDF(ctx context.Context, evt *events.Message, issuanceID
 		return
 	}
 
-	issuance, seats, err := loadIssuanceForTicket(b.DB.WithContext(ctx), issuanceID)
+	issuance, seats, baggage, err := loadIssuanceForTicket(b.DB.WithContext(ctx), issuanceID)
 	if err != nil {
 		b.Logger.Errorf("pdf: failed to load issuance %s for the ticket: %v", issuanceID, err)
 		return
@@ -49,7 +49,7 @@ func (b *Bot) sendTicketPDF(ctx context.Context, evt *events.Message, issuanceID
 		return
 	}
 
-	document, err := ticket.Render(ticket.FromIssuance(issuance, seats))
+	document, err := ticket.Render(ticket.FromIssuance(issuance, seats, baggage))
 	if err != nil {
 		b.Logger.Errorf("pdf: failed to render the ticket for %s: %v", issuance.ProgramLocator, err)
 		return
@@ -79,12 +79,17 @@ func (b *Bot) sendTicketPDF(ctx context.Context, evt *events.Message, issuanceID
 	b.Logger.Infof("pdf: sent the ticket for %s to %s", locator, chatJID)
 }
 
-// loadIssuanceForTicket fetches everything the ticket draws, in two queries. It
-// is the bot's own copy of the handler's loader rather than a shared helper:
+// loadIssuanceForTicket fetches everything the ticket draws, in three queries.
+// It is the bot's own copy of the handler's loader rather than a shared helper:
 // internal/api is the HTTP layer and internal/bot must not import it (see the
 // layering rule in internal/bot/CLAUDE.md), and the alternative - a third package
 // holding six lines of Preload - buys less than it costs.
-func loadIssuanceForTicket(db *gorm.DB, id string) (data.Issuance, map[string][]data.IssuancePassengerFlight, error) {
+func loadIssuanceForTicket(db *gorm.DB, id string) (
+	data.Issuance,
+	map[string][]data.IssuancePassengerFlight,
+	map[string][]data.IssuancePassengerBaggage,
+	error,
+) {
 	var issuance data.Issuance
 
 	err := db.
@@ -99,7 +104,7 @@ func loadIssuanceForTicket(db *gorm.DB, id string) (data.Issuance, map[string][]
 		}).
 		First(&issuance, "id = ?", id).Error
 	if err != nil {
-		return issuance, nil, err
+		return issuance, nil, nil, err
 	}
 
 	passengerIDs := make([]string, 0, len(issuance.Passengers))
@@ -108,16 +113,27 @@ func loadIssuanceForTicket(db *gorm.DB, id string) (data.Issuance, map[string][]
 	}
 
 	seats := make(map[string][]data.IssuancePassengerFlight, len(passengerIDs))
+	baggage := make(map[string][]data.IssuancePassengerBaggage, len(passengerIDs))
 	if len(passengerIDs) == 0 {
-		return issuance, seats, nil
+		return issuance, seats, baggage, nil
 	}
 
 	var rows []data.IssuancePassengerFlight
 	if err := db.Where("passenger_id IN ?", passengerIDs).Find(&rows).Error; err != nil {
-		return issuance, nil, err
+		return issuance, nil, nil, err
 	}
 	for _, row := range rows {
 		seats[row.PassengerID] = append(seats[row.PassengerID], row)
 	}
-	return issuance, seats, nil
+
+	var allowances []data.IssuancePassengerBaggage
+	if err := db.Where("passenger_id IN ?", passengerIDs).
+		Order("direction asc, position asc").
+		Find(&allowances).Error; err != nil {
+		return issuance, nil, nil, err
+	}
+	for _, row := range allowances {
+		baggage[row.PassengerID] = append(baggage[row.PassengerID], row)
+	}
+	return issuance, seats, baggage, nil
 }

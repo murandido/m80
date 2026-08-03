@@ -2,14 +2,17 @@ package issuance
 
 import (
 	"testing"
+	"time"
 
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/traveos"
+	"gorm.io/gorm"
 )
 
-// These exercise the pure mapping decisions, so they run without Postgres -
-// unlike the rest of this package's tests. The values are synthetic; the shapes
-// are the ones production returns.
+// The pure mapping decisions here run without Postgres - unlike the rest of this
+// package's tests. What writes rows (the seat/baggage split) needs the database,
+// and takes the same skip-if-unreachable path as create_test.go. The values are
+// synthetic; the shapes are the ones production returns.
 
 func TestCleanGivenNameStripsATrailingCourtesyTitle(t *testing.T) {
 	tests := []struct {
@@ -63,36 +66,120 @@ func TestCleanGivenNameNeverTouchesTheSurname(t *testing.T) {
 	}
 }
 
-func TestTotalBaggageSumsTheEntitlementsRatherThanIndexingByLeg(t *testing.T) {
-	// The trap: bagagens entries are entitlement classes, not legs. GOL sends
-	// [1, 0] for a single-leg ticket, so bagagens[legIndex] would read 1 for leg 1
-	// and run off the end on a two-leg itinerary.
-	tests := []struct {
-		name  string
-		input []traveos.BaggageAllowance
-		want  int
-	}{
-		{"gol sends counts", []traveos.BaggageAllowance{{Quantity: 1}, {Quantity: 0}}, 1},
-		{
-			"avianca sends weighted allowances with no pieces",
-			[]traveos.BaggageAllowance{{Quantity: 0, Weight: "10kg"}, {Quantity: 0, Weight: "23kg"}},
-			0,
-		},
-		{
-			"two checked pieces plus a carry-on",
-			[]traveos.BaggageAllowance{{Quantity: 2}, {Quantity: 1}},
-			3,
-		},
-		{"absent direction", nil, 0},
+// The trap this replaces: bagagens entries are entitlement classes, not legs.
+// They used to be summed into one integer per leg, which fit the old column but
+// merged two different classes - "one 10kg cabin bag" and "no 23kg checked bag"
+// - into the single number "1". One row per class is what lets the ticket draw
+// them apart.
+func TestInsertPassengerFlightsKeepsOneRowPerBaggageClass(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		passenger, flights := seedItinerary(t, tx)
+
+		seat := "12A"
+		source := traveos.Passenger{}
+		source.Seats.Outbound = []*string{&seat, nil}
+		source.Baggage.Outbound = []traveos.BaggageAllowance{
+			{Quantity: 1, Weight: "10kg"},
+			{Quantity: 0, Weight: "23kg"},
+		}
+		source.Baggage.Inbound = []traveos.BaggageAllowance{{Quantity: 1, Weight: "10kg"}}
+
+		if err := insertPassengerFlights(tx, passenger, source, flights); err != nil {
+			t.Fatalf("insertPassengerFlights: %v", err)
+		}
+
+		var rows []data.IssuancePassengerBaggage
+		if err := tx.Where("passenger_id = ?", passenger.ID).
+			Order("direction asc, position asc").Find(&rows).Error; err != nil {
+			t.Fatalf("reading the baggage back: %v", err)
+		}
+
+		// Only the outbound: the itinerary is one-way, and a direction with no
+		// legs must not get a return entitlement.
+		if len(rows) != 2 {
+			t.Fatalf("baggage rows = %d, want one per outbound class and nothing for the absent return", len(rows))
+		}
+		if rows[0].Position != 0 || rows[0].Quantity != 1 || rows[0].Weight == nil || *rows[0].Weight != "10kg" {
+			t.Errorf("first row = %+v, want position 0, 1 piece, 10kg", rows[0])
+		}
+		// Zero is kept: the class exists and the passenger did not buy it.
+		if rows[1].Position != 1 || rows[1].Quantity != 0 || rows[1].Weight == nil || *rows[1].Weight != "23kg" {
+			t.Errorf("second row = %+v, want position 1, 0 pieces, 23kg", rows[1])
+		}
+
+		// The seats still go per leg, which is the half of the split that was
+		// always right.
+		var seats []data.IssuancePassengerFlight
+		if err := tx.Where("passenger_id = ?", passenger.ID).Find(&seats).Error; err != nil {
+			t.Fatalf("reading the seats back: %v", err)
+		}
+		if len(seats) != len(flights.outbound) {
+			t.Errorf("seat rows = %d, want one per leg (%d)", len(seats), len(flights.outbound))
+		}
+	})
+}
+
+// GOL sends a bare count with no weight at all. That is a real shape, not
+// missing data, and it has to survive as a row with a null weight rather than
+// being dropped for having nothing to print underneath the number.
+func TestInsertPassengerFlightsStoresACountWithNoWeight(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		passenger, flights := seedItinerary(t, tx)
+
+		source := traveos.Passenger{}
+		source.Baggage.Outbound = []traveos.BaggageAllowance{{Quantity: 1}, {Quantity: 0}}
+
+		if err := insertPassengerFlights(tx, passenger, source, flights); err != nil {
+			t.Fatalf("insertPassengerFlights: %v", err)
+		}
+
+		var rows []data.IssuancePassengerBaggage
+		if err := tx.Where("passenger_id = ?", passenger.ID).Order("position asc").Find(&rows).Error; err != nil {
+			t.Fatalf("reading the baggage back: %v", err)
+		}
+		if len(rows) != 2 {
+			t.Fatalf("baggage rows = %d, want both counts kept", len(rows))
+		}
+		for _, row := range rows {
+			if row.Weight != nil {
+				t.Errorf("row at position %d has weight %q, want null", row.Position, *row.Weight)
+			}
+		}
+	})
+}
+
+// seedItinerary builds the FK chain insertPassengerFlights needs: an issuance
+// with two outbound legs and one passenger on it.
+func seedItinerary(t *testing.T, tx *gorm.DB) (data.IssuancePassenger, insertedFlights) {
+	t.Helper()
+
+	f := seedFixture(t, tx, data.Airline{})
+	issuance, err := Create(tx, f.input(), f.User.ID)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := totalBaggage(tc.input); got != tc.want {
-				t.Errorf("totalBaggage(%v) = %d, want %d", tc.input, got, tc.want)
-			}
-		})
+	var flights insertedFlights
+	for legOrder := 1; legOrder <= 2; legOrder++ {
+		leg := data.IssuanceFlight{
+			IssuanceID:  issuance.ID,
+			Direction:   "outbound",
+			LegOrder:    legOrder,
+			DepartureAt: time.Date(2026, 8, 20, 5, 0, 0, 0, time.UTC),
+		}
+		create(t, tx, &leg)
+		flights.outbound = append(flights.outbound, leg)
 	}
+
+	passenger := data.IssuancePassenger{
+		IssuanceID: issuance.ID,
+		FirstName:  "FERNANDA",
+		LastName:   "PRADO",
+		Position:   1,
+	}
+	create(t, tx, &passenger)
+
+	return passenger, flights
 }
 
 func TestDeriveTripTypeMapsTheVendorVocabulary(t *testing.T) {
