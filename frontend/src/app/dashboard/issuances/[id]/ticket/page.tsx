@@ -4,6 +4,13 @@ import { AlertTriangle, ArrowLeft, Download } from "lucide-react"
 import { env } from "@/lib/env"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
+import { TicketServicesPanel } from "@/components/issuances/ticket-services-panel"
+import {
+  getIssuanceBaggageAction,
+  getIssuanceLegsAction,
+  getIssuancePassengersAction,
+  getIssuanceSeatsAction,
+} from "@/actions/issuance-services"
 
 // The backend renders the ticket, not this page. It is the same document the PDF
 // is made from, so the preview here cannot drift from the file the passenger
@@ -39,7 +46,27 @@ async function fetchTicket(id: string): Promise<{ html: string } | { error: stri
 
 export default async function TicketPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const result = await fetchTicket(id)
+
+  // Five reads, one round trip's worth of latency: the editor needs the legs,
+  // the passengers and the current seats and baggage, and none of them depends
+  // on another.
+  const [result, legs, passengers, seats, baggage] = await Promise.all([
+    fetchTicket(id),
+    getIssuanceLegsAction(id),
+    getIssuancePassengersAction(id),
+    getIssuanceSeatsAction(id),
+    getIssuanceBaggageAction(id),
+  ])
+
+  // The editor only appears when everything it needs actually loaded. A panel
+  // opening onto empty fields would invite somebody to save a booking with no
+  // seats on it.
+  const canEdit =
+    "html" in result &&
+    "flights" in legs &&
+    "passengers" in passengers &&
+    "seats" in seats &&
+    "baggage" in baggage
 
   return (
     <div className="mx-auto flex w-full max-w-[1040px] flex-col gap-4 p-4">
@@ -51,17 +78,29 @@ export default async function TicketPage({ params }: { params: Promise<{ id: str
           </Link>
         </Button>
 
-        {"html" in result && (
-          // A plain anchor, not a fetch: the Route Handler answers with
-          // Content-Disposition: attachment, and letting the browser handle the
-          // download is what gives the file the name the backend chose.
-          <Button asChild size="sm">
-            <a href={`/api/issuances/${id}/pdf`} download>
-              <Download className="size-4" />
-              Baixar PDF
-            </a>
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          {canEdit && (
+            <TicketServicesPanel
+              issuanceID={id}
+              flights={legs.flights}
+              passengers={passengers.passengers}
+              seats={seats.seats}
+              baggage={baggage.baggage}
+            />
+          )}
+
+          {"html" in result && (
+            // A plain anchor, not a fetch: the Route Handler answers with
+            // Content-Disposition: attachment, and letting the browser handle
+            // the download is what gives the file the name the backend chose.
+            <Button asChild size="sm">
+              <a href={`/api/issuances/${id}/pdf`} download>
+                <Download className="size-4" />
+                Baixar PDF
+              </a>
+            </Button>
+          )}
+        </div>
       </div>
 
       {"error" in result ? (

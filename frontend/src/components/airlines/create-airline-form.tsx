@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation"
 import { Controller, useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
-import { Building2, Hash, Palette, Plane, Tag, X, Save } from "lucide-react"
+import { Building2, Hash, Plane, Tag, X, Save } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Field, FieldError, FieldLabel } from "@/components/ui/field"
 import {
@@ -14,6 +14,7 @@ import {
   InputGroupInput,
 } from "@/components/ui/input-group"
 import { Separator } from "@/components/ui/separator"
+import { ColorPickerField } from "@/components/shared/color-picker-field"
 import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 import { createAirlineSchema } from "@/schemas/airline"
@@ -315,29 +316,14 @@ export function CreateAirlineForm() {
                     render={({ field, fieldState }) => (
                       <>
                         <FieldLabel htmlFor="brand_color">Cor da marca</FieldLabel>
-                        <InputGroup className="bg-slate-200">
-                          <InputGroupInput
-                            {...field}
-                            id="brand_color"
-                            type="text"
-                            aria-invalid={fieldState.invalid}
-                            placeholder="#E30613"
-                            disabled={isPending}
-                          />
-                          <InputGroupAddon align="inline-end">
-                            {/* The swatch is the real feedback here - a hex code tells nobody
-                                what colour it is. */}
-                            {/^#[0-9a-fA-F]{6}$/.test(field.value.trim()) ? (
-                              <span
-                                aria-hidden
-                                className="h-4 w-4 rounded-sm border border-slate-400"
-                                style={{ backgroundColor: field.value.trim() }}
-                              />
-                            ) : (
-                              <Palette className="text-foreground h-4 w-4" />
-                            )}
-                          </InputGroupAddon>
-                        </InputGroup>
+                        {/* The same picker the loyalty programs use. A hex field
+                            alone asks somebody to know what #E30613 looks like. */}
+                        <ColorPickerField
+                          id="brand_color"
+                          value={field.value}
+                          onChange={field.onChange}
+                          disabled={isPending}
+                        />
                         <p className="text-muted-foreground text-xs">
                           Usada no bilhete. Formato #RRGGBB.
                         </p>

@@ -20,7 +20,7 @@ import { createLoyaltyProgramSchema } from "@/schemas/loyalty-program"
 import { Airline } from "@/schemas/airline"
 import { createLoyaltyProgramAction } from "@/actions/loyalty-program"
 import { AirlineCombobox } from "@/components/airlines/airline-combobox"
-import { ColorPickerField } from "./color-picker-field"
+import { ColorPickerField } from "@/components/shared/color-picker-field"
 
 type FormData = z.infer<typeof createLoyaltyProgramSchema.request>
 

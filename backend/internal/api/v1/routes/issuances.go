@@ -49,6 +49,13 @@ func RegisterIssuanceRoutes(r chi.Router, db *gorm.DB, broker *events.Broker, tr
 		r.Get("/{id}/ticket", issuanceHandler.GetIssuanceTicket)
 		r.Get("/{id}/pdf", issuanceHandler.GetIssuanceTicketPDF)
 
+		// the two things about a booking the airline changes after issuing, and
+		// that Traveos lets an operator correct. Each PUT replaces its whole set.
+		r.Get("/{id}/seats", issuanceHandler.GetIssuanceSeats)
+		r.Put("/{id}/seats", issuanceHandler.PutIssuanceSeats)
+		r.Get("/{id}/baggage", issuanceHandler.GetIssuanceBaggage)
+		r.Put("/{id}/baggage", issuanceHandler.PutIssuanceBaggage)
+
 		// passengers sub-resource
 		RegisterIssuancePassengerRoutes(r, db)
 	})
