@@ -76,12 +76,19 @@ export default async function TicketPage({ params }: { params: Promise<{ id: str
         // would otherwise apply to the whole dashboard, and its own layout would
         // inherit the dashboard's. srcDoc keeps it same-origin-free - the frame
         // gets no access to this page and needs none.
-        <iframe
-          title="Bilhete"
-          srcDoc={result.html}
-          sandbox=""
-          className="h-[1400px] w-full rounded-lg border bg-white"
-        />
+        //
+        // The breathing room around it is the wrapper's, not the document's. The
+        // document's own margins live in `@page`, which only exists when it is
+        // printed; giving the body padding on top of that would pad the PDF
+        // twice and make the preview stop matching the file.
+        <div className="rounded-lg border bg-white p-4">
+          <iframe
+            title="Bilhete"
+            srcDoc={result.html}
+            sandbox=""
+            className="h-[1400px] w-full"
+          />
+        </div>
       )}
     </div>
   )

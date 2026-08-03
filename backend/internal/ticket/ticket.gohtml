@@ -1,7 +1,7 @@
 {{- /*
 The ticket, in the subset WeasyPrint 61.2 renders.
 
-Three rules this file has to keep, because the same string is both the page the
+Four rules this file has to keep, because the same string is both the page the
 panel shows and the input the PDF service is handed:
 
   1. NO CSS GRID. WeasyPrint 61.2 does not implement it at all - a grid degrades
@@ -14,11 +14,32 @@ panel shows and the input the PDF service is handed:
      original page uses Articulat CF (commercial, cannot be embedded), so the
      stack is Liberation Sans with the system stack behind it - metrically close,
      and the fallback is what the browser uses on the panel anyway.
+  4. EVERY inline SVG carries an explicit colour. `currentColor` in an SVG
+     presentation attribute is not resolved by WeasyPrint's SVG renderer, and
+     the icon silently disappears - which is why the plane in the journey header
+     was invisible in the PDF while being perfectly there in the markup. The Go
+     side already computes Brand and BrandOn, so the hex is interpolated
+     straight into the attribute. Do not "simplify" these back to currentColor.
 
-The spacing ruler is 3.5px, from the original design: 7, 11, 14, 18, 21, 25, 28,
-32, 39, 42, 56. Rounding those to a 4px grid breaks the alignment between the
-segment table and the fixed 88px/210px widths.
+The page is 216mm wide - the vendor's own width - with a height computed from
+the content in Go, so the ticket lands on one page instead of being sliced by a
+paper size that knows nothing about it. See pageHeightMM in ticket.go.
+
+The spacing ruler is 3.5px, from the original design, scaled to the 188mm
+content column: 7, 10, 14, 18, 21, 25, 28.
 */ -}}
+{{- /*
+The icons are filled silhouettes, never stroked outlines. WeasyPrint 61.2 draws
+a 1.8px stroke on a 15px icon as a smudge, while a fill comes out crisp at any
+size. Each takes its colour as the dot, because an SVG presentation attribute
+cannot read currentColor here (see rule 4 above).
+*/ -}}
+{{- define "planeIcon" -}}
+<svg class="{{ .Class }}" viewBox="0 0 24 24">{{ if .Inbound }}<g transform="translate(24,0) scale(-1,1)">{{ else }}<g>{{ end }}<path fill="{{ .Colour }}" d="M22 12c0-.6-.4-1-1-1h-4.5L11 3.5c-.2-.3-.5-.5-.9-.5H8l3 8H6.5L4 8H2l1.5 4L2 16h2l2.5-3H11l-3 8h2.1c.4 0 .7-.2.9-.5L16.5 13H21c.6 0 1-.4 1-1z"/></g></svg>
+{{- end -}}
+{{- define "personIcon" -}}
+<svg class="personIcon" viewBox="0 0 24 24"><path fill="{{ . }}" d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm0 2c-4 0-8 2-8 4.5V21h16v-2.5c0-2.5-4-4.5-8-4.5z"/></svg>
+{{- end -}}
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -41,64 +62,64 @@ segment table and the fixed 88px/210px widths.
     --seat-placeholder: #d1d5db;
   }
 
-  /* A4 with the modal's own 15px of breathing room folded into the margin, so
-     the 970px content column lands inside the printable area at 96dpi. */
+  /* 216mm is the vendor's width; the height comes from the content. The margin
+     is what gives the document its breathing room from the paper edge - the
+     body adds none of its own on top. */
   @page {
-    size: A4 landscape;
-    margin: 12mm 10mm;
+    size: 216mm {{ .PageHeightMM }}mm;
+    margin: 12mm 14mm;
   }
 
   * { box-sizing: border-box; }
 
   body {
     margin: 0;
-    padding: 21px 15px;
+    padding: 0;
     background: #fff;
     color: var(--neutral-700);
     font-family: "Liberation Sans", Arial, Helvetica, sans-serif;
-    font-size: 18px;
+    font-size: 12px;
     line-height: 1.35;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.04em;
   }
 
-  .modal { max-width: 1000px; width: 100%; margin: 0 auto; }
-  .content { max-width: 970px; margin: 0 auto; }
+  .content { width: 100%; }
 
   /* ---------------------------------------------------------------- header */
 
   .header {
     display: table;
     width: 100%;
-    padding: 16px 0;
-    margin-bottom: 18px;
+    padding: 4px 0 10px;
   }
   .headerCell { display: table-cell; vertical-align: middle; }
-  .headerCell.logo { width: 183px; }
+  .headerCell.logo { width: 150px; }
   .headerCell.info { text-align: right; }
 
   /* The airline's colour has to appear somewhere on a document that carries its
      name. The original page put it on the "Visualizar reserva" button, which is
      a control and has no place on a passenger's copy - so it becomes a rule
      under the header instead. */
-  .brandRule { height: 3px; background: var(--brand); border-radius: 2px; margin-bottom: 18px; }
+  .brandRule { height: 2px; background: var(--brand); border-radius: 2px; margin-bottom: 14px; }
 
-  .airlineLogoImage { height: 42px; max-width: 183px; }
-  .airlineNameFallback { font-size: 21px; font-weight: bold; color: var(--brand-900); }
+  .airlineLogoImage { height: 30px; max-width: 150px; }
+  .airlineNameFallback { font-size: 15px; font-weight: bold; color: var(--brand-900); }
 
-  .infoItem { display: inline-block; padding: 0 28px; text-align: center; }
-  .infoLabel { display: block; font-size: 16px; color: var(--brand-900); }
-  .infoValue { display: block; font-size: 21px; font-weight: bold; letter-spacing: -0.01em; }
+  .infoItem { display: inline-block; padding: 0 18px; text-align: center; }
+  .infoLabel { display: block; font-size: 11px; color: var(--brand-900); }
+  .infoValue { display: block; font-size: 15px; font-weight: bold; letter-spacing: -0.01em; }
 
   /* --------------------------------------------------------------- journey */
 
   /* page-break-inside is the print-only property that matters most here: a
      journey split across two pages puts the departure on one sheet and the
-     arrival on the next. */
+     arrival on the next. It is the guard that makes a page height estimated
+     slightly short degrade into white space rather than into a cut card. */
   .journeySection {
     border: 1px solid var(--neutral-300);
-    border-radius: 14px;
+    border-radius: 12px;
     overflow: hidden;
-    margin-bottom: 14px;
+    margin-bottom: 12px;
     page-break-inside: avoid;
   }
 
@@ -111,230 +132,245 @@ segment table and the fixed 88px/210px widths.
     width: 100%;
     background: var(--brand);
     color: var(--brand-on);
-    padding: 7px 25px;
+    padding: 7px 18px;
   }
   .journeyHeaderCell { display: table-cell; vertical-align: middle; }
-  .journeyTitle { width: 142px; font-size: 21px; font-weight: bold; text-transform: uppercase; }
-  .journeyDate { text-align: center; font-size: 21px; font-weight: 500; }
-  .journeyLegs { width: 142px; text-align: right; }
+  .journeyTitle { width: 110px; font-size: 14px; font-weight: bold; text-transform: uppercase; }
+  .journeyDate { text-align: center; font-size: 14px; font-weight: 500; }
+  .journeyLegs { width: 110px; text-align: right; }
   .legsBadge {
     display: inline-block;
-    font-size: 18px;
+    font-size: 11px;
     font-weight: 600;
-    padding: 4px 11px;
+    padding: 3px 10px;
     border: 1px solid currentColor;
-    border-radius: 11px;
+    border-radius: 10px;
   }
 
-  .flightsList { padding: 11px 21px 14px; }
+  .flightsList { padding: 10px 14px 12px; }
 
+  /* The padding here is the "everything is glued to the edge" fix: the card was
+     11px/7px, which at this type size reads as text touching a border. */
   .flightSegmentCard {
     background: var(--neutral-50);
     border: 1px solid var(--neutral-300);
-    border-radius: 7px;
-    padding: 11px 7px;
+    border-radius: 8px;
+    padding: 12px 18px;
     margin-bottom: 7px;
   }
   .flightSegmentCard:last-child { margin-bottom: 0; }
 
   /* The five columns of the original grid, as a table. minmax() has no table
      equivalent, so the two ends get an explicit percentage and the middle its
-     fixed 195px - which reproduces the same result: the route stays centred
+     fixed width - which reproduces the same result: the route stays centred
      regardless of how long the airport names are. */
   .flightDetails { display: table; width: 100%; }
   .flightCell { display: table-cell; vertical-align: middle; }
   .flightCell.departure { width: 32%; }
   .flightCell.arrival { width: 32%; text-align: right; }
-  .flightCell.route { width: 195px; text-align: center; padding: 0 14px; }
-  .flightCell.dash { width: 18px; }
+  .flightCell.route { width: 175px; text-align: center; padding: 0 10px; }
+  .flightCell.dash { width: 14px; }
 
   .routeDash {
     display: block;
-    width: 18px;
-    height: 3px;
+    width: 14px;
+    height: 2px;
     background: var(--neutral-300);
     border-radius: 2px;
   }
 
-  .time { display: block; font-size: 32px; font-weight: bold; color: var(--neutral-600); }
-  .date { display: block; font-size: 18px; color: var(--neutral-700); }
-  .airportLine { display: block; font-size: 18px; color: var(--neutral-700); }
+  .time { display: block; font-size: 24px; font-weight: bold; color: var(--neutral-600); }
+  .date { display: block; font-size: 11px; color: var(--neutral-700); }
+  .airportLine { display: block; font-size: 12px; color: var(--neutral-700); }
 
-  .routeCodes { font-size: 25px; font-weight: bold; color: var(--neutral-600); }
+  .routeCodes { font-size: 19px; font-weight: bold; color: var(--neutral-600); }
   /* Both plane markers are inline SVG, not glyphs: the pdf-service container
      ships only fonts-liberation, which has no U+2708 and no triangles - a
      character reference there renders as a blank gap. */
-  .routePlane { width: 21px; height: 21px; vertical-align: -3px; margin: 0 7px; }
-  .planeIcon { width: 21px; height: 21px; vertical-align: -4px; margin-right: 6px; }
-  .flightMeta { margin-top: 4px; font-size: 18px; }
+  .routePlane { width: 16px; height: 16px; vertical-align: -2px; margin: 0 6px; }
+  .planeIcon { width: 15px; height: 15px; vertical-align: -3px; margin-right: 5px; }
+  .flightMeta { margin-top: 3px; font-size: 12px; }
   .cabinBadge {
     display: inline-block;
-    margin-left: 7px;
-    padding: 2px 11px;
+    margin-left: 6px;
+    padding: 2px 10px;
     border-radius: 7px;
     border: 1px solid var(--brand);
     color: var(--brand);
-    font-size: 16px;
+    font-size: 11px;
   }
 
   /* ------------------------------------------------------------ passengers */
 
-  .passengersTitle { font-size: 18px; font-weight: 600; margin: 21px 0 7px; letter-spacing: -0.01em; }
+  .passengersTitle { font-size: 12px; font-weight: 600; margin: 16px 0 7px; letter-spacing: -0.01em; }
 
   .passengerCard {
     background: var(--card);
-    border-radius: 14px;
-    padding: 11px;
-    margin-bottom: 11px;
+    border-radius: 12px;
+    padding: 12px 16px;
+    margin-bottom: 10px;
     page-break-inside: avoid;
   }
   .passengerName {
-    font-size: 18px;
+    font-size: 12px;
     font-weight: 600;
     text-transform: uppercase;
-    margin-bottom: 7px;
+    margin-bottom: 8px;
   }
+  .personIcon { width: 14px; height: 14px; vertical-align: -2px; margin-right: 6px; }
 
-  .tripRow { display: table; width: 100%; border-spacing: 11px 0; margin-left: -11px; }
+  /* border-spacing also applies to the outer edges, so the negative margin has
+     to compensate on BOTH sides. With it only on the left, a round trip pushed
+     the second card past the right edge of the paper and the PDF clipped the
+     baggage column clean off. */
+  .tripRow { display: table; width: 100%; border-spacing: 10px 0; margin: 0 -10px; }
   .tripCard {
     display: table-cell;
     width: 50%;
     background: #fff;
     border: 1px solid var(--neutral-200);
-    border-radius: 14px;
+    border-radius: 12px;
     vertical-align: top;
   }
   .tripInner { display: table; width: 100%; }
   .tripCellRail {
     display: table-cell;
-    width: 39px;
+    width: 34px;
     background: var(--rail);
-    padding: 7px 11px;
+    padding: 8px 7px;
     border-right: 1px solid var(--neutral-200);
-    font-size: 14px;
+    font-size: 11px;
     font-weight: 500;
+    text-align: center;
     vertical-align: middle;
   }
-  .tripCellSeats { display: table-cell; padding: 7px 11px; vertical-align: middle; }
+  .railPlane { display: block; width: 14px; height: 14px; margin: 4px auto 0; }
+  .tripCellSeats { display: table-cell; padding: 8px 14px; vertical-align: middle; }
+  /* A percentage, not the fixed 190px it used to be: on a round trip each card
+     is only half the page wide, and a fixed column that fits one card overflows
+     two. */
   .tripCellBaggage {
     display: table-cell;
-    width: 210px;
-    padding: 7px 11px;
+    width: 42%;
+    padding: 8px 14px;
     border-left: 1px solid var(--neutral-300);
     vertical-align: middle;
   }
 
-  .seatsLabel, .baggageLabel { font-size: 18px; font-weight: 500; margin-bottom: 4px; }
+  .seatsLabel, .baggageLabel { font-size: 12px; font-weight: 500; margin-bottom: 3px; }
   .seatItem { display: inline-block; padding: 0 7px; border-right: 1px solid var(--neutral-300); }
   .seatItem:last-child { border-right: 0; }
-  .trechoLabel { display: block; font-size: 16px; font-weight: 500; color: var(--neutral-500); }
-  .seatValue { display: block; font-size: 18px; font-weight: 600; color: var(--neutral-600); }
+  .trechoLabel { display: block; font-size: 10px; font-weight: 500; color: var(--neutral-500); }
+  .seatValue { display: block; font-size: 13px; font-weight: 600; color: var(--neutral-600); }
   .seatValue.placeholder { color: var(--seat-placeholder); font-weight: 400; }
-  .baggageValue { font-size: 18px; font-weight: 600; color: var(--neutral-600); }
+  .baggageValue { font-size: 13px; font-weight: 600; color: var(--neutral-600); }
 
   /* ----------------------------------------------------------- informações */
 
-  .informacoes { margin-top: 21px; font-size: 18px; color: var(--neutral-700); }
-  .informacoesTitle { font-size: 18px; font-weight: 600; margin-bottom: 7px; }
+  .informacoes { margin-top: 16px; font-size: 11px; color: var(--neutral-700); }
+  .informacoesTitle { font-size: 12px; font-weight: 600; margin-bottom: 5px; }
 </style>
 </head>
 <body>
-<div class="modal">
-  <div class="content">
+<div class="content">
 
-    <div class="header">
-      <div class="headerCell logo">
-        {{ if .AirlineLogo }}{{ .AirlineLogo }}{{ else }}<span class="airlineNameFallback">{{ .AirlineName }}</span>{{ end }}
-      </div>
-      <div class="headerCell info">
-        {{ if .PurchaseNumber }}
-        <span class="infoItem">
-          <span class="infoLabel">Número da compra</span>
-          <span class="infoValue">{{ .PurchaseNumber }}</span>
-        </span>
-        {{ end }}
-        <span class="infoItem">
-          <span class="infoLabel">Localizador</span>
-          <span class="infoValue">{{ .Locator }}</span>
-        </span>
-      </div>
+  <div class="header">
+    <div class="headerCell logo">
+      {{ if .AirlineLogo }}{{ .AirlineLogo }}{{ else }}<span class="airlineNameFallback">{{ .AirlineName }}</span>{{ end }}
     </div>
-    <div class="brandRule"></div>
-
-    {{ range .Journeys }}
-    <div class="journeySection">
-      <div class="journeyHeader">
-        <div class="journeyHeaderCell journeyTitle"><svg class="planeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">{{ if .Inbound }}<g transform="translate(24,0) scale(-1,1)">{{ else }}<g>{{ end }}<path d="M17.8 19.2 16 11l3.5-3.5a2.5 2.5 0 0 0-3.5-3.5L12.5 7.5 4.3 5.7a1 1 0 0 0-1 1.6L8 11l-3 3H3l-1 2 3 1 1 3 2-1v-2l3-3 3.7 4.7a1 1 0 0 0 1.6-1z"/></g></svg> {{ .Title }}</div>
-        <div class="journeyHeaderCell journeyDate">{{ .Date }}</div>
-        <div class="journeyHeaderCell journeyLegs"><span class="legsBadge">{{ .LegLabel }}</span></div>
-      </div>
-      <div class="flightsList">
-        {{ range .Segments }}
-        <div class="flightSegmentCard">
-          <div class="flightDetails">
-            <div class="flightCell departure">
-              <span class="time">{{ .DepartureTime }}</span>
-              <span class="date">{{ .DepartureDate }}</span>
-              <span class="airportLine">{{ .DepartureName }}</span>
-            </div>
-            <div class="flightCell dash"><span class="routeDash"></span></div>
-            <div class="flightCell route">
-              <div class="routeCodes">{{ .OriginCode }}<svg class="routePlane" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.8 19.2 16 11l3.5-3.5a2.5 2.5 0 0 0-3.5-3.5L12.5 7.5 4.3 5.7a1 1 0 0 0-1 1.6L8 11l-3 3H3l-1 2 3 1 1 3 2-1v-2l3-3 3.7 4.7a1 1 0 0 0 1.6-1z"/></svg>{{ .DestinationCode }}</div>
-              <div class="flightMeta">
-                {{ if .FlightNumber }}Voo <strong>{{ .FlightNumber }}</strong>{{ end }}
-                {{ if .Cabin }}<span class="cabinBadge">{{ .Cabin }}</span>{{ end }}
-              </div>
-            </div>
-            <div class="flightCell dash"><span class="routeDash"></span></div>
-            <div class="flightCell arrival">
-              <span class="airportLine">{{ .ArrivalName }}</span>
-              <span class="time">{{ .ArrivalTime }}</span>
-              <span class="date">{{ .ArrivalDate }}</span>
-            </div>
-          </div>
-        </div>
-        {{ end }}
-      </div>
+    <div class="headerCell info">
+      {{ if .PurchaseNumber }}
+      <span class="infoItem">
+        <span class="infoLabel">Número da compra</span>
+        <span class="infoValue">{{ .PurchaseNumber }}</span>
+      </span>
+      {{ end }}
+      <span class="infoItem">
+        <span class="infoLabel">Localizador</span>
+        <span class="infoValue">{{ .Locator }}</span>
+      </span>
     </div>
-    {{ end }}
-
-    {{ if .Passengers }}
-    <div class="passengersTitle">{{ pluralize (len .Passengers) "Passageiro" "Passageiros" }}</div>
-    {{ range .Passengers }}
-    <div class="passengerCard">
-      <div class="passengerName">{{ .Name }}</div>
-      <div class="tripRow">
-        {{ range .Trips }}
-        <div class="tripCard">
-          <div class="tripInner">
-            <div class="tripCellRail">{{ .Label }}</div>
-            <div class="tripCellSeats">
-              <div class="seatsLabel">Assentos</div>
-              {{ range .Seats }}
-              <span class="seatItem">
-                <span class="trechoLabel">{{ .Label }}</span>
-                <span class="seatValue{{ if not .Assigned }} placeholder{{ end }}">{{ .Value }}</span>
-              </span>
-              {{ end }}
-            </div>
-            <div class="tripCellBaggage">
-              <div class="baggageLabel">Bagagem</div>
-              <span class="baggageValue">{{ .Baggage }}</span>
-            </div>
-          </div>
-        </div>
-        {{ end }}
-      </div>
-    </div>
-    {{ end }}
-    {{ end }}
-
-    <div class="informacoes">
-      <div class="informacoesTitle">Informações</div>
-      <div>Item pessoal incluso. Confira as regras de bagagem e o horário de apresentação no aeroporto com a companhia aérea.</div>
-    </div>
-
   </div>
+  <div class="brandRule"></div>
+
+  {{ $brand := .Brand }}
+  {{ $brandOn := .BrandOn }}
+  {{ range .Journeys }}
+  <div class="journeySection">
+    <div class="journeyHeader">
+      <div class="journeyHeaderCell journeyTitle">{{ template "planeIcon" dict "Class" "planeIcon" "Colour" $brandOn "Inbound" .Inbound }} {{ .Title }}</div>
+      <div class="journeyHeaderCell journeyDate">{{ .Date }}</div>
+      <div class="journeyHeaderCell journeyLegs"><span class="legsBadge">{{ .LegLabel }}</span></div>
+    </div>
+    <div class="flightsList">
+      {{ range .Segments }}
+      <div class="flightSegmentCard">
+        <div class="flightDetails">
+          <div class="flightCell departure">
+            <span class="time">{{ .DepartureTime }}</span>
+            <span class="date">{{ .DepartureDate }}</span>
+            <span class="airportLine">{{ .DepartureName }}</span>
+          </div>
+          <div class="flightCell dash"><span class="routeDash"></span></div>
+          <div class="flightCell route">
+            <div class="routeCodes">{{ .OriginCode }}{{ template "planeIcon" dict "Class" "routePlane" "Colour" "#525252" "Inbound" false }}{{ .DestinationCode }}</div>
+            <div class="flightMeta">
+              {{ if .FlightNumber }}Voo <strong>{{ .FlightNumber }}</strong>{{ end }}
+              {{ if .Cabin }}<span class="cabinBadge">{{ .Cabin }}</span>{{ end }}
+            </div>
+          </div>
+          <div class="flightCell dash"><span class="routeDash"></span></div>
+          <div class="flightCell arrival">
+            <span class="airportLine">{{ .ArrivalName }}</span>
+            <span class="time">{{ .ArrivalTime }}</span>
+            <span class="date">{{ .ArrivalDate }}</span>
+          </div>
+        </div>
+      </div>
+      {{ end }}
+    </div>
+  </div>
+  {{ end }}
+
+  {{ if .Passengers }}
+  <div class="passengersTitle">{{ pluralize (len .Passengers) "Passageiro" "Passageiros" }}</div>
+  {{ range .Passengers }}
+  <div class="passengerCard">
+    <div class="passengerName">{{ template "personIcon" "#525252" }}{{ .Name }}</div>
+    <div class="tripRow">
+      {{ range .Trips }}
+      <div class="tripCard">
+        <div class="tripInner">
+          <div class="tripCellRail">
+            {{ .Label }}
+            {{ template "planeIcon" dict "Class" "railPlane" "Colour" $brand "Inbound" .Inbound }}
+          </div>
+          <div class="tripCellSeats">
+            <div class="seatsLabel">Assentos</div>
+            {{ range .Seats }}
+            <span class="seatItem">
+              <span class="trechoLabel">{{ .Label }}</span>
+              <span class="seatValue{{ if not .Assigned }} placeholder{{ end }}">{{ .Value }}</span>
+            </span>
+            {{ end }}
+          </div>
+          <div class="tripCellBaggage">
+            <div class="baggageLabel">Bagagem</div>
+            <span class="baggageValue">{{ .Baggage }}</span>
+          </div>
+        </div>
+      </div>
+      {{ end }}
+    </div>
+  </div>
+  {{ end }}
+  {{ end }}
+
+  <div class="informacoes">
+    <div class="informacoesTitle">Informações</div>
+    <div>Item pessoal incluso. Confira as regras de bagagem e o horário de apresentação no aeroporto com a companhia aérea.</div>
+  </div>
+
 </div>
 </body>
 </html>

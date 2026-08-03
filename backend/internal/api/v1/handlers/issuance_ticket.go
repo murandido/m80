@@ -70,10 +70,12 @@ func (h *IssuanceHandler) GetIssuanceTicketPDF(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// The filename is what the passenger ends up with in their downloads folder,
-	// so it carries the locator rather than a uuid.
+	// The filename is what the passenger ends up with in their downloads folder:
+	// the locator alone, exactly as Traveos names its own file. No "bilhete-"
+	// prefix - the operator searches their downloads by PNR, and a prefix pushes
+	// every ticket ever downloaded under the same letter.
 	w.Header().Set("Content-Type", "application/pdf")
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", "bilhete-"+locator+".pdf"))
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", locator+".pdf"))
 	// #nosec G705 -- PDF bytes from our own pdf-service, served as an attachment
 	// with an application/pdf content type; nothing here is interpreted as markup.
 	if _, err := w.Write(pdf); err != nil {

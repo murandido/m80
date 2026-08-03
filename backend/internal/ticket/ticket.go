@@ -32,8 +32,23 @@ var logoFS embed.FS
 const defaultBrand = "#224CF0"
 
 var tpl = template.Must(template.New("ticket.gohtml").
-	Funcs(template.FuncMap{"pluralize": pluralize}).
+	Funcs(template.FuncMap{"pluralize": pluralize, "dict": dict}).
 	ParseFS(templateFS, "ticket.gohtml"))
+
+// dict lets the icon sub-templates take more than one argument, which
+// html/template otherwise has no way to express. It exists only so the plane
+// silhouette is written once instead of three times, each copy free to drift.
+func dict(pairs ...any) map[string]any {
+	built := make(map[string]any, len(pairs)/2)
+	for i := 0; i+1 < len(pairs); i += 2 {
+		key, ok := pairs[i].(string)
+		if !ok {
+			continue
+		}
+		built[key] = pairs[i+1]
+	}
+	return built
+}
 
 // ViewModel is everything the template draws, already formatted. No time.Time,
 // no pointers and no database types cross into the template: a nil dereference
@@ -54,6 +69,12 @@ type ViewModel struct {
 
 	Journeys   []Journey
 	Passengers []Passenger
+
+	// PageHeightMM is the paper the document asks for, in millimetres. See
+	// pageHeightMM: the width is fixed at the vendor's own 216mm and only the
+	// height moves, so a ticket lands on one page instead of being sliced by a
+	// paper size that knows nothing about its contents.
+	PageHeightMM int
 }
 
 // Journey is one direction of the trip. Absent, not empty, on a one-way ticket.
@@ -90,8 +111,11 @@ type Passenger struct {
 
 // PassengerTrip is one direction's seats and baggage for one passenger.
 type PassengerTrip struct {
-	Label   string
-	Seats   []Seat
+	Label string
+	Seats []Seat
+	// Inbound mirrors the little plane in the card's rail, the same way
+	// Journey.Inbound mirrors the one in the journey header.
+	Inbound bool
 	Baggage string
 }
 
@@ -143,8 +167,79 @@ func FromIssuance(issuance data.Issuance, seats map[string][]data.IssuancePassen
 	outbound, inbound := splitByDirection(issuance.Flights)
 	model.Journeys = buildJourneys(outbound, inbound)
 	model.Passengers = buildPassengers(issuance.Passengers, outbound, inbound, seats)
+	model.PageHeightMM = pageHeightMM(model)
 
 	return model
+}
+
+// The page is 216mm wide - the width Traveos' own PDF uses - and as tall as the
+// content needs. A fixed paper is what put the ticket on three cut pages: A4
+// landscape has ~186mm of usable height and the document has never fit in it.
+//
+// The numbers below are millimetres measured from real renders, not guesses on
+// paper, and they are deliberately generous. Overestimating costs white space
+// at the bottom, which the vendor's own file has too; underestimating costs the
+// second page this whole thing exists to remove. The page-break-inside: avoid
+// on the journey and passenger cards means an underestimate degrades into a
+// clean break rather than a card sliced in half.
+const (
+	// pageChromeMM covers the two 12mm page margins, the header, the brand rule
+	// and the "Informações" block - everything present on every ticket.
+	pageChromeMM = 52
+	// journeyMM is one coloured bar plus the flight list's own padding.
+	journeyMM = 24
+	// legMM is one flight segment card plus the gap under it.
+	legMM = 28
+	// passengersTitleMM is the "N Passageiros" line, charged once.
+	passengersTitleMM = 10
+	// passengerMM is one passenger card. Both directions sit side by side inside
+	// it, so a round trip costs nothing extra here - what does cost is the seat
+	// chips wrapping once a direction has more than two legs, which is what
+	// passengerLegWrapMM pays for.
+	passengerMM        = 34
+	passengerLegWrapMM = 20
+	passengerWrapAfter = 2
+
+	// pageStepMM keeps the paper on a round number, so two similar tickets get
+	// the same page instead of differing by a millimetre.
+	pageStepMM = 20
+	// pageMinMM stops a one-leg ticket from coming out as a slip of paper.
+	pageMinMM = 160
+	// pageMaxMM is where "one page when possible" gives up. A ticket past this
+	// is genuinely too much content, and breaking it is the honest answer.
+	pageMaxMM = 600
+)
+
+func pageHeightMM(model ViewModel) int {
+	height := pageChromeMM + len(model.Journeys)*journeyMM
+
+	// The busiest single direction, because that is what makes a passenger's
+	// seat chips wrap onto a second row inside a half-width card.
+	busiest := 0
+	for _, journey := range model.Journeys {
+		height += len(journey.Segments) * legMM
+		if len(journey.Segments) > busiest {
+			busiest = len(journey.Segments)
+		}
+	}
+
+	if len(model.Passengers) > 0 {
+		perPassenger := passengerMM
+		if busiest > passengerWrapAfter {
+			perPassenger += passengerLegWrapMM
+		}
+		height += passengersTitleMM + len(model.Passengers)*perPassenger
+	}
+
+	// Round up to the step, then clamp.
+	height = ((height + pageStepMM - 1) / pageStepMM) * pageStepMM
+	if height < pageMinMM {
+		return pageMinMM
+	}
+	if height > pageMaxMM {
+		return pageMaxMM
+	}
+	return height
 }
 
 // splitByDirection separates the legs and puts each direction in leg order. The
@@ -205,7 +300,7 @@ func buildSegments(legs []data.IssuanceFlight) []Segment {
 			OriginCode:      derefOr(leg.OriginIATACode, "---"),
 			DestinationCode: derefOr(leg.DestinationIATACode, "---"),
 			FlightNumber:    derefOr(leg.FlightNumber, ""),
-			Cabin:           derefOr(leg.Cabin, ""),
+			Cabin:           cleanCabin(derefOr(leg.Cabin, "")),
 		}
 		segment.DepartureName = airportName(leg.OriginAirport, segment.OriginCode)
 		segment.ArrivalName = airportName(leg.DestinationAirport, segment.DestinationCode)
@@ -246,11 +341,12 @@ func buildPassengers(
 
 		person := Passenger{Name: strings.TrimSpace(passenger.FirstName + " " + passenger.LastName)}
 		for _, spec := range []struct {
-			label string
-			legs  []data.IssuanceFlight
+			label   string
+			legs    []data.IssuanceFlight
+			inbound bool
 		}{
-			{"Ida", outbound},
-			{"Volta", inbound},
+			{"Ida", outbound, false},
+			{"Volta", inbound, true},
 		} {
 			if len(spec.legs) == 0 {
 				continue
@@ -258,6 +354,7 @@ func buildPassengers(
 			person.Trips = append(person.Trips, PassengerTrip{
 				Label:   spec.label,
 				Seats:   buildSeats(spec.legs, byFlight),
+				Inbound: spec.inbound,
 				Baggage: baggageLabel(spec.legs, byFlight),
 			})
 		}
