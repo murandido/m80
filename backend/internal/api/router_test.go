@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/murandido/m-80-backend/internal/events"
+	"github.com/murandido/m-80-backend/internal/health"
 )
 
 // The CORS allowlist in middleware.CORS() is maintained by hand, so it drifts the
@@ -18,8 +19,9 @@ func TestCORS_AllowsEveryVerbTheRouterRegisters(t *testing.T) {
 	// A nil *gorm.DB is safe here: no handler constructor touches the database (they
 	// only store it), and the CORS middleware answers preflights before the auth
 	// middleware or any handler gets to run. The broker has to be real, though - the
-	// SSE route subscribes to it at request time.
-	router := NewRouter(nil, events.NewBroker(), nil)
+	// SSE route subscribes to it at request time. The health monitor likewise
+	// has to be real: the status handler reads its snapshot.
+	router := NewRouter(nil, events.NewBroker(), nil, health.NewMonitor(func() {}))
 
 	// One representative route per verb is enough - CORS is configured globally, not
 	// per route. The route is kept only to make a failure message actionable.

@@ -10,12 +10,13 @@ import (
 	"github.com/murandido/m-80-backend/internal/api/middleware"
 	v1 "github.com/murandido/m-80-backend/internal/api/v1"
 	"github.com/murandido/m-80-backend/internal/events"
+	"github.com/murandido/m-80-backend/internal/health"
 	"github.com/murandido/m-80-backend/internal/traveos"
 	httpSwagger "github.com/swaggo/http-swagger"
 	"gorm.io/gorm"
 )
 
-func NewRouter(db *gorm.DB, broker *events.Broker, traveosClient *traveos.Client) *chi.Mux {
+func NewRouter(db *gorm.DB, broker *events.Broker, traveosClient *traveos.Client, monitor *health.Monitor) *chi.Mux {
 	r := chi.NewRouter()
 
 	r.Use(chimiddleware.Logger)
@@ -38,7 +39,7 @@ func NewRouter(db *gorm.DB, broker *events.Broker, traveosClient *traveos.Client
 		httpSwagger.URL("http://localhost:8080/swagger/doc.json"),
 	))
 
-	r.Mount("/api/v1", v1.NewRouter(db, broker, traveosClient))
+	r.Mount("/api/v1", v1.NewRouter(db, broker, traveosClient, monitor))
 
 	return r
 }

@@ -6,11 +6,12 @@ import (
 	"github.com/murandido/m-80-backend/internal/api/v1/handlers"
 	"github.com/murandido/m-80-backend/internal/api/v1/routes"
 	"github.com/murandido/m-80-backend/internal/events"
+	"github.com/murandido/m-80-backend/internal/health"
 	"github.com/murandido/m-80-backend/internal/traveos"
 	"gorm.io/gorm"
 )
 
-func NewRouter(db *gorm.DB, broker *events.Broker, traveosClient *traveos.Client) chi.Router {
+func NewRouter(db *gorm.DB, broker *events.Broker, traveosClient *traveos.Client, monitor *health.Monitor) chi.Router {
 	r := chi.NewRouter()
 
 	authHandler := handlers.NewAuthHandler(db)
@@ -47,6 +48,9 @@ func NewRouter(db *gorm.DB, broker *events.Broker, traveosClient *traveos.Client
 		routes.RegisterAirportRoutes(r, db)
 		// SSE stream, behind the same auth as everything else in this group
 		routes.RegisterEventRoutes(r, broker)
+		// Dependency lights (bot + Traveos) for everyone, not just admins -
+		// the operator on the issuances grid is who needs them.
+		routes.RegisterStatusRoutes(r, monitor)
 		// GET /users is open to any authenticated user; its write routes are
 		// admin-gated inline within RegisterUserRoutes itself.
 		routes.RegisterUserRoutes(r, db)

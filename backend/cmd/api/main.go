@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"log/slog"
@@ -11,6 +12,7 @@ import (
 	"github.com/murandido/m-80-backend/internal/api"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/events"
+	"github.com/murandido/m-80-backend/internal/health"
 	"github.com/murandido/m-80-backend/internal/traveos"
 )
 
@@ -71,8 +73,25 @@ func main() {
 		traveosClient = nil
 	}
 
+	// The dependency lights the panel shows. The probes run here, on their own
+	// tickers, rather than inside the request that reads them: a vendor call
+	// takes seconds, and one probe per browser refresh would be both slow and
+	// rude to Traveos.
+	//
+	// Every observed *change* becomes an SSE event, which is what keeps the
+	// browser from polling - see internal/api/CLAUDE.md. The monitor only calls
+	// this on a transition, so a quiet day broadcasts nothing at all.
+	monitor := health.NewMonitor(func() {
+		broker.Broadcast(events.Event{Type: "system.status"})
+	})
+	monitorCtx := context.Background()
+	// The bot is a call inside the Compose network and costs nothing; Traveos
+	// is a real request to somebody else's production, so it goes slower.
+	go monitor.Run(monitorCtx, health.DependencyBot, time.Minute, health.BotProbe(os.Getenv("BOT_INTERNAL_URL")))
+	go monitor.Run(monitorCtx, health.DependencyTraveos, 2*time.Minute, health.TraveosProbe(traveosClient))
+
 	// config router
-	r := api.NewRouter(data.DB, broker, traveosClient)
+	r := api.NewRouter(data.DB, broker, traveosClient, monitor)
 
 	port := os.Getenv("PORT")
 	if port == "" {
