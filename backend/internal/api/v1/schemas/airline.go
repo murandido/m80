@@ -17,7 +17,9 @@ type CreateAirlineRequest struct {
 }
 
 // UpdateAirlineRequest defines the payload for updating an existing airline.
-// All fields are optional pointers: nil means "don't change this field".
+// Fields are optional pointers: nil means "don't change this field", except for
+// the two nullable columns (TraveosAirlineID and BrandColor) where nil means
+// "clear it" - otherwise a value set by mistake could never be taken back.
 type UpdateAirlineRequest struct {
 	Name                   *string `json:"name" validate:"omitempty"`
 	Code                   *string `json:"code" validate:"omitempty"`

@@ -312,3 +312,81 @@ func TestIsHexColourRejectsAnythingTheTicketCSSCannotUse(t *testing.T) {
 		}
 	}
 }
+
+func TestApplyIssuanceFieldsUsesTheOutboundArrivalAsTheDestination(t *testing.T) {
+	// The bug this covers: on a round trip the last leg of the itinerary lands back
+	// at the origin, so reading the itinerary's last arrival made every round trip
+	// look like a trip to the passenger's own city.
+	iata := func(code string) *string { return &code }
+
+	tests := []struct {
+		name     string
+		flights  insertedFlights
+		wantFrom string
+		wantTo   string
+	}{
+		{
+			name: "one way",
+			flights: insertedFlights{
+				outbound: []data.IssuanceFlight{
+					{OriginIATACode: iata("CNF"), DestinationIATACode: iata("GRU")},
+				},
+			},
+			wantFrom: "CNF", wantTo: "GRU",
+		},
+		{
+			name: "round trip lands back home on the last leg",
+			flights: insertedFlights{
+				outbound: []data.IssuanceFlight{
+					{OriginIATACode: iata("CNF"), DestinationIATACode: iata("LIS")},
+				},
+				inbound: []data.IssuanceFlight{
+					{OriginIATACode: iata("LIS"), DestinationIATACode: iata("CNF")},
+				},
+			},
+			wantFrom: "CNF", wantTo: "LIS",
+		},
+		{
+			// A connection is still part of the outbound: the destination is where
+			// the passenger stops, not where they change planes.
+			name: "round trip with a connection on the way out",
+			flights: insertedFlights{
+				outbound: []data.IssuanceFlight{
+					{OriginIATACode: iata("CNF"), DestinationIATACode: iata("GRU")},
+					{OriginIATACode: iata("GRU"), DestinationIATACode: iata("LIS")},
+				},
+				inbound: []data.IssuanceFlight{
+					{OriginIATACode: iata("LIS"), DestinationIATACode: iata("GRU")},
+					{OriginIATACode: iata("GRU"), DestinationIATACode: iata("CNF")},
+				},
+			},
+			wantFrom: "CNF", wantTo: "LIS",
+		},
+		{
+			// Nothing marked outbound is not a reason to leave the columns empty.
+			name: "inbound only falls back to the whole itinerary",
+			flights: insertedFlights{
+				inbound: []data.IssuanceFlight{
+					{OriginIATACode: iata("LIS"), DestinationIATACode: iata("CNF")},
+				},
+			},
+			wantFrom: "LIS", wantTo: "CNF",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var issuance data.Issuance
+			var details traveos.TicketData
+
+			applyIssuanceFields(nil, &issuance, &details, tc.flights)
+
+			if issuance.OriginIATACode == nil || *issuance.OriginIATACode != tc.wantFrom {
+				t.Errorf("origin = %v, want %q", issuance.OriginIATACode, tc.wantFrom)
+			}
+			if issuance.DestinationIATACode == nil || *issuance.DestinationIATACode != tc.wantTo {
+				t.Errorf("destination = %v, want %q", issuance.DestinationIATACode, tc.wantTo)
+			}
+		})
+	}
+}

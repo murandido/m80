@@ -311,13 +311,22 @@ func applyIssuanceFields(
 
 	legs := flights.all()
 	if len(legs) > 0 {
-		// First origin and last destination across the whole itinerary, which for a
-		// round trip means both ends are the same airport - that is correct: these
-		// two columns describe the journey, not the outbound leg.
 		if code := legs[0].OriginIATACode; code != nil {
 			issuance.OriginIATACode = code
 		}
-		if code := legs[len(legs)-1].DestinationIATACode; code != nil {
+	}
+
+	// The destination is where the outbound ends, not where the itinerary does: on a
+	// round trip the last leg lands back at the origin, and the column would claim the
+	// trip was to the passenger's own city. Connections still count - it is the last
+	// leg of the outbound, not the first. `all()` is only a fallback for an itinerary
+	// the vendor returned entirely as inbound legs.
+	outbound := flights.outbound
+	if len(outbound) == 0 {
+		outbound = legs
+	}
+	if len(outbound) > 0 {
+		if code := outbound[len(outbound)-1].DestinationIATACode; code != nil {
 			issuance.DestinationIATACode = code
 		}
 	}

@@ -150,7 +150,7 @@ func (h *AirlineHandler) GetAirline(w http.ResponseWriter, r *http.Request) {
 
 // UpdateAirline handles the PUT /airlines/{id} route
 // @Summary      Atualizar companhia aérea
-// @Description  Atualiza os dados de uma companhia aérea existente. Todos os campos são opcionais (atualização parcial).
+// @Description  Atualiza os dados de uma companhia aérea existente. Os campos são opcionais (atualização parcial), com duas exceções: traveos_airline_id e brand_color são apagados quando enviados como null.
 // @Tags         Companhias Aéreas
 // @Accept       json
 // @Produce      json
@@ -203,12 +203,12 @@ func (h *AirlineHandler) UpdateAirline(w http.ResponseWriter, r *http.Request) {
 	if req.RequiresPurchaseNumber != nil {
 		airline.RequiresPurchaseNumber = *req.RequiresPurchaseNumber
 	}
-	if req.TraveosAirlineID != nil {
-		airline.TraveosAirlineID = req.TraveosAirlineID
-	}
-	if req.BrandColor != nil {
-		airline.BrandColor = req.BrandColor
-	}
+	// Assigned unconditionally, unlike the fields above: these two are the only
+	// nullable ones, and the panel - the sole client of this route - always sends
+	// both. Reading nil as "leave alone" here left no value at all capable of
+	// undoing a Traveos id that was typed wrong, since 0 is refused by validation.
+	airline.TraveosAirlineID = req.TraveosAirlineID
+	airline.BrandColor = req.BrandColor
 
 	if err := h.DB.Save(&airline).Error; err != nil {
 		var pgErr *pgconn.PgError

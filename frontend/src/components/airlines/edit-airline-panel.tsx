@@ -48,12 +48,15 @@ export function EditAirlinePanel({ airline, isOpen, onSaved }: EditAirlinePanelP
     defaultValues,
   })
 
-  // Reset form whenever the panel closes
+  // Re-seeded whenever the panel closes, and whenever the airline itself changes.
+  // The second half matters after a save: the panel closes before router.refresh()
+  // lands, so resetting only on close would put back the value the operator just
+  // replaced, and reopening would look as if nothing had been saved.
   useEffect(() => {
     if (!isOpen) {
       form.reset(defaultValues)
     }
-  }, [isOpen]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isOpen, airline]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function onSubmit(data: FormData) {
     startTransition(async () => {

@@ -35,9 +35,8 @@ type AirlineFormFields = {
 }
 
 // Turns the form's strings into what the Go API expects. An empty field becomes
-// null, which the backend reads as "leave this alone" on update - clearing a
-// value that is already set is not offered, same as every other field on this
-// form.
+// null, which on these two fields the backend reads as "clear it" - so emptying
+// the input is how a Traveos id typed by mistake is taken back.
 export function toAirlineRequestPayload<T extends AirlineFormFields>(data: T) {
   return {
     ...data,
