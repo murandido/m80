@@ -13,6 +13,8 @@ import type { Agency } from "@/schemas/agency"
 import type { LoyaltyProgram } from "@/schemas/loyalty-program"
 import type { Airline } from "@/schemas/airline"
 import type { User } from "@/schemas/user"
+import { clearStickyFilters } from "@/lib/sticky-filters"
+import { useStickyFilters } from "@/hooks/use-sticky-filters"
 import {
   DASHBOARD_FILTER_KEYS,
   type DashboardFilterState,
@@ -44,6 +46,7 @@ export function DashboardFilterBar({
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
+  useStickyFilters()
   // A mirror of the server-resolved filters, for instant feedback on the controls. The URL
   // stays the source of truth.
   const [filters, setFilters] = useState<DashboardFilterState>(initialFilters)
@@ -113,7 +116,12 @@ export function DashboardFilterBar({
           type="button"
           variant="ghost"
           size="sm"
-          onClick={() => router.replace(pathname)}
+          // Forgetting comes first: without it the bare URL would immediately be
+          // repopulated from the cookie the operator just asked to drop.
+          onClick={() => {
+            clearStickyFilters(pathname)
+            router.replace(pathname)
+          }}
           className="text-slate-500"
         >
           <RotateCcw className="h-4 w-4" />

@@ -201,7 +201,8 @@ function TicketButton({ row }: { row: IssuanceRow }) {
       title="Ver bilhete"
       className="h-6 w-6 opacity-0 transition-opacity group-hover/row:opacity-100"
     >
-      <Link href={`/dashboard/issuances/${row.key}/ticket`}>
+      {/* row.id, not row.key: a row created in this session keeps its draft key. */}
+      <Link href={`/dashboard/issuances/${row.id}/ticket`}>
         <Ticket className="h-3.5 w-3.5 text-violet-600" />
       </Link>
     </Button>

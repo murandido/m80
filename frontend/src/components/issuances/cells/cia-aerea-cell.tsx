@@ -10,22 +10,41 @@ import { DropdownPortal } from "@/components/issuances/cells/dropdown-portal"
 
 interface Option {
   value: string
+  // What the cell writes and reads back: the code, which is the same shorthand the
+  // EMISSAO message uses on WhatsApp.
   label: string
+  // The full name, shown beside the code in the dropdown and searchable, so nobody
+  // has to know a code by heart to find it.
+  hint: string
 }
 
 // An empty query yields the whole list, in its original order: opening the cell should
 // show what is available instead of making the operator guess a prefix to type.
-function filterByName(options: Option[], typed: string): Option[] {
+function filterOptions(options: Option[], typed: string): Option[] {
   const q = typed.trim().toLowerCase()
   if (q === "") return options
   return options
-    .filter((o) => o.label.toLowerCase().includes(q))
+    .filter((o) => o.label.toLowerCase().includes(q) || o.hint.toLowerCase().includes(q))
     .sort((a, b) => {
       const aStarts = a.label.toLowerCase().startsWith(q)
       const bStarts = b.label.toLowerCase().startsWith(q)
       if (aStarts === bStarts) return 0
       return aStarts ? -1 : 1
     })
+}
+
+// Accepts the code first and the full name second: the code is what the cell writes,
+// but an operator used to typing "Smiles" should not be told it does not exist.
+function findByCodeOrName<T extends { code: string; name: string }>(
+  candidates: T[],
+  typed: string,
+): T | undefined {
+  const q = typed.trim().toLowerCase()
+  if (q === "") return undefined
+  return (
+    candidates.find((candidate) => candidate.code.toLowerCase() === q) ??
+    candidates.find((candidate) => candidate.name.toLowerCase() === q)
+  )
 }
 
 export const CiaAereaCell = memo(function CiaAereaCell({
@@ -62,12 +81,20 @@ export const CiaAereaCell = memo(function CiaAereaCell({
 
   const displayText = currentProgram
     ? showsNonDefaultAirline
-      ? `${currentProgram.name}/${currentAirline!.name}`
-      : currentProgram.name
+      ? `${currentProgram.code}/${currentAirline!.code}`
+      : currentProgram.code
     : ""
 
-  const programOptions: Option[] = livePrograms.map((lp) => ({ value: lp.id, label: lp.name }))
-  const airlineOptions: Option[] = airlines.map((a) => ({ value: a.id, label: a.name }))
+  const programOptions: Option[] = livePrograms.map((lp) => ({
+    value: lp.id,
+    label: lp.code,
+    hint: lp.name,
+  }))
+  const airlineOptions: Option[] = airlines.map((a) => ({
+    value: a.id,
+    label: a.code,
+    hint: a.name,
+  }))
 
   const [text, setText] = useState(displayText)
   const [stage, setStage] = useState<"program" | "airline">("program")
@@ -94,7 +121,7 @@ export const CiaAereaCell = memo(function CiaAereaCell({
       setText(startValue)
       // Opening on a cell that already names a program still lists every program, so the
       // operator sees the alternatives; only a typed character narrows the list on open.
-      const startFiltered = filterByName(programOptions, pendingChar ?? "")
+      const startFiltered = filterOptions(programOptions, pendingChar ?? "")
       setStage("program")
       setPrefix("")
       setFiltered(startFiltered)
@@ -124,12 +151,12 @@ export const CiaAereaCell = memo(function CiaAereaCell({
     if (slashIndex === -1) {
       setStage("program")
       setPrefix("")
-      setFiltered(filterByName(programOptions, value))
+      setFiltered(filterOptions(programOptions, value))
     } else {
       const airlineTyped = value.slice(slashIndex + 1)
       setStage("airline")
       setPrefix(value.slice(0, slashIndex + 1))
-      setFiltered(filterByName(airlineOptions, airlineTyped))
+      setFiltered(filterOptions(airlineOptions, airlineTyped))
     }
     setActiveIndex(0)
     setIsOpen(true)
@@ -161,8 +188,8 @@ export const CiaAereaCell = memo(function CiaAereaCell({
 
     const slashIndex = text.indexOf("/")
     if (slashIndex === -1) {
-      const program = livePrograms.find((lp) => lp.name.toLowerCase() === text.trim().toLowerCase())
-      if (!program || text.trim() === "") {
+      const program = findByCodeOrName(livePrograms, text)
+      if (!program) {
         onSaveAndMove(r, {}, direction)
         return
       }
@@ -178,10 +205,8 @@ export const CiaAereaCell = memo(function CiaAereaCell({
       return
     }
 
-    const programName = text.slice(0, slashIndex)
-    const airlineName = text.slice(slashIndex + 1)
-    const program = livePrograms.find((lp) => lp.name.toLowerCase() === programName.trim().toLowerCase())
-    const airline = airlines.find((a) => a.name.toLowerCase() === airlineName.trim().toLowerCase())
+    const program = findByCodeOrName(livePrograms, text.slice(0, slashIndex))
+    const airline = findByCodeOrName(airlines, text.slice(slashIndex + 1))
     if (!program || !airline) {
       onSaveAndMove(r, {}, direction)
       return
@@ -210,9 +235,9 @@ export const CiaAereaCell = memo(function CiaAereaCell({
       >
         {currentProgram ? (
           <>
-            <LoyaltyProgramBadge loyaltyProgram={currentProgram} />
+            <LoyaltyProgramBadge loyaltyProgram={currentProgram} label="code" />
             {showsNonDefaultAirline && (
-              <span className="truncate text-xs text-muted-foreground">({currentAirline!.name})</span>
+              <span className="truncate text-xs text-muted-foreground">({currentAirline!.code})</span>
             )}
           </>
         ) : (
@@ -227,7 +252,7 @@ export const CiaAereaCell = memo(function CiaAereaCell({
       <input
         ref={inputRef}
         value={text}
-        placeholder="programa/cia"
+        placeholder="código/cia"
         onChange={(e) => handleChange(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === "Escape") {
@@ -279,15 +304,17 @@ export const CiaAereaCell = memo(function CiaAereaCell({
                   inputRef.current?.focus()
                 }}
                 className={cn(
-                  "flex w-full items-center px-2 py-1.5 text-left text-sm hover:bg-accent",
+                  "flex w-full items-center gap-2 px-2 py-1.5 text-left text-sm hover:bg-accent",
                   index === activeIndex && "bg-accent",
                 )}
               >
                 {program ? (
-                  <LoyaltyProgramBadge loyaltyProgram={program} />
+                  <LoyaltyProgramBadge loyaltyProgram={program} label="code" />
                 ) : (
-                  <span className="truncate">{option.label}</span>
+                  <span className="shrink-0">{option.label}</span>
                 )}
+                {/* The name is the only clue for a code nobody has memorised yet. */}
+                <span className="truncate text-xs text-muted-foreground">{option.hint}</span>
               </button>
             )
           })}

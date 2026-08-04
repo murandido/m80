@@ -23,21 +23,26 @@ export function reconcileRows(
   fresh: Issuance[],
   editingRowKey: string | null,
 ): IssuanceRow[] {
-  const previousByKey = new Map(prev.map((row) => [row.key, row]))
+  // Matched by id, never by key: a row created in this session keeps its `draft-xxx`
+  // key on purpose (see reconcileCreatedRow), so looking it up by key would miss and
+  // build a second row for the issuance the operator is still typing in.
+  const previousById = new Map(
+    prev.filter((row) => row.id !== null).map((row) => [row.id as string, row]),
+  )
   const freshIds = new Set(fresh.map((issuance) => issuance.id))
 
-  // issuanceToRow keys rows by the backend id, so a persisted row keeps its key across
-  // reconciles and React never remounts it (which would drop the cell selection).
-  // Iterating `fresh` also adopts the backend's created_at desc ordering for free.
+  // Iterating `fresh` adopts the backend's ordering for free.
   const reconciled = fresh.map((issuance) => {
-    const existing = previousByKey.get(issuance.id)
+    const existing = previousById.get(issuance.id)
     if (!existing) return issuanceToRow(issuance)
     if (isProtected(existing, editingRowKey)) return existing
 
-    // saveStatus and hasError are UI-only; rebuilding them from the server would cut the
-    // 900ms save flash short on a row that just saved.
+    // The key comes from the row already on screen: changing it remounts the row and
+    // drops the cell selection. saveStatus and hasError are UI-only; rebuilding them
+    // from the server would cut the 900ms save flash short on a row that just saved.
     return {
       ...issuanceToRow(issuance),
+      key: existing.key,
       saveStatus: existing.saveStatus,
       hasError: existing.hasError,
     }
@@ -47,7 +52,7 @@ export function reconcileRows(
   // out of the current filter while the user is still in it. Dropping it would yank the
   // row out from under the cursor, so it stays until the next full page load.
   const orphans = prev.filter(
-    (row) => !row.isDraft && !freshIds.has(row.key) && isProtected(row, editingRowKey),
+    (row) => !row.isDraft && !(row.id !== null && freshIds.has(row.id)) && isProtected(row, editingRowKey),
   )
 
   // Drafts are always the tail: they have no id to match on, and the grid appends new

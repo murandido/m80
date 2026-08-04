@@ -6,6 +6,8 @@ import { RotateCcw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { cn } from "@/lib/utils"
+import { clearStickyFilters } from "@/lib/sticky-filters"
+import { useStickyFilters } from "@/hooks/use-sticky-filters"
 import { AgencyCombobox } from "@/components/agencies/agency-combobox"
 import { LoyaltyProgramCombobox } from "@/components/loyalty-programs/loyalty-program-combobox"
 import { AccountCombobox } from "@/components/accounts/account-combobox"
@@ -56,6 +58,7 @@ export function SalesFilterBar({
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
+  useStickyFilters()
   const [filters, setFilters] = useState<SalesFilterState>(initialFilters)
 
   // Merges into the URL that is already there instead of rewriting it, because the period
@@ -163,7 +166,12 @@ export function SalesFilterBar({
           type="button"
           variant="ghost"
           size="sm"
-          onClick={() => router.replace(pathname)}
+          // Forgetting comes first: without it the bare URL would immediately be
+          // repopulated from the cookie the operator just asked to drop.
+          onClick={() => {
+            clearStickyFilters(pathname)
+            router.replace(pathname)
+          }}
           className="text-slate-500"
         >
           <RotateCcw className="h-4 w-4" />

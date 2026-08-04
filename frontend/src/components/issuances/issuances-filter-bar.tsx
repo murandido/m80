@@ -11,7 +11,9 @@ import { Label } from "@/components/ui/label"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Switch } from "@/components/ui/switch"
 import { cn } from "@/lib/utils"
+import { clearStickyFilters } from "@/lib/sticky-filters"
 import { useAutocompletePreference } from "@/hooks/use-autocomplete-preference"
+import { useStickyFilters } from "@/hooks/use-sticky-filters"
 import {
   addDays,
   dateRangeLabel,
@@ -64,6 +66,7 @@ export function IssuancesFilterBar({
 }: IssuancesFilterBarProps) {
   const router = useRouter()
   const pathname = usePathname()
+  useStickyFilters()
 
   const [filters, setFilters] = useState<FilterState>(initialFilters)
   const [dateOpen, setDateOpen] = useState(false)
@@ -281,7 +284,12 @@ export function IssuancesFilterBar({
           title="Limpar filtros"
           aria-label="Limpar filtros"
           className="text-slate-500 hover:text-foreground"
-          onClick={() => router.replace(pathname)}
+          // Forgetting comes first: without it the bare URL would immediately be
+          // repopulated from the cookie the operator just asked to drop.
+          onClick={() => {
+            clearStickyFilters(pathname)
+            router.replace(pathname)
+          }}
         >
           <RotateCcw className="h-4 w-4" />
         </Button>

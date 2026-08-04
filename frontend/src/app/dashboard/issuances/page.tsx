@@ -2,6 +2,7 @@ import { cookies } from "next/headers"
 import { AlertTriangle } from "lucide-react"
 import { z } from "zod"
 import { env } from "@/lib/env"
+import { readStickyFilters, stickySearchParams } from "@/lib/sticky-filters"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { getIssuancesSchema } from "@/schemas/issuance"
 import { getLoyaltyProgramsSchema } from "@/schemas/loyalty-program"
@@ -125,7 +126,16 @@ export default async function IssuancesPage({
     ])
 
   // Second wave: the filtered issuance list, which needs currentUserId to build the defaults.
-  const filters = resolveFilters(await searchParams, currentUserId)
+  // A bare URL (every sidebar link is one) falls back to the filters this browser session
+  // last used here, so the screen is already filtered on the first paint.
+  const filters = resolveFilters(
+    stickySearchParams(
+      await searchParams,
+      readStickyFilters(cookieStore, "/dashboard/issuances"),
+      FILTER_KEYS,
+    ),
+    currentUserId,
+  )
   const issuanceQuery = new URLSearchParams()
   for (const key of FILTER_KEYS) {
     if (filters[key]) issuanceQuery.set(key, filters[key])

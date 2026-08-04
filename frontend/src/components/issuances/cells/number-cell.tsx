@@ -5,7 +5,7 @@ import { CellStateProps, useGridContext } from "@/components/issuances/grid-cont
 import { IssuanceRow } from "@/components/issuances/types"
 import { Direction } from "@/lib/grid-navigation"
 import { formatCurrencyBRL, parseCurrencyBRLInput } from "@/lib/currency"
-import { applyThousandsMask, applyPaddedThousandsMask } from "@/lib/number-mask"
+import { applyPaddedThousandsMask } from "@/lib/number-mask"
 
 interface NumberCellProps extends CellStateProps {
   r: number
@@ -19,10 +19,20 @@ function formatDisplay(value: number | null, mode: "integer" | "currency"): stri
   return mode === "currency" ? formatCurrencyBRL(value) : applyPaddedThousandsMask(String(value))
 }
 
+// The points column is typed in thousands, so the edit buffer has to be in thousands
+// too - seeding it with the stored "10.000" and parsing it back would save ten
+// million the moment somebody re-enters a cell they did not mean to change.
 function formatEditBuffer(value: number | null, mode: "integer" | "currency"): string {
   if (value === null) return ""
-  if (mode === "integer") return applyPaddedThousandsMask(String(value))
+  if (mode === "integer") return String(value / 1000).replace(".", ",")
   return (value / 100).toFixed(2).replace(".", ",")
+}
+
+// Digits and at most one comma. No thousands grouping while typing: in thousands the
+// number has one or two digits before the comma, and a dot would only get in the way.
+function sanitizeThousandsInput(raw: string): string {
+  const [whole, ...rest] = raw.replace(/[^\d,]/g, "").split(",")
+  return rest.length > 0 ? `${whole},${rest.join("")}` : whole
 }
 
 export const NumberCell = memo(function NumberCell({ r, c, field, mode, row, isEditing, pendingChar }: NumberCellProps) {
@@ -38,7 +48,7 @@ export const NumberCell = memo(function NumberCell({ r, c, field, mode, row, isE
     if (isThisCellEditing) {
       const startValue = pendingChar
         ? mode === "integer"
-          ? applyThousandsMask(pendingChar)
+          ? sanitizeThousandsInput(pendingChar)
           : pendingChar
         : formatEditBuffer(rawValue, mode)
       setText(startValue)
@@ -88,12 +98,10 @@ export const NumberCell = memo(function NumberCell({ r, c, field, mode, row, isE
       ref={inputRef}
       value={text}
       inputMode="decimal"
+      title={mode === "integer" ? "Em milheiros: 10 = 10.000, 10,5 = 10.500" : undefined}
       onChange={(e) => {
         const raw = e.target.value
-        // Let a typed comma sit as-is instead of stripping it live (habit
-        // carried over from the currency fields) - it gets cleaned up when
-        // the cell is committed, via parseIntOrNull below.
-        setText(mode === "integer" && !raw.includes(",") ? applyThousandsMask(raw) : raw)
+        setText(mode === "integer" ? sanitizeThousandsInput(raw) : raw)
       }}
       onKeyDown={(e) => {
         if (e.key === "Escape") {
@@ -122,12 +130,10 @@ export const NumberCell = memo(function NumberCell({ r, c, field, mode, row, isE
 function parseIntOrNull(text: string): number | null {
   const trimmed = text.trim()
   if (trimmed === "") return null
-  // The points column reads as milheiros (thousands): a comma is the decimal
-  // separator, so "0,5" means half a thousand = 500 points. Dots are thousands
-  // grouping and are stripped. A plain integer stays the raw point count, so
-  // "500" and "0,5" both land on 500 and render as "0.500".
-  const normalized = trimmed.replace(/\./g, "").replace(",", ".")
-  const value = Number(normalized)
+  // Every number typed here is a milheiro, the unit the operators actually quote
+  // and the one the bot already accepts ("31k"): "10" is ten thousand points and
+  // the comma is the fraction of a thousand, so "10,5" is 10.500 and "0,5" is 500.
+  const value = Number(trimmed.replace(",", "."))
   if (Number.isNaN(value)) return null
-  return Math.round(trimmed.includes(",") ? value * 1000 : value)
+  return Math.round(value * 1000)
 }

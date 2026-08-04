@@ -10,8 +10,10 @@ import {
 // The URL keys the period control owns, on every page that uses it. `period`/`reference`
 // are what the user picked; date_from/date_to are the expansion the API actually filters
 // on, kept in the URL so a shared link reproduces the exact range.
+export const PERIOD_KEYS = ["period", "reference", "date_from", "date_to"] as const
+
 export type PeriodSearchParams = Partial<
-  Record<"period" | "reference" | "date_from" | "date_to", string>
+  Record<(typeof PERIOD_KEYS)[number], string>
 >
 
 export interface ResolvedPeriod {

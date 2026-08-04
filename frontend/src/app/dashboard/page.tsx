@@ -3,6 +3,7 @@ import { AlertTriangle } from "lucide-react"
 import { z } from "zod"
 import { env } from "@/lib/env"
 import { getSessionUser } from "@/lib/session"
+import { readStickyFilters, stickySearchParams } from "@/lib/sticky-filters"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { getDashboardSchema, type Dashboard } from "@/schemas/dashboard"
 import { getAgenciesSchema, type Agency } from "@/schemas/agency"
@@ -23,6 +24,7 @@ import {
   resolveDashboardFilters,
   resolveDashboardMetric,
   resolveDashboardPeriod,
+  DASHBOARD_URL_KEYS,
   type DashboardSearchParams,
 } from "./dashboard-params"
 
@@ -67,7 +69,13 @@ export default async function DashboardPage({
   const authHeader = { Authorization: `Bearer ${token}` }
   const api = `${env.BACKEND_URL}/api/v1`
 
-  const params = await searchParams
+  // A bare URL (every sidebar link is one) falls back to the filters this browser
+  // session last used here, so the screen is already filtered on the first paint.
+  const params = stickySearchParams(
+    await searchParams,
+    readStickyFilters(cookieStore, "/dashboard"),
+    DASHBOARD_URL_KEYS,
+  )
   const period = resolveDashboardPeriod(params)
   const filters = resolveDashboardFilters(params)
   const query = buildDashboardQuery(period, filters)

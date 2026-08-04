@@ -4,6 +4,7 @@ import { AlertTriangle, ExternalLink } from "lucide-react"
 import { z } from "zod"
 import { env } from "@/lib/env"
 import { getSessionUser } from "@/lib/session"
+import { readStickyFilters, stickySearchParams } from "@/lib/sticky-filters"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { getSalesSchema, type Sale } from "@/schemas/sale"
@@ -22,6 +23,7 @@ import {
   buildSalesQuery,
   resolveSalesFilters,
   resolveSalesPeriod,
+  SALES_URL_KEYS,
   type SalesSearchParams,
 } from "./period-params"
 
@@ -52,7 +54,13 @@ export default async function SalesClientsPage({
   const authHeader = { Authorization: `Bearer ${token}` }
   const api = `${env.BACKEND_URL}/api/v1`
 
-  const params = await searchParams
+  // A bare URL (every sidebar link is one) falls back to the filters this browser
+  // session last used here, so the screen is already filtered on the first paint.
+  const params = stickySearchParams(
+    await searchParams,
+    readStickyFilters(cookieStore, "/dashboard/sales"),
+    SALES_URL_KEYS,
+  )
   const period = resolveSalesPeriod(params)
   const filters = resolveSalesFilters(params)
   const query = buildSalesQuery(period, filters)

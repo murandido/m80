@@ -1,5 +1,6 @@
 import type { PeriodPreset } from "@/lib/date-range"
 import {
+  PERIOD_KEYS,
   type PeriodSearchParams,
   type ResolvedPeriod,
   resolvePeriod,
@@ -28,6 +29,14 @@ export type DashboardMetric = (typeof DASHBOARD_METRICS)[number]
 
 export type DashboardSearchParams = PeriodSearchParams &
   Partial<Record<(typeof DASHBOARD_FILTER_KEYS)[number] | "metric", string>>
+
+// Everything this screen owns in the URL - what has to be remembered, and what
+// tells the page that the URL is user-controlled rather than a bare sidebar link.
+export const DASHBOARD_URL_KEYS = [
+  ...PERIOD_KEYS,
+  ...DASHBOARD_FILTER_KEYS,
+  "metric",
+] as const
 
 // Defaults to today: the dashboard's job is "how is the agency doing right now", and the
 // operator can widen to the month in one click.

@@ -1,4 +1,5 @@
 import {
+  PERIOD_KEYS,
   type PeriodSearchParams,
   type ResolvedPeriod,
   resolvePeriod,
@@ -22,6 +23,10 @@ export type SalesFilterState = Record<(typeof SALES_FILTER_KEYS)[number], string
 
 export type SalesSearchParams = PeriodSearchParams &
   Partial<Record<(typeof SALES_FILTER_KEYS)[number], string>>
+
+// Everything the sales views own in the URL - what has to be remembered, and what
+// tells the page that the URL is user-controlled rather than a bare sidebar link.
+export const SALES_URL_KEYS = [...PERIOD_KEYS, ...SALES_FILTER_KEYS] as const
 
 // Defaults to the current month: a single day is too narrow to be useful as a landing
 // view for "who still owes me money".
