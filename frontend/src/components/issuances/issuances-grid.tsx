@@ -22,9 +22,15 @@ import { GridCell } from "@/components/issuances/grid-cell"
 import { RowActions } from "@/components/issuances/row-actions"
 import { AutosaveDot } from "@/components/issuances/autosave-dot"
 import { interactionReducer, initialInteractionState } from "@/components/issuances/interaction-reducer"
-import { IssuanceRow, issuanceToRow, makeDraftRow, draftIsReadyToCreate } from "@/components/issuances/types"
+import {
+  IssuanceRow,
+  issuanceToRow,
+  makeDraftRow,
+  draftIsReadyToCreate,
+  isRowSyncing,
+} from "@/components/issuances/types"
 import { reconcileRows } from "@/components/issuances/reconcile-rows"
-import { hasAirlineMinimumFields } from "@/components/issuances/autocomplete"
+import { isAutocompleteCandidate } from "@/components/issuances/autocomplete"
 import { useAutocompletePreference } from "@/hooks/use-autocomplete-preference"
 import { clearPatchForColumn } from "@/components/issuances/column-fields"
 import { useSSE } from "@/hooks/use-sse"
@@ -220,10 +226,8 @@ export function IssuancesGrid({
   // minimum fields would fire again on each one.
   const autocompleteAttemptedRef = useRef<Set<string>>(new Set())
   const [autocompleteEnabled] = useAutocompletePreference()
-  // Read inside async callbacks, which must see the toggle as it is when they run
-  // rather than as it was when they were created.
-  const autocompleteEnabledRef = useRef(autocompleteEnabled)
-  autocompleteEnabledRef.current = autocompleteEnabled
+  // True while the sweep below is pulling a row, so it never starts a second one.
+  const [autocompleteRunning, setAutocompleteRunning] = useState(false)
   // Row index awaiting delete confirmation, driven by the Ctrl+Shift+Backspace shortcut.
   // Null means the confirm dialog is closed.
   const [pendingDeleteRow, setPendingDeleteRow] = useState<number | null>(null)
@@ -342,9 +346,6 @@ export function IssuancesGrid({
   // persistRef holds the latest persist so the recursive replay (queued patch after a
   // create resolves) can call it without persist listing itself as a dependency.
   const persistRef = useRef<(row: IssuanceRow, patch: Partial<IssuanceRow>) => Promise<void>>(null)
-  // maybeAutocomplete is defined further down (it needs onSyncRowWithTraveos), so
-  // persist reaches it through a ref rather than the two being reordered.
-  const maybeAutocompleteRef = useRef<((rowKey: string) => void) | null>(null)
 
   const persist = useCallback(
     async (row: IssuanceRow, patch: Partial<IssuanceRow>) => {
@@ -398,7 +399,6 @@ export function IssuancesGrid({
 
         reconcileCreatedRow(row.key, result.issuance)
         flashSaveStatus(row.key, "success")
-        maybeAutocompleteRef.current?.(row.key)
 
         if (queued) {
           await persistRef.current?.(
@@ -427,7 +427,6 @@ export function IssuancesGrid({
       if (result.issuance) updateRow(row.key, { status: result.issuance.status })
 
       flashSaveStatus(row.key, "success")
-      maybeAutocompleteRef.current?.(row.key)
     },
     [updateRow, flashSaveStatus, reconcileCreatedRow],
   )
@@ -531,7 +530,7 @@ export function IssuancesGrid({
     const editable =
       c !== CALCULATED_COLUMN_INDEX &&
       row?.status !== "cancelled" &&
-      !(row && syncingRowKeysRef.current[row.key])
+      !(row && isRowSyncing(row, syncingRowKeysRef.current))
     dispatch({ type: "CLICK_CELL", r, c, editable })
   }, [])
 
@@ -757,6 +756,9 @@ export function IssuancesGrid({
       if (syncingRowKeys[row.key]) {
         return { error: "Já estou puxando os dados dessa emissão." }
       }
+      if (row.traveos_syncing_at) {
+        return { error: "Essa emissão já está sendo puxada da Traveos." }
+      }
 
       setSyncingRowKeys((prev) => ({ ...prev, [row.key]: true }))
       try {
@@ -772,6 +774,9 @@ export function IssuancesGrid({
         updateRow(row.key, {
           status: issuance?.status ?? "complete",
           traveos_synced_at: issuance?.traveos_synced_at ?? new Date().toISOString(),
+          // The server clears its marker as the sync ends; carrying a stale one here
+          // would keep the row locked until the next refresh landed.
+          traveos_syncing_at: null,
           main_passenger_name: issuance?.main_passenger_name ?? row.main_passenger_name,
           origin_iata_code: issuance?.origin_iata_code ?? row.origin_iata_code,
           destination_iata_code: issuance?.destination_iata_code ?? row.destination_iata_code,
@@ -789,42 +794,44 @@ export function IssuancesGrid({
     [syncingRowKeys, updateRow],
   )
 
-  // Fires the same sync the button does, on its own, once a row has everything the
-  // airline needs. force=false is implied: the endpoint refuses nothing here because
-  // the row has no Traveos data yet, and a row that does is filtered out below.
+  // Sweeps the rows on screen and fires the same sync the button does, on the first
+  // one that has everything its airline needs. It runs on every change to the list -
+  // so it catches both the row just completed by hand and the rows that were already
+  // waiting when the page loaded, which the old "right after this row saved" trigger
+  // never looked at.
   //
-  // Three guards, and each one prevents a real ticket being issued at the vendor for
-  // nothing: the operator opted in, this row has never been tried, and the airline's
-  // own minimum fields are actually filled.
-  const maybeAutocomplete = useCallback(
-    (rowKey: string) => {
-      if (!autocompleteEnabledRef.current) return
+  // Strictly one at a time. A sync holds the vendor for minutes; letting a full grid
+  // start dozens at once would queue every operator behind them. When one finishes
+  // this effect runs again and picks up the next.
+  useEffect(() => {
+    if (!autocompleteEnabled || autocompleteRunning) return
 
-      const index = rowsRef.current.findIndex((candidate) => candidate.key === rowKey)
-      const row = rowsRef.current[index]
-      if (!row || row.isDraft || !row.id) return
-      if (row.status === "cancelled" || row.traveos_synced_at) return
-      if (autocompleteAttemptedRef.current.has(row.key)) return
+    const index = rowsRef.current.findIndex((row) =>
+      isAutocompleteCandidate(row, referenceData.airlines, autocompleteAttemptedRef.current),
+    )
+    if (index === -1) return
 
-      const airline = referenceData.airlines.find((candidate) => candidate.id === row.airline_id)
-      if (!airline || !airline.traveos_supported) return
-      if (!hasAirlineMinimumFields(row, airline)) return
-
-      autocompleteAttemptedRef.current.add(row.key)
-      void onSyncRowWithTraveos(index).then((result) => {
+    autocompleteAttemptedRef.current.add(rowsRef.current[index].key)
+    setAutocompleteRunning(true)
+    void onSyncRowWithTraveos(index)
+      .then((result) => {
         if ("error" in result) {
-          // Left in the attempted set on purpose. Whatever went wrong will go wrong
-          // again on the next blur, and the operator has an explicit button for when
-          // they have actually changed something.
+          // The row stays in the attempted set on purpose: whatever went wrong will go
+          // wrong again, and the operator has an explicit button for when they have
+          // actually changed something.
           toast.error(result.error)
           return
         }
         toast.success("Dados da Traveos preenchidos.")
       })
-    },
-    [referenceData.airlines, onSyncRowWithTraveos],
-  )
-  maybeAutocompleteRef.current = maybeAutocomplete
+      .finally(() => setAutocompleteRunning(false))
+  }, [
+    rows,
+    autocompleteEnabled,
+    autocompleteRunning,
+    referenceData.airlines,
+    onSyncRowWithTraveos,
+  ])
 
   // Keyboard entry point for deleting the active row. An untouched empty draft has nothing
   // to lose, so it is dropped without a prompt; anything else opens the confirm dialog.
@@ -1174,7 +1181,7 @@ export function IssuancesGrid({
                   row.status === "cancelled" && "bg-muted/40 text-muted-foreground hover:bg-muted/40",
                   row.hasError && "bg-red-50 hover:bg-red-50",
                   // Locked while Traveos is being read - see onCellClick.
-                  syncingRowKeys[row.key] && "bg-sky-50/60 hover:bg-sky-50/60",
+                  isRowSyncing(row, syncingRowKeys) && "bg-sky-50/60 hover:bg-sky-50/60",
                 )}
               >
                 <TableCell

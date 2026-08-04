@@ -125,6 +125,11 @@ type IssuanceResponse struct {
 	// timestamp rather than a flag because the operator's real question is how
 	// stale the data is.
 	TraveosSyncedAt *time.Time `json:"traveos_synced_at"`
+	// TraveosSyncingAt is set while a pull from Traveos is in flight, so every panel
+	// shows the row as busy and refuses to edit it - not just the one that started
+	// the pull. Already filtered for staleness by the server: a marker left behind
+	// by a process that died mid-pull arrives as null.
+	TraveosSyncingAt *time.Time `json:"traveos_syncing_at"`
 	// Status is derived: "incomplete" | "complete" | "cancelled".
 	Status             string                      `json:"status" example:"incomplete"`
 	Flights            []IssuanceFlightResponse    `json:"flights,omitempty"`
@@ -161,6 +166,7 @@ type IssuanceSummaryResponse struct {
 	IssuerName          string     `json:"issuer_name"`
 	AgencyName          string     `json:"agency_name"`
 	TraveosSyncedAt     *time.Time `json:"traveos_synced_at"`
+	TraveosSyncingAt    *time.Time `json:"traveos_syncing_at"`
 	// Status is derived: "incomplete" | "complete" | "cancelled".
 	Status string `json:"status" example:"incomplete"`
 }

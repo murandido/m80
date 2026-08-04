@@ -115,6 +115,7 @@ func toIssuanceResponse(issuance data.Issuance) schemas.IssuanceResponse {
 		AgencyID:            issuance.AgencyID,
 		Complete:            issuance.Complete,
 		TraveosSyncedAt:     issuance.TraveosSyncedAt,
+		TraveosSyncingAt:    freshTraveosSyncing(issuance.TraveosSyncingAt),
 		Status:              deriveIssuanceStatus(issuance.Complete, issuance.CancelledAt),
 		AdditionalServices:  issuance.AdditionalServices,
 		Observation:         issuance.Observation,
@@ -184,6 +185,19 @@ func toIssuanceResponse(issuance data.Issuance) schemas.IssuanceResponse {
 	return resp
 }
 
+// freshTraveosSyncing hides a marker older than the sync's own timeout. Past that
+// point the pull cannot still be running, so what is left is a marker from a
+// process that died mid-pull - and reporting it would lock the row on every screen
+// with no way out. Filtering here rather than in the client keeps the clients free
+// of time arithmetic and immune to a skewed browser clock, and it means no cleanup
+// job has to exist.
+func freshTraveosSyncing(startedAt *time.Time) *time.Time {
+	if startedAt == nil || time.Since(*startedAt) > traveosSyncTimeout {
+		return nil
+	}
+	return startedAt
+}
+
 // deriveIssuanceStatus derives the client-facing status from the underlying
 // complete/cancelled_at columns. Deleted issuances never reach here (soft-deleted
 // rows are excluded by GORM's default scope in every query this is called from).
@@ -212,6 +226,7 @@ func toIssuanceSummaryResponse(issuance data.Issuance) schemas.IssuanceSummaryRe
 		ValueOfTheThousand:  issuance.ValueOfTheThousand,
 		Taxes:               issuance.Taxes,
 		TraveosSyncedAt:     issuance.TraveosSyncedAt,
+		TraveosSyncingAt:    freshTraveosSyncing(issuance.TraveosSyncingAt),
 		Status:              status,
 	}
 
@@ -1072,7 +1087,26 @@ func (h *IssuanceHandler) SyncIssuanceWithTraveos(w http.ResponseWriter, r *http
 	ctx, cancel := context.WithTimeout(r.Context(), traveosSyncTimeout)
 	defer cancel()
 
+	// Announced before the pull, not after: Sync is synchronous and can take minutes,
+	// so waiting for it to return would tell the other operators the row was busy
+	// only once it no longer is. Sync marks the row itself as well - it has to, for
+	// the bot's path - and marking twice only refreshes the timestamp.
+	if err := issuancesvc.MarkTraveosSyncing(h.DB, id); err != nil {
+		slog.Error("failed to mark the issuance as syncing", "issuance_id", id, "err", err)
+	} else {
+		h.broadcastIssuance(eventIssuanceUpdated, id)
+	}
+
 	if err := issuancesvc.Sync(ctx, h.DB, h.Traveos, id, true); err != nil {
+		// Sync only unmarks what it marked, and it marks late - after the airline
+		// gates. A refusal before that (airline not integrated, no locator) would
+		// otherwise leave the row locked on every screen until the marker went stale.
+		if clearErr := issuancesvc.ClearTraveosSyncing(h.DB, id); clearErr != nil {
+			slog.Error("failed to clear the traveos syncing marker",
+				"issuance_id", id, "err", clearErr)
+		}
+		h.broadcastIssuance(eventIssuanceUpdated, id)
+
 		h.respondToTraveosSyncError(w, r, id, err)
 		return
 	}

@@ -42,7 +42,12 @@ type Issuance struct {
 	// what separates "complete because the airline confirmed it" from "complete
 	// because someone ticked it on the grid" - only the former has passengers and
 	// flights that came from the source, and only the former can render a ticket.
-	TraveosSyncedAt    *time.Time          `gorm:"column:traveos_synced_at" json:"traveos_synced_at"`
+	TraveosSyncedAt *time.Time `gorm:"column:traveos_synced_at" json:"traveos_synced_at"`
+	// TraveosSyncingAt is set while a pull is in flight and cleared when it ends,
+	// failure included. It is on the row rather than in the browser that started
+	// the pull so every panel shows the same issuance as busy - and so leaving the
+	// screen and coming back does not lose that it still is.
+	TraveosSyncingAt   *time.Time          `gorm:"column:traveos_syncing_at" json:"traveos_syncing_at"`
 	Flights            []IssuanceFlight    `gorm:"foreignKey:IssuanceID;references:ID" json:"flights,omitempty"`
 	Passengers         []IssuancePassenger `gorm:"foreignKey:IssuanceID;references:ID" json:"passengers,omitempty"`
 	AdditionalServices datatypes.JSON      `gorm:"column:additional_services;type:jsonb" json:"additional_services"`

@@ -42,6 +42,11 @@ export interface IssuanceRow {
   // is not the same as incomplete: a row can be marked complete by hand and still
   // have no Traveos data, and only rows that have it can render a ticket.
   traveos_synced_at: string | null
+  // Set while a pull from Traveos is in flight, by whoever started it - another
+  // operator, or the bot. It comes from the row rather than from this browser, which
+  // is what makes the lock and the spinner survive leaving the screen and show up
+  // for everybody else.
+  traveos_syncing_at: string | null
   // Read-only cancellation metadata, surfaced in the status pill's hover card. Never
   // edited through the grid - only set when the row loads cancelled or is cancelled here.
   cancelled_at: string | null
@@ -54,6 +59,17 @@ export interface IssuanceRow {
   // for 900ms and resets. Drives the persistent red row highlight so a failed save
   // isn't lost the moment the toast and the dot fade.
   hasError: boolean
+}
+
+// Whether a Traveos pull is in flight for this row. Two sources, and both are needed:
+// the local map covers the gap between the click and the first refresh from the
+// server, and the row's own marker is what makes the lock outlive this browser -
+// another operator's pull, or one that started before this screen was opened.
+export function isRowSyncing(
+  row: IssuanceRow,
+  syncingRowKeys: Record<string, true>,
+): boolean {
+  return Boolean(syncingRowKeys[row.key]) || Boolean(row.traveos_syncing_at)
 }
 
 export function issuanceToRow(issuance: Issuance): IssuanceRow {
@@ -81,6 +97,7 @@ export function issuanceToRow(issuance: Issuance): IssuanceRow {
     status: issuance.status,
     observation: issuance.observation,
     traveos_synced_at: issuance.traveos_synced_at ?? null,
+    traveos_syncing_at: issuance.traveos_syncing_at ?? null,
     cancelled_at: issuance.cancelled_at,
     cancelled_by_id: issuance.cancelled_by_id,
     refunded_points: issuance.refunded_points,
@@ -121,6 +138,7 @@ export function makeDraftRow(
     status: "incomplete",
     observation: null,
     traveos_synced_at: null,
+    traveos_syncing_at: null,
     cancelled_at: null,
     cancelled_by_id: null,
     refunded_points: null,

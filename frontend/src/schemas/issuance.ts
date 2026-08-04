@@ -57,6 +57,10 @@ export const issuanceSchema = z.object({
   // Set only when the itinerary came from Traveos, which is what separates it from
   // an issuance someone marked complete by hand. Gates the ticket page and the PDF.
   traveos_synced_at: z.string().nullish(),
+  // Set while somebody (any operator, or the bot) is pulling this issuance from
+  // Traveos. The server already drops a stale marker, so a value here means the
+  // pull is genuinely in flight.
+  traveos_syncing_at: z.string().nullish(),
   status: issuanceStatusSchema,
   flights: z.array(issuanceFlightSchema).nullish(),
   observation: z.string().nullable(),

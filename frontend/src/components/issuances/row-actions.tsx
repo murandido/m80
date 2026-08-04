@@ -20,7 +20,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { useGridContext } from "@/components/issuances/grid-context"
 import { CancelIssuanceButton } from "@/components/issuances/cancel-issuance-dialog"
-import { IssuanceRow } from "@/components/issuances/types"
+import { IssuanceRow, isRowSyncing } from "@/components/issuances/types"
 
 export function RowActions({ r, row }: { r: number; row: IssuanceRow }) {
   const { requestSaveActiveCell, onDeleteRow } = useGridContext()
@@ -133,7 +133,7 @@ function RevertCancellationButton({ r }: { r: number }) {
 function TraveosSyncButton({ r, row }: { r: number; row: IssuanceRow }) {
   const { onSyncRowWithTraveos, syncingRowKeys } = useGridContext()
   const [isPending, setIsPending] = useState(false)
-  const isSyncing = isPending || Boolean(syncingRowKeys[row.key])
+  const isSyncing = isPending || isRowSyncing(row, syncingRowKeys)
 
   const alreadySynced = row.traveos_synced_at !== null
 
