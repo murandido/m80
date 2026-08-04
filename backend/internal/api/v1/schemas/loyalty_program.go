@@ -29,4 +29,7 @@ type LoyaltyProgramResponse struct {
 	DefaultAirline   *AirlineResponse `json:"default_airline,omitempty"`
 	CreatedAt        time.Time        `json:"created_at"`
 	UpdatedAt        time.Time        `json:"updated_at"`
+	// Same as AccountResponse.DeletedAt: non-null only on a program reached through
+	// a past issuance, so the grid can label the row without offering the program.
+	DeletedAt *time.Time `json:"deleted_at"`
 }

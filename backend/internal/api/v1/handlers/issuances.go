@@ -268,13 +268,22 @@ func issuanceErrorResponse(err error) (int, string) {
 
 // preloadIssuanceAssociations applies the standard set of preloads used by the
 // list and single-issuance responses.
+//
+// The account, its aliases and the loyalty program are loaded Unscoped on purpose.
+// All three are soft-deleted (migration 29), and the GORM scope applies to preloads
+// too - so without this, archiving an account would blank the CONTA column on every
+// issuance it ever made. These associations exist to say what a past issuance was,
+// not to offer a choice: the caller decides whether an archived one may be picked,
+// which is why deleted_at is on the wire.
 func preloadIssuanceAssociations(query *gorm.DB) *gorm.DB {
+	unscoped := func(db *gorm.DB) *gorm.DB { return db.Unscoped() }
+
 	return query.
-		Preload("LoyaltyProgram").
+		Preload("LoyaltyProgram", unscoped).
 		Preload("Airline").
-		Preload("Account").
-		Preload("Account.Nicknames").
-		Preload("AccountNickname").
+		Preload("Account", unscoped).
+		Preload("Account.Nicknames", unscoped).
+		Preload("AccountNickname", unscoped).
 		Preload("Issuer").
 		Preload("Agency")
 }

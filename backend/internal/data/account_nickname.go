@@ -15,6 +15,11 @@ type AccountNickname struct {
 	LoyaltyProgram   *LoyaltyProgram `gorm:"foreignKey:LoyaltyProgramID;references:ID" json:"loyalty_program,omitempty"`
 	Nickname         string          `gorm:"not null" json:"nickname"`
 	CreatedAt        time.Time       `json:"created_at"`
+	// Archived along with the account it belongs to. The alias is how the bot routes
+	// an EMISSAO onto an account, so leaving it alive would keep sending new
+	// issuances to an account nobody can see anymore; and the uniqueness index over
+	// (loyalty_program_id, nickname) would keep the name reserved for good.
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
 func (an *AccountNickname) BeforeCreate(tx *gorm.DB) error {

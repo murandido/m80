@@ -23,6 +23,16 @@ type Account struct {
 	Complete         bool              `gorm:"not null;default:false" json:"complete"`
 	CreatedAt        time.Time         `json:"created_at"`
 	UpdatedAt        time.Time         `json:"updated_at"`
+	// Archiving, not a trash can to restore from. issuances.account_id is ON DELETE
+	// RESTRICT and issuances are themselves soft-deleted, so a real delete on an
+	// account that ever issued is refused by Postgres forever. Turning the delete
+	// into an UPDATE is what makes the account disappear from the panel without
+	// erasing which account a past issuance was made on - see migration 29.
+	//
+	// Exposed as deleted_at rather than hidden: the grid receives archived accounts
+	// embedded in old issuances (to label them) and has to keep them out of the
+	// pickers, which it can only do if it can tell them apart.
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"deleted_at"`
 }
 
 func (a *Account) BeforeCreate(tx *gorm.DB) error {

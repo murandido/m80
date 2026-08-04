@@ -413,3 +413,45 @@ func TestSeedLoyaltyProgramsLeavesAnExistingProgramUntouched(t *testing.T) {
 		}
 	})
 }
+
+func TestSeedLoyaltyProgramsDoesNotResurrectAnArchivedProgram(t *testing.T) {
+	// The seeder runs on every boot. Without the Unscoped lookup it would re-create
+	// each archived program with a fresh uuid, and the accounts left pointing at the
+	// archived row would be stranded on a program the panel no longer lists.
+	runOnEmptyCatalog(t, func(tx *gorm.DB) {
+		if err := SeedAirlines(tx); err != nil {
+			t.Fatalf("SeedAirlines: %v", err)
+		}
+		if err := SeedLoyaltyPrograms(tx); err != nil {
+			t.Fatalf("SeedLoyaltyPrograms: %v", err)
+		}
+
+		var smiles LoyaltyProgram
+		if err := tx.Where("code = ?", "SMILES").First(&smiles).Error; err != nil {
+			t.Fatalf("SMILES: %v", err)
+		}
+		if err := tx.Delete(&smiles).Error; err != nil {
+			t.Fatalf("archiving SMILES: %v", err)
+		}
+
+		if err := SeedLoyaltyPrograms(tx); err != nil {
+			t.Fatalf("re-running SeedLoyaltyPrograms: %v", err)
+		}
+
+		var live int64
+		if err := tx.Model(&LoyaltyProgram{}).Where("code = ?", "SMILES").Count(&live).Error; err != nil {
+			t.Fatalf("counting live SMILES: %v", err)
+		}
+		if live != 0 {
+			t.Errorf("SMILES came back after being archived: %d live rows", live)
+		}
+
+		var total int64
+		if err := tx.Unscoped().Model(&LoyaltyProgram{}).Where("code = ?", "SMILES").Count(&total).Error; err != nil {
+			t.Fatalf("counting every SMILES: %v", err)
+		}
+		if total != 1 {
+			t.Errorf("got %d SMILES rows in total, want the archived one only", total)
+		}
+	})
+}

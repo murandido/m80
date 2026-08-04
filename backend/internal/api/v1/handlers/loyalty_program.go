@@ -42,6 +42,7 @@ func toLoyaltyProgramResponse(loyaltyProgram data.LoyaltyProgram) schemas.Loyalt
 		DefaultAirline:   defaultAirline,
 		CreatedAt:        loyaltyProgram.CreatedAt,
 		UpdatedAt:        loyaltyProgram.UpdatedAt,
+		DeletedAt:        archivedAt(loyaltyProgram.DeletedAt),
 	}
 }
 
@@ -227,23 +228,25 @@ func (h *LoyaltyProgramHandler) UpdateLoyaltyProgram(w http.ResponseWriter, r *h
 
 // DeleteLoyaltyProgram handles the DELETE /loyalty-programs/{id} route.
 // @Summary      Deletar programa de fidelidade
-// @Description  Remove um programa de fidelidade do sistema. Falha com 422 se estiver vinculado a uma conta ou emissão.
+// @Description  Arquiva um programa de fidelidade: ele some das listagens e dos seletores, o código volta a ficar disponível, e as contas e emissões antigas continuam mostrando a que programa pertencem.
 // @Tags         Programas de Fidelidade
 // @Produce      json
 // @Security     BearerAuth
 // @Param        id  path  string  true  "UUID do programa de fidelidade"
-// @Success      200  {object}  schemas.ErrorResponse "Programa de fidelidade deletado com sucesso"
+// @Success      200  {object}  schemas.ErrorResponse "Programa de fidelidade arquivado com sucesso"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
-// @Failure      422  {object}  schemas.ErrorResponse "Programa de fidelidade vinculado a uma conta ou emissão"
-// @Failure      500  {object}  schemas.ErrorResponse "Erro ao deletar programa de fidelidade"
+// @Failure      422  {object}  schemas.ErrorResponse "Programa de fidelidade ainda referenciado por outro registro"
+// @Failure      500  {object}  schemas.ErrorResponse "Erro ao arquivar programa de fidelidade"
 // @Router       /loyalty-programs/{id} [delete]
 func (h *LoyaltyProgramHandler) DeleteLoyaltyProgram(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
 	if err := h.DB.Delete(&data.LoyaltyProgram{}, "id = ?", id).Error; err != nil {
 		var pgErr *pgconn.PgError
+		// Kept even though archiving no longer trips the issuance/account foreign
+		// keys: default_airline_id and any future reference still can.
 		if errors.As(err, &pgErr) && pgErr.Code == postgresForeignKeyViolation {
-			utils.SendError(w, r, http.StatusUnprocessableEntity, "Não é possível excluir programa de fidelidade vinculado a uma conta ou emissão")
+			utils.SendError(w, r, http.StatusUnprocessableEntity, "Não é possível excluir programa de fidelidade ainda referenciado por outro registro")
 			return
 		}
 

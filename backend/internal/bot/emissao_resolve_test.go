@@ -492,3 +492,52 @@ func countRows(t *testing.T, tx *gorm.DB, table, where string, arg any) int64 {
 	}
 	return count
 }
+
+func TestResolveEmissao_ArchivedAccountStartsFresh(t *testing.T) {
+	// Archiving an account in the panel archives its aliases too, and the alias is
+	// the bot's only route to an account. So the same word in the next EMISSAO has to
+	// behave like a word nobody ever used: a new account, not the archived one.
+	runInTx(t, func(tx *gorm.DB) {
+		f := seedEmissaoFixture(t, tx, data.Airline{})
+
+		archived := data.Account{LoyaltyProgramID: f.Program.ID, Complete: true}
+		seed(t, tx, &archived)
+		nickname := data.AccountNickname{
+			AccountID:        archived.ID,
+			LoyaltyProgramID: f.Program.ID,
+			Nickname:         "Heraldo",
+		}
+		seed(t, tx, &nickname)
+
+		// What DeleteAccount does, in the same order and in one go.
+		if err := tx.Where("account_id = ?", archived.ID).Delete(&data.AccountNickname{}).Error; err != nil {
+			t.Fatalf("archiving the alias: %v", err)
+		}
+		if err := tx.Delete(&archived).Error; err != nil {
+			t.Fatalf("archiving the account: %v", err)
+		}
+
+		input, err := resolveEmissao(tx, f.message("Heraldo"))
+		if err != nil {
+			t.Fatalf("resolveEmissao returned %v", err)
+		}
+
+		if input.AccountID == archived.ID {
+			t.Fatal("the EMISSAO landed on the archived account")
+		}
+		if input.AccountNicknameID == nil {
+			t.Fatal("no alias was created for the new account")
+		}
+		if *input.AccountNicknameID == nickname.ID {
+			t.Fatal("the archived alias was reused")
+		}
+
+		var successor data.Account
+		if err := tx.First(&successor, "id = ?", input.AccountID).Error; err != nil {
+			t.Fatalf("the account the EMISSAO landed on is not live: %v", err)
+		}
+		if successor.Complete {
+			t.Error("the fresh account was not created incomplete")
+		}
+	})
+}

@@ -31,6 +31,10 @@ export const accountSchema = z.object({
   complete: z.boolean(),
   created_at: z.string(),
   updated_at: z.string(),
+  // Set only on an archived account, which the account list never returns - it only
+  // ever arrives embedded in a past issuance, so an old row can still be labelled
+  // with it while the pickers leave it out.
+  deleted_at: z.string().nullish(),
 })
 
 export type Account = z.infer<typeof accountSchema>

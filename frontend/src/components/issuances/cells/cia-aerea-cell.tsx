@@ -45,6 +45,11 @@ export const CiaAereaCell = memo(function CiaAereaCell({
   } = useGridContext()
   const isThisCellEditing = isEditing
 
+  // Two lists on purpose. The full one resolves what the row already is - an archived
+  // program still has to label the issuances made on it - while the live one is the
+  // only thing the operator may pick or type their way into.
+  const livePrograms = loyaltyPrograms.filter((lp) => !lp.deleted_at)
+
   const currentProgram = loyaltyPrograms.find((lp) => lp.id === row.loyalty_program_id)
   const currentAirline = airlines.find((a) => a.id === row.airline_id)
 
@@ -61,7 +66,7 @@ export const CiaAereaCell = memo(function CiaAereaCell({
       : currentProgram.name
     : ""
 
-  const programOptions: Option[] = loyaltyPrograms.map((lp) => ({ value: lp.id, label: lp.name }))
+  const programOptions: Option[] = livePrograms.map((lp) => ({ value: lp.id, label: lp.name }))
   const airlineOptions: Option[] = airlines.map((a) => ({ value: a.id, label: a.name }))
 
   const [text, setText] = useState(displayText)
@@ -156,7 +161,7 @@ export const CiaAereaCell = memo(function CiaAereaCell({
 
     const slashIndex = text.indexOf("/")
     if (slashIndex === -1) {
-      const program = loyaltyPrograms.find((lp) => lp.name.toLowerCase() === text.trim().toLowerCase())
+      const program = livePrograms.find((lp) => lp.name.toLowerCase() === text.trim().toLowerCase())
       if (!program || text.trim() === "") {
         onSaveAndMove(r, {}, direction)
         return
@@ -175,7 +180,7 @@ export const CiaAereaCell = memo(function CiaAereaCell({
 
     const programName = text.slice(0, slashIndex)
     const airlineName = text.slice(slashIndex + 1)
-    const program = loyaltyPrograms.find((lp) => lp.name.toLowerCase() === programName.trim().toLowerCase())
+    const program = livePrograms.find((lp) => lp.name.toLowerCase() === programName.trim().toLowerCase())
     const airline = airlines.find((a) => a.name.toLowerCase() === airlineName.trim().toLowerCase())
     if (!program || !airline) {
       onSaveAndMove(r, {}, direction)

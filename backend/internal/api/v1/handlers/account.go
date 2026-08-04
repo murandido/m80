@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
@@ -26,6 +27,16 @@ func NewAccountHandler(db *gorm.DB) *AccountHandler {
 	}
 }
 
+// archivedAt unwraps a gorm.DeletedAt for the wire. Shared by the account and the
+// loyalty program responses, which both carry it so the panel can tell an archived
+// record apart from a live one when it meets it embedded in a past issuance.
+func archivedAt(deletedAt gorm.DeletedAt) *time.Time {
+	if !deletedAt.Valid {
+		return nil
+	}
+	return &deletedAt.Time
+}
+
 func toAccountResponse(account data.Account) schemas.AccountResponse {
 	nicknames := make([]schemas.AccountNicknameResponse, 0, len(account.Nicknames))
 	for _, nickname := range account.Nicknames {
@@ -42,6 +53,7 @@ func toAccountResponse(account data.Account) schemas.AccountResponse {
 			DefaultAirlineID: account.LoyaltyProgram.DefaultAirlineID,
 			CreatedAt:        account.LoyaltyProgram.CreatedAt,
 			UpdatedAt:        account.LoyaltyProgram.UpdatedAt,
+			DeletedAt:        archivedAt(account.LoyaltyProgram.DeletedAt),
 		}
 	}
 
@@ -57,6 +69,7 @@ func toAccountResponse(account data.Account) schemas.AccountResponse {
 		Complete:         account.Complete,
 		CreatedAt:        account.CreatedAt,
 		UpdatedAt:        account.UpdatedAt,
+		DeletedAt:        archivedAt(account.DeletedAt),
 	}
 }
 
@@ -247,23 +260,35 @@ func (h *AccountHandler) UpdateAccount(w http.ResponseWriter, r *http.Request) {
 
 // DeleteAccount handles the DELETE /accounts/{id} route.
 // @Summary      Deletar conta
-// @Description  Remove uma conta do sistema. Falha com 422 se a conta estiver vinculada a uma emissão.
+// @Description  Arquiva uma conta: ela some das listagens e dos seletores, mas as emissões antigas continuam mostrando em que conta foram feitas. Os apelidos da conta são arquivados junto, liberando o nome para outra conta do mesmo programa.
 // @Tags         Contas
 // @Produce      json
 // @Security     BearerAuth
 // @Param        id  path  string  true  "UUID da conta"
-// @Success      200  {object}  schemas.ErrorResponse "Conta deletada com sucesso"
+// @Success      200  {object}  schemas.ErrorResponse "Conta arquivada com sucesso"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
-// @Failure      422  {object}  schemas.ErrorResponse "Conta vinculada a uma emissão"
-// @Failure      500  {object}  schemas.ErrorResponse "Erro ao deletar conta"
+// @Failure      422  {object}  schemas.ErrorResponse "Conta ainda referenciada por outro registro"
+// @Failure      500  {object}  schemas.ErrorResponse "Erro ao arquivar conta"
 // @Router       /accounts/{id} [delete]
 func (h *AccountHandler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
-	if err := h.DB.Delete(&data.Account{}, "id = ?", id).Error; err != nil {
+	// One transaction for the two, because an account whose aliases outlived it is
+	// worse than one that was never archived: the alias is how the bot routes an
+	// EMISSAO, so it would keep sending new issuances to an account nobody can see.
+	err := h.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("account_id = ?", id).Delete(&data.AccountNickname{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&data.Account{}, "id = ?", id).Error
+	})
+
+	if err != nil {
+		// Still reachable, just no longer through the issuance: people is referenced by
+		// holder_id/administrator_id with RESTRICT and other rows may point here too.
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == postgresForeignKeyViolation {
-			utils.SendError(w, r, http.StatusUnprocessableEntity, "Não é possível excluir conta vinculada a uma emissão")
+			utils.SendError(w, r, http.StatusUnprocessableEntity, "Não é possível excluir conta ainda referenciada por outro registro")
 			return
 		}
 

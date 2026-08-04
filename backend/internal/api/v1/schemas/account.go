@@ -40,4 +40,8 @@ type AccountResponse struct {
 	Complete         bool                      `json:"complete"`
 	CreatedAt        time.Time                 `json:"created_at"`
 	UpdatedAt        time.Time                 `json:"updated_at"`
+	// Only ever non-null on an account reached through a past issuance - the account
+	// list itself never returns archived ones. It is what lets the grid label an old
+	// row with an archived account while keeping it out of the picker.
+	DeletedAt *time.Time `json:"deleted_at"`
 }

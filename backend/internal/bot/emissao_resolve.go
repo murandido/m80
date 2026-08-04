@@ -194,52 +194,74 @@ func assignExtras(airline data.Airline, extras []string, demandRequired bool) (l
 // resolveAccountByNickname finds the account an alias points at, creating an
 // incomplete one when the alias is new. Matching ignores case so "heraldo" and
 // "Heraldo" are the same account; the alias is stored exactly as typed.
+//
+// Archived accounts and archived aliases are invisible here, which is the point of
+// archiving one: the alias is the bot's only route to an account, so an operator who
+// archives an account expects the next EMISSAO naming it to start somewhere fresh.
 func resolveAccountByNickname(tx *gorm.DB, programID, nickname string) (data.Account, *string, error) {
 	var existing data.AccountNickname
 	err := tx.Where("loyalty_program_id = ? AND LOWER(nickname) = LOWER(?)", programID, nickname).
 		Order("created_at").
 		First(&existing).Error
 
+	// orphaned holds an alias that survived the account it pointed at. DeleteAccount
+	// archives both in one transaction, so this should not exist - but somebody fixing
+	// rows by hand can leave one behind, and the alias would then be a dead end: it
+	// cannot be re-created (the uniqueness index still counts it) and it leads nowhere.
+	// Re-pointing it at a fresh account beats aborting the EMISSAO with a raw GORM
+	// error over a state nobody in the group can see, let alone repair.
+	var orphaned *data.AccountNickname
+
 	switch {
 	case err == nil:
 		var account data.Account
-		if err := tx.First(&account, "id = ?", existing.AccountID).Error; err != nil {
-			return data.Account{}, nil, err
+		accountErr := tx.First(&account, "id = ?", existing.AccountID).Error
+		if accountErr == nil {
+			return account, &existing.ID, nil
 		}
-		return account, &existing.ID, nil
+		if !errors.Is(accountErr, gorm.ErrRecordNotFound) {
+			return data.Account{}, nil, accountErr
+		}
+		orphaned = &existing
 
-	case errors.Is(err, gorm.ErrRecordNotFound):
-		// The alias names whose account this is, so it also names a person. Creating
-		// that person and linking them as the holder is what makes the account
-		// recognisable in the panel: an account has no name of its own, and the
-		// cards there identify one by its holder.
-		holderID, err := resolvePersonByNickname(tx, nickname)
-		if err != nil {
-			return data.Account{}, nil, err
-		}
-
-		// administrator_id stays null on purpose. Defaulting it to the holder would
-		// make the first different name on line 4 become an alias of the holder
-		// forever - see attachAdministrator, which only ever aliases onto an
-		// administrator somebody actually chose.
-		account := data.Account{LoyaltyProgramID: programID, HolderID: &holderID, Complete: false}
-		if err := tx.Create(&account).Error; err != nil {
-			return data.Account{}, nil, err
-		}
-
-		created := data.AccountNickname{
-			AccountID:        account.ID,
-			LoyaltyProgramID: programID,
-			Nickname:         nickname,
-		}
-		if err := tx.Create(&created).Error; err != nil {
-			return data.Account{}, nil, err
-		}
-		return account, &created.ID, nil
-
-	default:
+	case !errors.Is(err, gorm.ErrRecordNotFound):
 		return data.Account{}, nil, err
 	}
+
+	// The alias names whose account this is, so it also names a person. Creating
+	// that person and linking them as the holder is what makes the account
+	// recognisable in the panel: an account has no name of its own, and the
+	// cards there identify one by its holder.
+	holderID, err := resolvePersonByNickname(tx, nickname)
+	if err != nil {
+		return data.Account{}, nil, err
+	}
+
+	// administrator_id stays null on purpose. Defaulting it to the holder would
+	// make the first different name on line 4 become an alias of the holder
+	// forever - see attachAdministrator, which only ever aliases onto an
+	// administrator somebody actually chose.
+	account := data.Account{LoyaltyProgramID: programID, HolderID: &holderID, Complete: false}
+	if err := tx.Create(&account).Error; err != nil {
+		return data.Account{}, nil, err
+	}
+
+	if orphaned != nil {
+		if err := tx.Model(orphaned).Update("account_id", account.ID).Error; err != nil {
+			return data.Account{}, nil, err
+		}
+		return account, &orphaned.ID, nil
+	}
+
+	created := data.AccountNickname{
+		AccountID:        account.ID,
+		LoyaltyProgramID: programID,
+		Nickname:         nickname,
+	}
+	if err := tx.Create(&created).Error; err != nil {
+		return data.Account{}, nil, err
+	}
+	return account, &created.ID, nil
 }
 
 // attachAdministrator decides what an administrator name on line 4 means for an

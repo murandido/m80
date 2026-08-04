@@ -16,6 +16,11 @@ type LoyaltyProgram struct {
 	DefaultAirline   *Airline  `gorm:"foreignKey:DefaultAirlineID;references:ID" json:"default_airline,omitempty"`
 	CreatedAt        time.Time `json:"created_at"`
 	UpdatedAt        time.Time `json:"updated_at"`
+	// Same reasoning as Account: accounts and issuances reference a program with
+	// ON DELETE RESTRICT, so a program that was ever used could never be removed.
+	// Exposed for the same reason too - the grid gets archived programs embedded in
+	// old issuances and has to label them without offering them in the picker.
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"deleted_at"`
 }
 
 func (lp *LoyaltyProgram) BeforeCreate(tx *gorm.DB) error {

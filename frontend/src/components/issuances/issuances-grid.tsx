@@ -41,6 +41,7 @@ import {
 import { Issuance, getIssuancesSchema, updateIssuanceSchema } from "@/schemas/issuance"
 import { Account } from "@/schemas/account"
 import { Agency } from "@/schemas/agency"
+import { LoyaltyProgram } from "@/schemas/loyalty-program"
 import {
   createIssuanceAction,
   updateIssuanceAction,
@@ -206,6 +207,7 @@ export function IssuancesGrid({
   // below dedupe when the same record arrives from both.
   const [extraAccounts, setExtraAccounts] = useState<Account[]>([])
   const [extraAgencies, setExtraAgencies] = useState<Agency[]>([])
+  const [extraPrograms, setExtraPrograms] = useState<LoyaltyProgram[]>([])
   const [pendingAccountLabels, setPendingAccountLabels] = useState<Record<string, string>>({})
   // Keyed by row key rather than index: a Traveos sync can run for minutes, and the
   // row can move as the list reorders or reconciles while it is in flight.
@@ -253,6 +255,10 @@ export function IssuancesGrid({
   const agencies = useMemo(
     () => mergeById(referenceData.agencies, extraAgencies),
     [referenceData.agencies, extraAgencies],
+  )
+  const loyaltyPrograms = useMemo(
+    () => mergeById(referenceData.loyaltyPrograms, extraPrograms),
+    [referenceData.loyaltyPrograms, extraPrograms],
   )
 
   useEffect(() => {
@@ -449,8 +455,19 @@ export function IssuancesGrid({
       setExtraAgencies((prev) =>
         absorb(prev, referenceData.agencies, fresh.map((issuance) => issuance.agency)),
       )
+      // Programs join the same trick for a different reason: an archived program is gone
+      // from GET /loyalty-programs, and the Cia aérea cell resolves its label from that
+      // list rather than from the object embedded in the row - so without this the column
+      // would go blank on every issuance made on it.
+      setExtraPrograms((prev) =>
+        absorb(
+          prev,
+          referenceData.loyaltyPrograms,
+          fresh.map((issuance) => issuance.loyalty_program),
+        ),
+      )
     },
-    [referenceData.accounts, referenceData.agencies],
+    [referenceData.accounts, referenceData.agencies, referenceData.loyaltyPrograms],
   )
 
   const refreshFromServer = useCallback(async () => {
@@ -1009,7 +1026,7 @@ export function IssuancesGrid({
   // not the `referenceData` rest object, which is a fresh object every render.
   const contextValue = useMemo<GridContextValue>(
     () => ({
-      loyaltyPrograms: referenceData.loyaltyPrograms,
+      loyaltyPrograms,
       airlines: referenceData.airlines,
       // Override the props: both include the records this session picked up after the
       // page rendered - created inline, or adopted from a refetched issuance.
@@ -1032,7 +1049,7 @@ export function IssuancesGrid({
       syncingRowKeys,
     }),
     [
-      referenceData.loyaltyPrograms,
+      loyaltyPrograms,
       referenceData.airlines,
       accounts,
       agencies,

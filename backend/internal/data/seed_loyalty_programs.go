@@ -92,8 +92,14 @@ func seededLoyaltyProgramExists(tx *gorm.DB, record loyaltyProgramSeedRecord) (b
 		}
 	}
 
+	// Unscoped: an archived program still counts as existing. Programs are
+	// soft-deleted (migration 29) and the seeder runs on every boot, so without this
+	// the next `make dev` would re-create every program the operator just archived -
+	// with a fresh uuid, leaving the old accounts pointing at the archived row.
 	var program LoyaltyProgram
-	err := tx.Where("LOWER(code) IN ? OR LOWER(name) IN ?", lowered, lowered).First(&program).Error
+	err := tx.Unscoped().
+		Where("LOWER(code) IN ? OR LOWER(name) IN ?", lowered, lowered).
+		First(&program).Error
 	if err == nil {
 		return true, nil
 	}

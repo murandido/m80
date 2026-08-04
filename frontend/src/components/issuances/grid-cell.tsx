@@ -30,9 +30,15 @@ function buildAccountOptions(
   people: Person[],
   loyaltyProgramId: string | null,
 ): ComboOption[] {
+  // Archived accounts are in this list only because they came embedded in a past
+  // issuance, so an old row could still be labelled with them. They are history, not
+  // a choice - offering one would let somebody move an issuance onto an account that
+  // no longer exists anywhere else in the panel.
+  const live = accounts.filter((account) => !account.deleted_at)
+
   const selectable = loyaltyProgramId
-    ? accounts.filter((account) => account.loyalty_program_id === loyaltyProgramId)
-    : accounts
+    ? live.filter((account) => account.loyalty_program_id === loyaltyProgramId)
+    : live
 
   return selectable.flatMap((account): ComboOption[] =>
     account.nicknames.length > 0

@@ -10,6 +10,9 @@ export const loyaltyProgramSchema = z.object({
   default_airline: airlineSchema.nullish(),
   created_at: z.string(),
   updated_at: z.string(),
+  // Same as accountSchema.deleted_at: only ever set on a program reached through a
+  // past issuance, so the grid can label the row without offering the program.
+  deleted_at: z.string().nullish(),
 })
 
 export type LoyaltyProgram = z.infer<typeof loyaltyProgramSchema>
