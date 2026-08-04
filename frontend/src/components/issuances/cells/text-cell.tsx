@@ -9,7 +9,7 @@ import { Direction } from "@/lib/grid-navigation"
 interface TextCellProps extends CellStateProps {
   r: number
   c: number
-  field: "main_passenger_name"
+  field: "main_passenger_name" | "observation"
 }
 
 export const TextCell = memo(function TextCell({ r, c, field, row, isEditing, pendingChar }: TextCellProps) {
@@ -53,6 +53,9 @@ export const TextCell = memo(function TextCell({ r, c, field, row, isEditing, pe
       <button
         type="button"
         onClick={() => onCellClick(r, c)}
+        // The value is truncated when the column is narrower than it; the title is the
+        // only way to read the rest without entering edit mode.
+        title={initialValue || undefined}
         className="block w-full truncate px-2 py-1.5 text-left"
       >
         {initialValue || <span className="text-muted-foreground">—</span>}

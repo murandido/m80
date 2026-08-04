@@ -33,6 +33,7 @@ import {
   CALCULATED_COLUMN_INDEX,
   COLUMN_COUNT,
   LOCATOR_COLUMN_INDEX,
+  OBSERVATION_COLUMN_INDEX,
   clampMove,
   resolveNextCell,
   Direction,
@@ -67,6 +68,9 @@ const COLUMN_LABELS = [
   "Emissor",
   "Agência",
   "Status",
+  // Last, not next to Agência: inserting it in the middle would renumber every
+  // column index in grid-cell.tsx, column-fields.ts and grid-navigation.ts.
+  "Observação",
 ]
 
 // Overlays the records this session learned about on top of the server-rendered list. The
@@ -368,6 +372,9 @@ export function IssuancesGrid({
           origin_iata_code: merged.origin_iata_code ?? undefined,
           destination_iata_code: merged.destination_iata_code ?? undefined,
           taxes: merged.taxes ?? undefined,
+          // Sent on the create too: a draft row is typed left to right, so the
+          // observation is often already there when the fifth required field lands.
+          observation: merged.observation ?? undefined,
           flight_date: merged.flight_date ?? undefined,
         }).finally(() => creatingKeysRef.current.delete(row.key))
 
@@ -1181,6 +1188,10 @@ export function IssuancesGrid({
                       className={cn(
                         // scroll-mt clears the sticky header when scrollIntoView lands here.
                         "scroll-mt-9 whitespace-normal border-l p-0 first:border-l-0",
+                        // The only free-text column with no length of its own. Bounded so
+                        // one long observation cannot widen the table for every other row -
+                        // the cell truncates and the full text is on the hover title.
+                        c === OBSERVATION_COLUMN_INDEX && "max-w-64",
                         accountNeedsPicking && "bg-red-100",
                         // Strike through the locator of a cancelled row - a "voided" cue on the
                         // cell that identifies the issuance.

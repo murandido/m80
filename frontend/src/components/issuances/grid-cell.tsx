@@ -190,6 +190,17 @@ export const GridCell = memo(function GridCell({
       )
     case 13:
       return <StatusCell r={r} c={c} row={row} isEditing={isEditing} />
+    case 14:
+      return (
+        <TextCell
+          r={r}
+          c={c}
+          row={row}
+          isEditing={isEditing}
+          pendingChar={pendingChar}
+          field="observation"
+        />
+      )
     default:
       return null
   }

@@ -41,6 +41,10 @@ export function clearPatchForColumn(c: number): Partial<IssuanceRow> | null {
       return { issuer_id: null }
     case 12:
       return { agency_id: null }
+    case 14:
+      // "" rather than null: the backend's PATCH takes observation as a plain
+      // optional string, so an empty one is how the column is cleared.
+      return { observation: "" }
     // 9 (calculated total) and 13 (status) intentionally fall through to null.
     default:
       return null

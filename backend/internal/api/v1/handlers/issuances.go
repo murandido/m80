@@ -349,7 +349,7 @@ func applyIssuanceListFilters(query *gorm.DB, r *http.Request) *gorm.DB {
 
 // GetIssuances handles the GET /issuances route.
 // @Summary      Listar emissões
-// @Description  Retorna as emissões cadastradas no sistema (exclui as removidas). Aceita filtros opcionais por data, programa de fidelidade, cia aérea, conta e emissor. As emissões canceladas também entram no filtro de data/usuário pela data e pelo usuário do cancelamento (cancelled_at/cancelled_by_id), não só pela criação.
+// @Description  Retorna as emissões cadastradas no sistema (exclui as removidas), da mais antiga para a mais recente. Aceita filtros opcionais por data, programa de fidelidade, cia aérea, conta e emissor. As emissões canceladas também entram no filtro de data/usuário pela data e pelo usuário do cancelamento (cancelled_at/cancelled_by_id), não só pela criação.
 // @Tags         Emissões
 // @Produce      json
 // @Security     BearerAuth
@@ -370,7 +370,10 @@ func (h *IssuanceHandler) GetIssuances(w http.ResponseWriter, r *http.Request) {
 		Preload("Flights", func(db *gorm.DB) *gorm.DB {
 			return db.Where("direction = ?", "outbound").Order("leg_order asc")
 		})
-	query = applyIssuanceListFilters(query, r).Order("created_at desc")
+	// Oldest first: the grid is read top to bottom in the order the issuances actually
+	// happened, and its draft row lives at the bottom - so a row created there stays
+	// where it was typed instead of jumping to the top on the next refresh.
+	query = applyIssuanceListFilters(query, r).Order("created_at asc")
 
 	if err := query.Find(&issuances).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch issuances")
@@ -387,7 +390,7 @@ func (h *IssuanceHandler) GetIssuances(w http.ResponseWriter, r *http.Request) {
 
 // GetIssuancesExport handles the GET /issuances/export route.
 // @Summary      Exportar emissões (.xlsx)
-// @Description  Gera uma planilha .xlsx das emissões filtradas, a partir do modelo padrão. Aceita os mesmos filtros da listagem (data, programa de fidelidade, cia aérea, conta e emissor).
+// @Description  Gera uma planilha .xlsx das emissões filtradas, a partir do modelo padrão, na mesma ordem da listagem (da mais antiga para a mais recente). Aceita os mesmos filtros da listagem (data, programa de fidelidade, cia aérea, conta e emissor).
 // @Tags         Emissões
 // @Produce      application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
 // @Security     BearerAuth
@@ -411,7 +414,7 @@ func (h *IssuanceHandler) GetIssuancesExport(w http.ResponseWriter, r *http.Requ
 		Preload("Flights", func(db *gorm.DB) *gorm.DB {
 			return db.Where("direction = ?", "outbound").Order("leg_order asc")
 		})
-	query = applyIssuanceListFilters(query, r).Order("created_at desc")
+	query = applyIssuanceListFilters(query, r).Order("created_at asc")
 
 	if err := query.Find(&issuances).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch issuances")

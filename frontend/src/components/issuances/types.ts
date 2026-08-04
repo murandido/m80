@@ -34,6 +34,10 @@ export interface IssuanceRow {
   issuer_id: string | null
   agency_id: string | null
   status: IssuanceStatus
+  // Free text on the issuance. The bot writes it by resolving the fifth line of an
+  // EMISSAO against observation_presets; the grid edits the resolved text, not the
+  // code, because the code is a shorthand for typing, not what the issuance carries.
+  observation: string | null
   // When the itinerary was last pulled from Traveos. Null means it never was, which
   // is not the same as incomplete: a row can be marked complete by hand and still
   // have no Traveos data, and only rows that have it can render a ticket.
@@ -75,6 +79,7 @@ export function issuanceToRow(issuance: Issuance): IssuanceRow {
     issuer_id: issuance.issuer_id,
     agency_id: issuance.agency_id,
     status: issuance.status,
+    observation: issuance.observation,
     traveos_synced_at: issuance.traveos_synced_at ?? null,
     cancelled_at: issuance.cancelled_at,
     cancelled_by_id: issuance.cancelled_by_id,
@@ -114,6 +119,7 @@ export function makeDraftRow(
     issuer_id: issuerId ?? null,
     agency_id: agencyId ?? null,
     status: "incomplete",
+    observation: null,
     traveos_synced_at: null,
     cancelled_at: null,
     cancelled_by_id: null,
