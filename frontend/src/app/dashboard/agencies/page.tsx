@@ -1,9 +1,16 @@
+import type { Metadata } from "next"
 import { cookies } from "next/headers"
 import { Separator } from "@/components/ui/separator"
 import { env } from "@/lib/env"
 import { getAgenciesSchema, Agency } from "@/schemas/agency"
 import { AgencyCard } from "@/components/agencies/agency-card"
 import { CreateAgencyForm } from "@/components/agencies/create-agency-form"
+
+export const metadata: Metadata = {
+  title: "Agências",
+  description:
+    "As agências que emitem pelo painel e qual delas vem marcada por padrão nos filtros.",
+}
 
 export default async function AgenciesPage() {
   const cookieStore = await cookies()

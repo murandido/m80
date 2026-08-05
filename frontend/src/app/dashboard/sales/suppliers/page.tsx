@@ -1,3 +1,4 @@
+import type { Metadata } from "next"
 import { cookies } from "next/headers"
 import Link from "next/link"
 import { AlertTriangle, ExternalLink } from "lucide-react"
@@ -24,6 +25,12 @@ import {
   SALES_URL_KEYS,
   type SalesSearchParams,
 } from "../period-params"
+
+export const metadata: Metadata = {
+  title: "Fornecedores",
+  description:
+    "Quantas milhas saíram de cada conta no período e quanto a agência deve a cada administrador.",
+}
 
 async function fetchList<T>(
   url: string,

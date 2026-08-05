@@ -1,3 +1,4 @@
+import type { Metadata } from "next"
 import { cookies } from "next/headers"
 import { Separator } from "@/components/ui/separator"
 import { env } from "@/lib/env"
@@ -5,6 +6,12 @@ import { getAirlinesSchema, Airline } from "@/schemas/airline"
 import { LoyaltyProgramsAirlinesToggle } from "@/components/layout/loyalty-programs-airlines-toggle"
 import { AirlineCard } from "@/components/airlines/airline-card"
 import { CreateAirlineForm } from "@/components/airlines/create-airline-form"
+
+export const metadata: Metadata = {
+  title: "CIAs Aéreas",
+  description:
+    "As companhias que operam os voos e o código que a busca automática usa para encontrá-los.",
+}
 
 export default async function AirlinesPage() {
   const cookieStore = await cookies()

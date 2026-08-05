@@ -1,3 +1,4 @@
+import type { Metadata } from "next"
 import { cookies } from "next/headers"
 import { Separator } from "@/components/ui/separator"
 import { env } from "@/lib/env"
@@ -7,6 +8,12 @@ import { getLoyaltyProgramsSchema, LoyaltyProgram } from "@/schemas/loyalty-prog
 import { ContasPessoasToggle } from "@/components/layout/contas-pessoas-toggle"
 import { AccountCard } from "@/components/accounts/account-card"
 import { CreateAccountForm } from "@/components/accounts/create-account-form"
+
+export const metadata: Metadata = {
+  title: "Contas",
+  description:
+    "As contas de programa de fidelidade de onde saem os pontos, com as credenciais de acesso.",
+}
 
 export default async function AccountsPage() {
   const cookieStore = await cookies()

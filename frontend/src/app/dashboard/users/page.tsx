@@ -1,3 +1,4 @@
+import type { Metadata } from "next"
 import { cookies } from "next/headers"
 import { Separator } from "@/components/ui/separator"
 import { env } from "@/lib/env"
@@ -5,6 +6,12 @@ import { requireAdmin } from "@/lib/session"
 import { getUsersSchema, getMeSchema, User } from "@/schemas/user"
 import { UserCard } from "@/components/users/user-card"
 import { CreateUserForm } from "@/components/users/create-user-form"
+
+export const metadata: Metadata = {
+  title: "Usuários",
+  description:
+    "Quem tem acesso ao painel, com qual perfil e com qual telefone entra.",
+}
 
 export default async function UsersPage() {
   await requireAdmin()

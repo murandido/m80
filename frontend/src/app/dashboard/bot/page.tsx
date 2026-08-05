@@ -1,3 +1,4 @@
+import type { Metadata } from "next"
 import { requireAdmin } from "@/lib/session"
 import { getBotStatusAction } from "@/actions/bot"
 import {
@@ -7,6 +8,12 @@ import {
 import { BotStatusCard } from "@/components/bot/bot-status-card"
 import { PendingChatsTable } from "@/components/bot/pending-chats-table"
 import { MonitoredChatsTable } from "@/components/bot/monitored-chats-table"
+
+export const metadata: Metadata = {
+  title: "Bot",
+  description:
+    "A conexão do bot com o WhatsApp e o que ele registrou em cada conversa.",
+}
 
 export default async function BotPage() {
   await requireAdmin()

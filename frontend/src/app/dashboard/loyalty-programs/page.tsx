@@ -1,3 +1,4 @@
+import type { Metadata } from "next"
 import { cookies } from "next/headers"
 import { Separator } from "@/components/ui/separator"
 import { env } from "@/lib/env"
@@ -6,6 +7,12 @@ import { getAirlinesSchema, Airline } from "@/schemas/airline"
 import { LoyaltyProgramsAirlinesToggle } from "@/components/layout/loyalty-programs-airlines-toggle"
 import { LoyaltyProgramCard } from "@/components/loyalty-programs/loyalty-program-card"
 import { CreateLoyaltyProgramForm } from "@/components/loyalty-programs/create-loyalty-program-form"
+
+export const metadata: Metadata = {
+  title: "Programas de Fidelidade",
+  description:
+    "Os programas de pontos, a companhia de cada um e a cor com que aparecem na grid.",
+}
 
 export default async function LoyaltyProgramsPage() {
   const cookieStore = await cookies()

@@ -1,3 +1,4 @@
+import type { Metadata } from "next"
 import { cookies } from "next/headers"
 import { AlertTriangle } from "lucide-react"
 import { z } from "zod"
@@ -14,6 +15,12 @@ import { getPeopleSchema } from "@/schemas/person"
 import { getAirportsSchema } from "@/schemas/airport"
 import { IssuancesGrid } from "@/components/issuances/issuances-grid"
 import { IssuancesFilterBar } from "@/components/issuances/issuances-filter-bar"
+
+export const metadata: Metadata = {
+  title: "Emissões",
+  description:
+    "Registre e acompanhe cada emissão, do localizador ao valor cobrado do cliente.",
+}
 
 // The filter dimensions the page understands, carried as URL query params.
 const FILTER_KEYS = [

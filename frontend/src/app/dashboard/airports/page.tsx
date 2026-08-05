@@ -1,3 +1,4 @@
+import type { Metadata } from "next"
 import { cookies } from "next/headers"
 import { Separator } from "@/components/ui/separator"
 import { env } from "@/lib/env"
@@ -7,6 +8,12 @@ import { CreateAirportForm } from "@/components/airports/create-airport-form"
 import { AirportCard } from "@/components/airports/airport-card"
 import { AirportSearchBar } from "@/components/airports/airport-search-bar"
 import { AirportPagination } from "@/components/airports/airport-pagination"
+
+export const metadata: Metadata = {
+  title: "Aeroportos",
+  description:
+    "A base de códigos IATA que preenche a origem e o destino das emissões.",
+}
 
 const PAGE_LIMIT = 20
 

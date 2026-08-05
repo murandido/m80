@@ -1,3 +1,4 @@
+import type { Metadata } from "next"
 import { cookies } from "next/headers"
 import { Separator } from "@/components/ui/separator"
 import { env } from "@/lib/env"
@@ -5,6 +6,12 @@ import { getPeopleSchema, Person } from "@/schemas/person"
 import { ContasPessoasToggle } from "@/components/layout/contas-pessoas-toggle"
 import { PersonCard } from "@/components/people/person-card"
 import { CreatePersonForm } from "@/components/people/create-person-form"
+
+export const metadata: Metadata = {
+  title: "Pessoas",
+  description:
+    "Passageiros e titulares das emissões, com os apelidos que o bot reconhece no WhatsApp.",
+}
 
 export default async function PeoplePage() {
   const cookieStore = await cookies()

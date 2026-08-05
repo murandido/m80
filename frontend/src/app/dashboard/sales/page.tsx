@@ -1,3 +1,4 @@
+import type { Metadata } from "next"
 import { cookies } from "next/headers"
 import Link from "next/link"
 import { AlertTriangle, ExternalLink } from "lucide-react"
@@ -26,6 +27,12 @@ import {
   SALES_URL_KEYS,
   type SalesSearchParams,
 } from "./period-params"
+
+export const metadata: Metadata = {
+  title: "Vendas",
+  description:
+    "Quanto cada cliente comprou no período e quanto ainda deve à agência.",
+}
 
 // Returns null when the request or the parse failed - distinct from an empty list, which
 // is a legitimate result. Mirrors fetchList in app/dashboard/issuances/page.tsx.

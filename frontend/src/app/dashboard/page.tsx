@@ -1,3 +1,4 @@
+import type { Metadata } from "next"
 import { cookies } from "next/headers"
 import { AlertTriangle } from "lucide-react"
 import { z } from "zod"
@@ -27,6 +28,12 @@ import {
   DASHBOARD_URL_KEYS,
   type DashboardSearchParams,
 } from "./dashboard-params"
+
+export const metadata: Metadata = {
+  title: "Dashboard",
+  description:
+    "O resumo do período: quanto foi emitido, quanto entrou e o que ainda está em aberto.",
+}
 
 // Returns null when the request or the parse failed - distinct from an empty result, which
 // is a legitimate answer. Mirrors fetchList in app/dashboard/sales/page.tsx.

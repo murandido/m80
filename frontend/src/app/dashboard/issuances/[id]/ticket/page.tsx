@@ -1,3 +1,4 @@
+import type { Metadata } from "next"
 import { cookies } from "next/headers"
 import Link from "next/link"
 import { AlertTriangle, ArrowLeft, Download } from "lucide-react"
@@ -11,6 +12,12 @@ import {
   getIssuancePassengersAction,
   getIssuanceSeatsAction,
 } from "@/actions/issuance-services"
+
+export const metadata: Metadata = {
+  title: "Bilhete",
+  description:
+    "O bilhete da emissão, pronto para enviar ao cliente.",
+}
 
 // The backend renders the ticket, not this page. It is the same document the PDF
 // is made from, so the preview here cannot drift from the file the passenger

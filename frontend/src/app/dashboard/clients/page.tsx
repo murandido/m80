@@ -1,9 +1,16 @@
+import type { Metadata } from "next"
 import { cookies } from "next/headers"
 import { Separator } from "@/components/ui/separator"
 import { env } from "@/lib/env"
 import { getClientsSchema, Client } from "@/schemas/client"
 import { ClientCard } from "@/components/clients/client-card"
 import { CreateClientForm } from "@/components/clients/create-client-form"
+
+export const metadata: Metadata = {
+  title: "Clientes",
+  description:
+    "Quem compra as passagens: o nome e o telefone usados para cobrar cada emissão.",
+}
 
 export default async function ClientsPage() {
   const cookieStore = await cookies()
