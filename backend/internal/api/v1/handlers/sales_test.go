@@ -743,3 +743,45 @@ func TestGetSupplierBalances_FiltersByAgencyProgramAndAccount(t *testing.T) {
 		}
 	})
 }
+
+// The suppliers view is the one surface that never sees the issuance's alias, so it has
+// to reach the account's own. Before the account_nicknames sub-select existed it fell
+// through to the raw 36-character UUID for any account identified only by an alias.
+func TestGetSupplierBalances_LabelsAccountByNicknameAndNeverByFullUUID(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		main := defaultAgency(t, tx)
+		issuance, _ := seedSaleFixture(t, tx, main.ID)
+
+		today := spDay(t, 0)
+		period := "date_from=" + today + "&date_to=" + today
+
+		// No holder, no login and no alias: the label degrades to a short id rather
+		// than dumping the whole UUID into the table.
+		bare := findBalance(callGetSupplierBalances(t, tx, period), issuance.AccountID)
+		if bare == nil {
+			t.Fatal("account missing from the supplier balances")
+		}
+		if bare.AccountLabel == issuance.AccountID {
+			t.Error("account_label is the raw UUID; it should be truncated when nothing else identifies the account")
+		}
+		if want := issuance.AccountID[:8]; bare.AccountLabel != want {
+			t.Errorf("account_label: got %q, want %q", bare.AccountLabel, want)
+		}
+
+		// An alias registered on the account itself is enough to name the row.
+		nickname := data.AccountNickname{
+			AccountID:        issuance.AccountID,
+			LoyaltyProgramID: issuance.LoyaltyProgramID,
+			Nickname:         "conta-do-joao-" + uuid.New().String()[:8],
+		}
+		create(t, tx, &nickname)
+
+		named := findBalance(callGetSupplierBalances(t, tx, period), issuance.AccountID)
+		if named == nil {
+			t.Fatal("account missing from the supplier balances after adding a nickname")
+		}
+		if named.AccountLabel != nickname.Nickname {
+			t.Errorf("account_label: got %q, want the account's nickname %q", named.AccountLabel, nickname.Nickname)
+		}
+	})
+}

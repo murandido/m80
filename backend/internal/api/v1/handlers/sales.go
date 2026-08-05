@@ -355,6 +355,7 @@ type supplierIssuanceRow struct {
 	CancelledAt    *time.Time
 
 	AccountLogin        *string
+	AccountNickname     *string
 	HolderName          *string
 	AdministratorName   *string
 	LoyaltyProgramName  string
@@ -393,6 +394,14 @@ func (h *SaleHandler) GetSupplierBalances(w http.ResponseWriter, r *http.Request
 			issuances.created_at,
 			issuances.cancelled_at,
 			accounts.login AS account_login,
+			-- Sub-select rather than a join: an account can hold several nicknames, and
+			-- joining would multiply the issuance rows this aggregation counts. Oldest
+			-- wins so the label does not move when someone registers a second alias.
+			(SELECT nickname FROM account_nicknames
+				WHERE account_nicknames.account_id = accounts.id
+				  AND account_nicknames.deleted_at IS NULL
+				ORDER BY account_nicknames.created_at ASC
+				LIMIT 1) AS account_nickname,
 			holders.name AS holder_name,
 			administrators.name AS administrator_name,
 			loyalty_programs.name AS loyalty_program_name,
@@ -500,13 +509,26 @@ func aggregateSupplierBalances(rows []supplierIssuanceRow, from, to *time.Time) 
 
 // supplierAccountLabel identifies an account in the suppliers view. Unlike the sales
 // listing it never uses the issuance's alias: the row is the account itself, aggregated
-// over many issuances that may each have picked a different alias.
+// over many issuances that may each have picked a different alias. The nickname here is
+// the account's own, chosen deterministically by the query.
+//
+// The chain matches the account picker in the panel (account-combobox.tsx), down to
+// truncating the id, so the same account reads the same way wherever it appears.
 func supplierAccountLabel(row supplierIssuanceRow) string {
 	if row.HolderName != nil && *row.HolderName != "" {
 		return *row.HolderName
 	}
 	if row.AccountLogin != nil && *row.AccountLogin != "" {
 		return *row.AccountLogin
+	}
+	if row.AccountNickname != nil && *row.AccountNickname != "" {
+		return *row.AccountNickname
+	}
+	// Last resort for an account with no holder, no login and no alias. A full UUID
+	// is unreadable and identifies nothing to the operator; the first block is enough
+	// to tell two such rows apart.
+	if len(row.AccountID) > 8 {
+		return row.AccountID[:8]
 	}
 	return row.AccountID
 }
