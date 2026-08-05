@@ -1,28 +1,25 @@
-import { LogoSVG } from "@/components/icons/logo"
-import { SidebarTrigger } from "@/components/ui/sidebar"
-import { UserMenu } from "@/components/layout/user-menu"
+import { NavBreadcrumb } from "@/components/layout/nav-breadcrumb"
 import { SystemStatusIndicator } from "@/components/layout/system-status-indicator"
+import { Separator } from "@/components/ui/separator"
+import { SidebarTrigger } from "@/components/ui/sidebar"
 import type { SystemStatus } from "@/schemas/status"
-import type { User } from "@/schemas/user"
 
 export function Header({
-  user,
   systemStatus = null,
   isAdmin = false,
 }: {
-  user: User | null
   systemStatus?: SystemStatus | null
   isAdmin?: boolean
 }) {
   return (
-    <header className="flex flex-none items-center justify-between bg-slate-700 px-6 py-4 sm:px-12">
-      <LogoSVG className="h-6 w-15 fill-white" />
-      <div className="flex items-center gap-2">
-        {/* In the header rather than on the dashboard home so that it reaches
-            the people who never leave the issuances grid. */}
+    <header className="sticky top-0 z-10 flex h-12 flex-none items-center gap-2 border-b bg-background px-3">
+      <SidebarTrigger className="-ml-1" />
+      <Separator orientation="vertical" className="mr-1 data-[orientation=vertical]:h-4" />
+      <NavBreadcrumb />
+      {/* In the header rather than on the dashboard home so that it reaches
+          the people who never leave the issuances grid. */}
+      <div className="ml-auto flex items-center gap-2">
         <SystemStatusIndicator initialStatus={systemStatus} isAdmin={isAdmin} />
-        <UserMenu user={user} />
-        <SidebarTrigger className="text-white hover:bg-slate-600 hover:text-white" />
       </div>
     </header>
   )

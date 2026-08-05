@@ -19,10 +19,12 @@ import type { DependencyStatus, SystemStatus } from "@/schemas/status"
 
 type Tone = "ok" | "bad" | "warn" | "idle"
 
+// Darkened one step from the -400 these used while the header was slate-700:
+// on the light header the lighter shades failed contrast against white.
 const DOT_CLASS: Record<Tone, string> = {
-  ok: "bg-emerald-400",
-  bad: "bg-red-400",
-  warn: "bg-amber-400",
+  ok: "bg-emerald-600",
+  bad: "bg-red-600",
+  warn: "bg-amber-600",
   // Grey covers both "never configured" and "not probed yet": neither is a
   // problem to act on, and a second alarming colour would dilute the red.
   idle: "bg-slate-400",
@@ -122,7 +124,7 @@ export function SystemStatusIndicator({
   return (
     <Popover>
       <PopoverTrigger
-        className="flex items-center gap-3 rounded-md px-2 py-1 text-xs text-slate-200 transition-colors hover:bg-slate-600"
+        className="flex items-center gap-3 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
         aria-label="Status do sistema"
       >
         <span className="flex items-center gap-1.5">
