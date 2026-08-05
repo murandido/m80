@@ -194,3 +194,80 @@ func TestListPeople_ClampsTheLimitAndFallsBackOnGarbage(t *testing.T) {
 		}
 	})
 }
+
+type accountListResponse struct {
+	Data []schemas.AccountResponse `json:"data"`
+}
+
+func callGetAccounts(t *testing.T, tx *gorm.DB, query string) []schemas.AccountResponse {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	NewAccountHandler(tx).GetAccounts(rec, httptest.NewRequest(http.MethodGet, "/accounts?"+query, nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GetAccounts status: got %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+	var resp accountListResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode GetAccounts response: %v", err)
+	}
+	return resp.Data
+}
+
+// The panel labels an account by holder, then login, then alias. Ordering has to
+// follow the same chain: sorting on holder and login alone drops an alias-named
+// account into the NULL bucket at the end, and the list reads as unsorted.
+func TestGetAccounts_OrdersAliasNamedAccountsAlongsideTheRest(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		airline := data.Airline{
+			Name: "CIA " + uuid.New().String()[:8],
+			Code: uuid.New().String()[:6],
+		}
+		create(t, tx, &airline)
+
+		program := data.LoyaltyProgram{
+			Name:             "Programa " + uuid.New().String()[:8],
+			Code:             uuid.New().String()[:6],
+			DefaultAirlineID: airline.ID,
+		}
+		create(t, tx, &program)
+
+		// Holder-named account sorting after the alias-named one alphabetically.
+		holder := data.Person{Name: "zzz-holder-" + uuid.New().String()[:8]}
+		create(t, tx, &holder)
+		withHolder := data.Account{LoyaltyProgramID: program.ID, HolderID: &holder.ID}
+		create(t, tx, &withHolder)
+
+		// Alias-named account: no holder, no login. Before the fix this sorted last
+		// no matter what its alias said.
+		aliasOnly := data.Account{LoyaltyProgramID: program.ID}
+		create(t, tx, &aliasOnly)
+		alias := data.AccountNickname{
+			AccountID:        aliasOnly.ID,
+			LoyaltyProgramID: program.ID,
+			Nickname:         "aaa-alias-" + uuid.New().String()[:8],
+		}
+		create(t, tx, &alias)
+
+		var seenAlias, seenHolder int
+		accounts := callGetAccounts(t, tx, "loyalty_program_id="+program.ID)
+		for i, account := range accounts {
+			switch account.ID {
+			case aliasOnly.ID:
+				seenAlias = i
+			case withHolder.ID:
+				seenHolder = i
+			}
+		}
+
+		if len(accounts) != 2 {
+			t.Fatalf("got %d accounts for the seeded program, want 2", len(accounts))
+		}
+		if seenAlias > seenHolder {
+			t.Errorf(
+				"the account named %q sorted after %q; alias-named accounts must sort by their alias, not land in the NULL bucket",
+				alias.Nickname, holder.Name,
+			)
+		}
+	})
+}

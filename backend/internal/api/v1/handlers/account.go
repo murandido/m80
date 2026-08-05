@@ -137,11 +137,26 @@ func (h *AccountHandler) CreateAccount(w http.ResponseWriter, r *http.Request) {
 }
 
 // An account has no name of its own - the panel labels it by holder, then login, then
-// alias. "Alphabetical" therefore has to be an expression rather than a column, and
-// this is the one listing where the default ordering is a judgement call. Rows with
-// neither a holder nor a login sort last instead of jumping to the top on an empty
-// string, and created_at breaks the ties so the order is stable.
-const accountLabelOrder = `COALESCE(NULLIF(holders.name, ''), NULLIF(accounts.login, '')) %s NULLS LAST, accounts.created_at ASC`
+// alias (see account-card.tsx). "Alphabetical" therefore has to be an expression
+// rather than a column, and it has to follow the same chain the operator reads: sort
+// by holder and login alone and an account named by its alias lands in the NULL
+// bucket at the end, which just looks like the list is not sorted.
+//
+// The alias comes from a sub-select for the same reason the suppliers view uses one:
+// an account can hold several, and joining would duplicate the row. Oldest wins, so
+// the position does not move when someone registers a second alias.
+//
+// Accounts with none of the three still sort last rather than jumping to the top on
+// an empty string, and created_at breaks the ties so the order is stable.
+const accountLabelOrder = `COALESCE(
+	NULLIF(holders.name, ''),
+	NULLIF(accounts.login, ''),
+	(SELECT nickname FROM account_nicknames
+		WHERE account_nicknames.account_id = accounts.id
+		  AND account_nicknames.deleted_at IS NULL
+		ORDER BY account_nicknames.created_at ASC
+		LIMIT 1)
+) %s NULLS LAST, accounts.created_at ASC`
 
 var accountOrder = map[string]string{
 	"name_asc":     fmt.Sprintf(accountLabelOrder, "ASC"),
