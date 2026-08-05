@@ -6,8 +6,9 @@ import { requireAdmin } from "@/lib/session"
 import { Airport, listAirportsSchema } from "@/schemas/airport"
 import { CreateAirportForm } from "@/components/airports/create-airport-form"
 import { AirportCard } from "@/components/airports/airport-card"
-import { AirportSearchBar } from "@/components/airports/airport-search-bar"
-import { AirportPagination } from "@/components/airports/airport-pagination"
+import { ListFilterBar } from "@/components/shared/list-filter-bar"
+import { ListPagination } from "@/components/shared/list-pagination"
+import { readStickyFilters, stickySearchParams } from "@/lib/sticky-filters"
 
 export const metadata: Metadata = {
   title: "Aeroportos",
@@ -17,6 +18,10 @@ export const metadata: Metadata = {
 
 const PAGE_LIMIT = 20
 
+// Airports order by IATA code in the backend and take no `order` param, so this
+// screen carries no sort control - see ListFilterBar.
+const AIRPORTS_URL_KEYS = ["q", "page"] as const
+
 export default async function AirportsPage({
   searchParams,
 }: {
@@ -24,12 +29,16 @@ export default async function AirportsPage({
 }) {
   await requireAdmin()
 
-  const { q, page: pageParam } = await searchParams
-  const query = q?.trim() ?? ""
-  const page = Math.max(1, Number(pageParam) || 1)
-
   const cookieStore = await cookies()
   const token = cookieStore.get("auth_token")?.value
+
+  const { q, page: pageParam } = stickySearchParams(
+    await searchParams,
+    readStickyFilters(cookieStore, "/dashboard/airports"),
+    AIRPORTS_URL_KEYS,
+  )
+  const query = q?.trim() ?? ""
+  const page = Math.max(1, Number(pageParam) || 1)
 
   let airports: Airport[] = []
   let total = 0
@@ -64,18 +73,27 @@ export default async function AirportsPage({
           Tabela de Aeroportos
         </h1>
         <CreateAirportForm />
-        <AirportSearchBar />
+        <ListFilterBar searchPlaceholder="Buscar por código IATA, nome, cidade, estado ou país" />
         <Separator className="my-2" />
         <div className="flex flex-col gap-2">
           {airports.length === 0 ? (
-            <p className="text-sm text-slate-500">Nenhum aeroporto encontrado.</p>
+            <p className="text-sm text-slate-500">
+              {query
+                ? `Nenhum aeroporto encontrado para "${query}".`
+                : "Nenhum aeroporto cadastrado."}
+            </p>
           ) : (
             airports.map((airport) => (
               <AirportCard key={airport.id} airport={airport} />
             ))
           )}
         </div>
-        <AirportPagination total={total} page={page} limit={PAGE_LIMIT} />
+        <ListPagination
+          total={total}
+          page={page}
+          limit={PAGE_LIMIT}
+          noun={["aeroporto", "aeroportos"]}
+        />
       </div>
     </div>
   )
