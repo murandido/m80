@@ -28,10 +28,11 @@ export type SalesSearchParams = PeriodSearchParams &
 // tells the page that the URL is user-controlled rather than a bare sidebar link.
 export const SALES_URL_KEYS = [...PERIOD_KEYS, ...SALES_FILTER_KEYS] as const
 
-// Defaults to the current month: a single day is too narrow to be useful as a landing
-// view for "who still owes me money".
+// Defaults to today, matching the dashboard home and the issuances grid. Landing on
+// the same day everywhere means a number seen on one screen is comparable with a
+// number seen on the next without checking which period each one is showing.
 export function resolveSalesPeriod(params: SalesSearchParams): ResolvedPeriod {
-  return resolvePeriod(params, "month")
+  return resolvePeriod(params, "day")
 }
 
 export function resolveSalesFilters(params: SalesSearchParams): SalesFilterState {
