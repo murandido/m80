@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -135,12 +136,56 @@ func (h *AccountHandler) CreateAccount(w http.ResponseWriter, r *http.Request) {
 	utils.SendJSON(w, r, http.StatusCreated, "Account created successfully", toAccountResponse(account))
 }
 
+// An account has no name of its own - the panel labels it by holder, then login, then
+// alias. "Alphabetical" therefore has to be an expression rather than a column, and
+// this is the one listing where the default ordering is a judgement call. Rows with
+// neither a holder nor a login sort last instead of jumping to the top on an empty
+// string, and created_at breaks the ties so the order is stable.
+const accountLabelOrder = `COALESCE(NULLIF(holders.name, ''), NULLIF(accounts.login, '')) %s NULLS LAST, accounts.created_at ASC`
+
+var accountOrder = map[string]string{
+	"name_asc":     fmt.Sprintf(accountLabelOrder, "ASC"),
+	"name_desc":    fmt.Sprintf(accountLabelOrder, "DESC"),
+	"created_desc": "accounts.created_at DESC",
+	"created_asc":  "accounts.created_at ASC",
+}
+
+// accountListQuery applies the optional search and the ordering. The join to holders is
+// unconditional because the default ordering reads from it.
+func accountListQuery(db *gorm.DB, params listQuery, programID string, complete *bool) *gorm.DB {
+	query := db.Model(&data.Account{}).
+		Joins("LEFT JOIN people AS holders ON holders.id = accounts.holder_id")
+
+	if params.Q != "" {
+		like := likePattern(params.Q)
+		search := db.Where("accounts.login ILIKE ?", like).
+			Or("holders.name ILIKE ?", like).
+			Or("EXISTS (SELECT 1 FROM people AS administrators WHERE administrators.id = accounts.administrator_id AND administrators.name ILIKE ?)", like).
+			Or("EXISTS (SELECT 1 FROM loyalty_programs WHERE loyalty_programs.id = accounts.loyalty_program_id AND (loyalty_programs.name ILIKE ? OR loyalty_programs.code ILIKE ?))", like, like).
+			Or(nicknameMatch("account_nicknames", "account_id", "accounts", true), like)
+		query = query.Where(search)
+	}
+
+	if programID != "" {
+		query = query.Where("accounts.loyalty_program_id = ?", programID)
+	}
+	if complete != nil {
+		query = query.Where("accounts.complete = ?", *complete)
+	}
+
+	return query.Order(orderClause(params.Order, accountOrder, accountOrder["name_asc"]))
+}
+
 // GetAccounts handles the GET /accounts route.
 // @Summary      Listar contas
 // @Description  Retorna todas as contas cadastradas no sistema.
 // @Tags         Contas
 // @Produce      json
 // @Security     BearerAuth
+// @Param        q                   query  string  false  "Busca por login, titular, administrador, programa ou apelido"
+// @Param        order               query  string  false  "Ordenação"  Enums(name_asc, name_desc, created_desc, created_asc)
+// @Param        loyalty_program_id  query  string  false  "UUID do programa de fidelidade"
+// @Param        complete            query  bool    false  "Somente contas completas (true) ou incompletas (false)"
 // @Success      200  {object}  schemas.AccountListResponse
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao buscar contas"
@@ -148,7 +193,13 @@ func (h *AccountHandler) CreateAccount(w http.ResponseWriter, r *http.Request) {
 func (h *AccountHandler) GetAccounts(w http.ResponseWriter, r *http.Request) {
 	var accounts []data.Account
 
-	if err := h.DB.Preload("Nicknames").Preload("LoyaltyProgram").Find(&accounts).Error; err != nil {
+	query := accountListQuery(
+		h.DB,
+		parseListQuery(r),
+		r.URL.Query().Get("loyalty_program_id"),
+		parseOptionalBool(r.URL.Query().Get("complete")),
+	)
+	if err := query.Preload("Nicknames").Preload("LoyaltyProgram").Find(&accounts).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch accounts")
 		return
 	}

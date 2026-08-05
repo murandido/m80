@@ -99,12 +99,43 @@ func (h *AirlineHandler) CreateAirline(w http.ResponseWriter, r *http.Request) {
 	utils.SendJSON(w, r, http.StatusCreated, "Airline created successfully", toAirlineResponse(airline))
 }
 
+// airlineOrder is the whitelist of sort keys; the client's string only ever indexes it.
+var airlineOrder = map[string]string{
+	"name_asc":     "airlines.name ASC",
+	"name_desc":    "airlines.name DESC",
+	"created_desc": "airlines.created_at DESC",
+	"created_asc":  "airlines.created_at ASC",
+}
+
+// airlineListQuery applies the optional search and the ordering. The ordering is not
+// optional: without it Postgres was free to return rows in heap order, so the list
+// reshuffled itself after any update.
+func airlineListQuery(db *gorm.DB, params listQuery, traveosSupported *bool) *gorm.DB {
+	query := db.Model(&data.Airline{})
+
+	if params.Q != "" {
+		like := likePattern(params.Q)
+		search := db.Where("airlines.name ILIKE ?", like)
+		search = search.Or("airlines.code ILIKE ?", like)
+		query = query.Where(search)
+	}
+
+	if traveosSupported != nil {
+		query = query.Where("airlines.traveos_supported = ?", *traveosSupported)
+	}
+
+	return query.Order(orderClause(params.Order, airlineOrder, airlineOrder["name_asc"]))
+}
+
 // GetAirlines handles the GET /airlines route.
 // @Summary      Listar companhias aéreas
 // @Description  Retorna todas as companhias aéreas cadastradas no sistema.
 // @Tags         Companhias Aéreas
 // @Produce      json
 // @Security     BearerAuth
+// @Param        q      query  string  false  "Busca por nome ou código"
+// @Param        order  query  string  false  "Ordenação"  Enums(name_asc, name_desc, created_desc, created_asc)
+// @Param        traveos_supported  query  bool  false  "Somente companhias com (true) ou sem (false) suporte na Traveos"
 // @Success      200  {object}  schemas.AirlineListResponse
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao buscar companhias aéreas"
@@ -112,7 +143,7 @@ func (h *AirlineHandler) CreateAirline(w http.ResponseWriter, r *http.Request) {
 func (h *AirlineHandler) GetAirlines(w http.ResponseWriter, r *http.Request) {
 	var airlines []data.Airline
 
-	if err := h.DB.Find(&airlines).Error; err != nil {
+	if err := airlineListQuery(h.DB, parseListQuery(r), parseOptionalBool(r.URL.Query().Get("traveos_supported"))).Find(&airlines).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch airlines")
 		return
 	}

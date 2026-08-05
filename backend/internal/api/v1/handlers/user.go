@@ -76,12 +76,45 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	utils.SendJSON(w, r, http.StatusCreated, "User created successfully", resp)
 }
 
+// userOrder is the whitelist of sort keys; the client's string only ever indexes it.
+var userOrder = map[string]string{
+	"name_asc":     "users.name ASC",
+	"name_desc":    "users.name DESC",
+	"created_desc": "users.created_at DESC",
+	"created_asc":  "users.created_at ASC",
+}
+
+// userListQuery applies the optional search and the ordering. The ordering is not
+// optional: without it Postgres was free to return rows in heap order, so the list
+// reshuffled itself after any update.
+func userListQuery(db *gorm.DB, params listQuery, role string) *gorm.DB {
+	query := db.Model(&data.User{})
+
+	if params.Q != "" {
+		like := likePattern(params.Q)
+		search := db.Where("users.name ILIKE ?", like)
+		search = search.Or("users.phone ILIKE ?", like)
+		query = query.Where(search)
+	}
+
+	// Only the two roles the panel offers; anything else leaves the list unfiltered
+	// rather than returning nothing for a typo in the URL.
+	if role == "admin" || role == "user" {
+		query = query.Where("users.role = ?", role)
+	}
+
+	return query.Order(orderClause(params.Order, userOrder, userOrder["name_asc"]))
+}
+
 // GetUsers handles the GET /users route.
 // @Summary      Listar usuários
 // @Description  Retorna todos os usuários cadastrados no sistema (sem senhas). Acessível a qualquer usuário autenticado (ex: para popular o combobox de "emissor" em outras telas).
 // @Tags         Usuários
 // @Produce      json
 // @Security     BearerAuth
+// @Param        q      query  string  false  "Busca por nome ou telefone"
+// @Param        order  query  string  false  "Ordenação"  Enums(name_asc, name_desc, created_desc, created_asc)
+// @Param        role   query  string  false  "Perfil"  Enums(admin, user)
 // @Success      200  {object}  schemas.UserListResponse
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao buscar usuários"
@@ -89,7 +122,7 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 func (h *UserHandler) GetUsers(w http.ResponseWriter, r *http.Request) {
 	var users []data.User
 
-	if err := h.DB.Find(&users).Error; err != nil {
+	if err := userListQuery(h.DB, parseListQuery(r), r.URL.Query().Get("role")).Find(&users).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch users")
 		return
 	}

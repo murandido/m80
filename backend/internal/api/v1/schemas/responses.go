@@ -40,6 +40,21 @@ type PersonListResponse struct {
 	Data    []PersonResponse `json:"data"`
 }
 
+// PersonPaginatedData is the data payload for the paginated people listing.
+type PersonPaginatedData struct {
+	People []PersonResponse `json:"people"`
+	Total  int64            `json:"total"`
+	Page   int              `json:"page"`
+	Limit  int              `json:"limit"`
+}
+
+// PersonPaginatedResponse is the GET /people/manage route response
+type PersonPaginatedResponse struct {
+	Success bool                `json:"success" example:"true"`
+	Message string              `json:"message" example:"Pessoas listadas com sucesso"`
+	Data    PersonPaginatedData `json:"data"`
+}
+
 // PersonSingleResponse is the response from single-person routes
 type PersonSingleResponse struct {
 	Success bool           `json:"success" example:"true"`

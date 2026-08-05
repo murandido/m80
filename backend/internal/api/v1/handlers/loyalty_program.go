@@ -108,12 +108,38 @@ func (h *LoyaltyProgramHandler) CreateLoyaltyProgram(w http.ResponseWriter, r *h
 	utils.SendJSON(w, r, http.StatusCreated, "Loyalty program created successfully", toLoyaltyProgramResponse(loyaltyProgram))
 }
 
+// loyaltyProgramOrder is the whitelist of sort keys; the client's string only ever indexes it.
+var loyaltyProgramOrder = map[string]string{
+	"name_asc":     "loyalty_programs.name ASC",
+	"name_desc":    "loyalty_programs.name DESC",
+	"created_desc": "loyalty_programs.created_at DESC",
+	"created_asc":  "loyalty_programs.created_at ASC",
+}
+
+// loyaltyProgramListQuery applies the optional search and the ordering. The ordering is not
+// optional: without it Postgres was free to return rows in heap order, so the list
+// reshuffled itself after any update.
+func loyaltyProgramListQuery(db *gorm.DB, params listQuery) *gorm.DB {
+	query := db.Model(&data.LoyaltyProgram{})
+
+	if params.Q != "" {
+		like := likePattern(params.Q)
+		search := db.Where("loyalty_programs.name ILIKE ?", like)
+		search = search.Or("loyalty_programs.code ILIKE ?", like)
+		query = query.Where(search)
+	}
+
+	return query.Order(orderClause(params.Order, loyaltyProgramOrder, loyaltyProgramOrder["name_asc"]))
+}
+
 // GetLoyaltyPrograms handles the GET /loyalty-programs route.
 // @Summary      Listar programas de fidelidade
 // @Description  Retorna todos os programas de fidelidade cadastrados no sistema.
 // @Tags         Programas de Fidelidade
 // @Produce      json
 // @Security     BearerAuth
+// @Param        q      query  string  false  "Busca por nome ou código"
+// @Param        order  query  string  false  "Ordenação"  Enums(name_asc, name_desc, created_desc, created_asc)
 // @Success      200  {object}  schemas.LoyaltyProgramListResponse
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao buscar programas de fidelidade"
@@ -121,7 +147,7 @@ func (h *LoyaltyProgramHandler) CreateLoyaltyProgram(w http.ResponseWriter, r *h
 func (h *LoyaltyProgramHandler) GetLoyaltyPrograms(w http.ResponseWriter, r *http.Request) {
 	var loyaltyPrograms []data.LoyaltyProgram
 
-	if err := h.DB.Preload("DefaultAirline").Find(&loyaltyPrograms).Error; err != nil {
+	if err := loyaltyProgramListQuery(h.DB, parseListQuery(r)).Preload("DefaultAirline").Find(&loyaltyPrograms).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch loyalty programs")
 		return
 	}

@@ -103,12 +103,38 @@ func (h *AgencyHandler) CreateAgency(w http.ResponseWriter, r *http.Request) {
 	utils.SendJSON(w, r, http.StatusCreated, "Agency created successfully", toAgencyResponse(agency))
 }
 
+// agencyOrder is the whitelist of sort keys; the client's string only ever indexes it.
+var agencyOrder = map[string]string{
+	"name_asc":     "agencies.name ASC",
+	"name_desc":    "agencies.name DESC",
+	"created_desc": "agencies.created_at DESC",
+	"created_asc":  "agencies.created_at ASC",
+}
+
+// agencyListQuery applies the optional search and the ordering. The ordering is not
+// optional: without it Postgres was free to return rows in heap order, so the list
+// reshuffled itself after any update.
+func agencyListQuery(db *gorm.DB, params listQuery) *gorm.DB {
+	query := db.Model(&data.Agency{})
+
+	if params.Q != "" {
+		like := likePattern(params.Q)
+		search := db.Where("agencies.name ILIKE ?", like)
+		search = search.Or(nicknameMatch("agency_nicknames", "agency_id", "agencies", false), like)
+		query = query.Where(search)
+	}
+
+	return query.Order(orderClause(params.Order, agencyOrder, agencyOrder["name_asc"]))
+}
+
 // GetAgencies handles the GET /agencies route.
 // @Summary      Listar agências
 // @Description  Retorna todas as agências cadastradas no sistema.
 // @Tags         Agências
 // @Produce      json
 // @Security     BearerAuth
+// @Param        q      query  string  false  "Busca por nome ou apelido"
+// @Param        order  query  string  false  "Ordenação"  Enums(name_asc, name_desc, created_desc, created_asc)
 // @Success      200  {object}  schemas.AgencyListResponse
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao buscar agências"
@@ -116,7 +142,7 @@ func (h *AgencyHandler) CreateAgency(w http.ResponseWriter, r *http.Request) {
 func (h *AgencyHandler) GetAgencies(w http.ResponseWriter, r *http.Request) {
 	var agencies []data.Agency
 
-	if err := h.DB.Preload("Nicknames").Find(&agencies).Error; err != nil {
+	if err := agencyListQuery(h.DB, parseListQuery(r)).Preload("Nicknames").Find(&agencies).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch agencies")
 		return
 	}

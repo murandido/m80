@@ -14,8 +14,12 @@ func RegisterPeopleRoutes(r chi.Router, db *gorm.DB) {
 		// create person
 		r.Post("/", peopleHandler.CreatePerson)
 
-		// get people
+		// get people — the whole list, for the pickers
 		r.Get("/", peopleHandler.GetPeople)
+
+		// paginated listing for the management screen. Chi resolves a static
+		// segment ahead of a param, so this never gets read as /people/{id}.
+		r.Get("/manage", peopleHandler.ListPeople)
 
 		// get person
 		r.Get("/{id}", peopleHandler.GetPerson)
