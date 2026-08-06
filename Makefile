@@ -1,4 +1,4 @@
-.PHONY: dev front back-up back-down back-logs clean
+.PHONY: dev front back-up back-down back-logs clean db-backup db-backup-list db-restore
 
 # LOCAL DEVELOPMENT (DOCKER-FIRST)
 
@@ -25,6 +25,25 @@ back-down:
 back-logs:
 	@echo "📋 Reading Backend Logs (Ctrl+C to exit)..."
 	cd backend && docker compose --profile dev logs -f
+
+# DATABASE BACKUP
+# Defaults target the prod profile, since that is where the data that matters
+# lives. Override with PROFILE=dev to exercise the same scripts locally.
+PROFILE ?= prod
+BACKUP_DIR ?= /var/backups/m-80
+
+# Dump now. The systemd timer runs this same script daily - use it by hand
+# before a deploy or a risky migration.
+db-backup:
+	@PROFILE=$(PROFILE) BACKUP_DIR=$(BACKUP_DIR) backend/scripts/db-backup.sh
+
+db-backup-list:
+	@ls -lh $(BACKUP_DIR)/m80-*.dump 2>/dev/null || echo "Nenhum dump em $(BACKUP_DIR)"
+
+# Restores into a scratch database by default; MODE=overwrite replaces the live one.
+db-restore:
+	@test -n "$(FILE)" || { echo "Uso: make db-restore FILE=<caminho do dump> [MODE=overwrite]"; exit 1; }
+	@PROFILE=$(PROFILE) backend/scripts/db-restore.sh $(if $(filter overwrite,$(MODE)),--overwrite,) $(FILE)
 
 # UTILS
 # Clears caches and builds (does not delete Docker volumes to avoid data loss)

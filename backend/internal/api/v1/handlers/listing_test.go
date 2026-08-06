@@ -336,8 +336,16 @@ func TestListAirports_ExplicitOrderBeatsSearchRelevance(t *testing.T) {
 		token := strings.ToUpper(uuid.New().String()[:6])
 		// The first is matched by its code, the second only by its name - so under
 		// relevance ordering the code match always comes first.
-		codeMatch := data.Airport{IATACode: token[:3], Name: "Zzz " + token, Country: "BR"}
-		nameMatch := data.Airport{IATACode: token[3:], Name: "Aaa " + token, Country: "BR"}
+		//
+		// The search term has to be the whole code, not a slice of it: relevance
+		// ranks a code hit above a name hit, but a row whose code merely shares a
+		// prefix with the term is a name hit like any other, and the two then tie
+		// and fall back to `iata_code ASC`. Both codes are also longer than a real
+		// IATA code, so neither can collide with a seeded airport on the unique
+		// index - and `other` keeps the second row out of the code bucket.
+		other := strings.ToUpper(uuid.New().String()[:6])
+		codeMatch := data.Airport{IATACode: token, Name: "Zzz " + token, Country: "BR"}
+		nameMatch := data.Airport{IATACode: other, Name: "Aaa " + token, Country: "BR"}
 		create(t, tx, &codeMatch)
 		create(t, tx, &nameMatch)
 

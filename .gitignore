@@ -62,3 +62,7 @@ Thumbs.db
 
 # Local knowledge-graph build artifacts (graphify)
 graphify-out/
+
+# Database dumps (db-backup.sh defaults to /var/backups, but BACKUP_DIR is overridable)
+backups/
+*.dump
