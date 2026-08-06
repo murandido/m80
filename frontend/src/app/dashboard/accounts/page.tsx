@@ -8,6 +8,10 @@ import { getLoyaltyProgramsSchema, LoyaltyProgram } from "@/schemas/loyalty-prog
 import { ContasPessoasToggle } from "@/components/layout/contas-pessoas-toggle"
 import { AccountCard } from "@/components/accounts/account-card"
 import { CreateAccountForm } from "@/components/accounts/create-account-form"
+import { ListFilterBar } from "@/components/shared/list-filter-bar"
+import { ListFilterSelect } from "@/components/shared/list-filter-select"
+import { listQueryString, resolveListParams } from "@/lib/list-params"
+import { readStickyFilters, stickySearchParams } from "@/lib/sticky-filters"
 
 export const metadata: Metadata = {
   title: "Contas",
@@ -15,19 +19,38 @@ export const metadata: Metadata = {
     "As contas de programa de fidelidade de onde saem os pontos, com as credenciais de acesso.",
 }
 
-export default async function AccountsPage() {
+const ACCOUNTS_URL_KEYS = ["q", "order", "loyalty_program_id", "complete"] as const
+
+export default async function AccountsPage({
+  searchParams,
+}: {
+  searchParams: Promise<Partial<Record<(typeof ACCOUNTS_URL_KEYS)[number], string>>>
+}) {
   const cookieStore = await cookies()
   const token = cookieStore.get("auth_token")?.value
   const authHeader = { Authorization: `Bearer ${token}` }
+
+  const raw = stickySearchParams(
+    await searchParams,
+    readStickyFilters(cookieStore, "/dashboard/accounts"),
+    ACCOUNTS_URL_KEYS,
+  )
+  const params = resolveListParams(raw)
+  const loyaltyProgramId = raw.loyalty_program_id ?? ""
+  const complete = raw.complete ?? ""
 
   let accounts: Account[] = []
   let people: Person[] = []
   let loyaltyPrograms: LoyaltyProgram[] = []
 
   try {
-    const res = await fetch(`${env.BACKEND_URL}/api/v1/accounts`, {
-      headers: authHeader,
-    })
+    const res = await fetch(
+      `${env.BACKEND_URL}/api/v1/accounts?${listQueryString(params, {
+        loyalty_program_id: loyaltyProgramId,
+        complete,
+      })}`,
+      { headers: authHeader, cache: "no-store" },
+    )
     const json = await res.json()
 
     const parsed = getAccountsSchema.response.safeParse(json)
@@ -76,16 +99,50 @@ export default async function AccountsPage() {
         <ContasPessoasToggle active="contas" />
 
         <CreateAccountForm people={people} loyaltyPrograms={loyaltyPrograms} />
+        <ListFilterBar
+          searchPlaceholder="Buscar por login, titular, administrador, programa ou apelido"
+          order={params.order}
+        >
+          <ListFilterSelect
+            name="loyalty_program_id"
+            label="Programa"
+            allLabel="Todos"
+            value={loyaltyProgramId}
+            className="w-52"
+            options={loyaltyPrograms.map((program) => ({
+              value: program.id,
+              label: program.name,
+            }))}
+          />
+          <ListFilterSelect
+            name="complete"
+            label="Cadastro"
+            allLabel="Todos"
+            value={complete}
+            options={[
+              { value: "true", label: "Completos" },
+              { value: "false", label: "Incompletos" },
+            ]}
+          />
+        </ListFilterBar>
         <Separator className="my-2" />
         <div className="flex flex-col gap-2">
-          {accounts.map((account) => (
-            <AccountCard
-              key={account.id}
-              account={account}
-              people={people}
-              loyaltyPrograms={loyaltyPrograms}
-            />
-          ))}
+          {accounts.length === 0 ? (
+            <p className="text-sm text-slate-500">
+              {params.q || loyaltyProgramId || complete
+                ? "Nenhuma conta encontrada para os filtros selecionados."
+                : "Nenhuma conta cadastrada."}
+            </p>
+          ) : (
+            accounts.map((account) => (
+              <AccountCard
+                key={account.id}
+                account={account}
+                people={people}
+                loyaltyPrograms={loyaltyPrograms}
+              />
+            ))
+          )}
         </div>
       </div>
     </div>

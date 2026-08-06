@@ -6,6 +6,10 @@ import { requireAdmin } from "@/lib/session"
 import { getUsersSchema, getMeSchema, User } from "@/schemas/user"
 import { UserCard } from "@/components/users/user-card"
 import { CreateUserForm } from "@/components/users/create-user-form"
+import { ListFilterBar } from "@/components/shared/list-filter-bar"
+import { ListFilterSelect } from "@/components/shared/list-filter-select"
+import { listQueryString, resolveListParams } from "@/lib/list-params"
+import { readStickyFilters, stickySearchParams } from "@/lib/sticky-filters"
 
 export const metadata: Metadata = {
   title: "Usuários",
@@ -13,19 +17,36 @@ export const metadata: Metadata = {
     "Quem tem acesso ao painel, com qual perfil e com qual telefone entra.",
 }
 
-export default async function UsersPage() {
+const USERS_URL_KEYS = ["q", "order", "role"] as const
+
+export default async function UsersPage({
+  searchParams,
+}: {
+  searchParams: Promise<Partial<Record<(typeof USERS_URL_KEYS)[number], string>>>
+}) {
   await requireAdmin()
 
   const cookieStore = await cookies()
   const token = cookieStore.get("auth_token")?.value
   const authHeader = { Authorization: `Bearer ${token}` }
 
+  const raw = stickySearchParams(
+    await searchParams,
+    readStickyFilters(cookieStore, "/dashboard/users"),
+    USERS_URL_KEYS,
+  )
+  const params = resolveListParams(raw)
+  const role = raw.role ?? ""
+
   let users: User[] = []
   let currentUserId: string | null = null
 
   try {
     const [usersRes, meRes] = await Promise.all([
-      fetch(`${env.BACKEND_URL}/api/v1/users`, { headers: authHeader }),
+      fetch(
+        `${env.BACKEND_URL}/api/v1/users?${listQueryString(params, { role })}`,
+        { headers: authHeader, cache: "no-store" },
+      ),
       fetch(`${env.BACKEND_URL}/api/v1/auth/me`, { headers: authHeader }),
     ])
 
@@ -51,15 +72,38 @@ export default async function UsersPage() {
           Tabela de Usuários
         </h1>
         <CreateUserForm />
+        <ListFilterBar
+          searchPlaceholder="Buscar por nome ou telefone"
+          order={params.order}
+        >
+          <ListFilterSelect
+            name="role"
+            label="Perfil"
+            allLabel="Todos"
+            value={role}
+            options={[
+              { value: "admin", label: "Administrador" },
+              { value: "user", label: "Usuário" },
+            ]}
+          />
+        </ListFilterBar>
         <Separator className="my-2" />
         <div className="flex flex-col gap-2">
-          {users.map((user) => (
-            <UserCard
-              key={user.id}
-              user={user}
-              isCurrentUser={user.id === currentUserId}
-            />
-          ))}
+          {users.length === 0 ? (
+            <p className="text-sm text-slate-500">
+              {params.q || role
+                ? "Nenhum usuário encontrado para os filtros selecionados."
+                : "Nenhum usuário cadastrado."}
+            </p>
+          ) : (
+            users.map((user) => (
+              <UserCard
+                key={user.id}
+                user={user}
+                isCurrentUser={user.id === currentUserId}
+              />
+            ))
+          )}
         </div>
       </div>
     </div>

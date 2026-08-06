@@ -37,18 +37,20 @@ export function resolveListParams(params: ListSearchParams): ResolvedListParams 
   }
 }
 
-/** Builds the query string sent to the backend, dropping empty dimensions. */
+/**
+ * Builds the query string sent to the backend, dropping empty dimensions.
+ * `extras` carries whatever filters the screen owns beyond search and ordering.
+ */
 export function listQueryString(
-  params: ResolvedListParams & Record<string, string | number | undefined>,
-  extraKeys: readonly string[] = [],
+  params: ResolvedListParams,
+  extras: Record<string, string | undefined> = {},
 ): string {
   const query = new URLSearchParams()
   if (params.q) query.set("q", params.q)
   query.set("order", params.order)
 
-  for (const key of extraKeys) {
-    const value = params[key]
-    if (value !== undefined && value !== "") query.set(key, String(value))
+  for (const [key, value] of Object.entries(extras)) {
+    if (value) query.set(key, value)
   }
 
   return query.toString()

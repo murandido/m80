@@ -1,5 +1,6 @@
 "use client"
 
+import { Suspense } from "react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { RotateCcw } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -18,7 +19,19 @@ interface ListFilterBarProps {
   children?: React.ReactNode
 }
 
-export function ListFilterBar({
+// Every control in the bar reads useSearchParams, which Next requires to sit under
+// a Suspense boundary. Wrapping here rather than in each page means no screen can
+// forget it - and forgetting it is not a visible failure, it is a hydration
+// mismatch that only shows up in the console.
+export function ListFilterBar(props: ListFilterBarProps) {
+  return (
+    <Suspense fallback={<div className="h-16" />}>
+      <FilterBar {...props} />
+    </Suspense>
+  )
+}
+
+function FilterBar({
   searchPlaceholder,
   order,
   children,

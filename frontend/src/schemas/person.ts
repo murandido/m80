@@ -39,6 +39,24 @@ export const getPeopleSchema = {
   }),
 }
 
+// The paginated management listing (GET /people/manage). The plain /people route
+// stays unpaginated because it is what feeds the holder, administrator and
+// passenger pickers on the accounts, sales and issuances screens.
+export const listPeopleSchema = {
+  response: z.object({
+    success: z.boolean(),
+    message: z.string(),
+    data: z
+      .object({
+        people: z.array(personSchema).nullish(),
+        total: z.number(),
+        page: z.number(),
+        limit: z.number(),
+      })
+      .nullish(),
+  }),
+}
+
 const optionalTextField = z.string().optional().or(z.literal(""))
 const optionalEmailField = z.union([z.literal(""), z.string().email("Email inválido")])
 

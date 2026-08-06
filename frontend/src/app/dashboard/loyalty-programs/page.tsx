@@ -7,6 +7,9 @@ import { getAirlinesSchema, Airline } from "@/schemas/airline"
 import { LoyaltyProgramsAirlinesToggle } from "@/components/layout/loyalty-programs-airlines-toggle"
 import { LoyaltyProgramCard } from "@/components/loyalty-programs/loyalty-program-card"
 import { CreateLoyaltyProgramForm } from "@/components/loyalty-programs/create-loyalty-program-form"
+import { ListFilterBar } from "@/components/shared/list-filter-bar"
+import { listQueryString, resolveListParams } from "@/lib/list-params"
+import { readStickyFilters, stickySearchParams } from "@/lib/sticky-filters"
 
 export const metadata: Metadata = {
   title: "Programas de Fidelidade",
@@ -14,18 +17,33 @@ export const metadata: Metadata = {
     "Os programas de pontos, a companhia de cada um e a cor com que aparecem na grid.",
 }
 
-export default async function LoyaltyProgramsPage() {
+const PROGRAMS_URL_KEYS = ["q", "order"] as const
+
+export default async function LoyaltyProgramsPage({
+  searchParams,
+}: {
+  searchParams: Promise<Partial<Record<(typeof PROGRAMS_URL_KEYS)[number], string>>>
+}) {
   const cookieStore = await cookies()
   const token = cookieStore.get("auth_token")?.value
   const authHeader = { Authorization: `Bearer ${token}` }
+
+  const params = resolveListParams(
+    stickySearchParams(
+      await searchParams,
+      readStickyFilters(cookieStore, "/dashboard/loyalty-programs"),
+      PROGRAMS_URL_KEYS,
+    ),
+  )
 
   let loyaltyPrograms: LoyaltyProgram[] = []
   let airlines: Airline[] = []
 
   try {
-    const res = await fetch(`${env.BACKEND_URL}/api/v1/loyalty-programs`, {
-      headers: authHeader,
-    })
+    const res = await fetch(
+      `${env.BACKEND_URL}/api/v1/loyalty-programs?${listQueryString(params)}`,
+      { headers: authHeader, cache: "no-store" },
+    )
     const json = await res.json()
 
     const parsed = getLoyaltyProgramsSchema.response.safeParse(json)
@@ -60,15 +78,27 @@ export default async function LoyaltyProgramsPage() {
         <LoyaltyProgramsAirlinesToggle active="loyalty-programs" />
 
         <CreateLoyaltyProgramForm airlines={airlines} />
+        <ListFilterBar
+          searchPlaceholder="Buscar por nome ou código"
+          order={params.order}
+        />
         <Separator className="my-2" />
         <div className="flex flex-col gap-2">
-          {loyaltyPrograms.map((loyaltyProgram) => (
-            <LoyaltyProgramCard
-              key={loyaltyProgram.id}
-              loyaltyProgram={loyaltyProgram}
-              airlines={airlines}
-            />
-          ))}
+          {loyaltyPrograms.length === 0 ? (
+            <p className="text-sm text-slate-500">
+              {params.q
+                ? `Nenhum programa encontrado para "${params.q}".`
+                : "Nenhum programa cadastrado."}
+            </p>
+          ) : (
+            loyaltyPrograms.map((loyaltyProgram) => (
+              <LoyaltyProgramCard
+                key={loyaltyProgram.id}
+                loyaltyProgram={loyaltyProgram}
+                airlines={airlines}
+              />
+            ))
+          )}
         </div>
       </div>
     </div>
