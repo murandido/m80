@@ -21,7 +21,14 @@ const ORDER_LABELS: Record<ListOrder, string> = {
   created_asc: "Mais antigos",
 }
 
-export function ListSortSelect({ order }: { order: ListOrder }) {
+interface ListSortSelectProps {
+  order: string
+  /** Override for a listing whose sort keys are not the shared four - airports
+      sort by code as well as by name, so "A – Z" alone would not say which. */
+  options?: readonly { value: string; label: string }[]
+}
+
+export function ListSortSelect({ order, options }: ListSortSelectProps) {
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
@@ -41,13 +48,16 @@ export function ListSortSelect({ order }: { order: ListOrder }) {
         Ordenar por
       </Label>
       <Select value={order} onValueChange={apply}>
-        <SelectTrigger id={selectId} className="w-40">
+        <SelectTrigger id={selectId} className="w-44">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          {LIST_ORDER_KEYS.map((key) => (
-            <SelectItem key={key} value={key}>
-              {ORDER_LABELS[key]}
+          {(
+            options ??
+            LIST_ORDER_KEYS.map((key) => ({ value: key, label: ORDER_LABELS[key] }))
+          ).map((option) => (
+            <SelectItem key={option.value} value={option.value}>
+              {option.label}
             </SelectItem>
           ))}
         </SelectContent>

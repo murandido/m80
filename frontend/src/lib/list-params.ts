@@ -17,6 +17,39 @@ export const LIST_ORDER_KEYS = [
 
 export type ListOrder = (typeof LIST_ORDER_KEYS)[number]
 
+// Airports sort by their own vocabulary: the row leads with the IATA code, so a
+// plain "A – Z" would be ambiguous between the code and the name. Kept here beside
+// the shared keys so the two whitelists stay visible to each other, and mirroring
+// the backend's airportOrder map exactly.
+const AIRPORT_SORT_OPTIONS = [
+  { value: "code_asc", label: "Código (A – Z)" },
+  { value: "code_desc", label: "Código (Z – A)" },
+  { value: "name_asc", label: "Nome (A – Z)" },
+  { value: "name_desc", label: "Nome (Z – A)" },
+] as const
+
+// While searching, the backend ranks by how the row matched - code first, then name,
+// city, state, country - and that is the better default. It is offered as a real
+// option so the control never claims to be sorting by code while showing you
+// relevance; picking anything else overrides the ranking.
+export const AIRPORT_RELEVANCE = "relevance"
+
+export function airportOrderOptions(
+  isSearching: boolean,
+): readonly { value: string; label: string }[] {
+  return isSearching
+    ? [{ value: AIRPORT_RELEVANCE, label: "Relevância" }, ...AIRPORT_SORT_OPTIONS]
+    : AIRPORT_SORT_OPTIONS
+}
+
+export function resolveAirportOrder(
+  value: string | undefined,
+  isSearching: boolean,
+): string {
+  if (AIRPORT_SORT_OPTIONS.some((option) => option.value === value)) return value as string
+  return isSearching ? AIRPORT_RELEVANCE : "code_asc"
+}
+
 export function isListOrder(value: string | undefined): value is ListOrder {
   return LIST_ORDER_KEYS.includes(value as ListOrder)
 }

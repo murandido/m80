@@ -8,13 +8,14 @@ import { ListSearchBar } from "@/components/shared/list-search-bar"
 import { ListSortSelect } from "@/components/shared/list-sort-select"
 import { useStickyFilters } from "@/hooks/use-sticky-filters"
 import { clearStickyFilters } from "@/lib/sticky-filters"
-import type { ListOrder } from "@/lib/list-params"
 
 interface ListFilterBarProps {
   searchPlaceholder: string
   /** Omit on a listing whose backend does not accept `order` — a select that
-      silently does nothing is worse than no select. Airports is the one case. */
-  order?: ListOrder
+      silently does nothing is worse than no select. */
+  order?: string
+  /** Override the sort options for a listing that does not use the shared four. */
+  orderOptions?: readonly { value: string; label: string }[]
   /** The screen's own filter controls, if it has a dimension worth filtering on. */
   children?: React.ReactNode
 }
@@ -34,6 +35,7 @@ export function ListFilterBar(props: ListFilterBarProps) {
 function FilterBar({
   searchPlaceholder,
   order,
+  orderOptions,
   children,
 }: ListFilterBarProps) {
   const router = useRouter()
@@ -59,7 +61,7 @@ function FilterBar({
         <ListSearchBar placeholder={searchPlaceholder} />
       </div>
       {children}
-      {order && <ListSortSelect order={order} />}
+      {order && <ListSortSelect order={order} options={orderOptions} />}
       {hasAnyFilter && (
         <Button
           type="button"

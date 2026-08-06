@@ -9,6 +9,11 @@ import { AirportCard } from "@/components/airports/airport-card"
 import { ListFilterBar } from "@/components/shared/list-filter-bar"
 import { ListPagination } from "@/components/shared/list-pagination"
 import { readStickyFilters, stickySearchParams } from "@/lib/sticky-filters"
+import {
+  AIRPORT_RELEVANCE,
+  airportOrderOptions,
+  resolveAirportOrder,
+} from "@/lib/list-params"
 
 export const metadata: Metadata = {
   title: "Aeroportos",
@@ -18,26 +23,25 @@ export const metadata: Metadata = {
 
 const PAGE_LIMIT = 20
 
-// Airports order by IATA code in the backend and take no `order` param, so this
-// screen carries no sort control - see ListFilterBar.
-const AIRPORTS_URL_KEYS = ["q", "page"] as const
+const AIRPORTS_URL_KEYS = ["q", "order", "page"] as const
 
 export default async function AirportsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; page?: string }>
+  searchParams: Promise<Partial<Record<(typeof AIRPORTS_URL_KEYS)[number], string>>>
 }) {
   await requireAdmin()
 
   const cookieStore = await cookies()
   const token = cookieStore.get("auth_token")?.value
 
-  const { q, page: pageParam } = stickySearchParams(
+  const { q, order, page: pageParam } = stickySearchParams(
     await searchParams,
     readStickyFilters(cookieStore, "/dashboard/airports"),
     AIRPORTS_URL_KEYS,
   )
   const query = q?.trim() ?? ""
+  const airportOrder = resolveAirportOrder(order, Boolean(q?.trim()))
   const page = Math.max(1, Number(pageParam) || 1)
 
   let airports: Airport[] = []
@@ -49,6 +53,8 @@ export default async function AirportsPage({
       limit: String(PAGE_LIMIT),
     })
     if (query) params.set("q", query)
+    // Relevance is the absence of an order, not a value the backend knows.
+    if (airportOrder !== AIRPORT_RELEVANCE) params.set("order", airportOrder)
 
     const res = await fetch(
       `${env.BACKEND_URL}/api/v1/airports/manage?${params.toString()}`,
@@ -73,7 +79,11 @@ export default async function AirportsPage({
           Tabela de Aeroportos
         </h1>
         <CreateAirportForm />
-        <ListFilterBar searchPlaceholder="Buscar por código IATA, nome, cidade, estado ou país" />
+        <ListFilterBar
+          searchPlaceholder="Buscar por código IATA, nome, cidade, estado ou país"
+          order={airportOrder}
+          orderOptions={airportOrderOptions(Boolean(query))}
+        />
         <Separator className="my-2" />
         <div className="flex flex-col gap-2">
           {airports.length === 0 ? (
