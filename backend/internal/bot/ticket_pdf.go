@@ -72,7 +72,10 @@ func (b *Bot) sendTicketPDF(ctx context.Context, evt *events.Message, issuanceID
 	b.SendPresenceTyping(ctx, evt)
 	humanizer.DelayComposing()
 
-	if err := b.SendDocument(ctx, evt, pdf, "bilhete-"+locator+".pdf", "application/pdf"); err != nil {
+	// The locator alone, the same name GetIssuanceTicketPDF gives the file the
+	// panel downloads: whoever receives it searches by PNR, and a "bilhete-"
+	// prefix files every ticket ever sent under the same letter.
+	if err := b.SendDocument(ctx, evt, pdf, locator+".pdf", "application/pdf"); err != nil {
 		b.Logger.Errorf("pdf: failed to send the ticket for %s: %v", locator, err)
 		return
 	}

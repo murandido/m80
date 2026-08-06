@@ -14,11 +14,12 @@ import (
 
 // cmdPDF turns the ticket PDF on or off for the chat it was sent in.
 //
-// `!pdf on` and `!pdf off` rather than a bare toggle. In a group nobody can see
-// the current state, so a blind toggle is right half the time - and the half it
-// gets wrong either stops sending files the team is waiting for, or starts
-// posting documents into a conversation with a client in it. `!pdf` on its own
-// answers with the state instead of changing it.
+// `!pdf` on its own flips the state, which is what an operator typing a switch
+// into a group expects. Nobody in the group can see the current state before
+// typing, and the answer is what closes that gap: it names the state the chat
+// ended in, so a flip in the wrong direction is visible immediately and one more
+// `!pdf` undoes it. `!pdf on` / `!pdf off` stay for whoever wants a final state
+// that does not depend on the current one.
 //
 // This is the only command besides !ping that replies with text, for the same
 // reason: an emoji cannot say "on" or "off".
@@ -54,10 +55,17 @@ func (b *Bot) cmdPDF(ctx context.Context, evt *events.Message, text string, star
 		return
 	}
 
-	wanted, ok := parsePDFArgument(text)
-	if !ok {
+	var wanted bool
+	switch parsePDFIntent(text) {
+	case pdfIntentUnreadable:
 		b.answerPDFState(ctx, evt, startedAt, chat.PDFMode)
 		return
+	case pdfIntentToggle:
+		wanted = !chat.PDFMode
+	case pdfIntentOn:
+		wanted = true
+	case pdfIntentOff:
+		wanted = false
 	}
 
 	if wanted != chat.PDFMode {
@@ -75,22 +83,35 @@ func (b *Bot) cmdPDF(ctx context.Context, evt *events.Message, text string, star
 	b.answerPDFState(ctx, evt, startedAt, wanted)
 }
 
-// parsePDFArgument reads the on/off argument. ok is false for `!pdf` with no
-// argument, which is a question rather than a command, and for anything the bot
-// cannot read as one of the two - guessing at "!pdf sim" would be worse than
-// showing the state and letting the operator try again.
-func parsePDFArgument(text string) (on, ok bool) {
+// pdfIntent is what the sender asked for. "said nothing" and "said something I
+// cannot read" are separate on purpose: the first is a deliberate flip, the
+// second must not be guessed at in either direction.
+type pdfIntent int
+
+const (
+	pdfIntentToggle     pdfIntent = iota // "!pdf" - flip whatever the chat is on now
+	pdfIntentOn                          // on / ligar / ativar
+	pdfIntentOff                         // off / desligar / desativar
+	pdfIntentUnreadable                  // "!pdf sim" - report the state, change nothing
+)
+
+// parsePDFIntent reads the argument of a !pdf message.
+func parsePDFIntent(text string) pdfIntent {
 	fields := strings.Fields(strings.ToLower(strings.TrimSpace(text)))
 	if len(fields) < 2 {
-		return false, false
+		return pdfIntentToggle
 	}
 	switch fields[1] {
 	case "on", "ligar", "ativar":
-		return true, true
+		return pdfIntentOn
 	case "off", "desligar", "desativar":
-		return false, true
+		return pdfIntentOff
 	default:
-		return false, false
+		// Guessing at "!pdf sim" would be worse than showing the state and letting
+		// the operator try again - unlike a bare !pdf, this one carries an
+		// intention the bot failed to read, so flipping could be the opposite of
+		// what was asked.
+		return pdfIntentUnreadable
 	}
 }
 

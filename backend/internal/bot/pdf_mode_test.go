@@ -10,37 +10,34 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestParsePDFArgument(t *testing.T) {
+func TestParsePDFIntent(t *testing.T) {
 	// Pure, so it runs without Postgres.
 	tests := []struct {
-		name   string
-		text   string
-		wantOn bool
-		wantOK bool
+		name string
+		text string
+		want pdfIntent
 	}{
-		{"on", "!pdf on", true, true},
-		{"off", "!pdf off", false, true},
-		{"portuguese on", "!pdf ligar", true, true},
-		{"portuguese off", "!pdf desativar", false, true},
-		{"mixed case", "!PDF On", true, true},
-		{"extra whitespace", "  !pdf   off  ", false, true},
+		{"on", "!pdf on", pdfIntentOn},
+		{"off", "!pdf off", pdfIntentOff},
+		{"portuguese on", "!pdf ligar", pdfIntentOn},
+		{"portuguese off", "!pdf desativar", pdfIntentOff},
+		{"mixed case", "!PDF On", pdfIntentOn},
+		{"extra whitespace", "  !pdf   off  ", pdfIntentOff},
 
-		// No argument is a question about the current state, not a command - a
-		// blind toggle in a group nobody can see the state of is wrong half the
-		// time, and the wrong half either stops files the team is waiting for or
-		// starts posting documents into a conversation with a client in it.
-		{"bare", "!pdf", false, false},
+		// No argument flips the state - a switch typed with no argument is a
+		// switch, and the answer names the state the chat ended in.
+		{"bare", "!pdf", pdfIntentToggle},
 
-		// Unreadable rather than guessed at.
-		{"unknown argument", "!pdf sim", false, false},
-		{"nonsense", "!pdf talvez amanha", false, false},
+		// Unreadable rather than guessed at: an argument the bot cannot read
+		// carries an intention, and flipping could be its opposite.
+		{"unknown argument", "!pdf sim", pdfIntentUnreadable},
+		{"nonsense", "!pdf talvez amanha", pdfIntentUnreadable},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			on, ok := parsePDFArgument(tc.text)
-			if on != tc.wantOn || ok != tc.wantOK {
-				t.Errorf("parsePDFArgument(%q) = (%v, %v), want (%v, %v)", tc.text, on, ok, tc.wantOn, tc.wantOK)
+			if got := parsePDFIntent(tc.text); got != tc.want {
+				t.Errorf("parsePDFIntent(%q) = %v, want %v", tc.text, got, tc.want)
 			}
 		})
 	}
@@ -80,15 +77,33 @@ func TestCmdPDFTurnsTheModeOnAndOff(t *testing.T) {
 	})
 }
 
-func TestCmdPDFWithNoArgumentReportsTheStateWithoutChangingIt(t *testing.T) {
+func TestCmdPDFWithNoArgumentFlipsTheState(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		s := newEmissaoScenario(t, tx, data.Airline{})
+
+		// Off is the default, so the first bare !pdf turns it on and the second
+		// puts it back - a switch, not a question.
+		s.Bot.cmdPDF(context.Background(), s.event(), "!pdf", time.Now())
+		if !pdfModeOf(t, tx, s.ChatJID) {
+			t.Fatal("a bare !pdf did not turn the mode on")
+		}
+
+		s.Bot.cmdPDF(context.Background(), s.eventWithID("second"), "!pdf", time.Now())
+		if pdfModeOf(t, tx, s.ChatJID) {
+			t.Fatal("a second bare !pdf did not turn the mode back off")
+		}
+	})
+}
+
+func TestCmdPDFWithAnUnreadableArgumentReportsTheStateWithoutChangingIt(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		s := newEmissaoScenario(t, tx, data.Airline{})
 		s.Bot.cmdPDF(context.Background(), s.event(), "!pdf on", time.Now())
 
-		s.Bot.cmdPDF(context.Background(), s.eventWithID("query"), "!pdf", time.Now())
+		s.Bot.cmdPDF(context.Background(), s.eventWithID("query"), "!pdf sim", time.Now())
 
 		if !pdfModeOf(t, tx, s.ChatJID) {
-			t.Fatal("a bare !pdf changed the state; it must only report it")
+			t.Fatal("!pdf sim changed the state; an argument the bot cannot read must only report it")
 		}
 	})
 }
@@ -132,7 +147,7 @@ func TestSendDocumentCarriesTheUploadKeysAndTheFileName(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		s := newEmissaoScenario(t, tx, data.Airline{})
 
-		err := s.Bot.SendDocument(context.Background(), s.event(), []byte("%PDF-1.7 fake"), "bilhete-ABC123.pdf", "application/pdf")
+		err := s.Bot.SendDocument(context.Background(), s.event(), []byte("%PDF-1.7 fake"), "ABC123.pdf", "application/pdf")
 		if err != nil {
 			t.Fatalf("SendDocument: %v", err)
 		}
@@ -153,7 +168,7 @@ func TestSendDocumentCarriesTheUploadKeysAndTheFileName(t *testing.T) {
 		if document.GetFileLength() == 0 {
 			t.Error("the message reports a zero-length file")
 		}
-		if document.GetFileName() != "bilhete-ABC123.pdf" {
+		if document.GetFileName() != "ABC123.pdf" {
 			t.Errorf("file name = %q, want the locator-based one", document.GetFileName())
 		}
 		if document.GetMimetype() != "application/pdf" {
