@@ -37,6 +37,17 @@ func parseListQuery(r *http.Request) listQuery {
 	}
 }
 
+// textOrder renders an ORDER BY over a text column the way a Portuguese reader
+// expects. The database collates by byte value, so "aleleli" sorts after "Wilmara"
+// and "Ágata" after "Zeca" - which reads as a list that is not sorted at all.
+//
+// pt-BR-x-icu handles both case and accents. It ships with the postgres:16-alpine
+// image every environment pins, so it is not an availability gamble; LOWER() would
+// have been portable but still puts accented names at the end.
+func textOrder(column, direction string) string {
+	return column + ` COLLATE "pt-BR-x-icu" ` + direction
+}
+
 // orderClause resolves a client-supplied sort key against a whitelist.
 //
 // The client's string is never interpolated into SQL - it is only ever a map key, and

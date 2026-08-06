@@ -110,8 +110,8 @@ func (h *LoyaltyProgramHandler) CreateLoyaltyProgram(w http.ResponseWriter, r *h
 
 // loyaltyProgramOrder is the whitelist of sort keys; the client's string only ever indexes it.
 var loyaltyProgramOrder = map[string]string{
-	"name_asc":     "loyalty_programs.name ASC",
-	"name_desc":    "loyalty_programs.name DESC",
+	"name_asc":     textOrder("loyalty_programs.name", "ASC"),
+	"name_desc":    textOrder("loyalty_programs.name", "DESC"),
 	"created_desc": "loyalty_programs.created_at DESC",
 	"created_asc":  "loyalty_programs.created_at ASC",
 }

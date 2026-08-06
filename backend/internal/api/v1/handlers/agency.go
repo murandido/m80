@@ -105,8 +105,8 @@ func (h *AgencyHandler) CreateAgency(w http.ResponseWriter, r *http.Request) {
 
 // agencyOrder is the whitelist of sort keys; the client's string only ever indexes it.
 var agencyOrder = map[string]string{
-	"name_asc":     "agencies.name ASC",
-	"name_desc":    "agencies.name DESC",
+	"name_asc":     textOrder("agencies.name", "ASC"),
+	"name_desc":    textOrder("agencies.name", "DESC"),
 	"created_desc": "agencies.created_at DESC",
 	"created_asc":  "agencies.created_at ASC",
 }

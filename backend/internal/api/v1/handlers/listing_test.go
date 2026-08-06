@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -268,6 +269,92 @@ func TestGetAccounts_OrdersAliasNamedAccountsAlongsideTheRest(t *testing.T) {
 				"the account named %q sorted after %q; alias-named accounts must sort by their alias, not land in the NULL bucket",
 				alias.Nickname, holder.Name,
 			)
+		}
+	})
+}
+
+// The database collates by byte value, so an uppercase Z sorts before a lowercase a
+// and an accented name lands after z. Neither reads as alphabetical to a Portuguese
+// speaker, which is what these listings are sorted for.
+func TestGetPeople_SortsCaseAndAccentInsensitively(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		prefix := "zzz-" + uuid.New().String()[:8] + "-"
+		names := []string{prefix + "Bruno", prefix + "ana", prefix + "Ágata", prefix + "Zeca"}
+		for _, name := range names {
+			person := data.Person{Name: name}
+			create(t, tx, &person)
+		}
+
+		wanted := map[string]bool{}
+		for _, name := range names {
+			wanted[name] = true
+		}
+
+		got := namesOf(callGetPeople(t, tx, ""), wanted)
+		expected := []string{
+			prefix + "Ágata",
+			prefix + "ana",
+			prefix + "Bruno",
+			prefix + "Zeca",
+		}
+
+		if len(got) != len(expected) {
+			t.Fatalf("got %d seeded people, want %d: %v", len(got), len(expected), got)
+		}
+		for i := range expected {
+			if got[i] != expected[i] {
+				t.Fatalf("collation order: got %v, want %v", got, expected)
+			}
+		}
+	})
+}
+
+type airportPaginatedResponse struct {
+	Data schemas.AirportPaginatedData `json:"data"`
+}
+
+func callListAirports(t *testing.T, tx *gorm.DB, query string) schemas.AirportPaginatedData {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	NewAirportHandler(tx).ListAirports(rec, httptest.NewRequest(http.MethodGet, "/airports/manage?"+query, nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("ListAirports status: got %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+	var resp airportPaginatedResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode ListAirports response: %v", err)
+	}
+	return resp.Data
+}
+
+// Airports rank by relevance when searching, which is the right default - but an
+// explicit sort has to win, or asking for Z–A and getting closest-match-first looks
+// like the control did nothing.
+func TestListAirports_ExplicitOrderBeatsSearchRelevance(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		token := strings.ToUpper(uuid.New().String()[:6])
+		// The first is matched by its code, the second only by its name - so under
+		// relevance ordering the code match always comes first.
+		codeMatch := data.Airport{IATACode: token[:3], Name: "Zzz " + token, Country: "BR"}
+		nameMatch := data.Airport{IATACode: token[3:], Name: "Aaa " + token, Country: "BR"}
+		create(t, tx, &codeMatch)
+		create(t, tx, &nameMatch)
+
+		relevance := callListAirports(t, tx, "q="+token)
+		if len(relevance.Airports) < 2 || relevance.Airports[0].IATACode != codeMatch.IATACode {
+			t.Fatalf("relevance order should lead with the code match, got %+v", relevance.Airports)
+		}
+
+		byName := callListAirports(t, tx, "q="+token+"&order=name_asc")
+		if len(byName.Airports) < 2 || byName.Airports[0].IATACode != nameMatch.IATACode {
+			t.Errorf("order=name_asc should override relevance, got %+v", byName.Airports)
+		}
+
+		byCodeDesc := callListAirports(t, tx, "q="+token+"&order=code_desc")
+		first, second := byCodeDesc.Airports[0].IATACode, byCodeDesc.Airports[1].IATACode
+		if first < second {
+			t.Errorf("order=code_desc: got %q before %q", first, second)
 		}
 	})
 }

@@ -131,6 +131,15 @@ func (h *AirportHandler) ListAllAirports(w http.ResponseWriter, r *http.Request)
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao buscar aeroportos"
 // @Router       /airports/manage [get]
+// Airports sort by their own vocabulary rather than the shared name_asc/name_desc:
+// the row leads with the IATA code, so "A–Z" would be ambiguous between the two.
+var airportOrder = map[string]string{
+	"code_asc":  "iata_code ASC",
+	"code_desc": "iata_code DESC",
+	"name_asc":  `name COLLATE "pt-BR-x-icu" ASC`,
+	"name_desc": `name COLLATE "pt-BR-x-icu" DESC`,
+}
+
 func (h *AirportHandler) ListAirports(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	page := parsePositiveInt(r.URL.Query().Get("page"), 1)
@@ -156,13 +165,23 @@ func (h *AirportHandler) ListAirports(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Priority ordering: rows matching by IATA code come first, then name, city,
-	// state and finally country — mirroring the user-facing fallback chain, with
-	// IATA code as the tie-breaker. A raw string in .Order() cannot carry bound
-	// args, and .Order() silently ignores a clause.Expr value, so the CASE goes
-	// through clause.OrderBy{Expression:...} which does render bound placeholders.
+	// Relevance ordering, but only when the operator has not asked for a specific
+	// sort: rows matching by IATA code come first, then name, city, state and
+	// finally country — mirroring the user-facing fallback chain, with IATA code as
+	// the tie-breaker. A raw string in .Order() cannot carry bound args, and
+	// .Order() silently ignores a clause.Expr value, so the CASE goes through
+	// clause.OrderBy{Expression:...} which does render bound placeholders.
+	//
+	// An explicit `order` wins over relevance: asking for Z–A and getting the
+	// closest matches first would look like the control did nothing.
+	order := strings.TrimSpace(r.URL.Query().Get("order"))
+	_, explicitOrder := airportOrder[order]
+
 	dbQuery := query.Session(&gorm.Session{})
-	if q != "" {
+	switch {
+	case explicitOrder:
+		dbQuery = dbQuery.Order(airportOrder[order])
+	case q != "":
 		like := "%" + q + "%"
 		dbQuery = dbQuery.Clauses(clause.OrderBy{
 			Expression: gorm.Expr(
@@ -170,8 +189,8 @@ func (h *AirportHandler) ListAirports(w http.ResponseWriter, r *http.Request) {
 				like, like, like, like, like,
 			),
 		})
-	} else {
-		dbQuery = dbQuery.Order("iata_code ASC")
+	default:
+		dbQuery = dbQuery.Order(airportOrder["code_asc"])
 	}
 
 	var airports []data.Airport

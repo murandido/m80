@@ -132,8 +132,8 @@ func (h *PeopleHandler) CreatePerson(w http.ResponseWriter, r *http.Request) {
 
 // peopleOrder is the whitelist of sort keys; the client's string only ever indexes it.
 var peopleOrder = map[string]string{
-	"name_asc":     "people.name ASC",
-	"name_desc":    "people.name DESC",
+	"name_asc":     textOrder("people.name", "ASC"),
+	"name_desc":    textOrder("people.name", "DESC"),
 	"created_desc": "people.created_at DESC",
 	"created_asc":  "people.created_at ASC",
 }

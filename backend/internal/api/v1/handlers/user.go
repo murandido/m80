@@ -78,8 +78,8 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 
 // userOrder is the whitelist of sort keys; the client's string only ever indexes it.
 var userOrder = map[string]string{
-	"name_asc":     "users.name ASC",
-	"name_desc":    "users.name DESC",
+	"name_asc":     textOrder("users.name", "ASC"),
+	"name_desc":    textOrder("users.name", "DESC"),
 	"created_desc": "users.created_at DESC",
 	"created_asc":  "users.created_at ASC",
 }

@@ -101,8 +101,8 @@ func (h *AirlineHandler) CreateAirline(w http.ResponseWriter, r *http.Request) {
 
 // airlineOrder is the whitelist of sort keys; the client's string only ever indexes it.
 var airlineOrder = map[string]string{
-	"name_asc":     "airlines.name ASC",
-	"name_desc":    "airlines.name DESC",
+	"name_asc":     textOrder("airlines.name", "ASC"),
+	"name_desc":    textOrder("airlines.name", "DESC"),
 	"created_desc": "airlines.created_at DESC",
 	"created_asc":  "airlines.created_at ASC",
 }

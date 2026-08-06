@@ -156,7 +156,7 @@ const accountLabelOrder = `COALESCE(
 		  AND account_nicknames.deleted_at IS NULL
 		ORDER BY account_nicknames.created_at ASC
 		LIMIT 1)
-) %s NULLS LAST, accounts.created_at ASC`
+) COLLATE "pt-BR-x-icu" %s NULLS LAST, accounts.created_at ASC`
 
 var accountOrder = map[string]string{
 	"name_asc":     fmt.Sprintf(accountLabelOrder, "ASC"),
