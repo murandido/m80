@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/murandido/m-80-backend/internal/bot/humanizer"
 	"go.mau.fi/whatsmeow/types"
 	waLog "go.mau.fi/whatsmeow/util/log"
 )
@@ -16,6 +17,12 @@ import (
 // ranges from the humanizer spec can be eyeballed directly, in addition to
 // the range assertions already covered by internal/bot/humanizer's own tests.
 func TestHumanizedFlow_Ping_LogsEachStageWithinExpectedRanges(t *testing.T) {
+	// The only test in this package that has to pay the real delays, because
+	// watching them happen is the entire point of it. TestMain turned them off
+	// for everybody else.
+	restore := humanizer.SetDelaysEnabled(true)
+	defer restore()
+
 	client := &fakeClientBase{}
 	b := &Bot{
 		Logger: waLog.Noop,

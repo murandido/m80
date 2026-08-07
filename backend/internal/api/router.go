@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"os"
 
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
@@ -18,6 +19,10 @@ import (
 
 func NewRouter(db *gorm.DB, broker *events.Broker, traveosClient *traveos.Client, monitor *health.Monitor) *chi.Mux {
 	r := chi.NewRouter()
+
+	// Before Logger and the rate limiter, both of which read r.RemoteAddr and
+	// would otherwise see the Caddy container on every request in production.
+	r.Use(middleware.RealIP())
 
 	r.Use(chimiddleware.Logger)
 	r.Use(chimiddleware.Recoverer)
@@ -35,9 +40,15 @@ func NewRouter(db *gorm.DB, broker *events.Broker, traveosClient *traveos.Client
 	})
 
 	// Swagger Route
-	r.Get("/swagger/*", httpSwagger.Handler(
-		httpSwagger.URL("http://localhost:8080/swagger/doc.json"),
-	))
+	//
+	// Registered before any authentication, so in production it would hand the
+	// whole API surface - every route, every DTO - to anyone who asks. The JSON
+	// URL is also hardcoded to localhost, so it would not even work published.
+	if os.Getenv("ENV") != "production" {
+		r.Get("/swagger/*", httpSwagger.Handler(
+			httpSwagger.URL("http://localhost:8080/swagger/doc.json"),
+		))
+	}
 
 	r.Mount("/api/v1", v1.NewRouter(db, broker, traveosClient, monitor))
 

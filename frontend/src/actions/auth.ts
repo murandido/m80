@@ -51,8 +51,10 @@ export async function loginAction(
     const cookieStore = await cookies()
     cookieStore.set("auth_token", token, {
       httpOnly: true,
-      // TODO: activate this when launch
-      // secure: env.NODE_ENV === "production",
+      // Off in development so the cookie still works over plain http://localhost.
+      secure: env.NODE_ENV === "production",
+      // "strict" would drop the cookie when the panel is reached from an
+      // external link, and there is no OAuth round trip here that would need it.
       sameSite: "lax",
       maxAge: 60 * 60 * 24 * 7, // 7 days
     })

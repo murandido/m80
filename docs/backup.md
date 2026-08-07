@@ -32,25 +32,25 @@ Três detalhes do desenho que valem saber:
 
 ## Instalar na VPS
 
-As units estão em `deploy/systemd/`. Elas assumem o clone em `/opt/m-80-monorepo` e o usuário
+As units estão em `deploy/systemd/`. Elas assumem o clone em `/opt/m80` e o usuário
 `deploy` — **ajuste `User`, `WorkingDirectory` e `ExecStart` no `.service` antes de copiar** se o seu
 for diferente. O usuário precisa estar no grupo `docker`.
 
 ```bash
-sudo cp deploy/systemd/m-80-backup.service /etc/systemd/system/
-sudo cp deploy/systemd/m-80-backup.timer   /etc/systemd/system/
+sudo cp deploy/systemd/m80-backup.service /etc/systemd/system/
+sudo cp deploy/systemd/m80-backup.timer   /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now m-80-backup.timer
+sudo systemctl enable --now m80-backup.timer
 ```
 
 Confira antes de confiar:
 
 ```bash
 # Roda uma vez agora, sem esperar as 03:30
-sudo systemctl start m-80-backup.service
-journalctl -u m-80-backup -n 20        # deve terminar com "ok: /var/backups/m-80/..."
+sudo systemctl start m80-backup.service
+journalctl -u m80-backup -n 20         # deve terminar com "ok: /var/backups/m-80/..."
 sudo ls -lh /var/backups/m-80          # o arquivo tem que estar lá, com tamanho plausível
-systemctl list-timers m-80-backup      # quando é o próximo disparo
+systemctl list-timers m80-backup       # quando é o próximo disparo
 ```
 
 Se a VPS estiver desligada às 03:30, o `Persistent=true` faz o dump rodar assim que ela voltar, em

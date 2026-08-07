@@ -1,6 +1,6 @@
 [Unit]
 Description=Dispara o dump diário do PostgreSQL do M-80
-Documentation=https://github.com/murandido/m-80-monorepo/blob/main/docs/backup.md
+Documentation=https://github.com/murandido/m80/blob/main/docs/backup.md
 
 [Timer]
 # Madrugada, quando ninguém está emitindo.
@@ -13,7 +13,7 @@ Persistent=true
 # Evita que o dump caia exatamente no mesmo minuto de outras tarefas noturnas.
 RandomizedDelaySec=10m
 
-Unit=m-80-backup.service
+Unit=m80-backup.service
 
 [Install]
 WantedBy=timers.target

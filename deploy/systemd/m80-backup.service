@@ -1,6 +1,6 @@
 [Unit]
 Description=Dump diário do PostgreSQL do M-80
-Documentation=https://github.com/murandido/m-80-monorepo/blob/main/docs/backup.md
+Documentation=https://github.com/murandido/m80/blob/main/docs/backup.md
 # O script fala com o Docker; sem o daemon no ar ele não tem o que fazer.
 Requires=docker.service
 After=docker.service
@@ -9,10 +9,10 @@ After=docker.service
 Type=oneshot
 # Ajuste os três valores abaixo para o clone e o usuário da VPS.
 User=deploy
-WorkingDirectory=/opt/m-80-monorepo
+WorkingDirectory=/opt/m80
 Environment=PROFILE=prod
 Environment=BACKUP_DIR=/var/backups/m-80
-ExecStart=/opt/m-80-monorepo/backend/scripts/db-backup.sh
+ExecStart=/opt/m80/backend/scripts/db-backup.sh
 
 # O script já sai com código diferente de zero quando o dump falha ou não passa
 # na verificação, então uma unidade "failed" no systemctl é sinal confiável de

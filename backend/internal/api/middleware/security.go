@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -10,9 +11,26 @@ import (
 	"github.com/murandido/m-80-backend/internal/auth"
 )
 
+// CORS allows exactly the origins listed in CORS_ALLOWED_ORIGINS, comma separated.
+//
+// An empty value allows none, and that is the right default rather than an
+// oversight: no page in the browser talks to this API directly. Every call
+// arrives from the Next.js server, which sends no Origin and triggers no
+// preflight, so a panel that works needs no entry here at all. The list exists
+// so that the day something does call this API from a browser, the origin is a
+// deliberate decision instead of the wildcard this used to carry - a wildcard
+// plus AllowCredentials is the one combination you never want facing the
+// internet.
 func CORS() func(http.Handler) http.Handler {
-	return cors.Handler(cors.Options{
-		AllowedOrigins: []string{"https://*", "http://*"},
+	var origins []string
+	for _, origin := range strings.Split(os.Getenv("CORS_ALLOWED_ORIGINS"), ",") {
+		if trimmed := strings.TrimSpace(origin); trimmed != "" {
+			origins = append(origins, trimmed)
+		}
+	}
+
+	options := cors.Options{
+		AllowedOrigins: origins,
 		// Must cover every verb the router registers, or the browser blocks the request
 		// at the preflight - see TestCORS_AllowsEveryVerbTheRouterRegisters.
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
@@ -20,7 +38,17 @@ func CORS() func(http.Handler) http.Handler {
 		ExposedHeaders:   []string{"Link"},
 		AllowCredentials: true,
 		MaxAge:           300,
-	})
+	}
+
+	// go-chi/cors reads an empty AllowedOrigins as "allow every origin" (see
+	// cors.go, where it sets allowedOriginsAll), which is the exact opposite of
+	// what an empty list means here. Supplying AllowOriginFunc is what
+	// suppresses that default; returning false denies every origin.
+	if len(origins) == 0 {
+		options.AllowOriginFunc = func(*http.Request, string) bool { return false }
+	}
+
+	return cors.Handler(options)
 }
 
 // RateLimit throttles per authenticated user rather than per IP.

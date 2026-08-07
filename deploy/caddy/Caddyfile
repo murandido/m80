@@ -1,0 +1,24 @@
+{$API_DOMAIN} {
+	encode gzip
+
+	header {
+		# The panel is HTTPS-only from day one, so there is no grace period to
+		# preserve by leaving this short.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		# Nothing downstream needs to know which server this is.
+		-Server
+	}
+
+	# Caddy appends the peer address to whatever X-Forwarded-For the client
+	# sent, so the header can carry forged entries - but only to the left of the
+	# one Caddy wrote. middleware.RealIP reads the rightmost entry precisely for
+	# that reason, so nothing here has to sanitise the header.
+	reverse_proxy api-prod:8080 {
+		# The SSE stream in /api/v1/events must arrive frame by frame. Caddy
+		# already disables buffering for text/event-stream, and this makes it
+		# explicit: a proxy that buffers kills every live update in the panel
+		# with no error anywhere - just screens that quietly stop moving.
+		flush_interval -1
+	}
+}

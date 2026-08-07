@@ -27,23 +27,59 @@ import (
 // @in header
 // @name Authorization
 // @description     Informe o token JWT no formato: Bearer {token}
+// seedInitialAdmin creates the first admin so an empty database is usable.
+//
+// Outside production the credentials are fixed and printed, and stay that way:
+// that is the whole convenience, and everyone running the stack locally counts
+// on it.
+//
+// In production the same convenience is a panel on a public domain whose admin
+// password is written down in this repository, so the credentials have to come
+// from the environment. When they are missing the API boots with no user at
+// all - a panel somebody has to bootstrap by hand is a much smaller problem
+// than one anybody who has read this repo can log into.
+func seedInitialAdmin() {
+	var count int64
+	data.DB.Model(&data.User{}).Count(&count)
+	if count > 0 {
+		return
+	}
+
+	production := os.Getenv("ENV") == "production"
+	phone, password := "11999999999", "12345678"
+	if production {
+		phone, password = os.Getenv("ADMIN_PHONE"), os.Getenv("ADMIN_PASSWORD")
+		if phone == "" || password == "" {
+			slog.Warn("no admin user was created: set ADMIN_PHONE and ADMIN_PASSWORD to seed the first account")
+			return
+		}
+	}
+
+	fmt.Println("🌱 DB empty. Creating ADMIN user...")
+	admin := data.User{
+		Name:     "Admin",
+		Phone:    phone,
+		Password: password,
+		Role:     "admin",
+	}
+	// Refusing to boot beats booting without the only account that can log in.
+	// The phone is validated in User.BeforeCreate, so a typo in ADMIN_PHONE
+	// surfaces here rather than as an empty users table nobody looks at.
+	if err := data.DB.Create(&admin).Error; err != nil {
+		log.Fatal("❌ Failed to create the initial admin user: ", err)
+	}
+
+	if production {
+		slog.Info("created the initial admin user", "phone", phone)
+		return
+	}
+	fmt.Printf("👤 Created admin: %s / %s\n", phone, password)
+}
+
 func main() {
 	data.Connect()
 
-	// creates an default user if the db is empty
-	var count int64
-	data.DB.Model(&data.User{}).Count(&count)
-	if count == 0 {
-		fmt.Println("🌱 DB empty. Creating ADMIN user...")
-		admin := data.User{
-			Name:     "Admin",
-			Phone:    "11999999999",
-			Password: "12345678",
-			Role:     "admin",
-		}
-		data.DB.Create(&admin)
-		fmt.Println("👤 Created admin: 11999999999 / 12345678")
-	}
+	seedInitialAdmin()
 
 	if err := data.SeedAirports(); err != nil {
 		log.Fatal("❌ Failed to seed airports: ", err)
