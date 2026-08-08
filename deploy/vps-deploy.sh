@@ -87,11 +87,19 @@ fi
 
 # Before anything else, because the API runs its migrations on boot and a
 # migration is the one step of a deploy that a rollback cannot undo.
-if [ "${SKIP_BACKUP:-0}" != "1" ]; then
+#
+# The one case where there is nothing to dump is the very first deploy: db-prod
+# has never started, and db-backup.sh would exit non-zero on `compose exec`
+# against a service that is not running - taking the whole deploy down with it,
+# before a single image had been pulled. So the backup is skipped when, and only
+# when, no database container is running.
+if [ "${SKIP_BACKUP:-0}" = "1" ]; then
+  log "skipping the pre-deploy dump (SKIP_BACKUP=1)"
+elif [ -z "$(compose "$TAG" ps --status running -q "db-${PROFILE}" 2>/dev/null)" ]; then
+  log "no database container running - skipping the pre-deploy dump (first deploy)"
+else
   log "taking a pre-deploy dump..."
   PROFILE="$PROFILE" "$REPO_DIR/backend/scripts/db-backup.sh"
-else
-  log "skipping the pre-deploy dump (SKIP_BACKUP=1)"
 fi
 
 deploy_tag "$TAG"

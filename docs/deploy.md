@@ -150,9 +150,22 @@ Do repositório oficial, **não** `apt install docker.io` (versão velha, sem o 
 ```bash
 curl -fsSL https://get.docker.com | sudo sh
 sudo usermod -aG docker deploy
-# saia e entre de novo para o grupo valer
-docker compose version
+exit          # a lista de grupos é resolvida no login, não dinamicamente
 ```
+
+Entre de novo e confirme, **antes** de seguir:
+
+```bash
+id -nG | grep -q docker && docker ps >/dev/null && echo ok
+```
+
+Sem o relogin, todo comando docker responde `permission denied while trying to connect to the Docker
+API at unix:///var/run/docker.sock` — o que parece problema de instalação e é só a sessão velha
+carregando os grupos antigos. Um `sudo su - deploy` de dentro da mesma sessão **não** resolve.
+
+> Estar no grupo `docker` equivale a ser root: quem alcança o socket sobe container privilegiado e
+> monta o disco do host. Aqui isso não amplia nada, porque o `deploy` já está no `sudo` — mas não
+> replique o grupo para usuários que não devam ser root.
 
 ### 8. Repositório e `.env`
 
@@ -183,11 +196,24 @@ Os que não existiam antes deste pipeline:
 Login no GHCR (as imagens são privadas porque o repositório é):
 
 ```bash
-echo "<PAT>" | docker login ghcr.io -u murandido --password-stdin
+read -s GHCR_PAT && echo "$GHCR_PAT" | docker login ghcr.io -u murandido --password-stdin && unset GHCR_PAT
 ```
 
-O PAT é **fine-grained com apenas `read:packages`**. A VPS só precisa baixar; token com escrita numa
-máquina exposta é escopo desnecessário.
+O `read -s` mantém o token fora do histórico do shell.
+
+**Tem que ser um token classic**, não fine-grained — o registry não aceita os novos:
+
+> "GitHub Packages only supports authentication using a personal access token (classic)."
+> — [docs.github.com](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)
+
+Marque **somente `read:packages`**. A VPS só precisa baixar, e o clone do repositório é feito pela
+deploy key, então esse token não precisa de `repo` nem de escrita. O que se perde em relação ao
+fine-grained é o escopo por repositório: um classic vale para a conta inteira. A compensação
+possível é **prazo curto** — 90 dias, com lembrete no calendário, porque quando ele expira o sintoma
+é um deploy falhando no `pull` e fazendo rollback sozinho.
+
+Se um dia o `docker pull` devolver 403 num pacote privado, o motivo é o pacote herdar o acesso do
+repositório: resolva em **Package settings → Manage Actions access**, não ampliando o token.
 
 ### 9. DNS — antes de subir o Caddy
 
