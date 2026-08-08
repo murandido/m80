@@ -38,6 +38,17 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o app ./cmd/${SERVICE_NA
 # prod image
 FROM alpine:latest AS prod
 
+# The DSN in internal/data/db.go pins TimeZone=America/Sao_Paulo, and a bare
+# alpine ships no IANA timezone database - so the driver dies with "unknown
+# time zone America/Sao_Paulo" immediately after the migrations apply, and both
+# Go services crash-loop. It never showed up in dev, test or CI: all three run
+# on Debian-based images that carry tzdata already.
+#
+# TLS needs nothing here: alpine's base already includes ca-certificates-bundle
+# with a populated trust store (checked - 119 certificates), so adding
+# ca-certificates would be redundant.
+RUN apk add --no-cache tzdata
+
 WORKDIR /root/
 RUN mkdir -p /root/data
 
