@@ -36,6 +36,13 @@ As units estão em `deploy/systemd/`. Elas assumem o clone em `/opt/m80` e o usu
 `deploy` — **ajuste `User`, `WorkingDirectory` e `ExecStart` no `.service` antes de copiar** se o seu
 for diferente. O usuário precisa estar no grupo `docker`.
 
+O diretório de destino precisa existir **com dono `deploy`** antes do primeiro dump. O script faz
+`install -d -m 700` nele, mas roda sem privilégio e `/var/backups` é `root:root 755`:
+
+```bash
+sudo install -d -o deploy -g deploy -m 700 /var/backups/m-80
+```
+
 ```bash
 sudo cp deploy/systemd/m80-backup.service /etc/systemd/system/
 sudo cp deploy/systemd/m80-backup.timer   /etc/systemd/system/

@@ -42,7 +42,7 @@ Em **Settings → Secrets and variables → Actions**:
 | `VPS_SSH_KEY` | chave privada SSH desse usuário, conteúdo inteiro | sim |
 | `VPS_SSH_PORT` | porta do SSH, se não for 22 | não |
 | `VPS_KNOWN_HOSTS` | chave pública do host (`ssh-keyscan -H <ip>`) | não, mas recomendado |
-| `VERCEL_TOKEN` | token de conta ou de time na Vercel | sim |
+| `VERCEL_TOKEN` | token **de conta**, com escopo no time — não um token de projeto (ver abaixo) | sim |
 | `VERCEL_ORG_ID` | está em `frontend/.vercel/project.json` após um `vercel link` | sim |
 | `VERCEL_PROJECT_ID` | mesmo arquivo | sim |
 
@@ -51,6 +51,31 @@ primeira conexão de cada execução. Ele emite um warning quando faz isso.
 
 Não existe secret para o domínio da API: o `vps-deploy.sh` lê `API_DOMAIN_PROD` do `.env` da própria
 VPS, que já é a fonte de verdade dele.
+
+### O `VERCEL_TOKEN` não pode ser um token de projeto
+
+A Vercel oferece dois tipos de token e só um funciona aqui. O de projeto (prefixo `vcp_`, criado
+dentro de **Project Settings → Tokens**) faz o CLI falhar, e **a mensagem de erro aponta para o lugar
+errado**:
+
+```
+Error: Could not retrieve Project Settings. To link your project, remove the .vercel
+directory and deploy again.
+```
+
+Não é o `.vercel`. Rodando o mesmo comando com `--debug`, a sequência real aparece:
+
+```
+#1  GET /v2/user            → 404
+#2  GET /v2/teams/<id>      → 403     ← este é o que mata
+#3  GET /v9/.../projects    → 200
+```
+
+O CLI resolve o **time** antes do projeto, e um token de projeto não enxerga o time. Crie o token em
+**Account Settings → Tokens**, com o escopo apontado para o time dono do projeto.
+
+Se você já colou um token de projeto em algum lugar, revogue: escopo curto não é o mesmo que escopo
+inofensivo.
 
 ---
 
@@ -215,6 +240,17 @@ possível é **prazo curto** — 90 dias, com lembrete no calendário, porque qu
 Se um dia o `docker pull` devolver 403 num pacote privado, o motivo é o pacote herdar o acesso do
 repositório: resolva em **Package settings → Manage Actions access**, não ampliando o token.
 
+Ainda neste passo, crie o diretório de backups **já com dono `deploy`**:
+
+```bash
+sudo install -d -o deploy -g deploy -m 700 /var/backups/m-80
+```
+
+O `db-backup.sh` faz `install -d -m 700 "$BACKUP_DIR"`, mas roda como `deploy` — e `/var/backups` é
+`root:root 755`, então ele não consegue criar o subdiretório sozinho. O sintoma não aparece no
+primeiro deploy (que pula o dump, porque não há banco rodando ainda): aparece no **segundo**, que
+morre no dump antes de puxar imagem nenhuma.
+
 ### 9. DNS — antes de subir o Caddy
 
 - `api.<domínio>` → IP da VPS
@@ -291,6 +327,54 @@ publicaria a cada push na main e a label não controlaria nada.
 `frontend/src/app/api/events/route.ts` declara `maxDuration = 300`. No plano **Hobby** a Vercel corta
 em 60s, então o SSE reconecta a cada minuto em vez de a cada cinco. O `useSSE` já delega reconexão ao
 `EventSource` nativo, então nada quebra — mas são ~60 invocações por hora, por aba aberta.
+
+---
+
+## Os workflows, e o que custou caro descobrir
+
+Cada item aqui derrubou pelo menos um deploy. Estão registrados porque nenhum deles é dedutível
+lendo a documentação da ferramenta.
+
+### O CLI da Vercel roda da raiz do repositório
+
+O workflow **não** tem `working-directory: frontend`, por mais que pareça certo. O projeto na Vercel
+já tem **Root Directory: `frontend`**, e o CLI aplica esse caminho ele mesmo — rodando de dentro da
+pasta, ele procura `frontend/frontend/package.json` e falha com um `ENOENT` seco. O comentário está
+no `.github/workflows/deploy-vercel.yml`; não o remova junto com o `working-directory` na próxima vez
+que ele parecer sobrando.
+
+### O runner precisa de `pnpm` instalado
+
+`vercel build` faz a instalação de dependências sozinho e chama `pnpm`, que o runner não tem:
+`setup-node` traz só npm, e o ambiente de build da própria Vercel já vem com pnpm — então esse buraco
+só existe fora de lá. O erro é `spawn pnpm ENOENT`.
+
+A versão é **fixada em 10**, que é o que a Vercel escolhe para este projeto (ela diz isso no log de
+build: um lockfile 9.0 é ambíguo entre pnpm 9 e 10 e ela desempata pela data de criação do projeto).
+As duas têm que concordar, ou o deploy resolve dependências com um resolver diferente de todo preview.
+
+### Não há cache de layer no build das imagens
+
+`cache-from`/`cache-to: type=gha` falhava **todo** build com `failed to reserve cache` — e falhava
+*depois* de a imagem já ter sido construída e enviada, então lia como falha de build. Nem o default de
+permissão do repositório nem conceder `actions: write` explicaram: a cota estava pela metade e
+nenhuma entrada era do buildx. Dois deploys foram gastos nisso.
+
+Cache é otimização e essa estava bloqueando produção, então foi removida em vez de chutada uma
+terceira vez. **A causa raiz continua desconhecida.** `type=registry`, que guarda o cache no próprio
+GHCR e não depende do serviço de cache do Actions, é o próximo a tentar quando o pipeline estiver
+entediante.
+
+### O SSH tenta cinco vezes antes de desistir
+
+Dois deploys morreram em `connect to host: Connection timed out` sem nunca chegar à VPS. O fail2ban
+foi descartado como culpado (`fail2ban-client status sshd`: zero banimentos, zero falhas totais) e a
+causa nunca apareceu.
+
+O que existe hoje é uma **sonda de conexão** repetida cinco vezes com 15s de intervalo; só o `true`
+remoto é repetido, nunca o deploy — repetir o deploy refaria o dump e recriaria todo container. Se as
+cinco falharem, o job imprime o **IP de saída do runner** antes de abortar: é o dado que distingue
+"um endereço bloqueado" de "uma faixa inteira" de "a rota caiu", e ele muda a cada execução.
 
 ---
 
