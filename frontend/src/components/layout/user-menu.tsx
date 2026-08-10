@@ -22,6 +22,7 @@ import type { User } from "@/schemas/user"
 const roleLabels: Record<User["role"], string> = {
   admin: "Administrador",
   user: "Usuário",
+  dev: "Desenvolvedor",
 }
 
 function initials(name: string): string {

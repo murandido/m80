@@ -9,7 +9,7 @@ type CreateUserRequest struct {
 	Name     string `json:"name" validate:"required"`
 	Phone    string `json:"phone" validate:"required"`
 	Password string `json:"password" validate:"required,min=6,max=20"`
-	Role     string `json:"role" validate:"omitempty,oneof=user admin"`
+	Role     string `json:"role" validate:"omitempty,oneof=user admin dev"`
 }
 
 // UserResponse defines how a user should be returned in the API
@@ -26,5 +26,5 @@ type UpdateUserRequest struct {
 	Name     string `json:"name" validate:"omitempty"`
 	Phone    string `json:"phone" validate:"omitempty"`
 	Password string `json:"password" validate:"omitempty,min=6,max=20"`
-	Role     string `json:"role" validate:"omitempty,oneof=user admin"`
+	Role     string `json:"role" validate:"omitempty,oneof=user admin dev"`
 }

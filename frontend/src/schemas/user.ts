@@ -1,10 +1,15 @@
 import { z } from "zod"
 
+// The user_role Postgres enum, in one place. Every schema below reuses it: if any single
+// one of them did not know a role the backend can return, safeParse fails and the whole
+// screen (or the session) breaks, not just that field.
+export const userRoleSchema = z.enum(["user", "admin", "dev"])
+
 export const userSchema = z.object({
   id: z.string(),
   name: z.string(),
   phone: z.string(),
-  role: z.enum(["user", "admin"]),
+  role: userRoleSchema,
   created_at: z.string(),
 })
 
@@ -41,7 +46,7 @@ export const updateUserSchema = {
         .min(6, "A senha precisa ter no mínimo 6 caracteres")
         .max(20, "A senha pode ter no máximo 20 caracteres"),
     ]),
-    role: z.enum(["user", "admin"]),
+    role: userRoleSchema,
   }),
   response: z.object({
     success: z.boolean(),
@@ -51,7 +56,7 @@ export const updateUserSchema = {
         id: z.string(),
         name: z.string(),
         phone: z.string(),
-        role: z.enum(["user", "admin"]),
+        role: userRoleSchema,
         created_at: z.string(),
       })
       .nullish(),
@@ -77,7 +82,7 @@ export const createUserSchema = {
       .string()
       .min(6, "A senha precisa ter no mínimo 6 caracteres")
       .max(20, "A senha pode ter no máximo 20 caracteres"),
-    role: z.enum(["user", "admin"]),
+    role: userRoleSchema,
   }),
   response: z.object({
     success: z.boolean(),
@@ -87,7 +92,7 @@ export const createUserSchema = {
         id: z.string(),
         name: z.string(),
         phone: z.string(),
-        role: z.enum(["user", "admin"]),
+        role: userRoleSchema,
         created_at: z.string(),
       })
       .nullish(),

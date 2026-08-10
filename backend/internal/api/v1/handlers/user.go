@@ -2,8 +2,8 @@ package handlers
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
+	"slices"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
@@ -97,9 +97,9 @@ func userListQuery(db *gorm.DB, params listQuery, role string) *gorm.DB {
 		query = query.Where(search)
 	}
 
-	// Only the two roles the panel offers; anything else leaves the list unfiltered
+	// Only the roles the enum actually has; anything else leaves the list unfiltered
 	// rather than returning nothing for a typo in the URL.
-	if role == "admin" || role == "user" {
+	if slices.Contains(data.UserRoles, role) {
 		query = query.Where("users.role = ?", role)
 	}
 
@@ -114,7 +114,7 @@ func userListQuery(db *gorm.DB, params listQuery, role string) *gorm.DB {
 // @Security     BearerAuth
 // @Param        q      query  string  false  "Busca por nome ou telefone"
 // @Param        order  query  string  false  "Ordenação"  Enums(name_asc, name_desc, created_desc, created_asc)
-// @Param        role   query  string  false  "Perfil"  Enums(admin, user)
+// @Param        role   query  string  false  "Perfil"  Enums(admin, user, dev)
 // @Success      200  {object}  schemas.UserListResponse
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao buscar usuários"
@@ -195,7 +195,6 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		utils.SendError(w, r, http.StatusInternalServerError, "Error parsing ID")
 		return
 	}
-	fmt.Println(id)
 
 	var user data.User
 	if err := h.DB.First(&user, "id = ?", id).Error; err != nil {
@@ -206,6 +205,15 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 	var req schemas.UpdateUserRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		utils.SendError(w, r, http.StatusBadRequest, "Invalid JSON payload")
+		return
+	}
+
+	// Without this the oneof/min tags on UpdateUserRequest were dead letters: an invalid
+	// role reached the Postgres enum and came back as a 500 carrying the raw driver
+	// message. Every tag here is omitempty, so this only rejects payloads that were
+	// already broken.
+	if err := h.Validator.Struct(req); err != nil {
+		utils.SendError(w, r, http.StatusBadRequest, "Validation failed: "+err.Error())
 		return
 	}
 

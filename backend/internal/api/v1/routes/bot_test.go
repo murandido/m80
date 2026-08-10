@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/murandido/m-80-backend/internal/data"
 )
 
 // The gate lives on the route (like the sales suppliers view), so it has to
@@ -16,7 +17,7 @@ func TestRegisterBotRoutes_RequiresAdmin(t *testing.T) {
 
 	r := chi.NewRouter()
 	r.Group(func(r chi.Router) {
-		r.Use(withRole("emissor"))
+		r.Use(withRole(data.RoleUser))
 		RegisterBotRoutes(r)
 	})
 
@@ -45,7 +46,7 @@ func TestRegisterBotRoutes_AdminProxiesToBotAPI(t *testing.T) {
 
 	r := chi.NewRouter()
 	r.Group(func(r chi.Router) {
-		r.Use(withRole("admin"))
+		r.Use(withRole(data.RoleAdmin))
 		RegisterBotRoutes(r)
 	})
 

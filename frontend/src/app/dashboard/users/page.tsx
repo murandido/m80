@@ -84,6 +84,7 @@ export default async function UsersPage({
             options={[
               { value: "admin", label: "Administrador" },
               { value: "user", label: "Usuário" },
+              { value: "dev", label: "Desenvolvedor" },
             ]}
           />
         </ListFilterBar>

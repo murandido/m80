@@ -92,7 +92,7 @@ func (h *DashboardHandler) GetDashboard(w http.ResponseWriter, r *http.Request) 
 	// Money is admin-only. Decided here from the user the auth middleware loaded from the
 	// database, never from a query param or a client-supplied header.
 	user, _ := r.Context().Value(middleware.UserContextKey).(data.User)
-	includeAmount := user.Role == "admin"
+	includeAmount := user.Role == data.RoleAdmin
 
 	granularity := r.URL.Query().Get("granularity")
 	if !dashboardGranularities[granularity] {

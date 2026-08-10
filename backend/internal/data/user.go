@@ -10,6 +10,20 @@ import (
 	"gorm.io/gorm"
 )
 
+// The values of the user_role Postgres enum, created in migration 000001 and extended by
+// 000032. They are plain strings because User.Role has to stay a string for gorm and for
+// the JSON contract; a named type would ripple into both for no gain.
+const (
+	RoleUser  = "user"
+	RoleAdmin = "admin"
+	RoleDev   = "dev"
+)
+
+// UserRoles is the whitelist the API validates and filters against. Keep it in sync with
+// the enum: a value that exists here but not in Postgres fails at INSERT time, not at
+// validation time, which surfaces as a 500 instead of a 400.
+var UserRoles = []string{RoleUser, RoleAdmin, RoleDev}
+
 type User struct {
 	ID        string         `gorm:"primaryKey;type:uuid" json:"id"`
 	Name      string         `gorm:"not null" json:"name"`

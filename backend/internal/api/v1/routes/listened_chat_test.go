@@ -34,7 +34,7 @@ func TestRegisterListenedChatRoutes_RequiresAdmin(t *testing.T) {
 		t.Run(p.method+" "+p.path, func(t *testing.T) {
 			r := chi.NewRouter()
 			r.Group(func(r chi.Router) {
-				r.Use(withRole("emissor"))
+				r.Use(withRole(data.RoleUser))
 				RegisterListenedChatRoutes(r, nil)
 			})
 
@@ -64,7 +64,7 @@ func TestRegisterListenedChatRoutes_DoesNotFallThroughToBotProxy(t *testing.T) {
 
 	r := chi.NewRouter()
 	r.Group(func(r chi.Router) {
-		r.Use(withRole("admin"))
+		r.Use(withRole(data.RoleAdmin))
 		RegisterBotRoutes(r)
 		RegisterListenedChatRoutes(r, db)
 	})

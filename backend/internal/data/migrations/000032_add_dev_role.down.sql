@@ -1,0 +1,4 @@
+-- Postgres does not support removing a value from an enum type directly - that would
+-- require recreating user_role without it and rewriting every dependent row. Forward-only
+-- migration, no-op down. An unused enum value costs nothing and an older API image simply
+-- never produces it, so a rollback that leaves 'dev' behind is harmless.

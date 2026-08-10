@@ -25,6 +25,7 @@ import { Separator } from "@/components/ui/separator"
 import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 import { User, updateUserSchema } from "@/schemas/user"
+import { RoleSelector } from "@/components/users/role-selector"
 import { updateUserAction } from "@/actions/user"
 
 type FormData = z.infer<typeof updateUserSchema.request>
@@ -215,41 +216,11 @@ export function EditUserPanel({ user, isOpen, onSaved }: EditUserPanelProps) {
                   name="role"
                   control={form.control}
                   render={({ field }) => (
-                    <>
-                      <FieldLabel>
-                        Perfil <span className="text-destructive">*</span>
-                      </FieldLabel>
-                      <div className="flex gap-2">
-                        <Button
-                          type="button"
-                          size="sm"
-                          onClick={() => field.onChange("user")}
-                          disabled={isPending}
-                          className={cn(
-                            "flex-1 transition-colors duration-150",
-                            field.value === "user"
-                              ? "bg-slate-800 text-white hover:bg-slate-900"
-                              : "border border-slate-300 bg-white text-slate-600 hover:bg-slate-100",
-                          )}
-                        >
-                          Usuário
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          onClick={() => field.onChange("admin")}
-                          disabled={isPending}
-                          className={cn(
-                            "flex-1 transition-colors duration-150",
-                            field.value === "admin"
-                              ? "bg-slate-800 text-white hover:bg-slate-900"
-                              : "border border-slate-300 bg-white text-slate-600 hover:bg-slate-100",
-                          )}
-                        >
-                          Admin
-                        </Button>
-                      </div>
-                    </>
+                    <RoleSelector
+                      value={field.value}
+                      onChange={field.onChange}
+                      disabled={isPending}
+                    />
                   )}
                 />
               </div>

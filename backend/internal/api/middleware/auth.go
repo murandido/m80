@@ -80,7 +80,10 @@ func RequireAdmin() func(handler http.Handler) http.Handler {
 				return
 			}
 
-			if user.Role != "admin" {
+			// Anything that is not admin is denied, dev included: adding the dev role was
+			// deliberately kept free of authorization changes, so it inherits the plain
+			// user's access until permissions are redistributed.
+			if user.Role != data.RoleAdmin {
 				utils.SendError(w, r, http.StatusForbidden, "Access denied: Role not allowed")
 				return
 			}

@@ -1,11 +1,13 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/murandido/m-80-backend/internal/auth"
+	"github.com/murandido/m-80-backend/internal/data"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -103,5 +105,56 @@ func TestRequireAuth_RejectsBadTokens(t *testing.T) {
 				t.Fatalf("status = %d, want 401", code)
 			}
 		})
+	}
+}
+
+// RequireAdmin needs no database: it decides from the user RequireAuth already loaded
+// into the context. The case that matters for this table is dev - the role was added
+// without granting it anything, so it has to be denied exactly like a plain user. If
+// this ever starts passing for dev, an authorization change slipped in unannounced.
+func TestRequireAdmin_OnlyAdminPasses(t *testing.T) {
+	tests := []struct {
+		role string
+		want int
+	}{
+		{data.RoleAdmin, http.StatusOK},
+		{data.RoleUser, http.StatusForbidden},
+		{data.RoleDev, http.StatusForbidden},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.role, func(t *testing.T) {
+			handler := RequireAdmin()(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			}))
+
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)
+			req = req.WithContext(context.WithValue(
+				req.Context(), UserContextKey, data.User{ID: "00000000-0000-0000-0000-000000000000", Role: tt.role},
+			))
+
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != tt.want {
+				t.Fatalf("status = %d, want %d", rec.Code, tt.want)
+			}
+		})
+	}
+}
+
+// A request that never went through RequireAuth has no user in the context at all.
+// That is a wiring mistake in the router, not a permission problem, so it must not
+// masquerade as a 403.
+func TestRequireAdmin_MissingContextIsNotForbidden(t *testing.T) {
+	handler := RequireAdmin()(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/users", nil))
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rec.Code)
 	}
 }

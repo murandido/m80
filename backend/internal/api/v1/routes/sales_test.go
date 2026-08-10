@@ -33,7 +33,7 @@ func withRole(role string) func(http.Handler) http.Handler {
 func TestRegisterSaleRoutes_SuppliersRequireAdmin(t *testing.T) {
 	r := chi.NewRouter()
 	r.Group(func(r chi.Router) {
-		r.Use(withRole("user"))
+		r.Use(withRole(data.RoleUser))
 		RegisterSaleRoutes(r, nil, nil)
 	})
 

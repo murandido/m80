@@ -60,7 +60,7 @@ func seedInitialAdmin() {
 		Name:     "Admin",
 		Phone:    phone,
 		Password: password,
-		Role:     "admin",
+		Role:     data.RoleAdmin,
 	}
 	// Refusing to boot beats booting without the only account that can log in.
 	// The phone is validated in User.BeforeCreate, so a typo in ADMIN_PHONE
