@@ -1,7 +1,7 @@
 import type { Metadata } from "next"
 import { cookies } from "next/headers"
 import Link from "next/link"
-import { AlertTriangle, ExternalLink } from "lucide-react"
+import { AlertTriangle, ExternalLink, FileSpreadsheet } from "lucide-react"
 import { z } from "zod"
 import { env } from "@/lib/env"
 import { getSessionUser } from "@/lib/session"
@@ -101,14 +101,24 @@ export default async function SalesClientsPage({
       <div className="flex flex-col gap-4 sm:gap-6">
         <div className="flex items-center justify-between gap-4">
           <h1 className="text-lg font-semibold text-slate-800">Vendas</h1>
-          {/* Linking a sale to a client that does not exist yet is the common case here,
-              so the client register is one click away instead of a trip to the sidebar. */}
-          <Button asChild variant="ghost" size="sm" className="text-slate-500">
-            <Link href="/dashboard/clients">
-              Gerenciar clientes
-              <ExternalLink className="h-4 w-4" />
-            </Link>
-          </Button>
+          <div className="flex items-center gap-2">
+            {/* Linking a sale to a client that does not exist yet is the common case here,
+                so the client register is one click away instead of a trip to the sidebar. */}
+            <Button asChild variant="ghost" size="sm" className="text-slate-500">
+              <Link href="/dashboard/clients">
+                Gerenciar clientes
+                <ExternalLink className="h-4 w-4" />
+              </Link>
+            </Button>
+            <Button asChild variant="outline" size="sm">
+              {/* Native download: the backend sets the filename via Content-Disposition, and
+                  `query` is the same string that fetched the list on screen. */}
+              <a href={`/api/sales/export?${query.toString()}`} download>
+                <FileSpreadsheet className="h-4 w-4" />
+                Exportar
+              </a>
+            </Button>
+          </div>
         </div>
 
         <SalesViewToggle active="clients" isAdmin={user?.role === "admin"} />

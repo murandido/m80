@@ -3,9 +3,12 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -13,6 +16,7 @@ import (
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/events"
+	"github.com/murandido/m-80-backend/internal/export"
 	"github.com/murandido/m-80-backend/internal/utils"
 	"gorm.io/gorm"
 )
@@ -178,6 +182,43 @@ func resolveAgencyFilter(db *gorm.DB, r *http.Request) (string, error) {
 	return defaultAgencyID(db)
 }
 
+// applySaleListFilters applies the listing filters to a query built by saleListQuery. It is
+// shared by GetSales and GetSalesExport so the spreadsheet can never contain a different set
+// of sales than the screen it was downloaded from. agency_id is deliberately not handled
+// here: it needs the DB to resolve the main agency, and resolveAgencyFilter already owns it.
+func applySaleListFilters(query *gorm.DB, r *http.Request) *gorm.DB {
+	q := r.URL.Query()
+
+	for column, param := range map[string]string{
+		"issuances.loyalty_program_id": "loyalty_program_id",
+		"issuances.account_id":         "account_id",
+		"issuances.issuer_id":          "issuer_id",
+		"sales.client_id":              "client_id",
+	} {
+		if value := q.Get(param); value != "" {
+			query = query.Where(column+" = ?", value)
+		}
+	}
+
+	if value := q.Get("paid"); value != "" {
+		if paid, err := strconvParseBool(value); err == nil {
+			query = query.Where("sales.paid = ?", paid)
+		}
+	}
+
+	// created_at is UTC in the DB; parseDateRange resolves the local calendar days into UTC
+	// bounds so "today" matches the operator's day.
+	from, to := parseDateRange(r)
+	if from != nil {
+		query = query.Where("issuances.created_at >= ?", *from)
+	}
+	if to != nil {
+		query = query.Where("issuances.created_at < ?", *to)
+	}
+
+	return query
+}
+
 // GetSales handles the GET /sales route.
 // @Summary      Listar vendas (Visão Clientes)
 // @Description  Lista as vendas com os dados da emissão associada. Sem agency_id, filtra pela agência principal (is_default=true). cancelled_at preenchido significa que a venda foi reaberta pelo cancelamento da emissão. Emissões deletadas não têm venda e nunca aparecem aqui.
@@ -203,33 +244,10 @@ func (h *SaleHandler) GetSales(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	query := saleListQuery(h.DB).Where("issuances.agency_id = ?", agencyID)
-
-	q := r.URL.Query()
-	for column, param := range map[string]string{
-		"issuances.loyalty_program_id": "loyalty_program_id",
-		"issuances.account_id":         "account_id",
-		"issuances.issuer_id":          "issuer_id",
-		"sales.client_id":              "client_id",
-	} {
-		if value := q.Get(param); value != "" {
-			query = query.Where(column+" = ?", value)
-		}
-	}
-
-	if value := q.Get("paid"); value != "" {
-		if paid, err := strconvParseBool(value); err == nil {
-			query = query.Where("sales.paid = ?", paid)
-		}
-	}
-
-	from, to := parseDateRange(r)
-	if from != nil {
-		query = query.Where("issuances.created_at >= ?", *from)
-	}
-	if to != nil {
-		query = query.Where("issuances.created_at < ?", *to)
-	}
+	query := applySaleListFilters(
+		saleListQuery(h.DB).Where("issuances.agency_id = ?", agencyID),
+		r,
+	)
 
 	var rows []saleRow
 	if err := query.Order("issuances.created_at desc").Scan(&rows).Error; err != nil {
@@ -243,6 +261,77 @@ func (h *SaleHandler) GetSales(w http.ResponseWriter, r *http.Request) {
 	}
 
 	utils.SendJSON(w, r, http.StatusOK, "Sales fetched successfully", resp)
+}
+
+// GetSalesExport handles the GET /sales/export route.
+// @Summary      Exportar vendas (.xlsx)
+// @Description  Gera uma planilha .xlsx das vendas filtradas, com as colunas DATA, CLIENTE, LOCALIZADOR, EMISSÃO e STATUS, da mais antiga para a mais recente. Aceita os mesmos filtros da listagem. STATUS é PG (paga), APG (em aberto) ou CANC (emissão cancelada, tenha sido paga ou não).
+// @Tags         Vendas
+// @Produce      application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+// @Security     BearerAuth
+// @Param        date_from           query  string  false  "Data inicial da emissão (YYYY-MM-DD), inclusiva"
+// @Param        date_to             query  string  false  "Data final da emissão (YYYY-MM-DD), inclusiva"
+// @Param        agency_id           query  string  false  "UUID da agência (padrão: a agência principal)"
+// @Param        loyalty_program_id  query  string  false  "UUID do programa de fidelidade"
+// @Param        account_id          query  string  false  "UUID da conta"
+// @Param        issuer_id           query  string  false  "UUID do emissor (usuário)"
+// @Param        client_id           query  string  false  "UUID do cliente vinculado"
+// @Param        paid                query  boolean false  "Filtra por vendas pagas (true) ou em aberto (false)"
+// @Success      200  {file}    binary  "Planilha .xlsx das vendas filtradas"
+// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      500  {object}  schemas.ErrorResponse "Nenhuma agência principal configurada ou erro ao gerar a planilha"
+// @Router       /sales/export [get]
+func (h *SaleHandler) GetSalesExport(w http.ResponseWriter, r *http.Request) {
+	agencyID, err := resolveAgencyFilter(h.DB, r)
+	if err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "No default agency configured")
+		return
+	}
+
+	// Same filters as the listing, but ascending: the screen shows the newest sale first,
+	// while a spreadsheet is read top to bottom in chronological order.
+	query := applySaleListFilters(
+		saleListQuery(h.DB).Where("issuances.agency_id = ?", agencyID),
+		r,
+	)
+
+	var rows []saleRow
+	if err := query.Order("issuances.created_at asc").Scan(&rows).Error; err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch sales")
+		return
+	}
+
+	sales := make([]export.SaleRow, 0, len(rows))
+	for _, row := range rows {
+		// Through toSaleResponse rather than recomputing the amount here: a second copy of
+		// the formula is how the sheet and the screen start disagreeing by a cent.
+		response := toSaleResponse(row)
+		sales = append(sales, export.SaleRow{
+			IssuedAt:       response.IssuedAt,
+			ClientName:     response.ClientName,
+			ProgramLocator: response.ProgramLocator,
+			AmountCents:    response.AmountCents,
+			Paid:           response.Paid,
+			CancelledAt:    response.CancelledAt,
+		})
+	}
+
+	content, err := export.BuildSalesXLSX(sales)
+	if err != nil {
+		slog.Error("failed to build sales export", "err", err)
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to build sales export")
+		return
+	}
+
+	// Binary response: the standard JSON envelope does not apply, mirroring the issuances
+	// export and the PDF path.
+	filename := fmt.Sprintf("vendas-%s.xlsx", time.Now().Format("2006-01-02"))
+	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+	w.Header().Set("Content-Length", strconv.Itoa(len(content)))
+	if _, err := w.Write(content); err != nil {
+		slog.Error("failed to write sales export response", "err", err)
+	}
 }
 
 // UpdateSale handles the PATCH /sales/{id} route.
