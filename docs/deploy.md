@@ -361,9 +361,27 @@ permissão do repositório nem conceder `actions: write` explicaram: a cota esta
 nenhuma entrada era do buildx. Dois deploys foram gastos nisso.
 
 Cache é otimização e essa estava bloqueando produção, então foi removida em vez de chutada uma
-terceira vez. **A causa raiz continua desconhecida.** `type=registry`, que guarda o cache no próprio
-GHCR e não depende do serviço de cache do Actions, é o próximo a tentar quando o pipeline estiver
-entediante.
+terceira vez.
+
+**A causa apareceu depois, no job vizinho.** O deploy de 09/08 trouxe uma anotação que o buildx nunca
+emitiu:
+
+```
+Cache reservation failed: cache write denied: token has no writable scopes
+```
+
+O padrão de permissão do repositório é `read`, e o serviço de cache do Actions recusa token sem
+escopo de escrita.
+
+O detalhe que escondeu isso por duas tentativas: **o mesmo `ci.yml` cacheava normalmente em todo pull
+request** e só falhava quando o deploy o chamava. Um workflow reusável nunca tem mais permissão que o
+job que o chama, e o job `ci` do `deploy-vps.yml` não declarava bloco nenhum — então caía no padrão
+do repositório, e as permissões que o `ci.yml` declara para si mesmo eram rebaixadas em silêncio. A
+correção é o `permissions:` **no job chamador**.
+
+**O cache de layer do buildx continua desligado.** O job `build` tem o mesmo defeito (concede
+`contents` e `packages`, então `actions` fica em `none`), mas essa hipótese já pareceu boa antes e o
+lugar de testá-la não é o caminho de deploy de produção.
 
 ### O SSH tenta cinco vezes antes de desistir
 
