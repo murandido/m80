@@ -26,7 +26,7 @@ func NewStatusHandler(monitor *health.Monitor) *StatusHandler {
 
 // GetSystemStatus handles the GET /status route.
 // @Summary      Status das dependências
-// @Description  Diz se o bot do WhatsApp e a Traveos estão no ar, a partir de sondas que rodam em background (bot a cada 60s, Traveos a cada 120s). Aberta a qualquer usuário autenticado, de propósito: quem trabalha na grid de emissões é quem precisa saber que a vendor caiu. Não devolve o código de pareamento nem o JID do bot — esses continuam só no proxy admin `/bot/*`.
+// @Description  Diz se o bot do WhatsApp e a Traveos estão no ar, a partir de sondas que rodam em background (bot a cada 60s, Traveos a cada 120s). Aberta a qualquer usuário autenticado, de propósito: quem trabalha na grid de emissões é quem precisa saber que a vendor caiu. Não devolve o código de pareamento nem o JID do bot — esses continuam só no proxy dev `/bot/*`.
 // @Tags         Status
 // @Produce      json
 // @Security     BearerAuth

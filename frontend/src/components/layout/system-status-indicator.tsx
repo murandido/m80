@@ -93,10 +93,10 @@ function StatusDot({ tone }: { tone: Tone }) {
 
 export function SystemStatusIndicator({
   initialStatus,
-  isAdmin = false,
+  canSeeBot = false,
 }: {
   initialStatus: SystemStatus | null
-  isAdmin?: boolean
+  canSeeBot?: boolean
 }) {
   const [status, setStatus] = useState(initialStatus)
   const [, startTransition] = useTransition()
@@ -179,9 +179,11 @@ export function SystemStatusIndicator({
             </p>
           )}
 
-          {/* Only admins have anywhere to go from here - pairing and logout
-              live behind the admin-only /dashboard/bot. */}
-          {isAdmin && (
+          {/* Only a dev has anywhere to go from here - pairing and logout live
+              behind the dev-only /dashboard/bot. Everyone else still sees the light,
+              which is the point: knowing the bot is down matters to the operator even
+              when fixing it is not their job. */}
+          {canSeeBot && (
             <Link
               href="/dashboard/bot"
               className="text-xs font-medium text-slate-600 underline underline-offset-2 hover:text-slate-800"

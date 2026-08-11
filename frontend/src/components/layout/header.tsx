@@ -6,10 +6,10 @@ import type { SystemStatus } from "@/schemas/status"
 
 export function Header({
   systemStatus = null,
-  isAdmin = false,
+  canSeeBot = false,
 }: {
   systemStatus?: SystemStatus | null
-  isAdmin?: boolean
+  canSeeBot?: boolean
 }) {
   return (
     <header className="sticky top-0 z-10 flex h-12 flex-none items-center gap-2 border-b bg-background px-3">
@@ -19,7 +19,7 @@ export function Header({
       {/* In the header rather than on the dashboard home so that it reaches
           the people who never leave the issuances grid. */}
       <div className="ml-auto flex items-center gap-2">
-        <SystemStatusIndicator initialStatus={systemStatus} isAdmin={isAdmin} />
+        <SystemStatusIndicator initialStatus={systemStatus} canSeeBot={canSeeBot} />
       </div>
     </header>
   )

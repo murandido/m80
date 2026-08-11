@@ -7,7 +7,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// RegisterListenedChatRoutes mounts /bot/chats/* - admin-only endpoints to
+// RegisterListenedChatRoutes mounts /bot/chats/* - dev-only endpoints to
 // list, approve, deny and stop monitoring WhatsApp chats requested via the
 // bot's !registrar-chat command. Mounted as a static child under the same
 // "bot" router node as RegisterBotRoutes' "/bot/*" catch-all proxy; chi's
@@ -17,7 +17,7 @@ func RegisterListenedChatRoutes(r chi.Router, db *gorm.DB) {
 	h := handlers.NewListenedChatHandler(db)
 
 	r.Route("/bot/chats", func(r chi.Router) {
-		r.Use(middleware.RequireAdmin())
+		r.Use(middleware.RequireDev())
 
 		r.Get("/pending", h.GetPendingListenedChats)
 		r.Post("/{id}/approve", h.ApproveListenedChat)

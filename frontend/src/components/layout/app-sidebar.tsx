@@ -23,6 +23,7 @@ import {
   isNavLinkActive,
   visibleSections,
   type NavLink,
+  type Role,
 } from "@/lib/navigation"
 import type { User } from "@/schemas/user"
 
@@ -57,10 +58,10 @@ function NavMenuItem({ link, pathname }: { link: NavLink; pathname: string }) {
 }
 
 export function AppSidebar({
-  isAdmin = false,
+  role,
   user = null,
 }: {
-  isAdmin?: boolean
+  role?: Role
   user?: User | null
 }) {
   const pathname = usePathname()
@@ -91,7 +92,7 @@ export function AppSidebar({
           </SidebarGroupContent>
         </SidebarGroup>
 
-        {visibleSections(isAdmin).map((section) => (
+        {visibleSections(role).map((section) => (
           <SidebarGroup key={section.label}>
             <SidebarGroupLabel>{section.label}</SidebarGroupLabel>
             <SidebarGroupContent>

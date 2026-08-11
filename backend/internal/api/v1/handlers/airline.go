@@ -52,6 +52,7 @@ func toAirlineResponse(airline data.Airline) schemas.AirlineResponse {
 // @Success      201  {object}  schemas.AirlineSingleResponse
 // @Failure      400  {object}  schemas.ErrorResponse "Payload inválido"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a desenvolvedores"
 // @Failure      422  {object}  schemas.ErrorResponse "Já existe uma companhia aérea com este código"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao criar companhia aérea"
 // @Router       /airlines [post]
@@ -191,6 +192,7 @@ func (h *AirlineHandler) GetAirline(w http.ResponseWriter, r *http.Request) {
 // @Success      200  {object}  schemas.AirlineSingleResponse
 // @Failure      400  {object}  schemas.ErrorResponse "Payload inválido"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a desenvolvedores"
 // @Failure      404  {object}  schemas.ErrorResponse "Companhia aérea não encontrada"
 // @Failure      422  {object}  schemas.ErrorResponse "Já existe uma companhia aérea com este código"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao atualizar companhia aérea"
@@ -264,6 +266,7 @@ func (h *AirlineHandler) UpdateAirline(w http.ResponseWriter, r *http.Request) {
 // @Param        id  path  string  true  "UUID da companhia aérea"
 // @Success      200  {object}  schemas.ErrorResponse "Companhia aérea deletada com sucesso"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a desenvolvedores"
 // @Failure      422  {object}  schemas.ErrorResponse "Companhia aérea vinculada a um programa de fidelidade ou emissão"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao deletar companhia aérea"
 // @Router       /airlines/{id} [delete]

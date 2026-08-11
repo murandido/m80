@@ -11,7 +11,7 @@ import {
 
 interface MetricToggleProps {
   metric: DashboardMetric
-  isAdmin: boolean
+  canSeeAmounts: boolean
 }
 
 const METRIC_LABELS: Record<DashboardMetric, string> = {
@@ -22,12 +22,12 @@ const METRIC_LABELS: Record<DashboardMetric, string> = {
 // Renders nothing for an operator, the way SalesViewToggle hides the suppliers view. This
 // is presentation only - the backend omits amount_cents from the payload for non-admins,
 // so hiding the control is a courtesy and not the control that matters.
-export function MetricToggle({ metric, isAdmin }: MetricToggleProps) {
+export function MetricToggle({ metric, canSeeAmounts }: MetricToggleProps) {
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
 
-  if (!isAdmin) return null
+  if (!canSeeAmounts) return null
 
   function select(next: DashboardMetric) {
     // Merged into the existing URL so switching the unit keeps the period and every

@@ -5,13 +5,13 @@ import { StatTile } from "./stat-tile"
 
 interface DashboardStatsProps {
   dashboard: Dashboard
-  isAdmin: boolean
+  canSeeAmounts: boolean
 }
 
 // The KPI row. Each figure is a stat tile rather than a one-bar chart, and each carries a
 // delta against the same window shifted back - the number alone says how much, the delta
 // says whether that is unusual.
-export function DashboardStats({ dashboard, isAdmin }: DashboardStatsProps) {
+export function DashboardStats({ dashboard, canSeeAmounts }: DashboardStatsProps) {
   const { totals, previous_totals: previous } = dashboard
 
   const averagePoints = average(totals.points, totals.issuance_count)
@@ -51,7 +51,7 @@ export function DashboardStats({ dashboard, isAdmin }: DashboardStatsProps) {
 
       {/* The fourth tile is the money for an admin and the cancellations for everyone
           else, so the row stays balanced instead of leaving a hole. */}
-      {isAdmin && totals.amount_cents !== undefined ? (
+      {canSeeAmounts && totals.amount_cents !== undefined ? (
         <StatTile
           label="Valor de venda"
           value={formatCurrencyBRL(totals.amount_cents)}

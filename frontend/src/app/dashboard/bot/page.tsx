@@ -1,5 +1,5 @@
 import type { Metadata } from "next"
-import { requireAdmin } from "@/lib/session"
+import { requireDev } from "@/lib/session"
 import { getBotStatusAction } from "@/actions/bot"
 import {
   getMonitoredListenedChatsAction,
@@ -16,7 +16,7 @@ export const metadata: Metadata = {
 }
 
 export default async function BotPage() {
-  await requireAdmin()
+  await requireDev()
 
   const [statusResult, pendingChatsResult, monitoredChatsResult] = await Promise.all([
     getBotStatusAction(),

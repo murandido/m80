@@ -57,6 +57,7 @@ func toLoyaltyProgramResponse(loyaltyProgram data.LoyaltyProgram) schemas.Loyalt
 // @Success      201  {object}  schemas.LoyaltyProgramSingleResponse
 // @Failure      400  {object}  schemas.ErrorResponse "Payload inválido"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a desenvolvedores"
 // @Failure      422  {object}  schemas.ErrorResponse "Código duplicado ou companhia aérea padrão inexistente"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao criar programa de fidelidade"
 // @Router       /loyalty-programs [post]
@@ -195,6 +196,7 @@ func (h *LoyaltyProgramHandler) GetLoyaltyProgram(w http.ResponseWriter, r *http
 // @Success      200  {object}  schemas.LoyaltyProgramSingleResponse
 // @Failure      400  {object}  schemas.ErrorResponse "Payload inválido"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a desenvolvedores"
 // @Failure      404  {object}  schemas.ErrorResponse "Programa de fidelidade não encontrado"
 // @Failure      422  {object}  schemas.ErrorResponse "Código duplicado ou companhia aérea padrão inexistente"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao atualizar programa de fidelidade"
@@ -261,6 +263,7 @@ func (h *LoyaltyProgramHandler) UpdateLoyaltyProgram(w http.ResponseWriter, r *h
 // @Param        id  path  string  true  "UUID do programa de fidelidade"
 // @Success      200  {object}  schemas.ErrorResponse "Programa de fidelidade arquivado com sucesso"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a desenvolvedores"
 // @Failure      422  {object}  schemas.ErrorResponse "Programa de fidelidade ainda referenciado por outro registro"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao arquivar programa de fidelidade"
 // @Router       /loyalty-programs/{id} [delete]

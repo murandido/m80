@@ -16,7 +16,9 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-func TestRegisterListenedChatRoutes_RequiresAdmin(t *testing.T) {
+// Same flip as the bot proxy: approving and pausing chats moved from admin to dev, so
+// admin belongs in the rejected set now.
+func TestRegisterListenedChatRoutes_RequiresDev(t *testing.T) {
 	paths := []struct {
 		method string
 		path   string
@@ -31,21 +33,23 @@ func TestRegisterListenedChatRoutes_RequiresAdmin(t *testing.T) {
 	}
 
 	for _, p := range paths {
-		t.Run(p.method+" "+p.path, func(t *testing.T) {
-			r := chi.NewRouter()
-			r.Group(func(r chi.Router) {
-				r.Use(withRole(data.RoleUser))
-				RegisterListenedChatRoutes(r, nil)
+		for _, role := range []string{data.RoleUser, data.RoleAdmin} {
+			t.Run(role+" "+p.method+" "+p.path, func(t *testing.T) {
+				r := chi.NewRouter()
+				r.Group(func(r chi.Router) {
+					r.Use(withRole(role))
+					RegisterListenedChatRoutes(r, nil)
+				})
+
+				req := httptest.NewRequest(p.method, p.path, nil)
+				rec := httptest.NewRecorder()
+				r.ServeHTTP(rec, req)
+
+				if rec.Code != http.StatusForbidden {
+					t.Fatalf("status: got %d, want %d (body: %s)", rec.Code, http.StatusForbidden, rec.Body.String())
+				}
 			})
-
-			req := httptest.NewRequest(p.method, p.path, nil)
-			rec := httptest.NewRecorder()
-			r.ServeHTTP(rec, req)
-
-			if rec.Code != http.StatusForbidden {
-				t.Fatalf("status: got %d, want %d (body: %s)", rec.Code, http.StatusForbidden, rec.Body.String())
-			}
-		})
+		}
 	}
 }
 
@@ -64,7 +68,7 @@ func TestRegisterListenedChatRoutes_DoesNotFallThroughToBotProxy(t *testing.T) {
 
 	r := chi.NewRouter()
 	r.Group(func(r chi.Router) {
-		r.Use(withRole(data.RoleAdmin))
+		r.Use(withRole(data.RoleDev))
 		RegisterBotRoutes(r)
 		RegisterListenedChatRoutes(r, db)
 	})

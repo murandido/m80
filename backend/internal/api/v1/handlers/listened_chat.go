@@ -45,13 +45,13 @@ func toListenedChatResponse(chat data.ListenedChat) schemas.ListenedChatResponse
 
 // GetPendingListenedChats handles the GET /bot/chats/pending route
 // @Summary      Listar chats pendentes de aprovação
-// @Description  Lista os chats do WhatsApp solicitados via !registrar-chat que ainda aguardam aprovação de um administrador.
+// @Description  Lista os chats do WhatsApp solicitados via !registrar-chat que ainda aguardam aprovação.
 // @Tags         Bot
 // @Produce      json
 // @Security     BearerAuth
 // @Success      200  {object}  schemas.ListenedChatListResponse
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
-// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a administradores"
+// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a desenvolvedores"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao listar chats pendentes"
 // @Router       /bot/chats/pending [get]
 func (h *ListenedChatHandler) GetPendingListenedChats(w http.ResponseWriter, r *http.Request) {
@@ -77,7 +77,7 @@ func (h *ListenedChatHandler) GetPendingListenedChats(w http.ResponseWriter, r *
 // @Security     BearerAuth
 // @Success      200  {object}  schemas.ListenedChatListResponse
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
-// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a administradores"
+// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a desenvolvedores"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao listar chats monitorados"
 // @Router       /bot/chats/active [get]
 func (h *ListenedChatHandler) GetMonitoredListenedChats(w http.ResponseWriter, r *http.Request) {
@@ -99,14 +99,14 @@ func (h *ListenedChatHandler) GetMonitoredListenedChats(w http.ResponseWriter, r
 
 // StopListenedChat handles the POST /bot/chats/{id}/stop route
 // @Summary      Parar de monitorar um chat
-// @Description  Desativa um chat atualmente monitorado (soft-stop: o registro e seu histórico de aprovação são mantidos, só active vira false). Apenas administradores podem acessar.
+// @Description  Desativa um chat atualmente monitorado (soft-stop: o registro e seu histórico de aprovação são mantidos, só active vira false). Apenas desenvolvedores podem acessar.
 // @Tags         Bot
 // @Produce      json
 // @Security     BearerAuth
 // @Param        id   path  string  true  "UUID do listened_chats"
 // @Success      200  {object}  schemas.ListenedChatSingleResponse
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
-// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a administradores"
+// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a desenvolvedores"
 // @Failure      404  {object}  schemas.ErrorResponse "Chat não encontrado"
 // @Failure      422  {object}  schemas.ErrorResponse "Chat não está ativo"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao parar de monitorar o chat"
@@ -141,14 +141,14 @@ func (h *ListenedChatHandler) StopListenedChat(w http.ResponseWriter, r *http.Re
 
 // DeactivateListenedChat handles the POST /bot/chats/{id}/deactivate route
 // @Summary      Desativar um chat monitorado permanentemente
-// @Description  Diferente de /stop (soft-stop, invisível e reabre sozinho via !registrar-chat), desativar marca o chat com status "deactivated": ele continua visível em "chats monitorados" (cinza) e o bot nunca reabre sozinho - só via /reactivate. Apenas administradores podem acessar.
+// @Description  Diferente de /stop (soft-stop, invisível e reabre sozinho via !registrar-chat), desativar marca o chat com status "deactivated": ele continua visível em "chats monitorados" (cinza) e o bot nunca reabre sozinho - só via /reactivate. Apenas desenvolvedores podem acessar.
 // @Tags         Bot
 // @Produce      json
 // @Security     BearerAuth
 // @Param        id   path  string  true  "UUID do listened_chats"
 // @Success      200  {object}  schemas.ListenedChatSingleResponse
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
-// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a administradores"
+// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a desenvolvedores"
 // @Failure      404  {object}  schemas.ErrorResponse "Chat não encontrado"
 // @Failure      422  {object}  schemas.ErrorResponse "Chat não está ativo"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao desativar o chat"
@@ -184,14 +184,14 @@ func (h *ListenedChatHandler) DeactivateListenedChat(w http.ResponseWriter, r *h
 
 // ReactivateListenedChat handles the POST /bot/chats/{id}/reactivate route
 // @Summary      Reativar um chat desativado
-// @Description  Reverte uma desativação (/deactivate), voltando o chat a ser monitorado. Não é uma nova decisão de aprovação, então não altera quem aprovou originalmente. Apenas administradores podem acessar.
+// @Description  Reverte uma desativação (/deactivate), voltando o chat a ser monitorado. Não é uma nova decisão de aprovação, então não altera quem aprovou originalmente. Apenas desenvolvedores podem acessar.
 // @Tags         Bot
 // @Produce      json
 // @Security     BearerAuth
 // @Param        id   path  string  true  "UUID do listened_chats"
 // @Success      200  {object}  schemas.ListenedChatSingleResponse
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
-// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a administradores"
+// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a desenvolvedores"
 // @Failure      404  {object}  schemas.ErrorResponse "Chat não encontrado"
 // @Failure      422  {object}  schemas.ErrorResponse "Chat não está desativado"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao reativar o chat"
@@ -227,14 +227,14 @@ func (h *ListenedChatHandler) ReactivateListenedChat(w http.ResponseWriter, r *h
 
 // ApproveListenedChat handles the POST /bot/chats/{id}/approve route
 // @Summary      Aprovar chat pendente
-// @Description  Aprova um chat solicitado via !registrar-chat, marcando-o como ativo. Apenas administradores podem acessar.
+// @Description  Aprova um chat solicitado via !registrar-chat, marcando-o como ativo. Apenas desenvolvedores podem acessar.
 // @Tags         Bot
 // @Produce      json
 // @Security     BearerAuth
 // @Param        id   path  string  true  "UUID do listened_chats"
 // @Success      200  {object}  schemas.ListenedChatSingleResponse
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
-// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a administradores"
+// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a desenvolvedores"
 // @Failure      404  {object}  schemas.ErrorResponse "Chat não encontrado"
 // @Failure      422  {object}  schemas.ErrorResponse "Chat já foi decidido"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao aprovar chat"
@@ -245,14 +245,14 @@ func (h *ListenedChatHandler) ApproveListenedChat(w http.ResponseWriter, r *http
 
 // DenyListenedChat handles the POST /bot/chats/{id}/deny route
 // @Summary      Negar chat pendente
-// @Description  Nega um chat solicitado via !registrar-chat. Apenas administradores podem acessar.
+// @Description  Nega um chat solicitado via !registrar-chat. Apenas desenvolvedores podem acessar.
 // @Tags         Bot
 // @Produce      json
 // @Security     BearerAuth
 // @Param        id   path  string  true  "UUID do listened_chats"
 // @Success      200  {object}  schemas.ListenedChatSingleResponse
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
-// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a administradores"
+// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a desenvolvedores"
 // @Failure      404  {object}  schemas.ErrorResponse "Chat não encontrado"
 // @Failure      422  {object}  schemas.ErrorResponse "Chat já foi decidido"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao negar chat"
@@ -304,7 +304,7 @@ func (h *ListenedChatHandler) decideListenedChat(w http.ResponseWriter, r *http.
 
 // SetListenedChatPDFMode handles the PATCH /bot/chats/{id}/pdf-mode route
 // @Summary      Ligar ou desligar o modo PDF de um chat
-// @Description  Com o modo PDF ligado, o bot manda o bilhete em PDF no chat depois de cada emissão que ele conseguiu completar na Traveos. É a mesma coluna que o comando !pdf escreve, então painel e WhatsApp são dois caminhos para a mesma configuração. Apenas administradores podem acessar.
+// @Description  Com o modo PDF ligado, o bot manda o bilhete em PDF no chat depois de cada emissão que ele conseguiu completar na Traveos. É a mesma coluna que o comando !pdf escreve, então painel e WhatsApp são dois caminhos para a mesma configuração. Apenas desenvolvedores podem acessar.
 // @Tags         Bot
 // @Accept       json
 // @Produce      json
@@ -314,7 +314,7 @@ func (h *ListenedChatHandler) decideListenedChat(w http.ResponseWriter, r *http.
 // @Success      200  {object}  schemas.ListenedChatSingleResponse
 // @Failure      400  {object}  schemas.ErrorResponse "Corpo inválido"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
-// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a administradores"
+// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a desenvolvedores"
 // @Failure      404  {object}  schemas.ErrorResponse "Chat não encontrado"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao salvar a configuração"
 // @Router       /bot/chats/{id}/pdf-mode [patch]

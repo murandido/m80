@@ -12,22 +12,34 @@ import {
   UserRound,
   Users,
 } from "lucide-react"
+import type { User } from "@/schemas/user"
 
 export type NavIcon = React.ComponentType<{ className?: string }>
+
+export type Role = User["role"]
 
 export interface NavLink {
   title: string
   url: string
   icon: NavIcon
+  // Which roles may reach this page. Omitted means everyone. dev is never listed:
+  // it passes every check, mirroring RequireRole on the backend, so a page cannot
+  // be hidden from dev by forgetting to name it here.
+  roles?: Role[]
 }
 
 export interface NavSection {
   label: string
-  // Hides the whole section from regular users. It sits on the section rather
-  // than on each link because the admin screens are exactly one section — the
-  // backend enforces the same restriction on its routes.
-  adminOnly?: boolean
   items: NavLink[]
+}
+
+// canAccess is the single question the whole panel asks about permissions: the sidebar
+// filter, the command palette and the components that show or hide a control all go
+// through it, so "admin or dev" is spelled out in exactly one place.
+export function canAccess(role: Role | undefined, roles?: Role[]): boolean {
+  if (role === "dev") return true
+  if (!roles) return true
+  return role !== undefined && roles.includes(role)
 }
 
 // Add a new dashboard page by adding a link to the section it belongs to — the
@@ -44,27 +56,35 @@ export const navSections: NavSection[] = [
     label: "Operação",
     items: [
       { title: "Emissões", url: "/dashboard/issuances", icon: Ticket },
-      { title: "Vendas", url: "/dashboard/sales", icon: HandCoins },
-      { title: "Clientes", url: "/dashboard/clients", icon: UserRound },
+      { title: "Controle de pagamentos", url: "/dashboard/sales", icon: HandCoins },
     ],
   },
   {
-    label: "Cadastros",
+    label: "Gestão",
+    // Deliberately mixed: Contas and Clientes are everyday operator screens, while
+    // Agências and Usuários are not. This is why permission moved from the section
+    // onto each link.
     items: [
+      { title: "Agências", url: "/dashboard/agencies", icon: Building2, roles: ["admin"] },
       { title: "Contas", url: "/dashboard/accounts", icon: Landmark },
-      { title: "Pessoas", url: "/dashboard/people", icon: Users },
-      { title: "Agências", url: "/dashboard/agencies", icon: Building2 },
-      { title: "Programas de Fidelidade", url: "/dashboard/loyalty-programs", icon: Award },
-      { title: "CIAs Aéreas", url: "/dashboard/airlines", icon: Plane },
+      { title: "Clientes", url: "/dashboard/clients", icon: UserRound },
+      { title: "Usuários do M80", url: "/dashboard/users", icon: IdCard, roles: ["admin"] },
     ],
   },
   {
-    label: "Administração",
-    adminOnly: true,
+    label: "Dev Mode",
+    // Every item is dev-only, so the section simply disappears for everyone else —
+    // visibleSections drops a section once nothing in it is reachable.
     items: [
-      { title: "Usuários", url: "/dashboard/users", icon: IdCard },
-      { title: "Aeroportos", url: "/dashboard/airports", icon: MapPin },
-      { title: "Bot", url: "/dashboard/bot", icon: Bot },
+      { title: "CIAs Aéreas", url: "/dashboard/airlines", icon: Plane, roles: [] },
+      {
+        title: "Programas de Fidelidade",
+        url: "/dashboard/loyalty-programs",
+        icon: Award,
+        roles: [],
+      },
+      { title: "Aeroportos", url: "/dashboard/airports", icon: MapPin, roles: [] },
+      { title: "Bot", url: "/dashboard/bot", icon: Bot, roles: [] },
     ],
   },
 ]
@@ -73,21 +93,37 @@ export const navSections: NavSection[] = [
 // They belong in the command palette — searching for a page that exists and
 // getting "nothing found" is worse than not searching at all — but adding them
 // to the nav tree would duplicate a link the page already offers.
-export const extraDestinations: (NavLink & { adminOnly?: boolean })[] = [
+//
+// sectionLabel is what the breadcrumb shows in place of a parent section. Proprietários
+// needs it spelled out: unlike Fornecedores, its URL is not nested under the sidebar link
+// it is reached from, so nothing can be inferred from the path.
+export const extraDestinations: (NavLink & { sectionLabel: string })[] = [
   {
     title: "Fornecedores",
     url: "/dashboard/sales/suppliers",
     icon: Landmark,
-    adminOnly: true,
+    roles: ["admin"],
+    sectionLabel: "Operação",
+  },
+  {
+    title: "Proprietários",
+    url: "/dashboard/people",
+    icon: Users,
+    sectionLabel: "Gestão",
   },
 ]
 
-export function visibleSections(isAdmin: boolean): NavSection[] {
-  return navSections.filter((section) => !section.adminOnly || isAdmin)
+export function visibleSections(role: Role | undefined): NavSection[] {
+  return navSections
+    .map((section) => ({
+      ...section,
+      items: section.items.filter((item) => canAccess(role, item.roles)),
+    }))
+    .filter((section) => section.items.length > 0)
 }
 
-export function visibleExtraDestinations(isAdmin: boolean): NavLink[] {
-  return extraDestinations.filter((item) => !item.adminOnly || isAdmin)
+export function visibleExtraDestinations(role: Role | undefined): NavLink[] {
+  return extraDestinations.filter((item) => canAccess(role, item.roles))
 }
 
 export function isNavLinkActive(pathname: string, url: string): boolean {
@@ -107,5 +143,14 @@ export function findNavLocation(
       .find((item) => pathname.startsWith(item.url))
     if (link) return { section, link }
   }
+
+  // Extra destinations are not in the tree, so without this a page like
+  // /dashboard/people — which has no sidebar parent to prefix-match — would fall all the
+  // way through and render a breadcrumb saying only "Dashboard".
+  const extra = extraDestinations.find((item) => pathname.startsWith(item.url))
+  if (extra) {
+    return { section: { label: extra.sectionLabel, items: [] }, link: extra }
+  }
+
   return null
 }

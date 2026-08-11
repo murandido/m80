@@ -4,6 +4,7 @@ import Link from "next/link"
 import { AlertTriangle, ExternalLink, FileSpreadsheet } from "lucide-react"
 import { z } from "zod"
 import { env } from "@/lib/env"
+import { canAccess } from "@/lib/navigation"
 import { getSessionUser } from "@/lib/session"
 import { readStickyFilters, stickySearchParams } from "@/lib/sticky-filters"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -29,7 +30,7 @@ import {
 } from "./period-params"
 
 export const metadata: Metadata = {
-  title: "Vendas",
+  title: "Controle de pagamentos",
   description:
     "Quanto cada cliente comprou no período e quanto ainda deve à agência.",
 }
@@ -100,7 +101,7 @@ export default async function SalesClientsPage({
       <LiveRefresh />
       <div className="flex flex-col gap-4 sm:gap-6">
         <div className="flex items-center justify-between gap-4">
-          <h1 className="text-lg font-semibold text-slate-800">Vendas</h1>
+          <h1 className="text-lg font-semibold text-slate-800">Controle de pagamentos</h1>
           <div className="flex items-center gap-2">
             {/* Linking a sale to a client that does not exist yet is the common case here,
                 so the client register is one click away instead of a trip to the sidebar. */}
@@ -121,7 +122,7 @@ export default async function SalesClientsPage({
           </div>
         </div>
 
-        <SalesViewToggle active="clients" isAdmin={user?.role === "admin"} />
+        <SalesViewToggle active="clients" canSeeSuppliers={canAccess(user?.role, ["admin"])} />
 
         <SalesFilterBar
           variant="clients"

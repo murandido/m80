@@ -50,7 +50,7 @@ export function ContasPessoasToggle({ active }: ContasPessoasToggleProps) {
             )}
           >
             <Users className="h-4 w-4" />
-            Pessoas
+            Proprietários
           </div>
         </Link>
       </Button>

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/murandido/m-80-backend/internal/auth"
@@ -70,8 +71,13 @@ func RequireAuth(db *gorm.DB) func(handler http.Handler) http.Handler {
 	}
 }
 
-// RequireAdmin checks the fresh database data put in the context
-func RequireAdmin() func(handler http.Handler) http.Handler {
+// RequireRole gates a route on the role the auth middleware loaded from the database.
+// dev passes every gate - that is the whole definition of the role - so it is never named
+// at a call site and therefore can never be forgotten at one.
+//
+// A missing context user is a 500, not a 403: it means the route was mounted outside
+// RequireAuth, which is a wiring mistake in the router rather than a permission decision.
+func RequireRole(allowed ...string) func(handler http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			user, ok := r.Context().Value(UserContextKey).(data.User)
@@ -80,10 +86,7 @@ func RequireAdmin() func(handler http.Handler) http.Handler {
 				return
 			}
 
-			// Anything that is not admin is denied, dev included: adding the dev role was
-			// deliberately kept free of authorization changes, so it inherits the plain
-			// user's access until permissions are redistributed.
-			if user.Role != data.RoleAdmin {
+			if user.Role != data.RoleDev && !slices.Contains(allowed, user.Role) {
 				utils.SendError(w, r, http.StatusForbidden, "Access denied: Role not allowed")
 				return
 			}
@@ -91,4 +94,14 @@ func RequireAdmin() func(handler http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// RequireAdmin allows admin - and dev, through RequireRole.
+func RequireAdmin() func(handler http.Handler) http.Handler {
+	return RequireRole(data.RoleAdmin)
+}
+
+// RequireDev allows nobody but dev, hence the empty list.
+func RequireDev() func(handler http.Handler) http.Handler {
+	return RequireRole()
 }

@@ -52,6 +52,7 @@ func (h *AgencyNicknameHandler) agencyExists(agencyID string) bool {
 // @Success      201  {object}  schemas.AgencyNicknameResponse
 // @Failure      400  {object}  schemas.ErrorResponse "Payload inválido"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a administradores"
 // @Failure      404  {object}  schemas.ErrorResponse "Agência não encontrada"
 // @Failure      422  {object}  schemas.ErrorResponse "Apelido já está em uso"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao criar apelido"
@@ -194,6 +195,7 @@ func (h *AgencyNicknameHandler) GetAgencyNickname(w http.ResponseWriter, r *http
 // @Success      200  {object}  schemas.AgencyNicknameResponse
 // @Failure      400  {object}  schemas.ErrorResponse "Payload inválido"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a administradores"
 // @Failure      404  {object}  schemas.ErrorResponse "Apelido não encontrado"
 // @Failure      422  {object}  schemas.ErrorResponse "Apelido já está em uso"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao atualizar apelido"
@@ -242,6 +244,7 @@ func (h *AgencyNicknameHandler) UpdateAgencyNickname(w http.ResponseWriter, r *h
 // @Param        nicknameID  path  string  true  "UUID do apelido"
 // @Success      200  {object}  schemas.ErrorResponse "Apelido deletado com sucesso"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a administradores"
 // @Failure      404  {object}  schemas.ErrorResponse "Apelido não encontrado"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao deletar apelido"
 // @Router       /agencies/{id}/nicknames/{nicknameID} [delete]

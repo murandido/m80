@@ -98,7 +98,7 @@ export default async function SalesSuppliersPage({
       <LiveRefresh />
       <div className="flex flex-col gap-4 sm:gap-6">
         <div className="flex items-center justify-between gap-4">
-          <h1 className="text-lg font-semibold text-slate-800">Vendas</h1>
+          <h1 className="text-lg font-semibold text-slate-800">Controle de pagamentos</h1>
           <Button asChild variant="ghost" size="sm" className="text-slate-500">
             <Link href="/dashboard/clients">
               Gerenciar clientes
@@ -107,7 +107,7 @@ export default async function SalesSuppliersPage({
           </Button>
         </div>
 
-        <SalesViewToggle active="suppliers" isAdmin />
+        <SalesViewToggle active="suppliers" canSeeSuppliers />
 
         <SalesFilterBar
           variant="suppliers"

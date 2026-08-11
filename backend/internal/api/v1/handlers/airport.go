@@ -129,6 +129,7 @@ func (h *AirportHandler) ListAllAirports(w http.ResponseWriter, r *http.Request)
 // @Param        limit  query  int     false  "Itens por página (default 20, máx 100)"
 // @Success      200  {object}  schemas.AirportPaginatedResponse
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a desenvolvedores"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao buscar aeroportos"
 // @Router       /airports/manage [get]
 // Airports sort by their own vocabulary rather than the shared name_asc/name_desc:
@@ -237,6 +238,7 @@ func parsePositiveInt(raw string, fallback int) int {
 // @Param        id  path  string  true  "UUID do aeroporto"
 // @Success      200  {object}  schemas.AirportSingleResponse
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a desenvolvedores"
 // @Failure      404  {object}  schemas.ErrorResponse "Aeroporto não encontrado"
 // @Router       /airports/{id} [get]
 func (h *AirportHandler) GetAirport(w http.ResponseWriter, r *http.Request) {
@@ -262,6 +264,7 @@ func (h *AirportHandler) GetAirport(w http.ResponseWriter, r *http.Request) {
 // @Success      201  {object}  schemas.AirportSingleResponse
 // @Failure      400  {object}  schemas.ErrorResponse "Payload inválido"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a desenvolvedores"
 // @Failure      422  {object}  schemas.ErrorResponse "Já existe um aeroporto com este código IATA"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao criar aeroporto"
 // @Router       /airports [post]
@@ -315,6 +318,7 @@ func (h *AirportHandler) CreateAirport(w http.ResponseWriter, r *http.Request) {
 // @Success      200  {object}  schemas.AirportSingleResponse
 // @Failure      400  {object}  schemas.ErrorResponse "Payload inválido"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a desenvolvedores"
 // @Failure      404  {object}  schemas.ErrorResponse "Aeroporto não encontrado"
 // @Failure      422  {object}  schemas.ErrorResponse "Já existe um aeroporto com este código IATA"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao atualizar aeroporto"
@@ -373,6 +377,7 @@ func (h *AirportHandler) UpdateAirport(w http.ResponseWriter, r *http.Request) {
 // @Param        id  path  string  true  "UUID do aeroporto"
 // @Success      200  {object}  schemas.ErrorResponse "Aeroporto deletado com sucesso"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a desenvolvedores"
 // @Failure      422  {object}  schemas.ErrorResponse "Aeroporto vinculado a uma emissão"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao deletar aeroporto"
 // @Router       /airports/{id} [delete]

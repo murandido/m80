@@ -12,7 +12,7 @@ import { listQueryString, resolveListParams } from "@/lib/list-params"
 import { readStickyFilters, stickySearchParams } from "@/lib/sticky-filters"
 
 export const metadata: Metadata = {
-  title: "Usuários",
+  title: "Usuários do M80",
   description:
     "Quem tem acesso ao painel, com qual perfil e com qual telefone entra.",
 }
@@ -69,7 +69,7 @@ export default async function UsersPage({
     <div className="p-6 sm:p-8">
       <div className="flex flex-col gap-2 sm:gap-6">
         <h1 className="text-lg font-semibold text-slate-800">
-          Tabela de Usuários
+          Usuários do M80
         </h1>
         <CreateUserForm />
         <ListFilterBar

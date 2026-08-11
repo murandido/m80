@@ -53,6 +53,7 @@ func toAgencyResponse(agency data.Agency) schemas.AgencyResponse {
 // @Success      201  {object}  schemas.AgencySingleResponse
 // @Failure      400  {object}  schemas.ErrorResponse "Payload inválido"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a administradores"
 // @Failure      422  {object}  schemas.ErrorResponse "Já existe uma agência padrão definida"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao criar agência"
 // @Router       /agencies [post]
@@ -190,6 +191,7 @@ func (h *AgencyHandler) GetAgency(w http.ResponseWriter, r *http.Request) {
 // @Success      200  {object}  schemas.AgencySingleResponse
 // @Failure      400  {object}  schemas.ErrorResponse "Payload inválido"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a administradores"
 // @Failure      404  {object}  schemas.ErrorResponse "Agência não encontrada"
 // @Failure      422  {object}  schemas.ErrorResponse "Já existe uma agência padrão definida"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao atualizar agência"
@@ -253,6 +255,7 @@ func (h *AgencyHandler) UpdateAgency(w http.ResponseWriter, r *http.Request) {
 // @Param        id  path  string  true  "UUID da agência"
 // @Success      200  {object}  schemas.ErrorResponse "Agência deletada com sucesso"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a administradores"
 // @Failure      422  {object}  schemas.ErrorResponse "Agência vinculada a uma emissão"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao deletar agência"
 // @Router       /agencies/{id} [delete]

@@ -93,7 +93,7 @@ export default async function AccountsPage({
     <div className="p-6 sm:p-8">
       <div className="flex flex-col gap-2 sm:gap-6">
         <h1 className="text-lg font-semibold text-slate-800">
-          Contas e Pessoas
+          Contas e Proprietários
         </h1>
 
         <ContasPessoasToggle active="contas" />

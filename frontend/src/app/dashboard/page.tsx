@@ -3,6 +3,7 @@ import { cookies } from "next/headers"
 import { AlertTriangle } from "lucide-react"
 import { z } from "zod"
 import { env } from "@/lib/env"
+import { canAccess } from "@/lib/navigation"
 import { getSessionUser } from "@/lib/session"
 import { readStickyFilters, stickySearchParams } from "@/lib/sticky-filters"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -100,8 +101,9 @@ export default async function DashboardPage({
     fetchList<User>(`${api}/users`, getUsersSchema.response, authHeader),
   ])
 
-  const isAdmin = user?.role === "admin"
-  const metric = resolveDashboardMetric(params, isAdmin)
+  // Money follows the same rule the backend applies in dashboardIncludesAmount.
+  const canSeeAmounts = canAccess(user?.role, ["admin"])
+  const metric = resolveDashboardMetric(params, canSeeAmounts)
 
   // The backend falls back to the main agency when agency_id is absent; resolving it here
   // too is what lets the combobox show its name instead of an empty placeholder.
@@ -130,7 +132,7 @@ export default async function DashboardPage({
               preset={period.preset}
               reference={period.reference}
             />
-            <MetricToggle metric={metric} isAdmin={isAdmin} />
+            <MetricToggle metric={metric} canSeeAmounts={canSeeAmounts} />
           </div>
         </DashboardFilterBar>
 
@@ -145,7 +147,7 @@ export default async function DashboardPage({
           </Alert>
         ) : (
           <>
-            <DashboardStats dashboard={dashboard} isAdmin={isAdmin} />
+            <DashboardStats dashboard={dashboard} canSeeAmounts={canSeeAmounts} />
 
             <IssuancesOverTimeChart
               series={dashboard.series}

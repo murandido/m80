@@ -2,6 +2,7 @@ import { cache } from "react"
 import { cookies } from "next/headers"
 import { redirect } from "next/navigation"
 import { env } from "@/lib/env"
+import { canAccess, type Role } from "@/lib/navigation"
 import { getMeSchema, User } from "@/schemas/user"
 
 // Server-only by construction: next/headers throws if this module is ever pulled
@@ -88,19 +89,33 @@ export async function getSessionUser(): Promise<User | null> {
   return session.status === "ok" ? session.user : null
 }
 
-// requireAdmin guards admin-only pages. Backend routes enforce admin independently
-// - this is the UI layer of the same rule, which is why it does not bounce anyone
-// when the role simply could not be read: a transient 429 should not throw an admin
+// requireRole guards a page whose sidebar entry is hidden from some roles - without it,
+// hiding the link would still leave the page one typed URL away. Backend routes enforce
+// the same rule independently; this is the UI layer of it, which is why it does not bounce
+// anyone when the role simply could not be read: a transient 429 should not throw someone
 // out of their own page. Returns null in that case, and the page renders degraded.
-export async function requireAdmin(): Promise<User | null> {
+//
+// dev is never passed in - canAccess lets it through every check, the same way RequireRole
+// does on the backend.
+export async function requireRole(...roles: Role[]): Promise<User | null> {
   const session = await fetchSession()
 
   if (session.status === "unauthenticated") {
     redirect("/api/logout")
   }
-  if (session.status === "ok" && session.user.role !== "admin") {
+  if (session.status === "ok" && !canAccess(session.user.role, roles)) {
     redirect("/dashboard")
   }
 
   return session.status === "ok" ? session.user : null
+}
+
+/** Pages open to admin and dev. */
+export async function requireAdmin(): Promise<User | null> {
+  return requireRole("admin")
+}
+
+/** Pages open to dev alone, hence the empty list. */
+export async function requireDev(): Promise<User | null> {
+  return requireRole()
 }

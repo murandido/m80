@@ -2,7 +2,7 @@ import type { Metadata } from "next"
 import { cookies } from "next/headers"
 import { Separator } from "@/components/ui/separator"
 import { env } from "@/lib/env"
-import { requireAdmin } from "@/lib/session"
+import { requireDev } from "@/lib/session"
 import { Airport, listAirportsSchema } from "@/schemas/airport"
 import { CreateAirportForm } from "@/components/airports/create-airport-form"
 import { AirportCard } from "@/components/airports/airport-card"
@@ -30,7 +30,7 @@ export default async function AirportsPage({
 }: {
   searchParams: Promise<Partial<Record<(typeof AIRPORTS_URL_KEYS)[number], string>>>
 }) {
-  await requireAdmin()
+  await requireDev()
 
   const cookieStore = await cookies()
   const token = cookieStore.get("auth_token")?.value

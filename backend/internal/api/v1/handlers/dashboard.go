@@ -65,9 +65,16 @@ func (row dashboardIssuanceRow) amountCents() int {
 	return amount
 }
 
+// dashboardIncludesAmount says whether a role gets to see money on the dashboard. Kept as
+// its own function so the rule can be tested without a database - the handler that uses it
+// cannot be.
+func dashboardIncludesAmount(role string) bool {
+	return role == data.RoleAdmin || role == data.RoleDev
+}
+
 // GetDashboard handles the GET /dashboard route.
 // @Summary      Métricas agregadas do dashboard
-// @Description  Agrega as emissões do período em totais, série temporal, e rollups por programa de fidelidade e por emissor. Sem agency_id, filtra pela agência principal (is_default=true). Emissões canceladas entram pela data do cancelamento nos totais de cancelamento. O campo amount_cents é omitido para usuários que não são administradores.
+// @Description  Agrega as emissões do período em totais, série temporal, e rollups por programa de fidelidade e por emissor. Sem agency_id, filtra pela agência principal (is_default=true). Emissões canceladas entram pela data do cancelamento nos totais de cancelamento. O campo amount_cents é omitido para o usuário comum; administradores e desenvolvedores veem os valores.
 // @Tags         Dashboard
 // @Produce      json
 // @Security     BearerAuth
@@ -89,10 +96,10 @@ func (h *DashboardHandler) GetDashboard(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Money is admin-only. Decided here from the user the auth middleware loaded from the
-	// database, never from a query param or a client-supplied header.
+	// Money is decided from the user the auth middleware loaded from the database, never
+	// from a query param or a client-supplied header.
 	user, _ := r.Context().Value(middleware.UserContextKey).(data.User)
-	includeAmount := user.Role == data.RoleAdmin
+	includeAmount := dashboardIncludesAmount(user.Role)
 
 	granularity := r.URL.Query().Get("granularity")
 	if !dashboardGranularities[granularity] {

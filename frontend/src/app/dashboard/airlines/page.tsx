@@ -1,6 +1,7 @@
 import type { Metadata } from "next"
 import { cookies } from "next/headers"
 import { Separator } from "@/components/ui/separator"
+import { requireDev } from "@/lib/session"
 import { env } from "@/lib/env"
 import { getAirlinesSchema, Airline } from "@/schemas/airline"
 import { LoyaltyProgramsAirlinesToggle } from "@/components/layout/loyalty-programs-airlines-toggle"
@@ -24,6 +25,8 @@ export default async function AirlinesPage({
 }: {
   searchParams: Promise<Partial<Record<(typeof AIRLINES_URL_KEYS)[number], string>>>
 }) {
+  await requireDev()
+
   const cookieStore = await cookies()
   const token = cookieStore.get("auth_token")?.value
   const authHeader = { Authorization: `Bearer ${token}` }

@@ -7,11 +7,11 @@ interface SalesViewToggleProps {
   active: "clients" | "suppliers"
   // What the agency owes each account administrator is not an operator's business, so the
   // whole suppliers view is admin-only. The backend enforces the same on its route.
-  isAdmin: boolean
+  canSeeSuppliers: boolean
 }
 
-export function SalesViewToggle({ active, isAdmin }: SalesViewToggleProps) {
-  if (!isAdmin) return null
+export function SalesViewToggle({ active, canSeeSuppliers }: SalesViewToggleProps) {
+  if (!canSeeSuppliers) return null
 
   return (
     <div className="flex gap-2">

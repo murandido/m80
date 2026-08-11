@@ -3,6 +3,8 @@ package handlers
 import (
 	"testing"
 	"time"
+
+	"github.com/murandido/m-80-backend/internal/data"
 )
 
 // aggregateDashboard is a pure fold over rows the SQL layer already narrowed, so these
@@ -411,5 +413,25 @@ func TestFormatDashboardBound_EchoesTheInclusiveDate(t *testing.T) {
 	}
 	if got := formatDashboardBound(nil, loc, false); got != "" {
 		t.Errorf("nil bound = %q, want empty", got)
+	}
+}
+
+// The role-to-money rule, on its own, because it is the one part of the dashboard gating
+// that no aggregate test covers: those take the boolean already decided.
+func TestDashboardIncludesAmount(t *testing.T) {
+	cases := map[string]bool{
+		data.RoleAdmin: true,
+		data.RoleDev:   true,
+		data.RoleUser:  false,
+		// A role the enum does not have must never open the money by accident.
+		"": false,
+	}
+
+	for role, want := range cases {
+		t.Run(role, func(t *testing.T) {
+			if got := dashboardIncludesAmount(role); got != want {
+				t.Errorf("dashboardIncludesAmount(%q) = %v, want %v", role, got, want)
+			}
+		})
 	}
 }

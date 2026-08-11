@@ -9,10 +9,10 @@ import (
 	"github.com/murandido/m-80-backend/internal/api/v1/handlers"
 )
 
-// RegisterBotRoutes mounts /bot/* as an admin-only, pure reverse proxy to the
+// RegisterBotRoutes mounts /bot/* as a dev-only, pure reverse proxy to the
 // bot's internal API (BOT_INTERNAL_URL) - status, pairing and logout for the
 // WhatsApp session. No business logic here: whatever the bot answers is what
-// the admin panel gets, status code and body untouched.
+// the panel gets, status code and body untouched.
 func RegisterBotRoutes(r chi.Router) {
 	proxy, err := handlers.NewBotProxy(os.Getenv("BOT_INTERNAL_URL"))
 	if err != nil {
@@ -29,7 +29,7 @@ func RegisterBotRoutes(r chi.Router) {
 	})
 
 	r.Route("/bot", func(r chi.Router) {
-		r.Use(middleware.RequireAdmin())
+		r.Use(middleware.RequireDev())
 		// Only the verbs the bot's internal API actually serves - GET
 		// /status and the POST actions - not a catch-all for every method.
 		r.Get("/*", forward)

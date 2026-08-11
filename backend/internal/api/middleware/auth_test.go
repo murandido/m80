@@ -108,36 +108,48 @@ func TestRequireAuth_RejectsBadTokens(t *testing.T) {
 	}
 }
 
-// RequireAdmin needs no database: it decides from the user RequireAuth already loaded
-// into the context. The case that matters for this table is dev - the role was added
-// without granting it anything, so it has to be denied exactly like a plain user. If
-// this ever starts passing for dev, an authorization change slipped in unannounced.
-func TestRequireAdmin_OnlyAdminPasses(t *testing.T) {
+// callGate runs a gate against a context user of the given role and reports the status.
+// No database is involved: the gates decide from the user RequireAuth already loaded.
+func callGate(t *testing.T, gate func(http.Handler) http.Handler, role string) int {
+	t.Helper()
+
+	handler := gate(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)
+	req = req.WithContext(context.WithValue(
+		req.Context(), UserContextKey, data.User{ID: "00000000-0000-0000-0000-000000000000", Role: role},
+	))
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	return rec.Code
+}
+
+// The two gates side by side, because what matters is the difference between them:
+// dev passes both, admin passes only the admin one, and a plain user passes neither.
+// dev is never named in a RequireRole call - if it stops passing a gate here, the
+// implicit allowance was lost.
+func TestRoleGates(t *testing.T) {
 	tests := []struct {
+		name string
+		gate func(http.Handler) http.Handler
 		role string
 		want int
 	}{
-		{data.RoleAdmin, http.StatusOK},
-		{data.RoleUser, http.StatusForbidden},
-		{data.RoleDev, http.StatusForbidden},
+		{"admin gate/admin", RequireAdmin(), data.RoleAdmin, http.StatusOK},
+		{"admin gate/dev", RequireAdmin(), data.RoleDev, http.StatusOK},
+		{"admin gate/user", RequireAdmin(), data.RoleUser, http.StatusForbidden},
+		{"dev gate/dev", RequireDev(), data.RoleDev, http.StatusOK},
+		{"dev gate/admin", RequireDev(), data.RoleAdmin, http.StatusForbidden},
+		{"dev gate/user", RequireDev(), data.RoleUser, http.StatusForbidden},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.role, func(t *testing.T) {
-			handler := RequireAdmin()(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.WriteHeader(http.StatusOK)
-			}))
-
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)
-			req = req.WithContext(context.WithValue(
-				req.Context(), UserContextKey, data.User{ID: "00000000-0000-0000-0000-000000000000", Role: tt.role},
-			))
-
-			rec := httptest.NewRecorder()
-			handler.ServeHTTP(rec, req)
-
-			if rec.Code != tt.want {
-				t.Fatalf("status = %d, want %d", rec.Code, tt.want)
+		t.Run(tt.name, func(t *testing.T) {
+			if code := callGate(t, tt.gate, tt.role); code != tt.want {
+				t.Fatalf("status = %d, want %d", code, tt.want)
 			}
 		})
 	}

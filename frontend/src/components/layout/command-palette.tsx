@@ -15,6 +15,7 @@ import {
   dashboardHome,
   visibleExtraDestinations,
   visibleSections,
+  type Role,
 } from "@/lib/navigation"
 
 interface CommandPaletteState {
@@ -33,10 +34,10 @@ function useCommandPalette(): CommandPaletteState {
 
 export function CommandPaletteProvider({
   children,
-  isAdmin = false,
+  role,
 }: {
   children: React.ReactNode
-  isAdmin?: boolean
+  role?: Role
 }) {
   const router = useRouter()
   const [isOpen, setIsOpen] = useState(false)
@@ -79,7 +80,7 @@ export function CommandPaletteProvider({
               <span>{dashboardHome.title}</span>
             </CommandItem>
           </CommandGroup>
-          {visibleSections(isAdmin).map((section) => (
+          {visibleSections(role).map((section) => (
             <CommandGroup key={section.label} heading={section.label}>
               {section.items.map((link) => (
                 <CommandItem
@@ -93,9 +94,9 @@ export function CommandPaletteProvider({
               ))}
             </CommandGroup>
           ))}
-          {visibleExtraDestinations(isAdmin).length > 0 && (
+          {visibleExtraDestinations(role).length > 0 && (
             <CommandGroup heading="Outras páginas">
-              {visibleExtraDestinations(isAdmin).map((link) => (
+              {visibleExtraDestinations(role).map((link) => (
                 <CommandItem
                   key={link.url}
                   value={link.title}

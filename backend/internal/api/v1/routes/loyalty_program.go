@@ -2,17 +2,21 @@ package routes
 
 import (
 	"github.com/go-chi/chi/v5"
+	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/handlers"
 	"gorm.io/gorm"
 )
 
-// RegisterLoyaltyProgramRoutes wires up the /loyalty-programs CRUD routes.
+// RegisterLoyaltyProgramRoutes wires up the /loyalty-programs CRUD routes. Same split as
+// the airlines: editing the catalogue is a dev screen, reading feeds the comboboxes on the
+// dashboard, the issuances grid and the accounts screen.
 func RegisterLoyaltyProgramRoutes(r chi.Router, db *gorm.DB) {
 	loyaltyProgramHandler := handlers.NewLoyaltyProgramHandler(db)
+	requireDev := middleware.RequireDev()
 
 	r.Route("/loyalty-programs", func(r chi.Router) {
 		// create loyalty program
-		r.Post("/", loyaltyProgramHandler.CreateLoyaltyProgram)
+		r.With(requireDev).Post("/", loyaltyProgramHandler.CreateLoyaltyProgram)
 
 		// get loyalty programs
 		r.Get("/", loyaltyProgramHandler.GetLoyaltyPrograms)
@@ -21,9 +25,9 @@ func RegisterLoyaltyProgramRoutes(r chi.Router, db *gorm.DB) {
 		r.Get("/{id}", loyaltyProgramHandler.GetLoyaltyProgram)
 
 		// update loyalty program
-		r.Put("/{id}", loyaltyProgramHandler.UpdateLoyaltyProgram)
+		r.With(requireDev).Put("/{id}", loyaltyProgramHandler.UpdateLoyaltyProgram)
 
 		// delete loyalty program
-		r.Delete("/{id}", loyaltyProgramHandler.DeleteLoyaltyProgram)
+		r.With(requireDev).Delete("/{id}", loyaltyProgramHandler.DeleteLoyaltyProgram)
 	})
 }

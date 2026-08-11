@@ -13,7 +13,7 @@ import { listQueryString, resolveListParams } from "@/lib/list-params"
 import { readStickyFilters, stickySearchParams } from "@/lib/sticky-filters"
 
 export const metadata: Metadata = {
-  title: "Pessoas",
+  title: "Proprietários",
   description:
     "Passageiros e titulares das emissões, com os apelidos que o bot reconhece no WhatsApp.",
 }
@@ -68,7 +68,7 @@ export default async function PeoplePage({
     <div className="p-6 sm:p-8">
       <div className="flex flex-col gap-2 sm:gap-6">
         <h1 className="text-lg font-semibold text-slate-800">
-          Contas e Pessoas
+          Contas e Proprietários
         </h1>
 
         <ContasPessoasToggle active="pessoas" />

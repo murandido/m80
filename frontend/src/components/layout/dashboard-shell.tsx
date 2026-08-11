@@ -3,21 +3,23 @@ import { CommandPaletteProvider } from "@/components/layout/command-palette"
 import { Header } from "@/components/layout/header"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import type { SystemStatus } from "@/schemas/status"
+import type { Role } from "@/lib/navigation"
+import { canAccess } from "@/lib/navigation"
 import type { User } from "@/schemas/user"
 
 export function DashboardShell({
   children,
-  isAdmin = false,
+  role,
   user = null,
   systemStatus = null,
 }: {
   children: React.ReactNode
-  isAdmin?: boolean
+  role?: Role
   user?: User | null
   systemStatus?: SystemStatus | null
 }) {
   return (
-    <CommandPaletteProvider isAdmin={isAdmin}>
+    <CommandPaletteProvider role={role}>
       <SidebarProvider>
         <a
           href="#conteudo"
@@ -25,11 +27,11 @@ export function DashboardShell({
         >
           Pular para o conteúdo
         </a>
-        <AppSidebar isAdmin={isAdmin} user={user} />
+        <AppSidebar role={role} user={user} />
         {/* SidebarInset already renders the <main>; the inner wrapper is the
             scroll container and the skip link's target. */}
         <SidebarInset>
-          <Header systemStatus={systemStatus} isAdmin={isAdmin} />
+          <Header systemStatus={systemStatus} canSeeBot={canAccess(role, [])} />
           <div id="conteudo" tabIndex={-1} className="flex-1 overflow-auto outline-none">
             {children}
           </div>

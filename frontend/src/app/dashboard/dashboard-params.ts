@@ -57,9 +57,11 @@ export function resolveDashboardFilters(
 
 export function resolveDashboardMetric(
   params: DashboardSearchParams,
-  isAdmin: boolean,
+  canSeeAmounts: boolean,
 ): DashboardMetric {
-  if (!isAdmin) return "points"
+  // Whoever cannot see money cannot select it either, even by editing the URL - the
+  // backend omits the field, so the amount view would render empty.
+  if (!canSeeAmounts) return "points"
   return params.metric === "amount" ? "amount" : "points"
 }
 
