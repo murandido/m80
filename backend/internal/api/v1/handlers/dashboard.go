@@ -74,7 +74,7 @@ func dashboardIncludesAmount(role string) bool {
 
 // GetDashboard handles the GET /dashboard route.
 // @Summary      Métricas agregadas do dashboard
-// @Description  Agrega as emissões do período em totais, série temporal, e rollups por programa de fidelidade e por emissor. Sem agency_id, filtra pela agência principal (is_default=true). Emissões canceladas entram pela data do cancelamento nos totais de cancelamento. O campo amount_cents é omitido para o usuário comum; administradores e desenvolvedores veem os valores.
+// @Description  Agrega as emissões do período em totais, série temporal, e rollups por programa de fidelidade e por emissor. Sem agency_id, filtra pela agência principal (is_default=true). Emissões canceladas ficam fora de todo o volume (contagem, pontos, valor e rollups), em qualquer período — mesmo que o cancelamento tenha ocorrido fora da janela consultada; elas aparecem apenas em cancelled_count e refunded_points, pela data do cancelamento. O campo amount_cents é omitido para o usuário comum; administradores e desenvolvedores veem os valores.
 // @Tags         Dashboard
 // @Produce      json
 // @Security     BearerAuth
@@ -211,14 +211,17 @@ func formatDashboardBound(bound *time.Time, loc *time.Location, exclusive bool) 
 // aggregateDashboard folds per-issuance rows into every panel of the dashboard at once, so
 // the tiles and the charts are guaranteed to be reading the same numbers.
 //
-// Creation and cancellation are counted independently: an issuance created inside the
-// window adds to the volume rollups, and one cancelled inside it adds to the cancellation
-// tallies. An issuance created and cancelled in the same window contributes to both, which
-// is what lets the pair net out without a same-period special case.
+// A cancelled issuance is excluded from volume entirely - count, points, amount, series,
+// by-program and by-issuer alike, in the current window and the previous one. Dropping it
+// from the count as well as from the money is what keeps "average per issuance" honest:
+// numerator and denominator have to move together.
 //
-// The volume rollups (series, by-program, by-issuer) deliberately follow creation only - a
-// cancellation is not something an issuer "emitted", so folding it into their ranking would
-// misread the chart's question.
+// Cancellations are still reported, by when they were cancelled, through CancelledCount and
+// RefundedPoints. Those two are now the only place a cancellation shows up on the dashboard.
+//
+// The volume rollups (series, by-program, by-issuer) follow creation - a cancellation is not
+// something an issuer "emitted", so folding it into their ranking would misread the chart's
+// question.
 func aggregateDashboard(
 	rows []dashboardIssuanceRow,
 	from, to *time.Time,
@@ -252,20 +255,30 @@ func aggregateDashboard(
 	}
 
 	for _, row := range rows {
-		createdAt := row.CreatedAt
+		// A cancelled issuance produced nothing, so it contributes nothing to volume - not a
+		// count, not a mile, not a cent, in any window. It stays in this loop only to feed the
+		// cancellation tallies below.
+		//
+		// The test is "is it cancelled at all", not "was it cancelled inside this window": an
+		// issuance created in January and cancelled in March disappears from January too. That
+		// makes a closed month's figure move when somebody cancels today, which is a deliberate
+		// trade for the totals always describing what actually stands.
+		if row.CancelledAt == nil {
+			createdAt := row.CreatedAt
 
-		if inRange(&createdAt, from, to) {
-			totals.IssuanceCount++
-			totals.Points += row.Points
-			totals.AmountCents = addAmount(totals.AmountCents, row.amountCents())
+			if inRange(&createdAt, from, to) {
+				totals.IssuanceCount++
+				totals.Points += row.Points
+				totals.AmountCents = addAmount(totals.AmountCents, row.amountCents())
 
-			add(buckets, dashboardBucketKey(createdAt, granularity, loc), "", "", row)
-			add(byProgram, row.LoyaltyProgramID, row.LoyaltyProgramName, row.LoyaltyProgramColor, row)
-			add(byIssuer, row.IssuerID, row.IssuerName, "", row)
-		} else if inRange(&createdAt, previousFrom, from) {
-			previous.IssuanceCount++
-			previous.Points += row.Points
-			previous.AmountCents = addAmount(previous.AmountCents, row.amountCents())
+				add(buckets, dashboardBucketKey(createdAt, granularity, loc), "", "", row)
+				add(byProgram, row.LoyaltyProgramID, row.LoyaltyProgramName, row.LoyaltyProgramColor, row)
+				add(byIssuer, row.IssuerID, row.IssuerName, "", row)
+			} else if inRange(&createdAt, previousFrom, from) {
+				previous.IssuanceCount++
+				previous.Points += row.Points
+				previous.AmountCents = addAmount(previous.AmountCents, row.amountCents())
+			}
 		}
 
 		if inRange(row.CancelledAt, from, to) {

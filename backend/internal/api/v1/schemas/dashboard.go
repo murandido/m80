@@ -22,8 +22,9 @@ type DashboardTotals struct {
 	AmountCents   *int `json:"amount_cents,omitempty" example:"19280000"`
 
 	// Cancellations are counted by when they were cancelled, not when the underlying
-	// issuance was created, which is why they are separate from IssuanceCount rather than
-	// subtracted from it.
+	// issuance was created - which is why they are their own fields rather than a
+	// subtraction. There is nothing to subtract: a cancelled issuance never entered
+	// IssuanceCount, Points or AmountCents in the first place, in any window.
 	CancelledCount int `json:"cancelled_count" example:"4"`
 	RefundedPoints int `json:"refunded_points" example:"120000"`
 }

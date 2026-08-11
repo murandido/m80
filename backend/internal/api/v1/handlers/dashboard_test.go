@@ -71,7 +71,7 @@ func amountOrFail(t *testing.T, value *int, what string) int {
 	return *value
 }
 
-func TestAggregateDashboard_CountsCreationAndCancellationIndependently(t *testing.T) {
+func TestAggregateDashboard_ExcludesCancelledFromVolume(t *testing.T) {
 	loc := spLocation(t)
 	from, to := spBounds(t, "2026-07-01", "2026-07-03")
 
@@ -91,24 +91,132 @@ func TestAggregateDashboard_CountsCreationAndCancellationIndependently(t *testin
 
 	got := aggregateDashboard(rows, from, to, "day", loc, true)
 
-	if got.Totals.IssuanceCount != 3 {
-		t.Errorf("issuance_count = %d, want 3", got.Totals.IssuanceCount)
+	// The third row was created inside the window, but it is cancelled - so it adds
+	// nothing to volume. The count drops with the money, which is what keeps the
+	// "average per issuance" tile from dividing valid points by a padded total.
+	if got.Totals.IssuanceCount != 2 {
+		t.Errorf("issuance_count = %d, want 2", got.Totals.IssuanceCount)
 	}
-	if got.Totals.Points != 1700 {
-		t.Errorf("points = %d, want 1700", got.Totals.Points)
+	if got.Totals.Points != 1500 {
+		t.Errorf("points = %d, want 1500", got.Totals.Points)
 	}
-	// 1000 miles @ 2000/mil = 2000c, 500 @ 2000 = 1000c, 200 @ 1000 = 200c.
-	if amount := amountOrFail(t, got.Totals.AmountCents, "totals"); amount != 3200 {
-		t.Errorf("amount_cents = %d, want 3200", amount)
+	// 1000 miles @ 2000/mil = 2000c, 500 @ 2000 = 1000c. The cancelled 200 @ 1000 = 200c
+	// is left out.
+	if amount := amountOrFail(t, got.Totals.AmountCents, "totals"); amount != 3200-200 {
+		t.Errorf("amount_cents = %d, want 3000", amount)
 	}
 
-	// The cancelled issuance was created inside the window too, so it counts on both
-	// sides rather than being netted out of the volume.
+	// Still reported, just never as volume: these two are now the only place a
+	// cancellation shows up on the dashboard.
 	if got.Totals.CancelledCount != 1 {
 		t.Errorf("cancelled_count = %d, want 1", got.Totals.CancelledCount)
 	}
 	if got.Totals.RefundedPoints != 300 {
 		t.Errorf("refunded_points = %d, want 300", got.Totals.RefundedPoints)
+	}
+}
+
+// The non-obvious half of the rule: "cancelled" is a property of the issuance, not of the
+// window. An issuance created in the window and cancelled long after it still disappears
+// from that window - which is why a closed month's figure can move.
+func TestAggregateDashboard_ExcludesCancelledEvenWhenCancelledAfterTheWindow(t *testing.T) {
+	loc := spLocation(t)
+	from, to := spBounds(t, "2026-07-01", "2026-07-03")
+
+	cancelledAt := spInstant(t, "2026-11-20 09:00")
+	refunded := 900
+	row := dashboardRow(spInstant(t, "2026-07-01 10:00"), 5000, 2000)
+	row.CancelledAt = &cancelledAt
+	row.RefundedPoints = &refunded
+
+	got := aggregateDashboard([]dashboardIssuanceRow{row}, from, to, "day", loc, true)
+
+	if got.Totals.IssuanceCount != 0 {
+		t.Errorf("issuance_count = %d, want 0", got.Totals.IssuanceCount)
+	}
+	if got.Totals.Points != 0 {
+		t.Errorf("points = %d, want 0", got.Totals.Points)
+	}
+	if amount := amountOrFail(t, got.Totals.AmountCents, "totals"); amount != 0 {
+		t.Errorf("amount_cents = %d, want 0", amount)
+	}
+	// The cancellation is outside this window too, so it is not tallied here either.
+	if got.Totals.CancelledCount != 0 {
+		t.Errorf("cancelled_count = %d, want 0", got.Totals.CancelledCount)
+	}
+}
+
+// Excluding it from the tiles but leaving it in the charts would be worse than not
+// excluding it at all: the page would contradict itself.
+func TestAggregateDashboard_ExcludesCancelledFromBreakdownsAndSeries(t *testing.T) {
+	loc := spLocation(t)
+	from, to := spBounds(t, "2026-07-01", "2026-07-02")
+
+	cancelledAt := spInstant(t, "2026-07-02 09:00")
+	live := dashboardRow(spInstant(t, "2026-07-01 10:00"), 1000, 2000)
+
+	cancelled := dashboardRow(spInstant(t, "2026-07-01 11:00"), 7000, 3000)
+	cancelled.LoyaltyProgramID = "program-b"
+	cancelled.LoyaltyProgramName = "TudoAzul"
+	cancelled.IssuerID = "issuer-b"
+	cancelled.IssuerName = "Bruno"
+	cancelled.CancelledAt = &cancelledAt
+
+	got := aggregateDashboard([]dashboardIssuanceRow{live, cancelled}, from, to, "day", loc, true)
+
+	// The cancelled row is the only one on program-b / issuer-b, so those dimensions must
+	// not appear at all - an empty slice, not a zeroed slice.
+	if len(got.ByProgram) != 1 || got.ByProgram[0].ID != "program-a" {
+		t.Errorf("by_program = %+v, want only program-a", got.ByProgram)
+	}
+	if len(got.ByIssuer) != 1 || got.ByIssuer[0].ID != "issuer-a" {
+		t.Errorf("by_issuer = %+v, want only issuer-a", got.ByIssuer)
+	}
+	if got.ByProgram[0].Points != 1000 {
+		t.Errorf("by_program points = %d, want 1000", got.ByProgram[0].Points)
+	}
+
+	// Both rows were created on the 1st, so that bucket must carry the live one alone.
+	key := dashboardBucketKey(spInstant(t, "2026-07-01 10:00"), "day", loc)
+	for _, bucket := range got.Series {
+		if bucket.Bucket != key {
+			continue
+		}
+		if bucket.IssuanceCount != 1 || bucket.Points != 1000 {
+			t.Errorf("series[%s] = count %d / points %d, want 1 / 1000", key, bucket.IssuanceCount, bucket.Points)
+		}
+	}
+}
+
+// previous_totals feeds the deltas on the stat tiles, so it has to follow the same rule -
+// otherwise the arrow would compare a filtered period against an unfiltered one.
+func TestAggregateDashboard_ExcludesCancelledFromPreviousTotals(t *testing.T) {
+	loc := spLocation(t)
+	// A three-day window, so the previous period is 28-30 June.
+	from, to := spBounds(t, "2026-07-01", "2026-07-03")
+
+	cancelledAt := spInstant(t, "2026-07-02 09:00")
+	previousLive := dashboardRow(spInstant(t, "2026-06-29 10:00"), 400, 2000)
+	previousCancelled := dashboardRow(spInstant(t, "2026-06-30 10:00"), 4000, 2000)
+	previousCancelled.CancelledAt = &cancelledAt
+
+	got := aggregateDashboard(
+		[]dashboardIssuanceRow{previousLive, previousCancelled},
+		from, to, "day", loc, true,
+	)
+
+	if got.PreviousTotals == nil {
+		t.Fatal("expected previous_totals to be present for a bounded window")
+	}
+	if got.PreviousTotals.IssuanceCount != 1 {
+		t.Errorf("previous issuance_count = %d, want 1", got.PreviousTotals.IssuanceCount)
+	}
+	if got.PreviousTotals.Points != 400 {
+		t.Errorf("previous points = %d, want 400", got.PreviousTotals.Points)
+	}
+	// The cancellation itself happened in the current window, not the previous one.
+	if got.Totals.CancelledCount != 1 {
+		t.Errorf("cancelled_count = %d, want 1", got.Totals.CancelledCount)
 	}
 }
 
