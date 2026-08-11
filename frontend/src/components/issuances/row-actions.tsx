@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { useGridContext } from "@/components/issuances/grid-context"
 import { CancelIssuanceButton } from "@/components/issuances/cancel-issuance-dialog"
+import { CopyEmissaoMenu } from "@/components/issuances/copy-emissao-menu"
 import { IssuanceRow, isRowSyncing } from "@/components/issuances/types"
 
 export function RowActions({ r, row }: { r: number; row: IssuanceRow }) {
@@ -42,6 +43,10 @@ export function RowActions({ r, row }: { r: number; row: IssuanceRow }) {
 
   return (
     <div className="flex items-center justify-end gap-0.5">
+      {/* Unconditional, unlike its neighbours: copying reads the row and changes nothing,
+          so it is just as valid on a draft that already has its fields as on a cancelled
+          issuance somebody needs to forward. */}
+      <CopyEmissaoMenu row={row} />
       {canOpenTicket && <TicketButton row={row} />}
       {canSyncWithTraveos && <TraveosSyncButton r={r} row={row} />}
       {canCancel && <CancelIssuanceButton r={r} />}

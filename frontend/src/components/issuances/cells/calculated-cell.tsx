@@ -2,6 +2,7 @@
 
 import { memo } from "react"
 import { CellStateProps, useGridContext } from "@/components/issuances/grid-context"
+import { issuanceTotalCents } from "@/components/issuances/emissao-message"
 import { formatCurrencyBRL } from "@/lib/currency"
 import { CALCULATED_COLUMN_INDEX } from "@/lib/grid-navigation"
 
@@ -11,10 +12,9 @@ export const CalculatedCell = memo(function CalculatedCell({
 }: { r: number } & Pick<CellStateProps, "row">) {
   const { onCellClick } = useGridContext()
 
-  const total =
-    row.points !== null && row.value_of_the_thousand !== null
-      ? Math.round((row.points / 1000) * row.value_of_the_thousand) + (row.taxes ?? 0)
-      : null
+  // Shared with the copied EMISSAO message, which the bot checksums against this exact
+  // number - see issuanceTotalCents.
+  const total = issuanceTotalCents(row)
 
   return (
     <button

@@ -2,6 +2,9 @@
 
 import { memo } from "react"
 import { CellStateProps, useGridContext } from "@/components/issuances/grid-context"
+// Shared with the copied EMISSAO message: an account with no alias has to be named the
+// same way on line 4 as it is in this combobox.
+import { accountFallbackLabel } from "@/components/issuances/emissao-message"
 import { Account } from "@/schemas/account"
 import { Person } from "@/schemas/person"
 import { TextCell } from "@/components/issuances/cells/text-cell"
@@ -13,13 +16,6 @@ import { ComboboxCell, ComboOption } from "@/components/issuances/cells/combobox
 import { AirportAutocompleteCell } from "@/components/issuances/cells/airport-autocomplete-cell"
 import { CiaAereaCell } from "@/components/issuances/cells/cia-aerea-cell"
 import { StatusCell } from "@/components/issuances/cells/status-cell"
-
-// Only used for accounts with no registered alias - those with aliases get one option
-// per alias instead, so there is nothing to fall back to.
-function accountFallbackLabel(account: Account, people: Person[]): string {
-  const holder = people.find((p) => p.id === account.holder_id)
-  return holder?.name ?? account.login ?? account.id
-}
 
 // One option per alias, so the operator picks a specific alias rather than an account
 // labelled with all of its aliases at once. Aliases belong to a loyalty program, so the

@@ -55,6 +55,8 @@ planilha (Excel/Sheets), não como um formulário.
 | `Ctrl+Enter` | Nova emissão |
 | `Delete` | Limpar a célula |
 | `Ctrl+C` / `Ctrl+V` | Copiar valor exibido (toast) / colar (entra em edição com o texto) |
+| `Ctrl+Alt+C` | Copiar a linha como mensagem EMISSAO (o mesmo do ícone de copiar) |
+| `Ctrl+Alt+X` | Copiar só a linha de cálculo (`31k * 16,5 + 189,22 tx = 700,72`) |
 | `Ctrl+Z` / `Ctrl+Shift+Z` (ou `Ctrl+Y`) | Desfazer / refazer (**só valores de célula**) |
 | `Ctrl+Shift+⌫` | Excluir a linha (com confirmação) |
 | `/` | Separar `programa/cia` (Cia aérea, Localizador) |

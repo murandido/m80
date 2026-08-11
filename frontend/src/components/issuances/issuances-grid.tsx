@@ -29,6 +29,8 @@ import {
   draftIsReadyToCreate,
   isRowSyncing,
 } from "@/components/issuances/types"
+import { buildCalculo, buildEmissaoResumo } from "@/components/issuances/emissao-message"
+import { copyEmissaoText } from "@/components/issuances/copy-emissao-menu"
 import { reconcileRows } from "@/components/issuances/reconcile-rows"
 import { isAutocompleteCandidate } from "@/components/issuances/autocomplete"
 import { useAutocompletePreference } from "@/hooks/use-autocomplete-preference"
@@ -148,6 +150,8 @@ const SHORTCUTS: { keys: string; label: string }[] = [
   { keys: "Ctrl+Enter", label: "Nova emissão" },
   { keys: "Delete", label: "Limpar a célula" },
   { keys: "Ctrl+C / Ctrl+V", label: "Copiar / colar" },
+  { keys: "Ctrl+Alt+C", label: "Copiar a emissão como mensagem" },
+  { keys: "Ctrl+Alt+X", label: "Copiar só o cálculo" },
   { keys: "Ctrl+Z / Ctrl+Shift+Z", label: "Desfazer / refazer" },
   { keys: "Ctrl+Shift+⌫", label: "Excluir a linha" },
   { keys: "/", label: 'Separar "programa/cia" (Cia aérea, Localizador)' },
@@ -946,6 +950,35 @@ export function IssuancesGrid({
     ) {
       e.preventDefault()
       runHistory("redo")
+      return
+    }
+
+    // Copying the row as an EMISSAO message, same as the copy menu in RowActions. Like
+    // undo/redo above, these act on the row rather than on the active cell, so they sit
+    // before the calculated-column guard - anything below it is dead on that column.
+    if ((e.ctrlKey || e.metaKey) && e.altKey && (e.key.toLowerCase() === "c" || e.code === "KeyC")) {
+      e.preventDefault()
+      const row = rows[interaction.sel.r]
+      // The merged lists (accounts/agencies/programs learned during this session), the
+      // same ones the context hands the copy menu.
+      if (row) {
+        void copyEmissaoText(
+          buildEmissaoResumo(row, {
+            loyaltyPrograms,
+            airlines: referenceData.airlines,
+            accounts,
+            agencies,
+            people: referenceData.people,
+          }),
+          "resumo",
+        )
+      }
+      return
+    }
+    if ((e.ctrlKey || e.metaKey) && e.altKey && (e.key.toLowerCase() === "x" || e.code === "KeyX")) {
+      e.preventDefault()
+      const row = rows[interaction.sel.r]
+      if (row) void copyEmissaoText(buildCalculo(row), "cálculo")
       return
     }
 
