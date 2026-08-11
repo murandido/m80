@@ -1,7 +1,7 @@
 "use client"
 
 import { type ReactNode, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react"
-import { Plus, Keyboard, FileSpreadsheet } from "lucide-react"
+import { Plus, Keyboard, FileSpreadsheet, AlertTriangle } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -32,7 +32,10 @@ import {
 import { buildCalculo, buildEmissaoResumo } from "@/components/issuances/emissao-message"
 import { copyEmissaoText } from "@/components/issuances/copy-emissao-menu"
 import { reconcileRows } from "@/components/issuances/reconcile-rows"
-import { isAutocompleteCandidate } from "@/components/issuances/autocomplete"
+import {
+  autocompleteHintFor,
+  isAutocompleteCandidate,
+} from "@/components/issuances/autocomplete"
 import { useAutocompletePreference } from "@/hooks/use-autocomplete-preference"
 import { clearPatchForColumn } from "@/components/issuances/column-fields"
 import { useSSE } from "@/hooks/use-sse"
@@ -1058,6 +1061,22 @@ export function IssuancesGrid({
     if (text) dispatch({ type: "TYPE_REPLACE", char: text })
   }
 
+  // What the selected row still needs before the autocomplete will pull from Traveos.
+  // Keyed off the selection, so it follows the operator down the grid and clears itself
+  // the moment they leave the row - it is a hint about the row being worked on, not a
+  // validation state the row carries around.
+  const autocompleteHint = useMemo(
+    () => autocompleteHintFor(rows[interaction.sel.r], referenceData.airlines, autocompleteEnabled),
+    [rows, interaction.sel.r, referenceData.airlines, autocompleteEnabled],
+  )
+  const missingColumnReasons = useMemo(
+    () =>
+      autocompleteHint.kind === "missing"
+        ? new Map(autocompleteHint.requirements.map((req) => [req.column, req.reason]))
+        : new Map<number, string>(),
+    [autocompleteHint],
+  )
+
   // The context carries only referentially-stable data: reference lists, the memoized
   // callbacks above and pendingAccountLabels (which changes only during inline account
   // creation). The volatile per-cell state (row/isEditing/pendingChar) is passed as props
@@ -1116,6 +1135,17 @@ export function IssuancesGrid({
       <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-2 bg-background py-2">
         {filters}
         <div className="ml-auto flex items-center gap-2">
+          {/* Sits here rather than in the filter bar (which the page owns and passes in as
+              `filters`), and lands next to the Autocompletar toggle because that toggle is
+              ml-auto at the filter bar's right edge. No red headers in this case: the row
+              will never autocomplete, so pointing at columns would be a false promise. */}
+          {autocompleteHint.kind === "unsupported" && (
+            <span className="flex items-center gap-1.5 text-xs text-amber-600">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              A {autocompleteHint.airlineName} não está integrada à Traveos — esta emissão não
+              autocompleta.
+            </span>
+          )}
           <Popover>
             <PopoverTrigger asChild>
               <Button type="button" variant="outline">
@@ -1176,17 +1206,25 @@ export function IssuancesGrid({
           <TableHeader>
             <TableRow className="hover:bg-transparent">
               <TableHead className="sticky top-0 z-10 w-8 bg-background p-1 text-center">#</TableHead>
-              {COLUMN_LABELS.map((label, c) => (
-                <TableHead
-                  key={label}
-                  className={cn(
-                    "sticky top-0 z-10 whitespace-nowrap bg-background",
-                    c === CALCULATED_COLUMN_INDEX && "text-right",
-                  )}
-                >
-                  {label}
-                </TableHead>
-              ))}
+              {COLUMN_LABELS.map((label, c) => {
+                // Red means "the autocomplete is still waiting on this one", and it clears
+                // as each is filled - so the header row doubles as a live checklist for
+                // the row being typed.
+                const missingReason = missingColumnReasons.get(c)
+                return (
+                  <TableHead
+                    key={label}
+                    title={missingReason}
+                    className={cn(
+                      "sticky top-0 z-10 whitespace-nowrap bg-background",
+                      c === CALCULATED_COLUMN_INDEX && "text-right",
+                      missingReason && "text-destructive",
+                    )}
+                  >
+                    {label}
+                  </TableHead>
+                )
+              })}
               <TableHead className="sticky top-0 z-10 w-8 bg-background p-1" />
             </TableRow>
           </TableHeader>

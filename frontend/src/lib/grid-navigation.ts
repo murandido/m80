@@ -11,6 +11,10 @@ export type Direction = "down" | "up" | "tab-right" | "tab-left"
 // "Conta", "Emissor", "Agência", "Status", "Observação".
 export const COLUMN_COUNT = 15
 export const LOCATOR_COLUMN_INDEX = 1
+export const PASSENGER_COLUMN_INDEX = 3
+export const ORIGIN_COLUMN_INDEX = 4
+export const POINTS_COLUMN_INDEX = 6
+export const VALUE_OF_THE_THOUSAND_COLUMN_INDEX = 7
 export const CALCULATED_COLUMN_INDEX = 9
 export const ACCOUNT_COLUMN_INDEX = 10
 export const OBSERVATION_COLUMN_INDEX = 14

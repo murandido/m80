@@ -151,6 +151,10 @@ export function makeDraftRow(
 
 // The 5 fields CreateIssuanceRequest requires up front - a draft row only
 // becomes a real POSTed issuance once all of these are filled.
+//
+// autocompleteHintFor (autocomplete.ts) names three of them to the operator, because the
+// Traveos autocomplete only ever looks at saved rows. Adding a field here means adding its
+// explanation there too.
 export function draftIsReadyToCreate(row: IssuanceRow): boolean {
   return (
     row.program_locator.trim() !== "" &&

@@ -92,6 +92,31 @@ avisa que campos de seleção podem vir incompletos.
   `Ctrl+V` nativo e as teclas de navegação; por isso a seleção precisa rolar pra dentro da
   tela explicitamente.
 
+## Autocompletar dados (Traveos)
+Toggle na barra de filtros (preferência em `localStorage`, `issuances:autocomplete`). Ligado, a
+grade puxa o itinerário da Traveos sozinha na **primeira linha candidata** — uma de cada vez, uma
+tentativa por linha por carregamento de página (`isAutocompleteCandidate` + `autocompleteAttemptedRef`).
+
+O mínimo para disparar **varia por companhia**, e por isso os cabeçalhos das colunas que ainda
+faltam ficam **vermelhos enquanto a linha estiver selecionada** (`autocompleteHintFor`), com o
+motivo no `title`:
+
+| Sempre | Só se a cia exigir |
+|---|---|
+| Localizador (do programa ou da cia), Origem | Passageiro principal (`requires_last_name`) |
+| Pontos, Valor milheiro, Conta | Nº da compra (`requires_purchase_number`) |
+
+- **Taxas não entra** — é anulável, a linha salva sem ela.
+- **Pontos / Valor milheiro / Conta** não são exigências da Traveos: são o que
+  `draftIsReadyToCreate` pede para a linha ser salva, e o autocomplete só olha para linhas salvas.
+- **Nº da compra não tem coluna** — é digitado depois de um `/` na célula Localizador, então
+  acende aquele cabeçalho e o `title` explica.
+- **Cia sem integração** (`traveos_supported` off ou sem `traveos_airline_id`): nenhum vermelho, e
+  um aviso âmbar na toolbar — preencher tudo não faria a linha autocompletar.
+- **Origem é exigência só do frontend.** O backend não a valida e mandaria `""` para a Traveos;
+  sem ela o autocomplete simplesmente nunca dispara, sem erro nenhum. É o caso que mais justifica
+  o realce.
+
 ## Performance
 Hoje a grade usa **um único contexto React**; mover a seleção re-renderiza todas as células
 (aceitável em volumes pequenos/médios). **Follow-up planejado (PR próprio):** dividir o
