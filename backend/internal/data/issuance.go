@@ -26,8 +26,24 @@ type Issuance struct {
 	Points              int             `gorm:"not null" json:"points"`
 	ValueOfTheThousand  int             `gorm:"column:value_of_the_thousand;not null" json:"value_of_the_thousand"`
 	Taxes               *int            `json:"taxes"`
-	AccountID           string          `gorm:"column:account_id;type:uuid;not null" json:"account_id"`
-	Account             *Account        `gorm:"foreignKey:AccountID;references:ID" json:"account,omitempty"`
+	// CostOfTheThousand is the buy side of the same trade ValueOfTheThousand is the
+	// sell side of: what the agency pays the account's administrator per thousand
+	// miles, in centavos. Nil means the cost has not been agreed yet, which is not
+	// the same as zero - the supplier payment summary refuses to generate on a nil
+	// rather than billing the supplier short.
+	//
+	// It is deliberately absent from IssuanceResponse and UpdateIssuanceRequest: what
+	// the agency pays a supplier is admin-only, and the issuances grid is an operator
+	// screen. It is read and written exclusively through /sales/suppliers, which is
+	// behind RequireAdmin.
+	CostOfTheThousand *int `gorm:"column:cost_of_the_thousand" json:"cost_of_the_thousand"`
+	// TaxesIncludedInCost says whether the taxes are part of what is paid for this
+	// issuance. Per issuance because it is per deal: some administrators are reimbursed
+	// the taxes they paid the airline and some are not, and one account can have both.
+	// Admin-only for the same reason CostOfTheThousand is.
+	TaxesIncludedInCost bool     `gorm:"column:taxes_included_in_cost;not null;default:false" json:"taxes_included_in_cost"`
+	AccountID           string   `gorm:"column:account_id;type:uuid;not null" json:"account_id"`
+	Account             *Account `gorm:"foreignKey:AccountID;references:ID" json:"account,omitempty"`
 	// AccountNicknameID records which of the account's aliases the operator picked.
 	// It is a FK rather than a copied string so renaming an alias propagates to past
 	// issuances instead of leaving them showing a stale name.

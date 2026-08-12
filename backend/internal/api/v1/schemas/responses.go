@@ -258,6 +258,13 @@ type SupplierBalanceListResponse struct {
 	Data    []SupplierBalanceResponse `json:"data"`
 }
 
+// UpdateSupplierIssuancesSingleResponse is the POST /sales/suppliers/issuances route response
+type UpdateSupplierIssuancesSingleResponse struct {
+	Success bool                            `json:"success" example:"true"`
+	Message string                          `json:"message" example:"Emissões atualizadas com sucesso"`
+	Data    UpdateSupplierIssuancesResponse `json:"data"`
+}
+
 // DashboardSingleResponse is the GET /dashboard route response
 type DashboardSingleResponse struct {
 	Success bool              `json:"success" example:"true"`

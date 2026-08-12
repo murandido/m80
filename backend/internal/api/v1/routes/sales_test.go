@@ -31,17 +31,27 @@ func withRole(role string) func(http.Handler) http.Handler {
 // the request never reaches the handler, and the admin path is already covered by the
 // handler tests in internal/api/v1/handlers/sales_test.go, which have a real database.
 func TestRegisterSaleRoutes_SuppliersRequireAdmin(t *testing.T) {
-	r := chi.NewRouter()
-	r.Group(func(r chi.Router) {
-		r.Use(withRole(data.RoleUser))
-		RegisterSaleRoutes(r, nil, nil)
-	})
+	// The write is gated separately from the read, so both are asserted: an operator who
+	// cannot see what the agency pays a supplier must not be able to set it either.
+	for _, tc := range []struct{ name, method, path string }{
+		{"read balances", http.MethodGet, "/sales/suppliers"},
+		{"set payment terms", http.MethodPost, "/sales/suppliers/issuances"},
+		{"payment summary", http.MethodGet, "/sales/suppliers/report"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := chi.NewRouter()
+			r.Group(func(r chi.Router) {
+				r.Use(withRole(data.RoleUser))
+				RegisterSaleRoutes(r, nil, nil)
+			})
 
-	req := httptest.NewRequest(http.MethodGet, "/sales/suppliers", nil)
-	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, req)
+			req := httptest.NewRequest(tc.method, tc.path, nil)
+			rec := httptest.NewRecorder()
+			r.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("status: got %d, want %d (body: %s)", rec.Code, http.StatusForbidden, rec.Body.String())
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("status: got %d, want %d (body: %s)", rec.Code, http.StatusForbidden, rec.Body.String())
+			}
+		})
 	}
 }

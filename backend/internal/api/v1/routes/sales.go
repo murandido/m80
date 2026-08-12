@@ -25,6 +25,13 @@ func RegisterSaleRoutes(r chi.Router, db *gorm.DB, broker *events.Broker) {
 		// aggregated balance per account (Visão Fornecedores)
 		r.With(middleware.RequireAdmin()).Get("/suppliers", saleHandler.GetSupplierBalances)
 
+		// set the payment terms on a set of issuances. Admin-only for the same
+		// reason the balances are: what the agency pays a supplier is not operator data.
+		r.With(middleware.RequireAdmin()).Post("/suppliers/issuances", saleHandler.UpdateSupplierIssuances)
+
+		// the payment summary sent to the account's administrator
+		r.With(middleware.RequireAdmin()).Get("/suppliers/report", saleHandler.GetSupplierReportPDF)
+
 		// link a client and/or mark as paid
 		r.Patch("/{id}", saleHandler.UpdateSale)
 	})

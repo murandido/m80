@@ -9,6 +9,8 @@ import { cn } from "@/lib/utils"
 import { clearStickyFilters } from "@/lib/sticky-filters"
 import { useStickyFilters } from "@/hooks/use-sticky-filters"
 import { AgencyCombobox } from "@/components/agencies/agency-combobox"
+import { AgencyMultiCombobox } from "@/components/agencies/agency-multi-combobox"
+import { PersonCombobox } from "@/components/people/person-combobox"
 import { LoyaltyProgramCombobox } from "@/components/loyalty-programs/loyalty-program-combobox"
 import { AccountCombobox } from "@/components/accounts/account-combobox"
 import { UserCombobox } from "@/components/users/user-combobox"
@@ -19,7 +21,12 @@ import type { Account } from "@/schemas/account"
 import type { Person } from "@/schemas/person"
 import type { User } from "@/schemas/user"
 import type { Client } from "@/schemas/client"
-import { SALES_FILTER_KEYS, type SalesFilterState } from "@/app/dashboard/sales/period-params"
+import {
+  parseAgencyIds,
+  SALES_FILTER_KEYS,
+  serializeAgencyIds,
+  type SalesFilterState,
+} from "@/app/dashboard/sales/period-params"
 
 interface SalesFilterBarProps {
   agencies: Agency[]
@@ -85,13 +92,21 @@ export function SalesFilterBar({
       <div className="flex flex-wrap items-end gap-3">
         <div className="flex w-52 flex-col gap-1">
           <Label className="text-xs text-slate-500">Agência</Label>
-          <AgencyCombobox
-            agencies={agencies}
-            value={filters.agency_id}
-            onChange={(agency_id) => update({ agency_id })}
-            placeholder="Agência principal"
-            clearable={false}
-          />
+          {isClients ? (
+            <AgencyCombobox
+              agencies={agencies}
+              value={filters.agency_id}
+              onChange={(agency_id) => update({ agency_id })}
+              placeholder="Agência principal"
+              clearable={false}
+            />
+          ) : (
+            <AgencyMultiCombobox
+              agencies={agencies}
+              value={parseAgencyIds(filters.agency_ids)}
+              onChange={(ids) => update({ agency_ids: serializeAgencyIds(ids) })}
+            />
+          )}
         </div>
 
         <div className="flex w-52 flex-col gap-1">
@@ -114,6 +129,18 @@ export function SalesFilterBar({
             placeholder="Todas"
           />
         </div>
+
+        {!isClients && (
+          <div className="flex w-52 flex-col gap-1">
+            <Label className="text-xs text-slate-500">Administrador</Label>
+            <PersonCombobox
+              people={people}
+              value={filters.administrator_id}
+              onChange={(administrator_id) => update({ administrator_id })}
+              placeholder="Todos"
+            />
+          </div>
+        )}
 
         {isClients && (
           <>

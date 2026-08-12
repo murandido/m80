@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -180,6 +181,52 @@ func resolveAgencyFilter(db *gorm.DB, r *http.Request) (string, error) {
 		return value, nil
 	}
 	return defaultAgencyID(db)
+}
+
+// allAgenciesToken is the explicit "every agency" choice on the suppliers view. It exists
+// because an empty query param cannot mean it: the panel drops empty params from the URL,
+// so "nothing selected" and "the param was never sent" arrive identical - and the second
+// one has to keep meaning the main agency, or an old bookmark would silently widen into
+// every partner's issuances.
+const allAgenciesToken = "all"
+
+// resolveSupplierAgencyFilter reads the suppliers view's multi-valued agency choice. It
+// returns nil when the caller asked for every agency, and otherwise the ids to restrict to.
+//
+// Precedence is deliberate: agency_ids wins when present, and its absence falls all the way
+// back to resolveAgencyFilter - the single agency_id, then the main agency. That keeps every
+// existing caller, bookmark and sticky-filter cookie behaving exactly as it did.
+func resolveSupplierAgencyFilter(db *gorm.DB, r *http.Request) ([]string, error) {
+	raw := strings.TrimSpace(r.URL.Query().Get("agency_ids"))
+	if raw == "" {
+		agencyID, err := resolveAgencyFilter(db, r)
+		if err != nil {
+			return nil, err
+		}
+		return []string{agencyID}, nil
+	}
+
+	if raw == allAgenciesToken {
+		return nil, nil
+	}
+
+	ids := make([]string, 0, 4)
+	for _, id := range strings.Split(raw, ",") {
+		if id = strings.TrimSpace(id); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	// A list that parsed down to nothing is a malformed param, not a request for
+	// everything - fall back rather than quietly widening the query.
+	if len(ids) == 0 {
+		agencyID, err := resolveAgencyFilter(db, r)
+		if err != nil {
+			return nil, err
+		}
+		return []string{agencyID}, nil
+	}
+
+	return ids, nil
 }
 
 // applySaleListFilters applies the listing filters to a query built by saleListQuery. It is
@@ -437,51 +484,103 @@ func (h *SaleHandler) UpdateSale(w http.ResponseWriter, r *http.Request) {
 // aggregated in Go rather than with SQL SUMs so the period rule - issued in it, refunded
 // in it - lives in one testable function instead of inside a CASE expression.
 type supplierIssuanceRow struct {
+	IssuanceID     string
 	AccountID      string
 	Points         int
 	RefundedPoints *int
 	CreatedAt      time.Time
 	CancelledAt    *time.Time
 
+	ProgramLocator      string
+	AirlineLocator      *string
+	OriginIATACode      *string
+	DestinationIATACode *string
+	Taxes               *int
+	RefundedTaxes       *int
+	CostOfTheThousand   *int
+	TaxesIncludedInCost bool
+
 	AccountLogin        *string
 	AccountNickname     *string
 	HolderName          *string
+	AdministratorID     *string
 	AdministratorName   *string
 	LoyaltyProgramName  string
 	LoyaltyProgramColor string
+	// LoyaltyProgramCode and DefaultAirlineCode resolve the brand mark on the payment
+	// summary, program first and its airline second - TudoAzul and AZUL share artwork,
+	// Smiles and GOL do not. They stay off the JSON response: the panel has no use for
+	// them, and the logos are a server-side asset.
+	LoyaltyProgramCode string
+	DefaultAirlineCode *string
 }
 
 // GetSupplierBalances handles the GET /sales/suppliers route.
 // @Summary      Saldo por fornecedor (Visão Fornecedores)
-// @Description  Agrega, por conta, as milhas emitidas no período menos as devolvidas por cancelamentos no mesmo período. Sem agency_id, filtra pela agência principal (is_default=true). Emissões excluídas não entram. Rota restrita a administradores.
+// @Description  Agrega, por conta, as milhas emitidas no período menos as devolvidas por cancelamentos no mesmo período. Sem agency_id nem agency_ids, filtra pela agência principal (is_default=true); agency_ids aceita uma lista ou 'all'. Emissões excluídas não entram. Rota restrita a administradores.
 // @Tags         Vendas
 // @Produce      json
 // @Security     BearerAuth
 // @Param        date_from           query  string  false  "Data inicial do período (YYYY-MM-DD), inclusiva"
 // @Param        date_to             query  string  false  "Data final do período (YYYY-MM-DD), inclusiva"
 // @Param        agency_id           query  string  false  "UUID da agência (padrão: a agência principal)"
+// @Param        agency_ids          query  string  false  "UUIDs de agências separados por vírgula, ou 'all' para todas. Tem precedência sobre agency_id"
 // @Param        loyalty_program_id  query  string  false  "UUID do programa de fidelidade"
 // @Param        account_id          query  string  false  "UUID da conta"
+// @Param        administrator_id    query  string  false  "UUID do administrador da conta (people.id)"
 // @Success      200  {object}  schemas.SupplierBalanceListResponse
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      403  {object}  schemas.ErrorResponse "Usuário não é administrador"
 // @Failure      500  {object}  schemas.ErrorResponse "Nenhuma agência principal configurada ou erro ao calcular saldos"
 // @Router       /sales/suppliers [get]
 func (h *SaleHandler) GetSupplierBalances(w http.ResponseWriter, r *http.Request) {
-	agencyID, err := resolveAgencyFilter(h.DB, r)
+	rows, from, to, err := h.fetchSupplierRows(r)
 	if err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "No default agency configured")
+		utils.SendError(w, r, err.status, err.message)
 		return
+	}
+
+	balances := aggregateSupplierBalances(rows, from, to)
+
+	utils.SendJSON(w, r, http.StatusOK, "Supplier balances fetched successfully", balances)
+}
+
+// supplierFetchError carries the status the caller should answer with, so the two handlers
+// that fetch supplier rows report the same failure the same way.
+type supplierFetchError struct {
+	status  int
+	message string
+}
+
+func (e *supplierFetchError) Error() string { return e.message }
+
+// fetchSupplierRows reads every issuance that can contribute to the requested period, with
+// the requested filters applied. It is shared by the balances endpoint and the payment
+// summary PDF so a document can never cover a different set of issuances than the screen it
+// was generated from.
+func (h *SaleHandler) fetchSupplierRows(r *http.Request) ([]supplierIssuanceRow, *time.Time, *time.Time, *supplierFetchError) {
+	agencyIDs, err := resolveSupplierAgencyFilter(h.DB, r)
+	if err != nil {
+		return nil, nil, nil, &supplierFetchError{http.StatusInternalServerError, "No default agency configured"}
 	}
 
 	from, to := parseDateRange(r)
 
 	query := h.DB.Table("issuances").
-		Select(`issuances.account_id,
+		Select(`issuances.id AS issuance_id,
+			issuances.account_id,
 			issuances.points,
 			issuances.refunded_points,
 			issuances.created_at,
 			issuances.cancelled_at,
+			issuances.program_locator,
+			issuances.airline_locator,
+			issuances.origin_iata_code,
+			issuances.destination_iata_code,
+			issuances.taxes,
+			issuances.refunded_taxes,
+			issuances.cost_of_the_thousand,
+			issuances.taxes_included_in_cost,
 			accounts.login AS account_login,
 			-- Sub-select rather than a join: an account can hold several nicknames, and
 			-- joining would multiply the issuance rows this aggregation counts. Oldest
@@ -492,23 +591,33 @@ func (h *SaleHandler) GetSupplierBalances(w http.ResponseWriter, r *http.Request
 				ORDER BY account_nicknames.created_at ASC
 				LIMIT 1) AS account_nickname,
 			holders.name AS holder_name,
+			accounts.administrator_id,
 			administrators.name AS administrator_name,
 			loyalty_programs.name AS loyalty_program_name,
-			loyalty_programs.color AS loyalty_program_color`).
+			loyalty_programs.color AS loyalty_program_color,
+			loyalty_programs.code AS loyalty_program_code,
+			program_airlines.code AS default_airline_code`).
 		Joins("JOIN accounts ON accounts.id = issuances.account_id").
 		Joins("JOIN loyalty_programs ON loyalty_programs.id = issuances.loyalty_program_id").
+		Joins("LEFT JOIN airlines AS program_airlines ON program_airlines.id = loyalty_programs.default_airline_id").
 		Joins("LEFT JOIN people AS holders ON holders.id = accounts.holder_id").
 		Joins("LEFT JOIN people AS administrators ON administrators.id = accounts.administrator_id").
 		// A deleted issuance is a typo being erased, not a debt with the account's
 		// administrator - unlike a cancellation, which really did consume and give back
 		// miles. The join is hand-written, so this scope has to be explicit.
-		Where("issuances.deleted_at IS NULL").
-		Where("issuances.agency_id = ?", agencyID)
+		Where("issuances.deleted_at IS NULL")
+
+	// nil means every agency was asked for; IN () on an empty slice would match nothing,
+	// which is the opposite.
+	if agencyIDs != nil {
+		query = query.Where("issuances.agency_id IN ?", agencyIDs)
+	}
 
 	q := r.URL.Query()
 	for column, param := range map[string]string{
 		"issuances.loyalty_program_id": "loyalty_program_id",
 		"issuances.account_id":         "account_id",
+		"accounts.administrator_id":    "administrator_id",
 	} {
 		if value := q.Get(param); value != "" {
 			query = query.Where(column+" = ?", value)
@@ -532,25 +641,27 @@ func (h *SaleHandler) GetSupplierBalances(w http.ResponseWriter, r *http.Request
 	}
 
 	var rows []supplierIssuanceRow
-	if err := query.Scan(&rows).Error; err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch supplier balances")
-		return
+	if scanErr := query.Scan(&rows).Error; scanErr != nil {
+		slog.Error("failed to fetch supplier balance rows", "err", scanErr)
+		return nil, nil, nil, &supplierFetchError{http.StatusInternalServerError, "Failed to fetch supplier balances"}
 	}
 
-	balances := aggregateSupplierBalances(rows, from, to)
-
-	utils.SendJSON(w, r, http.StatusOK, "Supplier balances fetched successfully", balances)
+	return rows, from, to, nil
 }
 
 // aggregateSupplierBalances folds per-issuance rows into one balance per account: miles
 // issued inside the period minus miles refunded by cancellations inside the same period.
 // An issuance created and cancelled in the same period contributes to both sides, which
 // is what makes the two cancel out to zero without any same-day special case.
+//
+// The same two branches also emit the account's statement, so the lines the panel shows can
+// never describe a different set of issuances than the totals beside them.
 func aggregateSupplierBalances(rows []supplierIssuanceRow, from, to *time.Time) []schemas.SupplierBalanceResponse {
 	type accumulator struct {
 		row            supplierIssuanceRow
 		issuedPoints   int
 		refundedPoints int
+		statement      []schemas.SupplierIssuanceResponse
 	}
 
 	byAccount := map[string]*accumulator{}
@@ -563,23 +674,36 @@ func aggregateSupplierBalances(rows []supplierIssuanceRow, from, to *time.Time) 
 
 		if inRange(&row.CreatedAt, from, to) {
 			acc.issuedPoints += row.Points
+			acc.statement = append(acc.statement, supplierStatementLine(row, "issued", row.CreatedAt, row.Points, row.Taxes))
 		}
 		if inRange(row.CancelledAt, from, to) && row.RefundedPoints != nil {
 			acc.refundedPoints += *row.RefundedPoints
+			acc.statement = append(acc.statement, supplierStatementLine(
+				row, "refund", *row.CancelledAt, -*row.RefundedPoints, negateCents(row.RefundedTaxes),
+			))
 		}
 	}
 
 	balances := make([]schemas.SupplierBalanceResponse, 0, len(byAccount))
 	for accountID, acc := range byAccount {
+		// Chronological, so a statement reads like one: what was issued, then what came
+		// back. Ranging over a map randomises the input order, so this is also what makes
+		// the response stable across identical requests.
+		sort.SliceStable(acc.statement, func(i, j int) bool {
+			return acc.statement[i].Date.Before(acc.statement[j].Date)
+		})
+
 		balance := schemas.SupplierBalanceResponse{
 			AccountID:           accountID,
 			AccountLabel:        supplierAccountLabel(acc.row),
 			LoyaltyProgramName:  acc.row.LoyaltyProgramName,
 			LoyaltyProgramColor: acc.row.LoyaltyProgramColor,
+			AdministratorID:     acc.row.AdministratorID,
 			AdministratorName:   acc.row.AdministratorName,
 			IssuedPoints:        acc.issuedPoints,
 			RefundedPoints:      acc.refundedPoints,
 			NetPoints:           acc.issuedPoints - acc.refundedPoints,
+			Issuances:           acc.statement,
 		}
 		balances = append(balances, balance)
 	}
@@ -594,6 +718,115 @@ func aggregateSupplierBalances(rows []supplierIssuanceRow, from, to *time.Time) 
 	})
 
 	return balances
+}
+
+// UpdateSupplierIssuances handles the POST /sales/suppliers/issuances route.
+// @Summary      Definir os termos de pagamento ao fornecedor
+// @Description  Grava o milheiro de custo (em centavos) e/ou se as taxas entram no valor, nas emissões informadas. Recebe a lista explícita de ids, nunca um filtro: um id é a edição de uma linha, vários são a aplicação em massa. Campo omitido é preservado; cost_of_the_thousand explicitamente nulo limpa o valor. Rota restrita a administradores.
+// @Tags         Vendas
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        request  body  schemas.UpdateSupplierIssuancesRequest  true  "Emissões e os termos de pagamento"
+// @Success      200  {object}  schemas.UpdateSupplierIssuancesSingleResponse
+// @Failure      400  {object}  schemas.ErrorResponse "Payload inválido"
+// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      403  {object}  schemas.ErrorResponse "Usuário não é administrador"
+// @Failure      500  {object}  schemas.ErrorResponse "Erro ao gravar os termos de pagamento"
+// @Router       /sales/suppliers/issuances [post]
+func (h *SaleHandler) UpdateSupplierIssuances(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		utils.SendError(w, r, http.StatusBadRequest, "Invalid JSON payload")
+		return
+	}
+
+	// Decoded twice, the same way UpdateSale is and for the same reason: the struct
+	// carries the values, the raw map tells an omitted cost_of_the_thousand (leave the
+	// rate alone) from an explicit null (clear it back to "not agreed"). A single *int
+	// cannot express that difference, and here it is the difference between the tax
+	// buttons preserving the rates and wiping every one of them.
+	var present map[string]json.RawMessage
+	if err := json.Unmarshal(body, &present); err != nil {
+		utils.SendError(w, r, http.StatusBadRequest, "Invalid JSON payload")
+		return
+	}
+
+	var req schemas.UpdateSupplierIssuancesRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		utils.SendError(w, r, http.StatusBadRequest, "Invalid JSON payload")
+		return
+	}
+
+	// The validator carries the real guard: required + min=1 is what makes an UPDATE
+	// without a WHERE unreachable, and max=1000 keeps a runaway request from rewriting the
+	// table in one statement.
+	if err := h.Validator.Struct(req); err != nil {
+		utils.SendError(w, r, http.StatusBadRequest, "Validation failed: "+err.Error())
+		return
+	}
+
+	updates := map[string]any{}
+	if _, ok := present["cost_of_the_thousand"]; ok {
+		updates["cost_of_the_thousand"] = req.CostOfTheThousand
+	}
+	if req.TaxesIncludedInCost != nil {
+		updates["taxes_included_in_cost"] = *req.TaxesIncludedInCost
+	}
+	if len(updates) == 0 {
+		utils.SendError(w, r, http.StatusBadRequest, "No fields to update")
+		return
+	}
+
+	result := h.DB.Model(&data.Issuance{}).
+		Where("id IN ?", req.IssuanceIDs).
+		Updates(updates)
+	if result.Error != nil {
+		slog.Error("failed to update the supplier payment terms",
+			"issuance_count", len(req.IssuanceIDs), "err", result.Error)
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to update the payment terms")
+		return
+	}
+
+	// One event for the batch rather than one per issuance: the panels that care refetch
+	// with their own filters anyway, and a bulk apply would otherwise put hundreds of
+	// messages on every open stream to say the same thing.
+	h.Broker.Broadcast(events.Event{
+		Type:    eventIssuanceUpdated,
+		Payload: map[string]string{"id": req.IssuanceIDs[0]},
+	})
+
+	utils.SendJSON(w, r, http.StatusOK, "Payment terms updated successfully",
+		schemas.UpdateSupplierIssuancesResponse{Updated: int(result.RowsAffected)})
+}
+
+// supplierStatementLine builds one line of an account's statement. Points and taxes are
+// passed in already signed rather than derived here, because only the caller knows which of
+// the two branches it is in.
+func supplierStatementLine(row supplierIssuanceRow, kind string, date time.Time, points int, taxes *int) schemas.SupplierIssuanceResponse {
+	return schemas.SupplierIssuanceResponse{
+		IssuanceID:          row.IssuanceID,
+		Kind:                kind,
+		Date:                date,
+		ProgramLocator:      row.ProgramLocator,
+		AirlineLocator:      row.AirlineLocator,
+		OriginIATACode:      row.OriginIATACode,
+		DestinationIATACode: row.DestinationIATACode,
+		Points:              points,
+		Taxes:               taxes,
+		CostOfTheThousand:   row.CostOfTheThousand,
+		TaxesIncludedInCost: row.TaxesIncludedInCost,
+	}
+}
+
+// negateCents flips a nullable amount, preserving nil. A cancellation with no tax refund
+// recorded is not a refund of zero: the line simply has no tax side.
+func negateCents(cents *int) *int {
+	if cents == nil {
+		return nil
+	}
+	negated := -*cents
+	return &negated
 }
 
 // supplierAccountLabel identifies an account in the suppliers view. Unlike the sales

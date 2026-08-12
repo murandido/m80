@@ -178,7 +178,7 @@ func FromIssuance(
 
 	if issuance.Airline != nil {
 		model.AirlineName = issuance.Airline.Name
-		model.AirlineLogo = logoFor(issuance.Airline.Code)
+		model.AirlineLogo = LogoFor(issuance.Airline.Code)
 		if issuance.Airline.BrandColor != nil && *issuance.Airline.BrandColor != "" {
 			model.Brand = *issuance.Airline.BrandColor
 		}
@@ -465,9 +465,14 @@ func buildAllowances(rows []data.IssuancePassengerBaggage) []Allowance {
 	return built
 }
 
-// logoFor returns the airline's inline SVG, or nothing when we have no artwork
-// for it - the template then falls back to the airline's name in text.
-func logoFor(code string) template.HTML {
+// LogoFor returns the brand's inline SVG, or nothing when we have no artwork
+// for it - the caller's template then falls back to the name in text.
+//
+// Exported because the supplier payment summary draws the same brands from the
+// same files. Duplicating the artwork into a second package would mean two
+// copies of every logo drifting apart, which is exactly the sort of thing that
+// is noticed only after a document has already gone out to a supplier.
+func LogoFor(code string) template.HTML {
 	svg, err := logoFS.ReadFile("logos/" + strings.ToUpper(strings.TrimSpace(code)) + ".svg")
 	if err != nil {
 		return ""

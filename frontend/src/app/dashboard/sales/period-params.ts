@@ -12,12 +12,23 @@ export type { ResolvedPeriod }
 // agency", resolved by the backend.
 export const SALES_FILTER_KEYS = [
   "agency_id",
+  // agency_ids is the suppliers view's multi-valued agency choice and takes precedence
+  // over agency_id on that screen only. It is a comma-separated list, or the literal
+  // "all": an empty value cannot mean "every agency" because the filter bar drops empty
+  // params from the URL, which would make "none selected" indistinguishable from "never
+  // chose", and the second one still has to mean the main agency.
+  "agency_ids",
   "loyalty_program_id",
   "account_id",
+  "administrator_id",
   "issuer_id",
   "client_id",
   "paid",
 ] as const
+
+// ALL_AGENCIES is the explicit "every agency" token. It has to match allAgenciesToken in
+// backend/internal/api/v1/handlers/sales.go.
+export const ALL_AGENCIES = "all"
 
 export type SalesFilterState = Record<(typeof SALES_FILTER_KEYS)[number], string>
 
@@ -38,12 +49,28 @@ export function resolveSalesPeriod(params: SalesSearchParams): ResolvedPeriod {
 export function resolveSalesFilters(params: SalesSearchParams): SalesFilterState {
   return {
     agency_id: params.agency_id ?? "",
+    agency_ids: params.agency_ids ?? "",
     loyalty_program_id: params.loyalty_program_id ?? "",
     account_id: params.account_id ?? "",
+    administrator_id: params.administrator_id ?? "",
     issuer_id: params.issuer_id ?? "",
     client_id: params.client_id ?? "",
     paid: params.paid ?? "",
   }
+}
+
+// parseAgencyIds turns the URL's agency_ids into the list the picker holds. Both "all" and
+// an absent value come back empty, because the picker draws them the same way - the
+// difference between them only matters on the way out, in buildSalesQuery.
+export function parseAgencyIds(value: string): string[] {
+  if (!value || value === ALL_AGENCIES) return []
+  return value.split(",").filter(Boolean)
+}
+
+// serializeAgencyIds is the inverse, and is where "none selected" becomes the explicit
+// token instead of an empty param that would be dropped and read back as the main agency.
+export function serializeAgencyIds(ids: string[]): string {
+  return ids.length === 0 ? ALL_AGENCIES : ids.join(",")
 }
 
 // Builds the query string for the backend out of the resolved period plus filters. Empty

@@ -1,0 +1,209 @@
+{{- /*
+The supplier payment summary, in the subset WeasyPrint 61.2 renders.
+
+The same four rules internal/ticket/ticket.gohtml documents at length apply here,
+because the same renderer sees both files:
+
+  1. NO CSS GRID - it is not implemented and degrades to stacked blocks without
+     warning. The statement rows are `display: table`, which is also what keeps
+     the columns aligned down the page.
+  2. NO oklch(), no color-mix(), no @media - all three are dropped as invalid,
+     and a colour written that way renders black.
+  3. Only fonts-liberation, the one font family the pdf-service container has.
+  4. Every inline SVG carries an explicit colour. The logos come from
+     internal/ticket/logos, which already follow that rule.
+
+The look follows the ticket: the loyalty program's own colour as a header band,
+its logo on a white chip, and hairline rules instead of heavy borders. Brand and
+BrandOn are computed in Go - see ContrastColour - because half the real brand
+colours are unreadable under white text.
+
+This document is read by someone deciding how much money to send, so "Total a
+pagar" is the only thing set large. Everything else is deliberately quiet.
+*/ -}}
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Resumo de pagamento ao fornecedor</title>
+<style>
+  @page {
+    size: 216mm {{ .PageHeightMM }}mm;
+    margin: 12mm 12mm 12mm 12mm;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    font-family: "Liberation Sans", Arial, Helvetica, sans-serif;
+    font-size: 10.5px;
+    line-height: 1.4;
+    color: #1e293b;
+    background: #ffffff;
+  }
+
+  .section { page-break-inside: auto; }
+  .section + .section { margin-top: 26px; }
+
+  /* Table rather than flex: the logo chip has to sit hard against the right edge
+     and stay centred against a two-line title, which a float cannot promise. */
+  .header {
+    width: 100%;
+    display: table;
+    border-radius: 6px;
+    padding: 11px 14px;
+  }
+  .headerText { display: table-cell; vertical-align: middle; }
+  .headerLogo { display: table-cell; vertical-align: middle; text-align: right; width: 124px; }
+
+  /* The logos are brand artwork in their own colours, so they need a light plate
+     to sit on - several of them vanish against their own brand band. */
+  .logoChip {
+    display: inline-block;
+    background: #ffffff;
+    border-radius: 5px;
+    padding: 5px 9px;
+  }
+  .logoChip svg { max-width: 92px; max-height: 26px; vertical-align: middle; }
+
+  .title { font-size: 15px; font-weight: 700; letter-spacing: -0.1px; }
+  .period { font-size: 10px; opacity: 0.92; }
+  .administrator { font-size: 11px; margin-top: 3px; opacity: 0.95; }
+  .programName { font-size: 14px; font-weight: 700; }
+
+  .lines { width: 100%; display: table; margin-top: 10px; }
+  .line { display: table-row; page-break-inside: avoid; }
+  .line > span {
+    display: table-cell;
+    padding: 4px 8px 4px 0;
+    border-bottom: 1px solid #eef2f7;
+  }
+  .lineHead > span {
+    font-size: 8.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.7px;
+    color: #94a3b8;
+    border-bottom: none;
+    padding-bottom: 2px;
+  }
+
+  .colLocator { width: 16%; font-weight: 700; }
+  .colDate { width: 15%; color: #64748b; }
+  .colRoute { width: 15%; color: #64748b; }
+  .colPoints { width: 13%; text-align: right; }
+  .colMilheiro { width: 13%; text-align: right; color: #64748b; }
+  .colTaxes { width: 13%; text-align: right; }
+  .colAmount { width: 15%; text-align: right; font-weight: 700; }
+
+  /* A credit is the one row a supplier must not skim past: it is money going back
+     the other way. */
+  .refund > span { color: #b91c1c; }
+  .refundTag {
+    font-size: 7.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    background: #fee2e2;
+    border-radius: 3px;
+    padding: 1px 4px;
+  }
+
+  .totals > span {
+    padding-top: 6px;
+    font-weight: 700;
+    border-bottom: none;
+    border-top: 1.5px solid #cbd5e1;
+  }
+
+  /* The one figure the reader is here for. The brand tint ties it to the header
+     band without another heavy rule across the page. */
+  .payable {
+    margin-top: 12px;
+    padding: 9px 14px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .payable .amount { font-size: 17px; }
+
+  .grandTotal {
+    margin-top: 24px;
+    padding: 11px 14px;
+    border-radius: 6px;
+    background: #0f172a;
+    color: #f8fafc;
+    font-size: 14px;
+    font-weight: 700;
+  }
+  .grandTotal .amount { font-size: 18px; }
+
+  .empty { color: #94a3b8; font-style: italic; }
+</style>
+</head>
+<body>
+
+{{ range .Sections }}
+<div class="section">
+  <div class="header" style="background: {{ .Brand }}; color: {{ .BrandOn }}">
+    <div class="headerText">
+      <div class="title">Emissões · {{ .AccountLabel }}</div>
+      <div class="period">{{ .PeriodLabel }}</div>
+      <div class="administrator">{{ if .Administrator }}{{ .Administrator }}{{ else }}Administrador não informado{{ end }}</div>
+    </div>
+    <div class="headerLogo">
+      {{ if .Logo }}<span class="logoChip">{{ .Logo }}</span>{{ else }}<span class="programName">{{ .ProgramName }}</span>{{ end }}
+    </div>
+  </div>
+
+  <div class="lines">
+    <div class="line lineHead">
+      <span class="colLocator">Localizador</span>
+      <span class="colDate">Data de emissão</span>
+      <span class="colRoute">Trecho</span>
+      <span class="colPoints">Pontos</span>
+      <span class="colMilheiro">Milheiro</span>
+      <span class="colTaxes">Taxas</span>
+      <span class="colAmount">Valor</span>
+    </div>
+
+    {{ range .Lines }}
+    <div class="line{{ if .Refund }} refund{{ end }}">
+      <span class="colLocator">{{ .Locator }}{{ if .Refund }} <span class="refundTag">estorno</span>{{ end }}</span>
+      <span class="colDate">{{ .Date }}</span>
+      <span class="colRoute">{{ .Origin }}{{ if .Destination }} → {{ .Destination }}{{ end }}</span>
+      <span class="colPoints">{{ .Points }}</span>
+      <span class="colMilheiro">{{ .Milheiro }}</span>
+      <span class="colTaxes">{{ .Taxes }}</span>
+      <span class="colAmount">{{ .Amount }}</span>
+    </div>
+    {{ else }}
+    <div class="line">
+      <span class="colLocator empty">Nenhuma emissão no período.</span>
+    </div>
+    {{ end }}
+
+    <div class="line totals">
+      <span class="colLocator">Total</span>
+      <span class="colDate"></span>
+      <span class="colRoute"></span>
+      <span class="colPoints">{{ .TotalPoints }}</span>
+      <span class="colMilheiro"></span>
+      <span class="colTaxes">{{ .TotalTaxes }}</span>
+      <span class="colAmount">{{ .TotalAmount }}</span>
+    </div>
+  </div>
+
+  <div class="payable" style="background: {{ .Brand }}; color: {{ .BrandOn }}">
+    Total a pagar <span class="amount">{{ .TotalAmount }}</span>
+  </div>
+</div>
+{{ end }}
+
+{{ if .ShowGrandTotal }}
+<div class="grandTotal">Total geral a pagar <span class="amount">{{ .GrandTotal }}</span></div>
+{{ end }}
+
+</body>
+</html>

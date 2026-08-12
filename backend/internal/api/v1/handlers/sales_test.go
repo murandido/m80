@@ -639,6 +639,109 @@ func TestGetSupplierBalances_NetsRefundsInTheSamePeriod(t *testing.T) {
 	})
 }
 
+// The statement is the un-aggregated version of the totals, so it has to agree with them
+// line by line. An issuance created and cancelled inside the same window produces two
+// lines - the booking and the credit - and they have to net to the same figure the totals
+// report.
+func TestGetSupplierBalances_StatementMatchesTheTotals(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		main := defaultAgency(t, tx)
+		issuance, _ := seedSaleFixture(t, tx, main.ID)
+
+		if err := tx.Model(&issuance).Updates(map[string]any{
+			"points":                10000,
+			"value_of_the_thousand": 2000,
+			"taxes":                 8400,
+			"cost_of_the_thousand":  1650,
+			"active":                false,
+			"cancelled_at":          time.Now(),
+			"refunded_points":       4000,
+			"refunded_taxes":        3000,
+		}).Error; err != nil {
+			t.Fatalf("failed to set up the cancelled issuance: %v", err)
+		}
+
+		today := spDay(t, 0)
+		got := findBalance(callGetSupplierBalances(t, tx, "date_from="+today+"&date_to="+today), issuance.AccountID)
+		if got == nil {
+			t.Fatal("account missing from the supplier balances")
+		}
+		if len(got.Issuances) != 2 {
+			t.Fatalf("statement lines: got %d, want 2 (%+v)", len(got.Issuances), got.Issuances)
+		}
+
+		issued, refund := got.Issuances[0], got.Issuances[1]
+		if issued.Kind != "issued" || refund.Kind != "refund" {
+			t.Fatalf("expected the booking before the credit, got %q then %q", issued.Kind, refund.Kind)
+		}
+		if issued.Points != 10000 {
+			t.Errorf("issued points: got %d, want 10000", issued.Points)
+		}
+		if issued.Taxes == nil || *issued.Taxes != 8400 {
+			t.Errorf("issued taxes: got %v, want 8400", issued.Taxes)
+		}
+		// Signed at the source so the panel only ever sums.
+		if refund.Points != -4000 {
+			t.Errorf("refund points: got %d, want -4000", refund.Points)
+		}
+		if refund.Taxes == nil || *refund.Taxes != -3000 {
+			t.Errorf("refund taxes: got %v, want -3000", refund.Taxes)
+		}
+		if issued.CostOfTheThousand == nil || *issued.CostOfTheThousand != 1650 {
+			t.Errorf("cost_of_the_thousand: got %v, want 1650", issued.CostOfTheThousand)
+		}
+		if issued.ProgramLocator != issuance.ProgramLocator {
+			t.Errorf("program_locator: got %q, want %q", issued.ProgramLocator, issuance.ProgramLocator)
+		}
+		if issued.IssuanceID != issuance.ID || refund.IssuanceID != issuance.ID {
+			t.Error("both lines must point back at the issuance that produced them")
+		}
+
+		// The whole point of the statement: summing it reproduces the totals beside it.
+		sum := issued.Points + refund.Points
+		if sum != got.NetPoints {
+			t.Errorf("statement sums to %d but net_points is %d", sum, got.NetPoints)
+		}
+	})
+}
+
+// A booking made before the window and cancelled inside it is money to be clawed back in
+// the window of the cancellation, not of the booking - so the only line is the credit.
+func TestGetSupplierBalances_StatementCreditsACancellationOnItsOwnDay(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		main := defaultAgency(t, tx)
+		issuance, _ := seedSaleFixture(t, tx, main.ID)
+
+		if err := tx.Model(&issuance).Updates(map[string]any{
+			"points":                10000,
+			"value_of_the_thousand": 2000,
+			"cost_of_the_thousand":  1650,
+			"created_at":            time.Now().AddDate(0, 0, -7),
+			"active":                false,
+			"cancelled_at":          time.Now(),
+			"refunded_points":       10000,
+		}).Error; err != nil {
+			t.Fatalf("failed to set up the cancelled issuance: %v", err)
+		}
+
+		today := spDay(t, 0)
+		got := findBalance(callGetSupplierBalances(t, tx, "date_from="+today+"&date_to="+today), issuance.AccountID)
+		if got == nil {
+			t.Fatal("account missing from the supplier balances")
+		}
+		if len(got.Issuances) != 1 {
+			t.Fatalf("statement lines: got %d, want 1 (%+v)", len(got.Issuances), got.Issuances)
+		}
+		if got.Issuances[0].Kind != "refund" || got.Issuances[0].Points != -10000 {
+			t.Errorf("got %s line of %d points, want a refund of -10000",
+				got.Issuances[0].Kind, got.Issuances[0].Points)
+		}
+		if got.NetPoints != -10000 {
+			t.Errorf("net_points: got %d, want -10000 - the agency is owed miles back", got.NetPoints)
+		}
+	})
+}
+
 func TestGetSupplierBalances_IgnoresCancellationOutsideThePeriod(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		main := defaultAgency(t, tx)
@@ -740,6 +843,232 @@ func TestGetSupplierBalances_FiltersByAgencyProgramAndAccount(t *testing.T) {
 			if findBalance(balances, other.AccountID) != nil {
 				t.Errorf("%s: a non-matching account leaked through", tc.name)
 			}
+		}
+	})
+}
+
+func callSetSupplierCost(t *testing.T, tx *gorm.DB, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	handler := NewSaleHandler(tx, events.NewBroker())
+
+	req := httptest.NewRequest(http.MethodPost, "/sales/suppliers/issuances", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	handler.UpdateSupplierIssuances(rec, req)
+	return rec
+}
+
+func taxesIncludedInCost(t *testing.T, tx *gorm.DB, issuanceID string) bool {
+	t.Helper()
+	var issuance data.Issuance
+	if err := tx.First(&issuance, "id = ?", issuanceID).Error; err != nil {
+		t.Fatalf("failed to re-read issuance %s: %v", issuanceID, err)
+	}
+	return issuance.TaxesIncludedInCost
+}
+
+func costOfTheThousand(t *testing.T, tx *gorm.DB, issuanceID string) *int {
+	t.Helper()
+	var issuance data.Issuance
+	if err := tx.First(&issuance, "id = ?", issuanceID).Error; err != nil {
+		t.Fatalf("failed to re-read issuance %s: %v", issuanceID, err)
+	}
+	return issuance.CostOfTheThousand
+}
+
+func TestSetSupplierCost_WritesOnlyTheListedIssuances(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		main := defaultAgency(t, tx)
+		first, _ := seedSaleFixture(t, tx, main.ID)
+		second, _ := seedSaleFixture(t, tx, main.ID)
+		untouched, _ := seedSaleFixture(t, tx, main.ID)
+
+		rec := callSetSupplierCost(t, tx, `{"issuance_ids":["`+first.ID+`","`+second.ID+`"],"cost_of_the_thousand":1650}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+		}
+
+		var resp struct {
+			Data schemas.UpdateSupplierIssuancesResponse `json:"data"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+		if resp.Data.Updated != 2 {
+			t.Errorf("updated: got %d, want 2", resp.Data.Updated)
+		}
+
+		for _, id := range []string{first.ID, second.ID} {
+			got := costOfTheThousand(t, tx, id)
+			if got == nil || *got != 1650 {
+				t.Errorf("issuance %s: cost got %v, want 1650", id, got)
+			}
+		}
+		// The endpoint takes ids and never a filter precisely so this can be asserted:
+		// nothing outside the list the operator confirmed is written.
+		if got := costOfTheThousand(t, tx, untouched.ID); got != nil {
+			t.Errorf("an issuance outside the list was written: got %v, want nil", got)
+		}
+	})
+}
+
+// Null is a real value here: it puts the issuance back to "cost not agreed yet", which is
+// what makes the payment summary refuse to generate again.
+func TestSetSupplierCost_NullClearsTheCost(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		main := defaultAgency(t, tx)
+		issuance, _ := seedSaleFixture(t, tx, main.ID)
+
+		if rec := callSetSupplierCost(t, tx, `{"issuance_ids":["`+issuance.ID+`"],"cost_of_the_thousand":1650}`); rec.Code != http.StatusOK {
+			t.Fatalf("seeding the cost failed: %d (%s)", rec.Code, rec.Body.String())
+		}
+		if rec := callSetSupplierCost(t, tx, `{"issuance_ids":["`+issuance.ID+`"],"cost_of_the_thousand":null}`); rec.Code != http.StatusOK {
+			t.Fatalf("clearing the cost failed: %d (%s)", rec.Code, rec.Body.String())
+		}
+
+		if got := costOfTheThousand(t, tx, issuance.ID); got != nil {
+			t.Errorf("cost after clearing: got %v, want nil", got)
+		}
+	})
+}
+
+// The tax buttons send no cost_of_the_thousand at all, and that has to leave the rates
+// alone. Absent and explicitly null look the same to a *int, which is why the handler
+// decodes the body twice - and this is what would catch that coming undone: without it, one
+// press of "incluir taxas em todas" would wipe every rate the operator had entered.
+func TestUpdateSupplierIssuances_OmittedCostIsNotAClearedCost(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		main := defaultAgency(t, tx)
+		issuance, _ := seedSaleFixture(t, tx, main.ID)
+
+		if rec := callSetSupplierCost(t, tx, `{"issuance_ids":["`+issuance.ID+`"],"cost_of_the_thousand":1650}`); rec.Code != http.StatusOK {
+			t.Fatalf("seeding the cost failed: %d (%s)", rec.Code, rec.Body.String())
+		}
+
+		// Only the tax flag is sent.
+		if rec := callSetSupplierCost(t, tx, `{"issuance_ids":["`+issuance.ID+`"],"taxes_included_in_cost":true}`); rec.Code != http.StatusOK {
+			t.Fatalf("setting the tax flag failed: %d (%s)", rec.Code, rec.Body.String())
+		}
+
+		if got := costOfTheThousand(t, tx, issuance.ID); got == nil || *got != 1650 {
+			t.Errorf("the rate was touched by a tax-only write: got %v, want 1650", got)
+		}
+		if !taxesIncludedInCost(t, tx, issuance.ID) {
+			t.Error("expected the taxes to be marked as included")
+		}
+
+		// And the inverse: setting only the rate leaves the tax flag alone.
+		if rec := callSetSupplierCost(t, tx, `{"issuance_ids":["`+issuance.ID+`"],"cost_of_the_thousand":1800}`); rec.Code != http.StatusOK {
+			t.Fatalf("updating the rate failed: %d (%s)", rec.Code, rec.Body.String())
+		}
+		if !taxesIncludedInCost(t, tx, issuance.ID) {
+			t.Error("the tax flag was cleared by a rate-only write")
+		}
+	})
+}
+
+// An UPDATE with no WHERE must not be reachable through this endpoint, whatever the body
+// says. Both of these would otherwise rewrite the cost of every issuance in the database.
+func TestSetSupplierCost_RejectsAnEmptyOrMissingIDList(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		main := defaultAgency(t, tx)
+		issuance, _ := seedSaleFixture(t, tx, main.ID)
+
+		for _, tc := range []struct{ name, body string }{
+			{"empty list", `{"issuance_ids":[],"cost_of_the_thousand":1650}`},
+			{"no fields", `{"issuance_ids":["` + issuance.ID + `"]}`},
+			{"absent list", `{"cost_of_the_thousand":1650}`},
+			{"not a uuid", `{"issuance_ids":["nope"],"cost_of_the_thousand":1650}`},
+			{"negative cost", `{"issuance_ids":["` + issuance.ID + `"],"cost_of_the_thousand":-1}`},
+		} {
+			rec := callSetSupplierCost(t, tx, tc.body)
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf("%s: status got %d, want 400 (body: %s)", tc.name, rec.Code, rec.Body.String())
+			}
+		}
+
+		if got := costOfTheThousand(t, tx, issuance.ID); got != nil {
+			t.Errorf("a rejected request still wrote: got %v, want nil", got)
+		}
+	})
+}
+
+// agency_ids is the suppliers view's multi-valued agency choice. The three cases below are
+// the whole contract: a list narrows to exactly that list, "all" drops the agency filter
+// entirely, and an absent param still means the main agency - the last one being what keeps
+// every existing bookmark and sticky-filter cookie behaving as it did.
+func TestGetSupplierBalances_FiltersByMultipleAgencies(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		main := defaultAgency(t, tx)
+		partnerA := data.Agency{Name: "Parceira A " + uuid.New().String()[:8]}
+		create(t, tx, &partnerA)
+		partnerB := data.Agency{Name: "Parceira B " + uuid.New().String()[:8]}
+		create(t, tx, &partnerB)
+
+		mainIssuance, _ := seedSaleFixture(t, tx, main.ID)
+		issuanceA, _ := seedSaleFixture(t, tx, partnerA.ID)
+		issuanceB, _ := seedSaleFixture(t, tx, partnerB.ID)
+
+		today := spDay(t, 0)
+		period := "date_from=" + today + "&date_to=" + today
+
+		twoOfThree := callGetSupplierBalances(t, tx, period+"&agency_ids="+main.ID+","+partnerA.ID)
+		if findBalance(twoOfThree, mainIssuance.AccountID) == nil {
+			t.Error("agency_ids: expected the main agency's account")
+		}
+		if findBalance(twoOfThree, issuanceA.AccountID) == nil {
+			t.Error("agency_ids: expected partner A's account")
+		}
+		if findBalance(twoOfThree, issuanceB.AccountID) != nil {
+			t.Error("agency_ids: partner B was not asked for and must not appear")
+		}
+
+		all := callGetSupplierBalances(t, tx, period+"&agency_ids=all")
+		for name, accountID := range map[string]string{
+			"main":     mainIssuance.AccountID,
+			"partnerA": issuanceA.AccountID,
+			"partnerB": issuanceB.AccountID,
+		} {
+			if findBalance(all, accountID) == nil {
+				t.Errorf("agency_ids=all: expected %s's account", name)
+			}
+		}
+
+		// The param being absent is not the same as "none selected": it still has to
+		// fall back to the main agency.
+		absent := callGetSupplierBalances(t, tx, period)
+		if findBalance(absent, issuanceA.AccountID) != nil {
+			t.Error("without agency_ids the query must stay on the main agency")
+		}
+	})
+}
+
+func TestGetSupplierBalances_FiltersByAdministrator(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		main := defaultAgency(t, tx)
+
+		administrator := data.Person{Name: "Administradora " + uuid.New().String()[:8]}
+		create(t, tx, &administrator)
+
+		administered, _ := seedSaleFixture(t, tx, main.ID)
+		if err := tx.Model(&data.Account{}).Where("id = ?", administered.AccountID).
+			Update("administrator_id", administrator.ID).Error; err != nil {
+			t.Fatalf("failed to set the account administrator: %v", err)
+		}
+		other, _ := seedSaleFixture(t, tx, main.ID)
+
+		today := spDay(t, 0)
+		balances := callGetSupplierBalances(t, tx,
+			"date_from="+today+"&date_to="+today+"&administrator_id="+administrator.ID)
+
+		match := findBalance(balances, administered.AccountID)
+		if match == nil {
+			t.Fatal("expected the administered account")
+		}
+		if match.AdministratorName == nil || *match.AdministratorName != administrator.Name {
+			t.Errorf("administrator_name: got %v, want %q", match.AdministratorName, administrator.Name)
+		}
+		if findBalance(balances, other.AccountID) != nil {
+			t.Error("an account with a different administrator leaked through")
 		}
 	})
 }

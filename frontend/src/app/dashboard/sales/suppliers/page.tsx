@@ -19,6 +19,7 @@ import { SalesFilterBar } from "@/components/sales/sales-filter-bar"
 import { SalesSuppliersTable } from "@/components/sales/sales-suppliers-table"
 import { LiveRefresh } from "@/components/layout/live-refresh"
 import {
+  ALL_AGENCIES,
   buildSalesQuery,
   resolveSalesFilters,
   resolveSalesPeriod,
@@ -88,9 +89,17 @@ export default async function SalesSuppliersPage({
     fetchList<Person>(`${api}/people`, getPeopleSchema.response, authHeader),
   ])
 
+  // The multi-picker owns the agency choice here, so it has to be told what the server
+  // actually filtered by. A bare URL means the backend fell back to the main agency; the
+  // picker shows that one selected rather than the "todas" it would show for an empty list,
+  // which would claim the table holds every agency when it does not.
   const effectiveFilters = {
     ...filters,
-    agency_id: filters.agency_id || (agencies ?? []).find((a) => a.is_default)?.id || "",
+    agency_ids:
+      filters.agency_ids ||
+      filters.agency_id ||
+      (agencies ?? []).find((a) => a.is_default)?.id ||
+      ALL_AGENCIES,
   }
 
   return (
@@ -137,7 +146,7 @@ export default async function SalesSuppliersPage({
             </AlertDescription>
           </Alert>
         ) : (
-          <SalesSuppliersTable balances={balances} />
+          <SalesSuppliersTable balances={balances} query={query.toString()} />
         )}
       </div>
     </div>
