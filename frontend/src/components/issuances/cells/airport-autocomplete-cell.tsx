@@ -1,6 +1,7 @@
 "use client"
 
 import { memo, useEffect, useRef, useState } from "react"
+import { normalizeSearch } from "@/lib/search"
 import { cn } from "@/lib/utils"
 import { CellStateProps, useGridContext } from "@/components/issuances/grid-context"
 import { IssuanceRow } from "@/components/issuances/types"
@@ -28,17 +29,17 @@ function airportLabel(airport: Airport): string {
 // matches across code/name/city/state/country, ranking IATA-prefix hits first to
 // mirror the backend's priority.
 function filterAirports(airports: Airport[], typed: string): Airport[] {
-  const q = typed.trim().toLowerCase()
+  const q = normalizeSearch(typed)
   if (q === "") return airports.slice(0, MAX_RESULTS)
   return airports
     .filter((a) =>
       [a.iata_code, a.name, a.city, a.state, a.country].some(
-        (value) => value?.toLowerCase().includes(q),
+        (value) => (value ? normalizeSearch(value).includes(q) : false),
       ),
     )
     .sort((a, b) => {
-      const aStarts = a.iata_code.toLowerCase().startsWith(q)
-      const bStarts = b.iata_code.toLowerCase().startsWith(q)
+      const aStarts = normalizeSearch(a.iata_code).startsWith(q)
+      const bStarts = normalizeSearch(b.iata_code).startsWith(q)
       if (aStarts === bStarts) return 0
       return aStarts ? -1 : 1
     })

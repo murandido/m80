@@ -1,6 +1,7 @@
 "use client"
 
 import { memo, useEffect, useRef, useState } from "react"
+import { normalizeSearch } from "@/lib/search"
 import { cn } from "@/lib/utils"
 import { CellStateProps, useGridContext } from "@/components/issuances/grid-context"
 import { IssuanceRow } from "@/components/issuances/types"
@@ -21,13 +22,13 @@ interface Option {
 // An empty query yields the whole list, in its original order: opening the cell should
 // show what is available instead of making the operator guess a prefix to type.
 function filterOptions(options: Option[], typed: string): Option[] {
-  const q = typed.trim().toLowerCase()
+  const q = normalizeSearch(typed)
   if (q === "") return options
   return options
-    .filter((o) => o.label.toLowerCase().includes(q) || o.hint.toLowerCase().includes(q))
+    .filter((o) => normalizeSearch(o.label).includes(q) || normalizeSearch(o.hint).includes(q))
     .sort((a, b) => {
-      const aStarts = a.label.toLowerCase().startsWith(q)
-      const bStarts = b.label.toLowerCase().startsWith(q)
+      const aStarts = normalizeSearch(a.label).startsWith(q)
+      const bStarts = normalizeSearch(b.label).startsWith(q)
       if (aStarts === bStarts) return 0
       return aStarts ? -1 : 1
     })
@@ -39,11 +40,11 @@ function findByCodeOrName<T extends { code: string; name: string }>(
   candidates: T[],
   typed: string,
 ): T | undefined {
-  const q = typed.trim().toLowerCase()
+  const q = normalizeSearch(typed)
   if (q === "") return undefined
   return (
-    candidates.find((candidate) => candidate.code.toLowerCase() === q) ??
-    candidates.find((candidate) => candidate.name.toLowerCase() === q)
+    candidates.find((candidate) => normalizeSearch(candidate.code) === q) ??
+    candidates.find((candidate) => normalizeSearch(candidate.name) === q)
   )
 }
 

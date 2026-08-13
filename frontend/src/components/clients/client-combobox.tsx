@@ -5,6 +5,7 @@ import { Check, ChevronsUpDown, Plus, Search, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { normalizeSearch } from "@/lib/search"
 import { cn } from "@/lib/utils"
 import { Client } from "@/schemas/client"
 
@@ -23,12 +24,12 @@ interface ClientComboboxProps {
 }
 
 function matches(client: Client, query: string): boolean {
-  const needle = query.trim().toLowerCase()
+  const needle = normalizeSearch(query)
   if (!needle) return true
 
   return (
-    client.name.toLowerCase().includes(needle) ||
-    (client.phone?.toLowerCase().includes(needle) ?? false)
+    normalizeSearch(client.name).includes(needle) ||
+    (client.phone ? normalizeSearch(client.phone).includes(needle) : false)
   )
 }
 
@@ -50,13 +51,14 @@ export function ClientCombobox({
     [clients, query],
   )
 
-  // Offered only when nothing already carries that exact name: the backend rejects
-  // duplicates, so proposing one would just produce an error the operator cannot act on.
+  // Offered only when nothing already carries that name, compared without accents: the
+  // operator who types "joao silva" for an existing "João Silva" must be handed the
+  // existing client, not an invitation to register a second spelling of the same person.
   const typed = query.trim()
   const showCreate =
     onCreate !== undefined &&
     typed !== "" &&
-    !clients.some((c) => c.name.toLowerCase() === typed.toLowerCase())
+    !clients.some((c) => normalizeSearch(c.name) === normalizeSearch(typed))
 
   function handleSelect(id: string) {
     onChange(id === value ? "" : id)

@@ -2,6 +2,7 @@
 
 import { memo, useEffect, useRef, useState } from "react"
 import { Loader2, Plus } from "lucide-react"
+import { normalizeSearch } from "@/lib/search"
 import { cn } from "@/lib/utils"
 import { CellStateProps, useGridContext } from "@/components/issuances/grid-context"
 import { IssuanceRow } from "@/components/issuances/types"
@@ -43,13 +44,13 @@ interface ComboboxCellProps extends Pick<CellStateProps, "isEditing" | "pendingC
 // An empty query yields the whole list, in its original order: opening the cell should
 // show what is available instead of making the operator guess a prefix to type.
 function filterOptions(options: ComboOption[], typed: string): ComboOption[] {
-  const q = typed.trim().toLowerCase()
+  const q = normalizeSearch(typed)
   if (q === "") return options
   return options
-    .filter((o) => o.label.toLowerCase().includes(q))
+    .filter((o) => normalizeSearch(o.label).includes(q))
     .sort((a, b) => {
-      const aStarts = a.label.toLowerCase().startsWith(q)
-      const bStarts = b.label.toLowerCase().startsWith(q)
+      const aStarts = normalizeSearch(a.label).startsWith(q)
+      const bStarts = normalizeSearch(b.label).startsWith(q)
       if (aStarts === bStarts) return 0
       return aStarts ? -1 : 1
     })
@@ -136,8 +137,10 @@ export const ComboboxCell = memo(function ComboboxCell({
     listRef.current?.children[activeIndex]?.scrollIntoView({ block: "nearest" })
   }, [activeIndex, acOpen])
 
+  // Accents are ignored here too: typing "joao" must commit the existing "João" option
+  // instead of falling through to creating a second account for the same holder.
   function findExactMatch(value: string): ComboOption | undefined {
-    return options.find((o) => o.label.toLowerCase() === value.trim().toLowerCase())
+    return options.find((o) => normalizeSearch(o.label) === normalizeSearch(value))
   }
 
   function commit(direction: Direction | null) {

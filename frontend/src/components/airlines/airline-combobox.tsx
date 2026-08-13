@@ -5,6 +5,7 @@ import { Check, ChevronsUpDown, Search, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { normalizeSearch } from "@/lib/search"
 import { cn } from "@/lib/utils"
 import { Airline } from "@/schemas/airline"
 
@@ -17,12 +18,12 @@ interface AirlineComboboxProps {
 }
 
 function matches(airline: Airline, query: string): boolean {
-  const needle = query.trim().toLowerCase()
+  const needle = normalizeSearch(query)
   if (!needle) return true
 
   return (
-    airline.name.toLowerCase().includes(needle) ||
-    airline.code.toLowerCase().includes(needle)
+    normalizeSearch(airline.name).includes(needle) ||
+    normalizeSearch(airline.code).includes(needle)
   )
 }
 

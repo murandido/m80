@@ -5,6 +5,7 @@ import { Check, ChevronsUpDown, Search, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { normalizeSearch } from "@/lib/search"
 import { cn } from "@/lib/utils"
 import { Account } from "@/schemas/account"
 import { Person } from "@/schemas/person"
@@ -33,14 +34,14 @@ function accountLabel(account: Account, people: Person[]): string {
 }
 
 function matches(account: Account, people: Person[], query: string): boolean {
-  const needle = query.trim().toLowerCase()
+  const needle = normalizeSearch(query)
   if (!needle) return true
 
   return (
-    accountLabel(account, people).toLowerCase().includes(needle) ||
-    account.loyalty_program.name.toLowerCase().includes(needle) ||
-    account.loyalty_program.code.toLowerCase().includes(needle) ||
-    account.nicknames.some((n) => n.nickname.toLowerCase().includes(needle))
+    normalizeSearch(accountLabel(account, people)).includes(needle) ||
+    normalizeSearch(account.loyalty_program.name).includes(needle) ||
+    normalizeSearch(account.loyalty_program.code).includes(needle) ||
+    account.nicknames.some((n) => normalizeSearch(n.nickname).includes(needle))
   )
 }
 

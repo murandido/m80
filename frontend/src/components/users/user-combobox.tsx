@@ -5,6 +5,7 @@ import { Check, ChevronsUpDown, Search, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { normalizeSearch } from "@/lib/search"
 import { cn } from "@/lib/utils"
 import { User } from "@/schemas/user"
 
@@ -17,12 +18,12 @@ interface UserComboboxProps {
 }
 
 function matches(user: User, query: string): boolean {
-  const needle = query.trim().toLowerCase()
+  const needle = normalizeSearch(query)
   if (!needle) return true
 
   return (
-    user.name.toLowerCase().includes(needle) ||
-    user.phone.toLowerCase().includes(needle)
+    normalizeSearch(user.name).includes(needle) ||
+    normalizeSearch(user.phone).includes(needle)
   )
 }
 

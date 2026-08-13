@@ -5,6 +5,7 @@ import { Check, ChevronsUpDown, Search, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { normalizeSearch } from "@/lib/search"
 import { cn } from "@/lib/utils"
 import { Person } from "@/schemas/person"
 
@@ -17,11 +18,11 @@ interface PersonComboboxProps {
 }
 
 function matches(person: Person, query: string): boolean {
-  const needle = query.trim().toLowerCase()
+  const needle = normalizeSearch(query)
   if (!needle) return true
 
-  if (person.name.toLowerCase().includes(needle)) return true
-  return person.nicknames.some((n) => n.nickname.toLowerCase().includes(needle))
+  if (normalizeSearch(person.name).includes(needle)) return true
+  return person.nicknames.some((n) => normalizeSearch(n.nickname).includes(needle))
 }
 
 export function PersonCombobox({

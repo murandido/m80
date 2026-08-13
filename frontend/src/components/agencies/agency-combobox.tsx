@@ -5,6 +5,7 @@ import { Check, ChevronsUpDown, Search, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { normalizeSearch } from "@/lib/search"
 import { cn } from "@/lib/utils"
 import { Agency } from "@/schemas/agency"
 
@@ -20,12 +21,12 @@ interface AgencyComboboxProps {
 }
 
 function matches(agency: Agency, query: string): boolean {
-  const needle = query.trim().toLowerCase()
+  const needle = normalizeSearch(query)
   if (!needle) return true
 
   return (
-    agency.name.toLowerCase().includes(needle) ||
-    agency.nicknames.some((n) => n.nickname.toLowerCase().includes(needle))
+    normalizeSearch(agency.name).includes(needle) ||
+    agency.nicknames.some((n) => normalizeSearch(n.nickname).includes(needle))
   )
 }
 

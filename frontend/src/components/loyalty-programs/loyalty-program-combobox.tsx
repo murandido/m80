@@ -5,6 +5,7 @@ import { Check, ChevronsUpDown, Search, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { normalizeSearch } from "@/lib/search"
 import { cn } from "@/lib/utils"
 import { LoyaltyProgram } from "@/schemas/loyalty-program"
 
@@ -17,12 +18,12 @@ interface LoyaltyProgramComboboxProps {
 }
 
 function matches(loyaltyProgram: LoyaltyProgram, query: string): boolean {
-  const needle = query.trim().toLowerCase()
+  const needle = normalizeSearch(query)
   if (!needle) return true
 
   return (
-    loyaltyProgram.name.toLowerCase().includes(needle) ||
-    loyaltyProgram.code.toLowerCase().includes(needle)
+    normalizeSearch(loyaltyProgram.name).includes(needle) ||
+    normalizeSearch(loyaltyProgram.code).includes(needle)
   )
 }
 
