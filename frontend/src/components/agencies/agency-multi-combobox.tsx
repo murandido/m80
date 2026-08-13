@@ -5,6 +5,7 @@ import { Check, ChevronsUpDown, Search } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { useComboboxNavigation } from "@/hooks/use-combobox-navigation"
 import { normalizeSearch } from "@/lib/search"
 import { cn } from "@/lib/utils"
 import { Agency } from "@/schemas/agency"
@@ -52,6 +53,17 @@ export function AgencyMultiCombobox({
     // component exists, and closing after each one would make that four clicks apiece.
   }
 
+  // Enter toggles and leaves the popover open, same as clicking: the hook only reports
+  // which index was accepted, so multi-select needs nothing special here.
+  const { activeIndex, listRef, handleKeyDown } = useComboboxNavigation({
+    itemCount: filtered.length,
+    resetKey: open ? query : null,
+    onSelect: (index) => {
+      const option = filtered[index]
+      if (option) toggle(option.id)
+    },
+  })
+
   const label =
     value.length === 0
       ? "Todas as agências"
@@ -83,17 +95,18 @@ export function AgencyMultiCombobox({
             autoFocus
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={handleKeyDown}
             placeholder="Nome ou apelido"
             className="pl-8"
           />
         </div>
-        <div className="max-h-56 overflow-y-auto">
+        <div ref={listRef} className="max-h-56 overflow-y-auto">
           {filtered.length === 0 && (
             <p className="px-2 py-3 text-center text-sm text-muted-foreground">
               Nenhuma agência encontrada.
             </p>
           )}
-          {filtered.map((agency) => {
+          {filtered.map((agency, index) => {
             const checked = value.includes(agency.id)
             return (
               <button
@@ -102,7 +115,10 @@ export function AgencyMultiCombobox({
                 role="option"
                 aria-selected={checked}
                 onClick={() => toggle(agency.id)}
-                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent"
+                className={cn(
+                  "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent",
+                  index === activeIndex && "bg-slate-200",
+                )}
               >
                 <span
                   className={cn(

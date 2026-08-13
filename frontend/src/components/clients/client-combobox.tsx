@@ -5,6 +5,7 @@ import { Check, ChevronsUpDown, Plus, Search, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { useComboboxNavigation } from "@/hooks/use-combobox-navigation"
 import { normalizeSearch } from "@/lib/search"
 import { cn } from "@/lib/utils"
 import { Client } from "@/schemas/client"
@@ -72,6 +73,18 @@ export function ClientCombobox({
     setQuery("")
   }
 
+  // The create entry sits after the matches, so the last navigable index is it - which is
+  // what lets Enter register a client whose name matched nobody.
+  const { activeIndex, listRef, handleKeyDown } = useComboboxNavigation({
+    itemCount: filtered.length + (showCreate ? 1 : 0),
+    resetKey: open ? query : null,
+    onSelect: (index) => {
+      const client = filtered[index]
+      if (client) handleSelect(client.id)
+      else if (showCreate) handleCreate()
+    },
+  })
+
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
@@ -115,22 +128,26 @@ export function ClientCombobox({
             autoFocus
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={handleKeyDown}
             placeholder="Nome ou telefone"
             className="pl-8"
           />
         </div>
-        <div className="max-h-56 overflow-y-auto">
+        <div ref={listRef} className="max-h-56 overflow-y-auto">
           {filtered.length === 0 && !showCreate && (
             <p className="px-2 py-3 text-center text-sm text-muted-foreground">
               Nenhum cliente encontrado.
             </p>
           )}
-          {filtered.map((client) => (
+          {filtered.map((client, index) => (
             <button
               key={client.id}
               type="button"
               onClick={() => handleSelect(client.id)}
-              className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent"
+              className={cn(
+                "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent",
+                index === activeIndex && "bg-slate-200",
+              )}
             >
               <span className="flex min-w-0 flex-1 flex-col">
                 <span className="truncate">{client.name}</span>
@@ -151,6 +168,7 @@ export function ClientCombobox({
               className={cn(
                 "flex w-full items-start gap-1.5 rounded-sm px-2 py-2 text-left hover:bg-accent",
                 filtered.length > 0 && "mt-1 border-t",
+                activeIndex === filtered.length && "bg-slate-200",
               )}
             >
               <Plus className="mt-0.5 h-3.5 w-3.5 shrink-0" />

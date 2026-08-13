@@ -5,6 +5,7 @@ import { Check, ChevronsUpDown, Search, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { useComboboxNavigation } from "@/hooks/use-combobox-navigation"
 import { normalizeSearch } from "@/lib/search"
 import { cn } from "@/lib/utils"
 import { Airline } from "@/schemas/airline"
@@ -49,6 +50,15 @@ export function AirlineCombobox({
     setQuery("")
   }
 
+  const { activeIndex, listRef, handleKeyDown } = useComboboxNavigation({
+    itemCount: filtered.length,
+    resetKey: open ? query : null,
+    onSelect: (index) => {
+      const option = filtered[index]
+      if (option) handleSelect(option.id)
+    },
+  })
+
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
@@ -89,22 +99,26 @@ export function AirlineCombobox({
             autoFocus
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={handleKeyDown}
             placeholder="Nome ou código"
             className="pl-8"
           />
         </div>
-        <div className="max-h-56 overflow-y-auto">
+        <div ref={listRef} className="max-h-56 overflow-y-auto">
           {filtered.length === 0 && (
             <p className="px-2 py-3 text-center text-sm text-muted-foreground">
               Nenhuma companhia aérea encontrada.
             </p>
           )}
-          {filtered.map((airline) => (
+          {filtered.map((airline, index) => (
             <button
               key={airline.id}
               type="button"
               onClick={() => handleSelect(airline.id)}
-              className="flex w-full items-center justify-between gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent"
+              className={cn(
+                "flex w-full items-center justify-between gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent",
+                index === activeIndex && "bg-slate-200",
+              )}
             >
               <span className="flex flex-col">
                 <span>{airline.name}</span>
