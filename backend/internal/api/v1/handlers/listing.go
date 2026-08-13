@@ -67,6 +67,16 @@ func likePattern(q string) string {
 	return "%" + q + "%"
 }
 
+// unaccentedLike renders a contains-match that ignores case and accents. ILIKE alone
+// folds case but not diacritics, so an operator searching "joao" was told that "João
+// Silva" does not exist - and registered the same client a second time.
+//
+// The column is always a compile-time constant supplied by the handler; nothing from
+// the request reaches this string. The pattern stays a bound argument.
+func unaccentedLike(column string) string {
+	return "unaccent(" + column + ") ILIKE unaccent(?)"
+}
+
 // parseOptionalBool reads a tri-state filter. Absent leaves the listing unfiltered, and
 // anything that is not exactly "true" or "false" counts as absent rather than as false -
 // so a stray ?complete=maybe shows everything instead of silently hiding half the rows.
@@ -100,5 +110,5 @@ func nicknameMatch(nicknameTable, foreignKey, parentTable string, softDeleted bo
 		// archived alias would still surface the account it used to name.
 		clause += " AND " + nicknameTable + ".deleted_at IS NULL"
 	}
-	return clause + " AND " + nicknameTable + ".nickname ILIKE ?)"
+	return clause + " AND " + unaccentedLike(nicknameTable+".nickname") + ")"
 }

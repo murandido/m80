@@ -65,7 +65,8 @@ func (h *AirportHandler) GetAirports(w http.ResponseWriter, r *http.Request) {
 	if q != "" {
 		like := "%" + q + "%"
 		if err := h.DB.
-			Where("iata_code ILIKE ? OR name ILIKE ? OR city ILIKE ?", like, like, like).
+			Where(unaccentedLike("iata_code")+" OR "+unaccentedLike("name")+" OR "+unaccentedLike("city"),
+				like, like, like).
 			Order("iata_code ASC").
 			Limit(airportSearchLimit * 5).
 			Find(&airports).Error; err != nil {
@@ -155,7 +156,8 @@ func (h *AirportHandler) ListAirports(w http.ResponseWriter, r *http.Request) {
 	if q != "" {
 		like := "%" + q + "%"
 		query = query.Where(
-			"iata_code ILIKE ? OR name ILIKE ? OR city ILIKE ? OR state ILIKE ? OR country ILIKE ?",
+			unaccentedLike("iata_code")+" OR "+unaccentedLike("name")+" OR "+unaccentedLike("city")+
+				" OR "+unaccentedLike("state")+" OR "+unaccentedLike("country"),
 			like, like, like, like, like,
 		)
 	}
@@ -185,8 +187,14 @@ func (h *AirportHandler) ListAirports(w http.ResponseWriter, r *http.Request) {
 	case q != "":
 		like := "%" + q + "%"
 		dbQuery = dbQuery.Clauses(clause.OrderBy{
+			// The ranking folds accents exactly like the filter above: a row that only
+			// matched because of unaccent() would otherwise fall into the ELSE bucket
+			// and sort last, which reads as a broken ranking rather than as an
+			// accent-insensitive search.
 			Expression: gorm.Expr(
-				"CASE WHEN iata_code ILIKE ? THEN 1 WHEN name ILIKE ? THEN 2 WHEN city ILIKE ? THEN 3 WHEN state ILIKE ? THEN 4 WHEN country ILIKE ? THEN 5 ELSE 6 END, iata_code ASC",
+				"CASE WHEN "+unaccentedLike("iata_code")+" THEN 1 WHEN "+unaccentedLike("name")+
+					" THEN 2 WHEN "+unaccentedLike("city")+" THEN 3 WHEN "+unaccentedLike("state")+
+					" THEN 4 WHEN "+unaccentedLike("country")+" THEN 5 ELSE 6 END, iata_code ASC",
 				like, like, like, like, like,
 			),
 		})

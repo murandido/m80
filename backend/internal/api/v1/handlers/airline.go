@@ -116,8 +116,8 @@ func airlineListQuery(db *gorm.DB, params listQuery, traveosSupported *bool) *go
 
 	if params.Q != "" {
 		like := likePattern(params.Q)
-		search := db.Where("airlines.name ILIKE ?", like)
-		search = search.Or("airlines.code ILIKE ?", like)
+		search := db.Where(unaccentedLike("airlines.name"), like)
+		search = search.Or(unaccentedLike("airlines.code"), like)
 		query = query.Where(search)
 	}
 

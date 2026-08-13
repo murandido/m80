@@ -120,7 +120,7 @@ func agencyListQuery(db *gorm.DB, params listQuery) *gorm.DB {
 
 	if params.Q != "" {
 		like := likePattern(params.Q)
-		search := db.Where("agencies.name ILIKE ?", like)
+		search := db.Where(unaccentedLike("agencies.name"), like)
 		search = search.Or(nicknameMatch("agency_nicknames", "agency_id", "agencies", false), like)
 		query = query.Where(search)
 	}

@@ -1,0 +1,13 @@
+-- The list screens search with `column ILIKE '%term%'`, which folds case but not
+-- accents. Searching "joao" therefore reported that "João Silva" does not exist, and
+-- the operator registered the same client a second time - the duplicate the panel's
+-- comboboxes stopped producing on their side.
+--
+-- unaccent() strips the diacritics from both sides of the comparison. It ships with
+-- the postgres:16-alpine image every environment pins, the same availability bet the
+-- pt-BR-x-icu collation used for ordering already makes, and it is a trusted extension
+-- since PG13, so creating it does not require a superuser.
+--
+-- No index accompanies it: these searches wrap the term in leading wildcards, so they
+-- already scan and unaccent() changes no plan.
+CREATE EXTENSION IF NOT EXISTS unaccent;

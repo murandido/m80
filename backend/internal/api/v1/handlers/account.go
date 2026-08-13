@@ -173,10 +173,12 @@ func accountListQuery(db *gorm.DB, params listQuery, programID string, complete 
 
 	if params.Q != "" {
 		like := likePattern(params.Q)
-		search := db.Where("accounts.login ILIKE ?", like).
-			Or("holders.name ILIKE ?", like).
-			Or("EXISTS (SELECT 1 FROM people AS administrators WHERE administrators.id = accounts.administrator_id AND administrators.name ILIKE ?)", like).
-			Or("EXISTS (SELECT 1 FROM loyalty_programs WHERE loyalty_programs.id = accounts.loyalty_program_id AND (loyalty_programs.name ILIKE ? OR loyalty_programs.code ILIKE ?))", like, like).
+		search := db.Where(unaccentedLike("accounts.login"), like).
+			Or(unaccentedLike("holders.name"), like).
+			Or("EXISTS (SELECT 1 FROM people AS administrators WHERE administrators.id = accounts.administrator_id AND "+
+				unaccentedLike("administrators.name")+")", like).
+			Or("EXISTS (SELECT 1 FROM loyalty_programs WHERE loyalty_programs.id = accounts.loyalty_program_id AND ("+
+				unaccentedLike("loyalty_programs.name")+" OR "+unaccentedLike("loyalty_programs.code")+"))", like, like).
 			Or(nicknameMatch("account_nicknames", "account_id", "accounts", true), like)
 		query = query.Where(search)
 	}

@@ -97,7 +97,7 @@ func (h *ClientHandler) ListClients(w http.ResponseWriter, r *http.Request) {
 	query := h.DB
 
 	if search := r.URL.Query().Get("search"); search != "" {
-		query = query.Where("name ILIKE ?", "%"+search+"%")
+		query = query.Where(unaccentedLike("name"), likePattern(search))
 	}
 
 	var clients []data.Client

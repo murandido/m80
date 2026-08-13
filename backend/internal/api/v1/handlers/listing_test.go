@@ -160,6 +160,49 @@ func TestGetPeople_SearchesByNicknameAndNotOnlyByName(t *testing.T) {
 	})
 }
 
+// Operators type names without diacritics. Before unaccent() the listing answered that
+// "Ágata Conceição" did not exist, and the same person was registered a second time -
+// the duplicate the panel's comboboxes already stopped producing on their side.
+func TestGetPeople_SearchesIgnoringAccents(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		suffix := uuid.New().String()[:8]
+		person := data.Person{Name: "Ágata-Conceição-" + suffix}
+		create(t, tx, &person)
+
+		// The accented spelling is searched too: folding diacritics must widen what
+		// matches, never move the goalposts for whoever types the name correctly.
+		for _, term := range []string{
+			"agata-conceicao-" + suffix,
+			"Ágata-Conceição-" + suffix,
+			"conceicao-" + suffix,
+		} {
+			found := callGetPeople(t, tx, "q="+url.QueryEscape(term))
+			if len(found) != 1 || found[0].ID != person.ID {
+				t.Errorf("searching %q returned %d rows, want exactly the seeded person", term, len(found))
+			}
+		}
+	})
+}
+
+// nicknameMatch is the one search clause every listing shares, so it gets its own case:
+// a regression here would silently narrow accounts, agencies and people at once.
+func TestGetPeople_SearchesNicknamesIgnoringAccents(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		suffix := uuid.New().String()[:8]
+		person := data.Person{Name: "Fulano " + suffix}
+		create(t, tx, &person)
+
+		alias := "Conceição-" + suffix
+		nickname := data.PersonNickname{PersonID: person.ID, Nickname: alias}
+		create(t, tx, &nickname)
+
+		found := callGetPeople(t, tx, "q="+url.QueryEscape("conceicao-"+suffix))
+		if len(found) != 1 || found[0].ID != person.ID {
+			t.Fatalf("searching the unaccented nickname returned %d rows, want exactly the seeded person", len(found))
+		}
+	})
+}
+
 func TestListPeople_PaginatesAndCountsTheFilteredSet(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		prefix, _ := seedPeopleForSorting(t, tx)

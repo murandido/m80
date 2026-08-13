@@ -146,11 +146,11 @@ func peopleListQuery(db *gorm.DB, params listQuery, complete *bool) *gorm.DB {
 	if params.Q != "" {
 		like := likePattern(params.Q)
 		query = query.Where(
-			db.Where("people.name ILIKE ?", like).
-				Or("people.cpf ILIKE ?", like).
-				Or("people.email ILIKE ?", like).
-				Or("people.phone ILIKE ?", like).
-				Or("people.city ILIKE ?", like).
+			db.Where(unaccentedLike("people.name"), like).
+				Or(unaccentedLike("people.cpf"), like).
+				Or(unaccentedLike("people.email"), like).
+				Or(unaccentedLike("people.phone"), like).
+				Or(unaccentedLike("people.city"), like).
 				Or(nicknameMatch("person_nicknames", "person_id", "people", false), like),
 		)
 	}

@@ -92,8 +92,8 @@ func userListQuery(db *gorm.DB, params listQuery, role string) *gorm.DB {
 
 	if params.Q != "" {
 		like := likePattern(params.Q)
-		search := db.Where("users.name ILIKE ?", like)
-		search = search.Or("users.phone ILIKE ?", like)
+		search := db.Where(unaccentedLike("users.name"), like)
+		search = search.Or(unaccentedLike("users.phone"), like)
 		query = query.Where(search)
 	}
 

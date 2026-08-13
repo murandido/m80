@@ -125,8 +125,8 @@ func loyaltyProgramListQuery(db *gorm.DB, params listQuery) *gorm.DB {
 
 	if params.Q != "" {
 		like := likePattern(params.Q)
-		search := db.Where("loyalty_programs.name ILIKE ?", like)
-		search = search.Or("loyalty_programs.code ILIKE ?", like)
+		search := db.Where(unaccentedLike("loyalty_programs.name"), like)
+		search = search.Or(unaccentedLike("loyalty_programs.code"), like)
 		query = query.Where(search)
 	}
 
