@@ -63,7 +63,18 @@ type Issuance struct {
 	// failure included. It is on the row rather than in the browser that started
 	// the pull so every panel shows the same issuance as busy - and so leaving the
 	// screen and coming back does not lose that it still is.
-	TraveosSyncingAt   *time.Time          `gorm:"column:traveos_syncing_at" json:"traveos_syncing_at"`
+	TraveosSyncingAt *time.Time `gorm:"column:traveos_syncing_at" json:"traveos_syncing_at"`
+	// TraveosAttemptedAt is when the automatic lookup last ran, whether or not it
+	// found anything. TraveosSyncedAt only records success, and "we already looked
+	// and it is not there" is the other half - without it the panel would ask again
+	// on every page load, which for an imported day is hundreds of calls a refresh.
+	TraveosAttemptedAt *time.Time `gorm:"column:traveos_attempted_at" json:"traveos_attempted_at"`
+	// Imported marks an issuance that came from the pre-panel spreadsheet
+	// (internal/legacyimport). The booking was made outside the system and long
+	// before the row existed, so Traveos may be searched for it but must never be
+	// asked to issue it - see findOrEmit. The importer goes away after the
+	// migration; this column does not, because the rows it describes stay.
+	Imported           bool                `gorm:"not null;default:false" json:"imported"`
 	Flights            []IssuanceFlight    `gorm:"foreignKey:IssuanceID;references:ID" json:"flights,omitempty"`
 	Passengers         []IssuancePassenger `gorm:"foreignKey:IssuanceID;references:ID" json:"passengers,omitempty"`
 	AdditionalServices datatypes.JSON      `gorm:"column:additional_services;type:jsonb" json:"additional_services"`

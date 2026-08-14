@@ -60,6 +60,12 @@ var (
 	// that invites an immediate retry - that would risk a duplicate.
 	ErrTicketNotFoundAfterEmission = errors.New("traveos issued the ticket but it is not in the ticket list")
 
+	// ErrImportedNotAtVendor ends the sync of an imported issuance whose booking
+	// Traveos does not know about. It is a dead end on purpose and not a failure to
+	// retry: the alternative branch - issuing the ticket - would spend money on a
+	// flight that already departed. See findOrEmit.
+	ErrImportedNotAtVendor = errors.New("this issuance was imported and its booking is not at traveos")
+
 	// ErrFlightMissingDeparture aborts the sync rather than writing a zero date
 	// into issuance_flights.departure_at, which is NOT NULL. A leg with no
 	// departure time is not a flight anyone can travel on.

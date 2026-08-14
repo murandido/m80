@@ -116,6 +116,8 @@ func toIssuanceResponse(issuance data.Issuance) schemas.IssuanceResponse {
 		Complete:            issuance.Complete,
 		TraveosSyncedAt:     issuance.TraveosSyncedAt,
 		TraveosSyncingAt:    freshTraveosSyncing(issuance.TraveosSyncingAt),
+		TraveosAttemptedAt:  issuance.TraveosAttemptedAt,
+		Imported:            issuance.Imported,
 		Status:              deriveIssuanceStatus(issuance.Complete, issuance.CancelledAt),
 		AdditionalServices:  issuance.AdditionalServices,
 		Observation:         issuance.Observation,
@@ -227,6 +229,8 @@ func toIssuanceSummaryResponse(issuance data.Issuance) schemas.IssuanceSummaryRe
 		Taxes:               issuance.Taxes,
 		TraveosSyncedAt:     issuance.TraveosSyncedAt,
 		TraveosSyncingAt:    freshTraveosSyncing(issuance.TraveosSyncingAt),
+		TraveosAttemptedAt:  issuance.TraveosAttemptedAt,
+		Imported:            issuance.Imported,
 		Status:              status,
 	}
 
@@ -1153,6 +1157,14 @@ func (h *IssuanceHandler) respondToTraveosSyncError(w http.ResponseWriter, r *ht
 	case errors.Is(err, issuancesvc.ErrLocatorMissing):
 		utils.SendError(w, r, http.StatusUnprocessableEntity,
 			"A emissão não tem localizador para consultar")
+
+	// Nameable, and a dead end rather than something to retry: the booking was made
+	// outside the system, so if Traveos does not already have it, the only way to put
+	// it there would be to issue the ticket again - for a flight that already flew.
+	case errors.Is(err, issuancesvc.ErrImportedNotAtVendor):
+		utils.SendError(w, r, http.StatusUnprocessableEntity,
+			"Essa emissão foi importada da planilha e a Traveos não tem essa reserva. "+
+				"Emitir de novo não é opção, então os dados do voo têm que ser preenchidos à mão")
 
 	// Also nameable, and the reason the sync refused before spending anything: the
 	// vendor's emission is not idempotent, so asking it with one of these fields

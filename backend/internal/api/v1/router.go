@@ -61,6 +61,10 @@ func NewRouter(db *gorm.DB, broker *events.Broker, traveosClient *traveos.Client
 		// "/bot/chats" child, never shadowed by RegisterBotRoutes' "/bot/*"
 		// catch-all proxy above (see RegisterListenedChatRoutes doc comment).
 		routes.RegisterListenedChatRoutes(r, db)
+		// Temporary: the screen that imports the pre-panel spreadsheet, admin-gated
+		// inside RegisterLegacyImportRoutes. Delete this line along with the rest of
+		// the importer once the migration off the spreadsheets is done.
+		routes.RegisterLegacyImportRoutes(r, db, broker)
 	})
 
 	return r

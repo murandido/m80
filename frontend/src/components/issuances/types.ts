@@ -47,6 +47,13 @@ export interface IssuanceRow {
   // is what makes the lock and the spinner survive leaving the screen and show up
   // for everybody else.
   traveos_syncing_at: string | null
+  // When the automatic Traveos lookup last ran on this row, whether or not it found
+  // the booking. Persisted rather than kept in this browser: for an imported day the
+  // in-memory "one attempt per page load" is one attempt per refresh, times hundreds
+  // of rows. See isAutocompleteCandidate.
+  traveos_attempted_at: string | null
+  // Came from the pre-panel spreadsheet (backend internal/legacyimport). Read-only.
+  imported: boolean
   // Read-only cancellation metadata, surfaced in the status pill's hover card. Never
   // edited through the grid - only set when the row loads cancelled or is cancelled here.
   cancelled_at: string | null
@@ -98,6 +105,8 @@ export function issuanceToRow(issuance: Issuance): IssuanceRow {
     observation: issuance.observation,
     traveos_synced_at: issuance.traveos_synced_at ?? null,
     traveos_syncing_at: issuance.traveos_syncing_at ?? null,
+    traveos_attempted_at: issuance.traveos_attempted_at ?? null,
+    imported: issuance.imported,
     cancelled_at: issuance.cancelled_at,
     cancelled_by_id: issuance.cancelled_by_id,
     refunded_points: issuance.refunded_points,
@@ -139,6 +148,10 @@ export function makeDraftRow(
     observation: null,
     traveos_synced_at: null,
     traveos_syncing_at: null,
+    traveos_attempted_at: null,
+    // A row typed into the grid is never imported - the flag only ever arrives from
+    // the server, on rows the spreadsheet importer wrote.
+    imported: false,
     cancelled_at: null,
     cancelled_by_id: null,
     refunded_points: null,

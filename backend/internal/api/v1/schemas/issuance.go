@@ -130,6 +130,15 @@ type IssuanceResponse struct {
 	// the pull. Already filtered for staleness by the server: a marker left behind
 	// by a process that died mid-pull arrives as null.
 	TraveosSyncingAt *time.Time `json:"traveos_syncing_at"`
+	// TraveosAttemptedAt is when the vendor was last asked about this issuance,
+	// whether or not it had the booking. The panel needs the failed lookups too:
+	// it is what tells an imported row that has been looked up and not found from
+	// one that has never been looked up at all.
+	TraveosAttemptedAt *time.Time `json:"traveos_attempted_at"`
+	// Imported says the issuance came from the pre-panel spreadsheet. The panel
+	// uses it to stop the automatic Traveos lookup after a single attempt, and the
+	// server uses it to refuse issuing the ticket at the vendor.
+	Imported bool `json:"imported"`
 	// Status is derived: "incomplete" | "complete" | "cancelled".
 	Status             string                      `json:"status" example:"incomplete"`
 	Flights            []IssuanceFlightResponse    `json:"flights,omitempty"`
@@ -167,6 +176,8 @@ type IssuanceSummaryResponse struct {
 	AgencyName          string     `json:"agency_name"`
 	TraveosSyncedAt     *time.Time `json:"traveos_synced_at"`
 	TraveosSyncingAt    *time.Time `json:"traveos_syncing_at"`
+	TraveosAttemptedAt  *time.Time `json:"traveos_attempted_at"`
+	Imported            bool       `json:"imported"`
 	// Status is derived: "incomplete" | "complete" | "cancelled".
 	Status string `json:"status" example:"incomplete"`
 }

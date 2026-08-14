@@ -29,6 +29,13 @@ export function isAutocompleteCandidate(
   // One attempt per row per page load: a failure will fail again, and each retry is
   // another chance of issuing a real ticket at the vendor for nothing.
   if (attempted.has(row.key)) return false
+  // For an imported row the same rule has to survive a refresh. The set above lives
+  // in this browser, so a day brought in from the spreadsheet - hundreds of rows the
+  // vendor has never heard of - would be looked up again in full on every reload.
+  // The server records the attempt on the row, and one attempt is all these get:
+  // Traveos cannot issue the booking (it already flew), so a second look would only
+  // ever find the same nothing.
+  if (row.imported && row.traveos_attempted_at) return false
 
   const airline = airlines.find((candidate) => candidate.id === row.airline_id)
   if (!airline || !airline.traveos_supported) return false
@@ -69,6 +76,10 @@ export type AutocompleteHint =
   | { kind: "idle" }
   // The row will never autocomplete, however complete it gets.
   | { kind: "unsupported"; airlineName: string }
+  // An imported row whose one lookup already happened and came back empty. Also
+  // final, but for a different reason than "unsupported", and worth saying so:
+  // here the operator's next move is to fill the itinerary in by hand.
+  | { kind: "imported" }
   | { kind: "missing"; requirements: MissingRequirement[] }
 
 const blank = (value: string | null | undefined) => !(value ?? "").trim()
@@ -96,6 +107,10 @@ export function autocompleteHintFor(
   // CiaAereaCell always writes an airline alongside the program (the program's default
   // when no "/cia" was typed), so an unresolved one means no program has been picked yet -
   // and until then there is no airline whose rules could be shown.
+  // Checked before the airline: the row being imported and already looked up settles
+  // the question regardless of which carrier it is on.
+  if (row.imported && row.traveos_attempted_at) return { kind: "imported" }
+
   const airline = airlines.find((candidate) => candidate.id === row.airline_id)
   if (!airline) return { kind: "idle" }
 

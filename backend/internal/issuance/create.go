@@ -59,6 +59,18 @@ type CreateInput struct {
 	// leaves it false (rows are completed later, from the grid); the bot may set
 	// it once every required field arrived in the same message.
 	Complete bool
+
+	// CreatedAt backdates the issuance. Only the spreadsheet importer
+	// (internal/legacyimport) sets it, and only ever to the day of the sheet the
+	// row came from: created_at is what the grid and every date filter read as
+	// "the day of the issuance", so an August row stamped with now() would show up
+	// as today's and vanish from its own day. Nil everywhere else, which leaves the
+	// timestamp to the database.
+	CreatedAt *time.Time
+	// Imported records that this issuance came from that spreadsheet. It is what
+	// keeps Traveos from being asked to *issue* the booking - see findOrEmit - and
+	// unlike the importer itself, it stays after the migration is over.
+	Imported bool
 }
 
 // Create persists an issuance together with the two rows that must always
@@ -88,6 +100,13 @@ func Create(db *gorm.DB, in CreateInput, actorID string) (data.Issuance, error) 
 		AdditionalServices:  in.AdditionalServices,
 		IssuerID:            actorID,
 		Complete:            in.Complete,
+		Imported:            in.Imported,
+	}
+
+	// GORM only stamps CreatedAt when it is still the zero value, so setting it here
+	// is all backdating takes.
+	if in.CreatedAt != nil {
+		issuance.CreatedAt = *in.CreatedAt
 	}
 
 	err := db.Transaction(func(tx *gorm.DB) error {

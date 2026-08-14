@@ -61,6 +61,13 @@ export const issuanceSchema = z.object({
   // Traveos. The server already drops a stale marker, so a value here means the
   // pull is genuinely in flight.
   traveos_syncing_at: z.string().nullish(),
+  // Set whenever the automatic pull ran, found something or not. traveos_synced_at
+  // only records the ones that found something, so this is what tells "already
+  // looked for and it is not at the vendor" from "never looked".
+  traveos_attempted_at: z.string().nullish(),
+  // The issuance came from the pre-panel spreadsheet. Its booking was made outside
+  // the system, so Traveos may be searched but must never be asked to issue it.
+  imported: z.boolean().default(false),
   status: issuanceStatusSchema,
   flights: z.array(issuanceFlightSchema).nullish(),
   observation: z.string().nullable(),

@@ -1146,6 +1146,13 @@ export function IssuancesGrid({
               autocompleta.
             </span>
           )}
+          {autocompleteHint.kind === "imported" && (
+            <span className="flex items-center gap-1.5 text-xs text-amber-600">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              Emissão importada da planilha: a Traveos já foi consultada e não tem essa reserva.
+              Os dados do voo precisam ser preenchidos à mão.
+            </span>
+          )}
           <Popover>
             <PopoverTrigger asChild>
               <Button type="button" variant="outline">

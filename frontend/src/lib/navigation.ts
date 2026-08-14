@@ -2,6 +2,7 @@ import {
   Award,
   Bot,
   Building2,
+  FileUp,
   HandCoins,
   IdCard,
   Landmark,
@@ -69,6 +70,9 @@ export const navSections: NavSection[] = [
       { title: "Contas", url: "/dashboard/accounts", icon: Landmark },
       { title: "Clientes", url: "/dashboard/clients", icon: UserRound },
       { title: "Usuários do M80", url: "/dashboard/users", icon: IdCard, roles: ["admin"] },
+      // Temporary: the bridge off the hand-kept spreadsheet. Remove this line with the
+      // rest of the importer (see backend/internal/legacyimport).
+      { title: "Importar planilha", url: "/dashboard/import", icon: FileUp, roles: ["admin"] },
     ],
   },
   {
