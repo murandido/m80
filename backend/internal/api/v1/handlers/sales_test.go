@@ -359,13 +359,21 @@ func TestGetSales_FiltersByPaid(t *testing.T) {
 	})
 }
 
-func callUpdateSale(tx *gorm.DB, id, body string) *httptest.ResponseRecorder {
+// callUpdateSale needs a real user in the context: paid is now translated into a payment,
+// and sale_payments.created_by_id is a foreign key - a made-up id would fail the insert
+// rather than the assertion.
+func callUpdateSale(t *testing.T, tx *gorm.DB, id, body string) *httptest.ResponseRecorder {
+	t.Helper()
 	handler := NewSaleHandler(tx, events.NewBroker())
+
+	actor := createUser(t, tx, "Operador "+uuid.New().String()[:8])
 
 	req := httptest.NewRequest(http.MethodPatch, "/sales/"+id, strings.NewReader(body))
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", id)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	ctx = context.WithValue(ctx, middleware.UserContextKey, actor)
+	req = req.WithContext(ctx)
 
 	rec := httptest.NewRecorder()
 	handler.UpdateSale(rec, req)
@@ -380,7 +388,7 @@ func TestUpdateSale_LinksClientAndMarksPaid(t *testing.T) {
 		client := data.Client{Name: "Cliente " + uuid.New().String()[:8]}
 		create(t, tx, &client)
 
-		rec := callUpdateSale(tx, sale.ID, `{"client_id":"`+client.ID+`","paid":true}`)
+		rec := callUpdateSale(t, tx, sale.ID, `{"client_id":"`+client.ID+`","paid":true}`)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status: got %d, want 200 (body: %s)", rec.Code, rec.Body.String())
 		}
@@ -420,7 +428,7 @@ func TestUpdateSale_NullClientUnlinks(t *testing.T) {
 			t.Fatalf("failed to pre-link client: %v", err)
 		}
 
-		if rec := callUpdateSale(tx, sale.ID, `{"client_id":null}`); rec.Code != http.StatusOK {
+		if rec := callUpdateSale(t, tx, sale.ID, `{"client_id":null}`); rec.Code != http.StatusOK {
 			t.Fatalf("status: got %d, want 200 (body: %s)", rec.Code, rec.Body.String())
 		}
 
@@ -446,7 +454,7 @@ func TestUpdateSale_OmittedClientKeepsLink(t *testing.T) {
 		}
 
 		// Only paid is sent: the absent client_id must not be read as "unlink".
-		if rec := callUpdateSale(tx, sale.ID, `{"paid":true}`); rec.Code != http.StatusOK {
+		if rec := callUpdateSale(t, tx, sale.ID, `{"paid":true}`); rec.Code != http.StatusOK {
 			t.Fatalf("status: got %d, want 200 (body: %s)", rec.Code, rec.Body.String())
 		}
 
@@ -465,7 +473,7 @@ func TestUpdateSale_UnknownClientIsUnprocessable(t *testing.T) {
 		main := defaultAgency(t, tx)
 		_, sale := seedSaleFixture(t, tx, main.ID)
 
-		rec := callUpdateSale(tx, sale.ID, `{"client_id":"`+uuid.New().String()+`"}`)
+		rec := callUpdateSale(t, tx, sale.ID, `{"client_id":"`+uuid.New().String()+`"}`)
 		if rec.Code != http.StatusUnprocessableEntity {
 			t.Fatalf("status: got %d, want 422 (body: %s)", rec.Code, rec.Body.String())
 		}
@@ -476,7 +484,7 @@ func TestUpdateSale_NotFound(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		defaultAgency(t, tx)
 
-		rec := callUpdateSale(tx, uuid.New().String(), `{"paid":true}`)
+		rec := callUpdateSale(t, tx, uuid.New().String(), `{"paid":true}`)
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("status: got %d, want 404 (body: %s)", rec.Code, rec.Body.String())
 		}
@@ -488,7 +496,7 @@ func TestUpdateSale_EmptyPayloadIsBadRequest(t *testing.T) {
 		main := defaultAgency(t, tx)
 		_, sale := seedSaleFixture(t, tx, main.ID)
 
-		rec := callUpdateSale(tx, sale.ID, `{}`)
+		rec := callUpdateSale(t, tx, sale.ID, `{}`)
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("status: got %d, want 400 (body: %s)", rec.Code, rec.Body.String())
 		}
@@ -509,10 +517,13 @@ func TestUpdateSale_BroadcastsSaleUpdated(t *testing.T) {
 		defer broker.Unsubscribe(subscriber)
 
 		handler := NewSaleHandler(tx, broker)
+		actor := createUser(t, tx, "Operador "+uuid.New().String()[:8])
 		req := httptest.NewRequest(http.MethodPatch, "/sales/"+sale.ID, strings.NewReader(`{"paid":true}`))
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("id", sale.ID)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+		ctx = context.WithValue(ctx, middleware.UserContextKey, actor)
+		req = req.WithContext(ctx)
 
 		rec := httptest.NewRecorder()
 		handler.UpdateSale(rec, req)
@@ -544,11 +555,14 @@ func TestUpdateSale_DoesNotBroadcastOnFailure(t *testing.T) {
 		defer broker.Unsubscribe(subscriber)
 
 		handler := NewSaleHandler(tx, broker)
+		actor := createUser(t, tx, "Operador "+uuid.New().String()[:8])
 		unknownID := uuid.New().String()
 		req := httptest.NewRequest(http.MethodPatch, "/sales/"+unknownID, strings.NewReader(`{"paid":true}`))
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("id", unknownID)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+		ctx = context.WithValue(ctx, middleware.UserContextKey, actor)
+		req = req.WithContext(ctx)
 
 		rec := httptest.NewRecorder()
 		handler.UpdateSale(rec, req)

@@ -8,7 +8,35 @@ import "time"
 // "absent" from "null".
 type UpdateSaleRequest struct {
 	ClientID *string `json:"client_id" validate:"omitempty,uuid"`
-	Paid     *bool   `json:"paid" validate:"omitempty"`
+	// Paid is the old switch, kept working for a panel that has not been published yet -
+	// the two sides deploy by independent labels. It is translated into the statement:
+	// true records a payment for whatever is missing, false clears the statement. The
+	// current panel settles a sale through /sales/{id}/payments instead.
+	Paid *bool `json:"paid" validate:"omitempty"`
+}
+
+// CreateSalePaymentRequest is the payload for POST /sales/{id}/payments.
+type CreateSalePaymentRequest struct {
+	// AmountCents is in centavos and may be negative - that is how money handed back to
+	// the client is recorded. Zero is refused: a movement of nothing is only ever a typo.
+	AmountCents int `json:"amount_cents" validate:"required" example:"40000"`
+	// PaidOn (YYYY-MM-DD) is the day the money moved, which is what the operator knows.
+	PaidOn string  `json:"paid_on" validate:"required,datetime=2006-01-02" example:"2026-08-14"`
+	Note   *string `json:"note" validate:"omitempty"`
+}
+
+// SalePaymentResponse is one line of a sale's statement.
+type SalePaymentResponse struct {
+	ID          string `json:"id"`
+	SaleID      string `json:"sale_id"`
+	AmountCents int    `json:"amount_cents" example:"40000"`
+	// PaidOn is a calendar day (YYYY-MM-DD), not an instant: the operator knows the day
+	// the money moved, not the hour. CreatedAt is when the line was typed.
+	PaidOn        string    `json:"paid_on" example:"2026-08-14"`
+	Note          *string   `json:"note"`
+	CreatedByID   string    `json:"created_by_id"`
+	CreatedByName string    `json:"created_by_name"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 // SaleResponse is a flat, denormalized view of a sale for the "Vendas > Clientes" table -
@@ -31,6 +59,12 @@ type SaleResponse struct {
 	Taxes              *int `json:"taxes"`
 	// AmountCents is what the client owes: points/1000 * value_of_the_thousand + taxes.
 	AmountCents int `json:"amount_cents"`
+	// PaidCents is the sum of the sale's payments, which can exceed AmountCents (the
+	// client overpaid) or go negative (more was handed back than came in).
+	PaidCents int `json:"paid_cents"`
+	// BalanceCents is what is still missing: AmountCents - PaidCents. Zero or less means
+	// settled, which is exactly what Paid reports.
+	BalanceCents int `json:"balance_cents"`
 
 	AccountID           string `json:"account_id"`
 	AccountLabel        string `json:"account_label"`

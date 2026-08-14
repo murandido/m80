@@ -8,6 +8,7 @@ import (
 	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
+	"github.com/murandido/m-80-backend/internal/sale"
 	"github.com/murandido/m-80-backend/internal/utils"
 	"gorm.io/gorm"
 )
@@ -58,7 +59,7 @@ type dashboardIssuanceRow struct {
 // taxes. Shares pointsValueCents with the sales views so the dashboard and the "Vendas"
 // table never disagree by a cent on the same issuance.
 func (row dashboardIssuanceRow) amountCents() int {
-	amount := pointsValueCents(row.Points, row.ValueOfTheThousand)
+	amount := sale.PointsValueCents(row.Points, row.ValueOfTheThousand)
 	if row.Taxes != nil {
 		amount += *row.Taxes
 	}

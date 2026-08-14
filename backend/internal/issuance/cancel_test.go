@@ -78,7 +78,12 @@ func TestCancel_AlreadyCancelledIsRefused(t *testing.T) {
 	})
 }
 
-func TestCancel_ResetsPaidSale(t *testing.T) {
+// Cancelling used to reopen the sale, which made sense while paid was a switch. It is now
+// the sum of what the client actually handed over, and a cancelled booking does not take
+// that money back out of the till - returning it is a negative entry on the statement,
+// made when it happens. What flags the pending refund is cancelled_at, which the sales
+// screen already renders as the "reaberta por cancelamento" badge.
+func TestCancel_LeavesAPaidSaleAlone(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		f := seedFixture(t, tx, data.Airline{})
 		issuance, err := Create(tx, f.input(), f.User.ID)
@@ -97,10 +102,11 @@ func TestCancel_ResetsPaidSale(t *testing.T) {
 		if err := tx.First(&sale, "issuance_id = ?", issuance.ID).Error; err != nil {
 			t.Fatalf("failed to re-read sale: %v", err)
 		}
-		if sale.Paid {
-			t.Error("expected sale.paid to be reset to false")
+		if !sale.Paid {
+			t.Error("the sale was reopened by the cancellation; the money the client paid is still in the till")
 		}
 
+		// And the audit entry no longer claims to have reset anything.
 		var log data.AuditLog
 		if err := tx.Where("issuance_id = ? AND action = 'cancelled'", issuance.ID).First(&log).Error; err != nil {
 			t.Fatalf("failed to read audit log: %v", err)
@@ -109,8 +115,8 @@ func TestCancel_ResetsPaidSale(t *testing.T) {
 		if err := json.Unmarshal(log.Details, &details); err != nil {
 			t.Fatalf("failed to decode details: %v", err)
 		}
-		if got := details["sale_paid_reset"]; got != true {
-			t.Errorf("details.sale_paid_reset = %v, want true", got)
+		if _, ok := details["sale_paid_reset"]; ok {
+			t.Errorf("details still carry sale_paid_reset: %v", details)
 		}
 	})
 }

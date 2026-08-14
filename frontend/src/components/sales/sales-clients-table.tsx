@@ -12,13 +12,16 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { Switch } from "@/components/ui/switch"
 import {
   HoverCard,
   HoverCardContent,
   HoverCardTrigger,
 } from "@/components/ui/hover-card"
 import { ClientCombobox } from "@/components/clients/client-combobox"
+import {
+  needsAttention,
+  SalePaymentsPopover,
+} from "@/components/sales/sale-payments-popover"
 import { updateSaleAction } from "@/actions/sale"
 import { createClientAction } from "@/actions/client"
 import { formatCurrencyBRL } from "@/lib/currency"
@@ -32,7 +35,7 @@ interface SalesClientsTableProps {
   clients: Client[]
 }
 
-const COLUMN_COUNT = 10
+const COLUMN_COUNT = 11
 
 function formatDateTime(iso: string): string {
   return new Date(iso).toLocaleDateString("pt-BR")
@@ -61,10 +64,12 @@ function ReopenedBadge({ sale }: { sale: Sale }) {
         </span>
       </HoverCardTrigger>
       <HoverCardContent className="w-64 text-sm">
-        <p className="font-medium">Emissão cancelada em {formatDateTime(sale.cancelled_at)}</p>
-        <p className="mt-1 text-muted-foreground">
-          O pagamento foi revertido automaticamente. Se o cliente já havia pago, o valor
-          precisa ser devolvido ou compensado.
+        <p className="font-medium">
+          Emissão cancelada em {formatDateTime(sale.cancelled_at)}
+        </p>
+        <p className="text-muted-foreground mt-1">
+          O pagamento foi revertido automaticamente. Se o cliente já havia pago,
+          o valor precisa ser devolvido ou compensado.
         </p>
       </HoverCardContent>
     </HoverCard>
@@ -166,10 +171,6 @@ export function SalesClientsTable({ sales, clients }: SalesClientsTableProps) {
     })
   }
 
-  function handlePaidChange(sale: Sale, paid: boolean) {
-    persist(sale, { paid }, { paid }, "Erro ao atualizar o pagamento.")
-  }
-
   return (
     <div className="max-h-[calc(100vh-18rem)] overflow-auto rounded-md border">
       <Table>
@@ -183,8 +184,9 @@ export function SalesClientsTable({ sales, clients }: SalesClientsTableProps) {
             <TableHead className="text-right">Vlr. milheiro</TableHead>
             <TableHead className="text-right">Taxas</TableHead>
             <TableHead className="text-right">Valor</TableHead>
+            <TableHead className="text-right">Saldo</TableHead>
             <TableHead className="w-56">Cliente</TableHead>
-            <TableHead className="w-32 text-center">Pago</TableHead>
+            <TableHead className="w-44 text-center">Pagamento</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -192,7 +194,7 @@ export function SalesClientsTable({ sales, clients }: SalesClientsTableProps) {
             <TableRow>
               <TableCell
                 colSpan={COLUMN_COUNT}
-                className="py-10 text-center text-sm text-muted-foreground"
+                className="text-muted-foreground py-10 text-center text-sm"
               >
                 Nenhuma venda no período selecionado.
               </TableCell>
@@ -201,13 +203,29 @@ export function SalesClientsTable({ sales, clients }: SalesClientsTableProps) {
           {optimisticSales.map((sale) => {
             const isSaving = savingIds.has(sale.id)
             const isReopened = sale.cancelled_at !== null
+            const pending = needsAttention(sale)
 
             return (
               <TableRow
                 key={sale.id}
-                className={cn(isReopened && "bg-muted/40", isSaving && "opacity-60")}
+                className={cn(
+                  isReopened && "bg-muted/40",
+                  isSaving && "opacity-60",
+                )}
               >
-                <TableCell>
+                {/* A 3px rule down the left edge, and nothing else: the column exists to
+                    be swept vertically for the rows that still need somebody, which a
+                    coloured background or a badge per row would drown rather than help.
+                    Amber for money still to move, emerald for nothing left to do. Inset
+                    shadow rather than a border so it cannot shift the cell by a pixel and
+                    misalign the header. */}
+                <TableCell
+                  className={cn(
+                    "shadow-[inset_3px_0_0_0_var(--tw-shadow-color)]",
+                    pending ? "shadow-amber-400" : "shadow-emerald-500",
+                  )}
+                  aria-label={pending ? "Precisa de atenção" : "Em dia"}
+                >
                   <div className="flex flex-col gap-1">
                     <span
                       className={cn(
@@ -220,7 +238,7 @@ export function SalesClientsTable({ sales, clients }: SalesClientsTableProps) {
                     <ReopenedBadge sale={sale} />
                   </div>
                 </TableCell>
-                <TableCell className="whitespace-nowrap text-muted-foreground">
+                <TableCell className="text-muted-foreground whitespace-nowrap">
                   {formatDateTime(sale.issued_at)}
                 </TableCell>
                 <TableCell>{sale.main_passenger_name ?? "—"}</TableCell>
@@ -232,7 +250,7 @@ export function SalesClientsTable({ sales, clients }: SalesClientsTableProps) {
                     />
                     <span className="flex min-w-0 flex-col">
                       <span className="truncate">{sale.account_label}</span>
-                      <span className="truncate text-xs text-muted-foreground">
+                      <span className="text-muted-foreground truncate text-xs">
                         {sale.loyalty_program_name}
                       </span>
                     </span>
@@ -241,16 +259,30 @@ export function SalesClientsTable({ sales, clients }: SalesClientsTableProps) {
                 <TableCell className="text-right tabular-nums">
                   {formatPoints(sale.points)}
                 </TableCell>
-                <TableCell className="text-right tabular-nums text-muted-foreground">
+                <TableCell className="text-muted-foreground text-right tabular-nums">
                   {formatCurrencyBRL(sale.value_of_the_thousand)}
                 </TableCell>
-                <TableCell className="text-right tabular-nums text-muted-foreground">
+                <TableCell className="text-muted-foreground text-right tabular-nums">
                   {/* An em dash, not R$ 0,00: no taxes recorded is a different fact from
                       taxes that came to zero, and the operator has to be able to tell. */}
                   {sale.taxes === null ? "—" : formatCurrencyBRL(sale.taxes)}
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
                   {formatCurrencyBRL(sale.amount_cents)}
+                </TableCell>
+                <TableCell
+                  className={cn(
+                    "text-right tabular-nums",
+                    // The column exists to be scanned: settled rows should recede, and the
+                    // ones still owing money should not.
+                    sale.balance_cents > 0
+                      ? "font-medium"
+                      : sale.balance_cents < 0
+                        ? "text-amber-700"
+                        : "text-muted-foreground",
+                  )}
+                >
+                  {formatCurrencyBRL(sale.balance_cents)}
                 </TableCell>
                 <TableCell>
                   <ClientCombobox
@@ -262,22 +294,14 @@ export function SalesClientsTable({ sales, clients }: SalesClientsTableProps) {
                   />
                 </TableCell>
                 <TableCell>
-                  <div className="flex items-center justify-center gap-2">
-                    <Switch
-                      checked={sale.paid}
-                      onCheckedChange={(paid) => handlePaidChange(sale, paid)}
-                      disabled={isSaving}
-                      aria-label={sale.paid ? "Marcar como em aberto" : "Marcar como pago"}
-                    />
-                    <span
-                      className={cn(
-                        "text-xs",
-                        sale.paid ? "text-emerald-700" : "text-muted-foreground",
-                      )}
-                    >
-                      {sale.paid ? "Pago" : "Em aberto"}
-                    </span>
-                  </div>
+                  <SalePaymentsPopover
+                    sale={sale}
+                    // The balance rule lives on the server, so a write refetches rather
+                    // than recomputing it here - two implementations of "is it settled"
+                    // is exactly how the screen starts disagreeing with the database.
+                    onChanged={() => router.refresh()}
+                    disabled={isSaving}
+                  />
                 </TableCell>
               </TableRow>
             )

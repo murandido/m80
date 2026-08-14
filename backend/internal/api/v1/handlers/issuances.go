@@ -19,6 +19,7 @@ import (
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/events"
 	"github.com/murandido/m-80-backend/internal/export"
+	"github.com/murandido/m-80-backend/internal/sale"
 	"github.com/murandido/m-80-backend/internal/traveos"
 
 	// Aliased because "issuance" is the local variable name for a data.Issuance
@@ -971,22 +972,13 @@ func (h *IssuanceHandler) UncancelIssuance(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// The linked sale's paid flag is only restored if the cancellation itself reset it -
-	// blindly setting paid=true could wrongly mark a sale that was never paid. The cancel
-	// audit log records that decision under sale_paid_reset; read the latest one.
-	salePaidReset := false
-	var lastCancel data.AuditLog
-	if err := h.DB.
-		Where("issuance_id = ? AND action = ?", id, auditActionCancelled).
-		Order("created_at desc").
-		First(&lastCancel).Error; err == nil {
-		var details struct {
-			SalePaidReset bool `json:"sale_paid_reset"`
-		}
-		_ = json.Unmarshal(lastCancel.Details, &details)
-		salePaidReset = details.SalePaidReset
-	}
-
+	// The sale's ledger is not touched here either - what the client paid is the sum of its
+	// payments, and reviving a booking does not move money. What does change is what is
+	// owed: the ticket is a debt again, so the balance goes back to the price minus what
+	// came in. The recalculation happens with the write, below.
+	//
+	// Older cancellations recorded a sale_paid_reset flag for this branch to undo; those
+	// entries stay in audit_logs as history and are simply no longer acted on.
 	now := time.Now()
 	// Clearing cancelled_at makes deriveIssuanceStatus fall back to complete/incomplete;
 	// cancel never touched Complete, so the pre-cancel status is recovered for free.
@@ -998,8 +990,7 @@ func (h *IssuanceHandler) UncancelIssuance(w http.ResponseWriter, r *http.Reques
 	issuance.CancellationFee = nil
 
 	details, err := json.Marshal(map[string]any{
-		"restored_sale_paid": salePaidReset,
-		"restored_at":        now,
+		"restored_at": now,
 	})
 	if err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to build audit details: "+err.Error())
@@ -1013,12 +1004,8 @@ func (h *IssuanceHandler) UncancelIssuance(w http.ResponseWriter, r *http.Reques
 			return err
 		}
 
-		if salePaidReset {
-			if err := tx.Model(&data.Sale{}).
-				Where("issuance_id = ?", issuance.ID).
-				Update("paid", true).Error; err != nil {
-				return err
-			}
+		if err := sale.RecalculateByIssuance(tx, issuance.ID); err != nil {
+			return err
 		}
 
 		return tx.Create(&data.AuditLog{

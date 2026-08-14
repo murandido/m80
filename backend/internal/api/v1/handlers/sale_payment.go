@@ -1,0 +1,246 @@
+package handlers
+
+import (
+	"encoding/json"
+	"net/http"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/murandido/m-80-backend/internal/api/middleware"
+	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
+	"github.com/murandido/m-80-backend/internal/data"
+	"github.com/murandido/m-80-backend/internal/sale"
+	"github.com/murandido/m-80-backend/internal/utils"
+	"gorm.io/gorm"
+)
+
+// A sale is settled when its payments add up to what it is worth. sales.paid survives as a
+// cache of that sum - see recalculateSalePaid - so the previous API image keeps reading the
+// right thing after a rollback, and so the ?paid= filter and the export stay one column
+// lookup instead of an aggregate.
+//
+// Everything that writes a payment goes through here, and everything here ends by
+// recalculating. That is the whole of the consistency rule.
+
+func toSalePaymentResponse(payment data.SalePayment) schemas.SalePaymentResponse {
+	resp := schemas.SalePaymentResponse{
+		ID:          payment.ID,
+		SaleID:      payment.SaleID,
+		AmountCents: payment.AmountCents,
+		PaidOn:      payment.PaidOn.Format("2006-01-02"),
+		Note:        payment.Note,
+		CreatedByID: payment.CreatedByID,
+		CreatedAt:   payment.CreatedAt,
+	}
+	if payment.CreatedBy != nil {
+		resp.CreatedByName = payment.CreatedBy.Name
+	}
+	return resp
+}
+
+// GetSalePayments handles GET /sales/{id}/payments
+// @Summary      Extrato de pagamentos de uma venda
+// @Description  Lista os lançamentos de uma venda, do mais antigo para o mais recente. Valor negativo é dinheiro devolvido ao cliente.
+// @Tags         Vendas
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id path string true "UUID da venda"
+// @Success      200  {object}  schemas.SalePaymentListResponse
+// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      404  {object}  schemas.ErrorResponse "Venda não encontrada"
+// @Failure      500  {object}  schemas.ErrorResponse "Erro ao buscar os lançamentos"
+// @Router       /sales/{id}/payments [get]
+func (h *SaleHandler) GetSalePayments(w http.ResponseWriter, r *http.Request) {
+	saleID := chi.URLParam(r, "id")
+
+	var found data.Sale
+	if err := h.DB.First(&found, "id = ?", saleID).Error; err != nil {
+		utils.SendError(w, r, http.StatusNotFound, "Sale not found")
+		return
+	}
+
+	var payments []data.SalePayment
+	err := h.DB.Preload("CreatedBy").
+		Where("sale_id = ?", saleID).
+		Order("paid_on asc, created_at asc").
+		Find(&payments).Error
+	if err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch the payments")
+		return
+	}
+
+	responses := make([]schemas.SalePaymentResponse, 0, len(payments))
+	for _, payment := range payments {
+		responses = append(responses, toSalePaymentResponse(payment))
+	}
+
+	utils.SendJSON(w, r, http.StatusOK, "Sale payments retrieved successfully", responses)
+}
+
+// CreateSalePayment handles POST /sales/{id}/payments
+// @Summary      Lançar um pagamento numa venda
+// @Description  Registra dinheiro recebido do cliente. O valor é em centavos e pode ser negativo, que é como se registra uma devolução — o saldo da venda volta a subir. Zero é recusado. Depois de gravar, a venda é marcada como paga ou em aberto conforme a soma dos lançamentos alcance ou não o valor dela.
+// @Tags         Vendas
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id      path  string                            true "UUID da venda"
+// @Param        payload body  schemas.CreateSalePaymentRequest  true "Lançamento"
+// @Success      201  {object}  schemas.SalePaymentSingleResponse
+// @Failure      400  {object}  schemas.ErrorResponse "Payload inválido, valor zero ou data em formato errado"
+// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      404  {object}  schemas.ErrorResponse "Venda não encontrada"
+// @Failure      500  {object}  schemas.ErrorResponse "Erro ao lançar o pagamento"
+// @Router       /sales/{id}/payments [post]
+func (h *SaleHandler) CreateSalePayment(w http.ResponseWriter, r *http.Request) {
+	userCtx, ok := r.Context().Value(middleware.UserContextKey).(data.User)
+	if !ok {
+		utils.SendError(w, r, http.StatusUnauthorized, "Unauthorized or invalid context")
+		return
+	}
+
+	saleID := chi.URLParam(r, "id")
+
+	var req schemas.CreateSalePaymentRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		utils.SendError(w, r, http.StatusBadRequest, "Invalid JSON payload")
+		return
+	}
+	if err := h.Validator.Struct(req); err != nil {
+		utils.SendError(w, r, http.StatusBadRequest, "Validation failed: "+err.Error())
+		return
+	}
+	// The database refuses this too, but a check constraint surfaces as a 500 with a
+	// Postgres string in it. A movement of nothing is only ever a typo.
+	if req.AmountCents == 0 {
+		utils.SendError(w, r, http.StatusBadRequest, "O valor do lançamento não pode ser zero")
+		return
+	}
+
+	paidOn, err := time.Parse("2006-01-02", req.PaidOn)
+	if err != nil {
+		utils.SendError(w, r, http.StatusBadRequest, "Data inválida (use AAAA-MM-DD)")
+		return
+	}
+
+	var found data.Sale
+	if err := h.DB.First(&found, "id = ?", saleID).Error; err != nil {
+		utils.SendError(w, r, http.StatusNotFound, "Sale not found")
+		return
+	}
+
+	payment := data.SalePayment{
+		SaleID:      saleID,
+		AmountCents: req.AmountCents,
+		PaidOn:      paidOn,
+		Note:        optionalText(req.Note),
+		CreatedByID: userCtx.ID,
+	}
+
+	err = h.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&payment).Error; err != nil {
+			return err
+		}
+		return sale.Recalculate(tx, saleID)
+	})
+	if err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to record the payment: "+err.Error())
+		return
+	}
+
+	h.broadcastSaleUpdated(saleID)
+
+	payment.CreatedBy = &userCtx
+	utils.SendJSON(w, r, http.StatusCreated, "Payment recorded successfully", toSalePaymentResponse(payment))
+}
+
+// DeleteSalePayment handles DELETE /sales/{id}/payments/{paymentID}
+// @Summary      Apagar um lançamento
+// @Description  Remove um lançamento digitado errado e recalcula a situação da venda. Não é soft delete: um pagamento que nunca aconteceu não é história, é engano.
+// @Tags         Vendas
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id        path string true "UUID da venda"
+// @Param        paymentID path string true "UUID do lançamento"
+// @Success      200  {object}  schemas.ErrorResponse "Lançamento apagado com sucesso"
+// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      404  {object}  schemas.ErrorResponse "Lançamento não encontrado nessa venda"
+// @Failure      500  {object}  schemas.ErrorResponse "Erro ao apagar o lançamento"
+// @Router       /sales/{id}/payments/{paymentID} [delete]
+func (h *SaleHandler) DeleteSalePayment(w http.ResponseWriter, r *http.Request) {
+	saleID := chi.URLParam(r, "id")
+	paymentID := chi.URLParam(r, "paymentID")
+
+	// Scoped by both ids: the payment has to belong to the sale in the URL, or a guessed id
+	// would let one sale's statement be edited through another's.
+	var payment data.SalePayment
+	if err := h.DB.First(&payment, "id = ? AND sale_id = ?", paymentID, saleID).Error; err != nil {
+		utils.SendError(w, r, http.StatusNotFound, "Payment not found")
+		return
+	}
+
+	err := h.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Delete(&payment).Error; err != nil {
+			return err
+		}
+		return sale.Recalculate(tx, saleID)
+	})
+	if err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to delete the payment: "+err.Error())
+		return
+	}
+
+	h.broadcastSaleUpdated(saleID)
+
+	utils.SendJSON(w, r, http.StatusOK, "Payment deleted successfully", nil)
+}
+
+// settleSaleFromLegacyFlag reproduces the old paid switch for a client that still speaks it -
+// the panel already deployed while this ships, since the two are published by independent
+// labels. true records a payment for whatever is missing; false clears the statement.
+//
+// It is a compatibility step, not a feature: delete it once the panel that uses the
+// statement is out. Nothing in the new UI calls it.
+func settleSaleFromLegacyFlag(tx *gorm.DB, saleID string, paid bool, actorID string) error {
+	if !paid {
+		if err := tx.Where("sale_id = ?", saleID).Delete(&data.SalePayment{}).Error; err != nil {
+			return err
+		}
+		return sale.Recalculate(tx, saleID)
+	}
+
+	amount, err := sale.AmountOf(tx, saleID)
+	if err != nil {
+		return err
+	}
+	paidCents, err := sale.PaidCents(tx, saleID)
+	if err != nil {
+		return err
+	}
+
+	// On a cancelled sale the balance is what has to go back, so the old switch records the
+	// refund. That is the only reading of "mark as paid" that leaves the sale with nothing
+	// pending, which is what the switch meant.
+	if missing := sale.BalanceCents(amount, paidCents); missing != 0 {
+		note := "Baixa pelo interruptor de pago"
+		payment := data.SalePayment{
+			SaleID:      saleID,
+			AmountCents: missing,
+			PaidOn:      time.Now(),
+			Note:        &note,
+			CreatedByID: actorID,
+		}
+		if err := tx.Create(&payment).Error; err != nil {
+			return err
+		}
+	}
+
+	return sale.Recalculate(tx, saleID)
+}
+
+func optionalText(value *string) *string {
+	if value == nil || *value == "" {
+		return nil
+	}
+	return value
+}

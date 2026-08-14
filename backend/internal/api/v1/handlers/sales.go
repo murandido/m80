@@ -14,10 +14,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
+	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/events"
 	"github.com/murandido/m-80-backend/internal/export"
+	"github.com/murandido/m-80-backend/internal/sale"
 	"github.com/murandido/m-80-backend/internal/utils"
 	"gorm.io/gorm"
 )
@@ -33,6 +35,16 @@ type SaleHandler struct {
 	DB        *gorm.DB
 	Validator *validator.Validate
 	Broker    *events.Broker
+}
+
+// broadcastSaleUpdated announces a persisted change. Called only after the write landed, so
+// no panel is ever told about a change that failed. The payload is just the id, as
+// everywhere else: whoever is listening refetches with their own filters.
+func (h *SaleHandler) broadcastSaleUpdated(saleID string) {
+	h.Broker.Broadcast(events.Event{
+		Type:    eventSaleUpdated,
+		Payload: map[string]string{"id": saleID},
+	})
 }
 
 func NewSaleHandler(db *gorm.DB, broker *events.Broker) *SaleHandler {
@@ -73,6 +85,7 @@ type saleRow struct {
 
 	ValueOfTheThousand int
 	Taxes              *int
+	PaidCents          int
 	CancelledAt        *time.Time
 
 	AccountID           string
@@ -98,6 +111,7 @@ func saleListQuery(db *gorm.DB) *gorm.DB {
 			issuances.points,
 			issuances.value_of_the_thousand,
 			issuances.taxes,
+			COALESCE(payments.paid_cents, 0) AS paid_cents,
 			issuances.cancelled_at,
 			issuances.account_id,
 			users.name AS issuer_name,
@@ -113,6 +127,13 @@ func saleListQuery(db *gorm.DB) *gorm.DB {
 		Joins("LEFT JOIN clients ON clients.id = sales.client_id").
 		Joins("LEFT JOIN account_nicknames ON account_nicknames.id = issuances.account_nickname_id").
 		Joins("LEFT JOIN people AS holders ON holders.id = accounts.holder_id").
+		// Aggregated in the join rather than per row: the statement of every sale on the
+		// screen in one pass, instead of one query per line.
+		Joins(`LEFT JOIN (
+			SELECT sale_id, SUM(amount_cents) AS paid_cents
+			FROM sale_payments
+			GROUP BY sale_id
+		) AS payments ON payments.sale_id = sales.id`).
 		// Deleting an issuance also deletes its sale, so this only matters for rows that
 		// predate that rule - but the join is hand-written, so nothing else would filter
 		// them out. A sale whose issuance was erased has nothing left to charge for.
@@ -134,25 +155,17 @@ func saleAccountLabel(row saleRow) string {
 	return row.AccountID
 }
 
-// pointsValueCents converts miles to money at a given price per thousand, rounding up to
-// the cent. Rounding up (rather than truncating) matches the ROUNDUP the export
-// spreadsheet applies, so the two never disagree by a cent on the same issuance.
-func pointsValueCents(points, valueOfTheThousand int) int {
-	total := points * valueOfTheThousand
-	if total <= 0 {
-		return total / 1000
-	}
-	return (total + 999) / 1000
-}
-
 func toSaleResponse(row saleRow) schemas.SaleResponse {
-	amount := pointsValueCents(row.Points, row.ValueOfTheThousand)
+	amount := sale.PointsValueCents(row.Points, row.ValueOfTheThousand)
 	if row.Taxes != nil {
 		amount += *row.Taxes
 	}
 
 	return schemas.SaleResponse{
-		ID:                  row.ID,
+		ID:        row.ID,
+		PaidCents: row.PaidCents,
+		BalanceCents: sale.BalanceCents(
+			sale.Amount{Cents: amount, Cancelled: row.CancelledAt != nil}, row.PaidCents),
 		IssuanceID:          row.IssuanceID,
 		ClientID:            row.ClientID,
 		ClientName:          row.ClientName,
@@ -398,6 +411,14 @@ func (h *SaleHandler) GetSalesExport(w http.ResponseWriter, r *http.Request) {
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao atualizar venda"
 // @Router       /sales/{id} [patch]
 func (h *SaleHandler) UpdateSale(w http.ResponseWriter, r *http.Request) {
+	// Needed only by the legacy paid translation below, which records a payment and has to
+	// credit somebody for it.
+	userCtx, ok := r.Context().Value(middleware.UserContextKey).(data.User)
+	if !ok {
+		utils.SendError(w, r, http.StatusUnauthorized, "Unauthorized or invalid context")
+		return
+	}
+
 	id := chi.URLParam(r, "id")
 
 	body, err := io.ReadAll(r.Body)
@@ -443,16 +464,27 @@ func (h *SaleHandler) UpdateSale(w http.ResponseWriter, r *http.Request) {
 		}
 		updates["client_id"] = req.ClientID
 	}
-	if req.Paid != nil {
-		updates["paid"] = *req.Paid
-	}
 
-	if len(updates) == 0 {
+	if len(updates) == 0 && req.Paid == nil {
 		utils.SendError(w, r, http.StatusBadRequest, "No fields to update")
 		return
 	}
 
-	if err := h.DB.Model(&sale).Updates(updates).Error; err != nil {
+	err = h.DB.Transaction(func(tx *gorm.DB) error {
+		if len(updates) > 0 {
+			if err := tx.Model(&sale).Updates(updates).Error; err != nil {
+				return err
+			}
+		}
+		// paid is no longer a column an operator sets: it is the sum of the sale's
+		// payments. A client still sending it gets that intent translated into the
+		// statement - see settleSaleFromLegacyFlag for why this exists and when it goes.
+		if req.Paid != nil {
+			return settleSaleFromLegacyFlag(tx, sale.ID, *req.Paid, userCtx.ID)
+		}
+		return nil
+	})
+	if err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to update sale: "+err.Error())
 		return
 	}
@@ -470,12 +502,7 @@ func (h *SaleHandler) UpdateSale(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Announced only after the write landed, so no panel is ever told about a change that
-	// failed.
-	h.Broker.Broadcast(events.Event{
-		Type:    eventSaleUpdated,
-		Payload: map[string]string{"id": sale.ID},
-	})
+	h.broadcastSaleUpdated(sale.ID)
 
 	utils.SendJSON(w, r, http.StatusOK, "Sale updated successfully", toSaleResponse(row))
 }

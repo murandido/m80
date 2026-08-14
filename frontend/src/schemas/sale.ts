@@ -14,6 +14,11 @@ export const saleSchema = z.object({
   value_of_the_thousand: z.number(),
   taxes: z.number().nullable(),
   amount_cents: z.number(),
+  // What the client has actually handed over: the sum of the sale's payments. Can exceed
+  // amount_cents (overpaid) or go negative (more was given back than came in).
+  paid_cents: z.number().default(0),
+  // What is still missing. Zero or less means settled, which is what `paid` reports.
+  balance_cents: z.number().default(0),
   account_id: z.string(),
   account_label: z.string(),
   loyalty_program_name: z.string(),
@@ -24,6 +29,44 @@ export const saleSchema = z.object({
 })
 
 export type Sale = z.infer<typeof saleSchema>
+
+// One line of a sale's statement.
+export const salePaymentSchema = z.object({
+  id: z.string(),
+  sale_id: z.string(),
+  // Centavos, signed: negative is money handed back to the client.
+  amount_cents: z.number(),
+  // A calendar day (YYYY-MM-DD), not an instant - the operator knows the day the money
+  // moved, not the hour.
+  paid_on: z.string(),
+  note: z.string().nullable(),
+  created_by_id: z.string(),
+  created_by_name: z.string().default(""),
+  created_at: z.string(),
+})
+
+export type SalePayment = z.infer<typeof salePaymentSchema>
+
+export const getSalePaymentsSchema = {
+  response: z.object({
+    success: z.boolean(),
+    message: z.string(),
+    data: z.array(salePaymentSchema).nullish(),
+  }),
+}
+
+export const createSalePaymentSchema = {
+  request: z.object({
+    amount_cents: z.number(),
+    paid_on: z.string(),
+    note: z.string().optional(),
+  }),
+  response: z.object({
+    success: z.boolean(),
+    message: z.string(),
+    data: salePaymentSchema.nullish(),
+  }),
+}
 
 export const getSalesSchema = {
   response: z.object({

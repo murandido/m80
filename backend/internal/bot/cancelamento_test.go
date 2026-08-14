@@ -104,7 +104,11 @@ func TestHandleCancelamento_PartialRefund(t *testing.T) {
 	})
 }
 
-func TestHandleCancelamento_ResetsPaidSale(t *testing.T) {
+// The bot cancels through the same internal/issuance.Cancel the panel does, which is the
+// point of the rule living there: a CANCELAMENTO no longer reopens the sale either. What
+// the client paid is the sum of the sale's payments, and cancelling a booking does not take
+// that money back out of the till.
+func TestHandleCancelamento_LeavesThePaidSaleAlone(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		s := newCorrectionScenario(t, tx, data.Airline{})
 		if err := tx.Model(&data.Sale{}).Where("issuance_id = ?", s.Issuance.ID).
@@ -120,8 +124,8 @@ func TestHandleCancelamento_ResetsPaidSale(t *testing.T) {
 		if err := tx.First(&sale, "issuance_id = ?", s.Issuance.ID).Error; err != nil {
 			t.Fatalf("failed to re-read sale: %v", err)
 		}
-		if sale.Paid {
-			t.Fatal("expected sale.paid to be reset to false")
+		if !sale.Paid {
+			t.Fatal("the CANCELAMENTO reopened the sale; the two cancel paths have to agree")
 		}
 
 		cancelled := s.reload(t, tx)

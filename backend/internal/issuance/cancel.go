@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/murandido/m-80-backend/internal/data"
+	"github.com/murandido/m-80-backend/internal/sale"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
@@ -51,14 +52,16 @@ func Cancel(db *gorm.DB, issuance data.Issuance, in CancelInput, actorID string)
 		return data.Issuance{}, err
 	}
 
-	// Only touch a paid sale: scoping on paid=true keeps this a no-op when there is
-	// no sale linked or it was already unpaid. RowsAffected records whether we actually
-	// flipped it, so an uncancel can restore the exact prior state on a revert.
-	res := db.Model(&data.Sale{}).
-		Where("issuance_id = ? AND paid = ?", issuance.ID, true).
-		Update("paid", false)
-	if res.Error != nil {
-		return data.Issuance{}, res.Error
+	// The sale's ledger is left alone - the money the client handed over does not stop
+	// existing because the booking was cancelled. What changes is what is owed: a cancelled
+	// ticket is not a debt, so the balance stops being "the client owes the price" and
+	// becomes "the agency owes back whatever came in". Recalculating is what moves
+	// sales.paid to match; see internal/sale.BalanceCents.
+	//
+	// This used to flip paid to false instead, which made sense while paid was a switch an
+	// operator set by hand.
+	if err := sale.RecalculateByIssuance(db, issuance.ID); err != nil {
+		return data.Issuance{}, err
 	}
 
 	details, err := json.Marshal(map[string]any{
@@ -66,7 +69,6 @@ func Cancel(db *gorm.DB, issuance data.Issuance, in CancelInput, actorID string)
 		"refunded_taxes":   in.RefundedTaxes,
 		"cancellation_fee": in.CancellationFee,
 		"cancelled_at":     now,
-		"sale_paid_reset":  res.RowsAffected > 0,
 	})
 	if err != nil {
 		return data.Issuance{}, err

@@ -251,6 +251,20 @@ type SaleSingleResponse struct {
 	Data    SaleResponse `json:"data"`
 }
 
+// SalePaymentListResponse is the GET /sales/{id}/payments route response
+type SalePaymentListResponse struct {
+	Success bool                  `json:"success" example:"true"`
+	Message string                `json:"message" example:"Lançamentos listados com sucesso"`
+	Data    []SalePaymentResponse `json:"data"`
+}
+
+// SalePaymentSingleResponse is the POST /sales/{id}/payments route response
+type SalePaymentSingleResponse struct {
+	Success bool                `json:"success" example:"true"`
+	Message string              `json:"message" example:"Lançamento registrado com sucesso"`
+	Data    SalePaymentResponse `json:"data"`
+}
+
 // SupplierBalanceListResponse is the GET /sales/suppliers route response
 type SupplierBalanceListResponse struct {
 	Success bool                      `json:"success" example:"true"`

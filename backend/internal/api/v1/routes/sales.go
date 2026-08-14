@@ -32,7 +32,15 @@ func RegisterSaleRoutes(r chi.Router, db *gorm.DB, broker *events.Broker) {
 		// the payment summary sent to the account's administrator
 		r.With(middleware.RequireAdmin()).Get("/suppliers/report", saleHandler.GetSupplierReportPDF)
 
-		// link a client and/or mark as paid
+		// link a client (and, for a panel that has not been published yet, the old
+		// paid switch - translated into a payment; see settleSaleFromLegacyFlag)
 		r.Patch("/{id}", saleHandler.UpdateSale)
+
+		// The statement of a sale: what the client has handed over, in parts. Open to
+		// any authenticated user, like the clients view it belongs to - receiving money
+		// from a client is the operator's own work.
+		r.Get("/{id}/payments", saleHandler.GetSalePayments)
+		r.Post("/{id}/payments", saleHandler.CreateSalePayment)
+		r.Delete("/{id}/payments/{paymentID}", saleHandler.DeleteSalePayment)
 	})
 }

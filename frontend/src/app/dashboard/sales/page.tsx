@@ -12,7 +12,10 @@ import { Button } from "@/components/ui/button"
 import { getSalesSchema, type Sale } from "@/schemas/sale"
 import { getClientsSchema, type Client } from "@/schemas/client"
 import { getAgenciesSchema, type Agency } from "@/schemas/agency"
-import { getLoyaltyProgramsSchema, type LoyaltyProgram } from "@/schemas/loyalty-program"
+import {
+  getLoyaltyProgramsSchema,
+  type LoyaltyProgram,
+} from "@/schemas/loyalty-program"
 import { getAccountsSchema, type Account } from "@/schemas/account"
 import { getPeopleSchema, type Person } from "@/schemas/person"
 import { getUsersSchema, type User } from "@/schemas/user"
@@ -20,6 +23,7 @@ import { SalesViewToggle } from "@/components/sales/sales-view-toggle"
 import { PeriodFilter } from "@/components/filters/period-filter"
 import { SalesFilterBar } from "@/components/sales/sales-filter-bar"
 import { SalesClientsTable } from "@/components/sales/sales-clients-table"
+import { SalesHelpPopover } from "@/components/sales/sales-help-popover"
 import { LiveRefresh } from "@/components/layout/live-refresh"
 import {
   buildSalesQuery,
@@ -73,27 +77,48 @@ export default async function SalesClientsPage({
   const filters = resolveSalesFilters(params)
   const query = buildSalesQuery(period, filters)
 
-  const [user, sales, clients, agencies, loyaltyPrograms, accounts, people, users] =
-    await Promise.all([
-      getSessionUser(),
-      fetchList<Sale>(`${api}/sales?${query.toString()}`, getSalesSchema.response, authHeader),
-      fetchList<Client>(`${api}/clients`, getClientsSchema.response, authHeader),
-      fetchList<Agency>(`${api}/agencies`, getAgenciesSchema.response, authHeader),
-      fetchList<LoyaltyProgram>(
-        `${api}/loyalty-programs`,
-        getLoyaltyProgramsSchema.response,
-        authHeader,
-      ),
-      fetchList<Account>(`${api}/accounts`, getAccountsSchema.response, authHeader),
-      fetchList<Person>(`${api}/people`, getPeopleSchema.response, authHeader),
-      fetchList<User>(`${api}/users`, getUsersSchema.response, authHeader),
-    ])
+  const [
+    user,
+    sales,
+    clients,
+    agencies,
+    loyaltyPrograms,
+    accounts,
+    people,
+    users,
+  ] = await Promise.all([
+    getSessionUser(),
+    fetchList<Sale>(
+      `${api}/sales?${query.toString()}`,
+      getSalesSchema.response,
+      authHeader,
+    ),
+    fetchList<Client>(`${api}/clients`, getClientsSchema.response, authHeader),
+    fetchList<Agency>(
+      `${api}/agencies`,
+      getAgenciesSchema.response,
+      authHeader,
+    ),
+    fetchList<LoyaltyProgram>(
+      `${api}/loyalty-programs`,
+      getLoyaltyProgramsSchema.response,
+      authHeader,
+    ),
+    fetchList<Account>(
+      `${api}/accounts`,
+      getAccountsSchema.response,
+      authHeader,
+    ),
+    fetchList<Person>(`${api}/people`, getPeopleSchema.response, authHeader),
+    fetchList<User>(`${api}/users`, getUsersSchema.response, authHeader),
+  ])
 
   // The backend falls back to the main agency when agency_id is absent; resolving it here
   // too is what lets the combobox show its name instead of an empty placeholder.
   const effectiveFilters = {
     ...filters,
-    agency_id: filters.agency_id || (agencies ?? []).find((a) => a.is_default)?.id || "",
+    agency_id:
+      filters.agency_id || (agencies ?? []).find((a) => a.is_default)?.id || "",
   }
 
   return (
@@ -101,11 +126,18 @@ export default async function SalesClientsPage({
       <LiveRefresh />
       <div className="flex flex-col gap-4 sm:gap-6">
         <div className="flex items-center justify-between gap-4">
-          <h1 className="text-lg font-semibold text-slate-800">Controle de pagamentos</h1>
+          <h1 className="text-lg font-semibold text-slate-800">
+            Controle de pagamentos
+          </h1>
           <div className="flex items-center gap-2">
             {/* Linking a sale to a client that does not exist yet is the common case here,
                 so the client register is one click away instead of a trip to the sidebar. */}
-            <Button asChild variant="ghost" size="sm" className="text-slate-500">
+            <Button
+              asChild
+              variant="ghost"
+              size="sm"
+              className="text-slate-500"
+            >
               <Link href="/dashboard/clients">
                 Gerenciar clientes
                 <ExternalLink className="h-4 w-4" />
@@ -119,10 +151,14 @@ export default async function SalesClientsPage({
                 Exportar
               </a>
             </Button>
+            <SalesHelpPopover />
           </div>
         </div>
 
-        <SalesViewToggle active="clients" canSeeSuppliers={canAccess(user?.role, ["admin"])} />
+        <SalesViewToggle
+          active="clients"
+          canSeeSuppliers={canAccess(user?.role, ["admin"])}
+        />
 
         <SalesFilterBar
           variant="clients"
@@ -147,8 +183,8 @@ export default async function SalesClientsPage({
             <AlertTriangle />
             <AlertTitle>Não foi possível carregar as vendas</AlertTitle>
             <AlertDescription>
-              Recarregue a página. Marcar pagamentos com a lista incompleta pode registrar
-              uma cobrança na venda errada.
+              Recarregue a página. Marcar pagamentos com a lista incompleta pode
+              registrar uma cobrança na venda errada.
             </AlertDescription>
           </Alert>
         ) : (

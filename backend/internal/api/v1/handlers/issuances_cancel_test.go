@@ -310,14 +310,25 @@ func TestCancelIssuance_DeletedIsNotFound(t *testing.T) {
 	})
 }
 
-func TestCancelIssuance_ResetsPaidSale(t *testing.T) {
+// Cancelling never touches the sale's ledger - money does not move because a booking was
+// cancelled. What it changes is what is *owed*, and the two cases pull in opposite
+// directions, so both are pinned here.
+//
+// Paid: the price stops being a debt and the refund becomes one, so the sale stays pending
+// until somebody hands the money back.
+func TestCancelIssuance_APaidSaleBecomesARefundToMake(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		issuance, user := seedIssuance(t, tx)
-		sale := data.Sale{IssuanceID: issuance.ID, Paid: true}
+		sale := data.Sale{IssuanceID: issuance.ID}
 		create(t, tx, &sale)
 
-		rec := callCancel(tx, issuance.ID, user.ID, "")
+		// Through the compatibility switch, which records a payment for the full value: a
+		// sale marked paid over an empty statement is a state the system cannot produce.
+		if rec := callUpdateSale(t, tx, sale.ID, `{"paid":true}`); rec.Code != http.StatusOK {
+			t.Fatalf("marking paid: got %d (body: %s)", rec.Code, rec.Body.String())
+		}
 
+		rec := callCancel(tx, issuance.ID, user.ID, "")
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status: got %d, want %d (body: %s)", rec.Code, http.StatusOK, rec.Body.String())
 		}
@@ -327,7 +338,37 @@ func TestCancelIssuance_ResetsPaidSale(t *testing.T) {
 			t.Fatalf("failed to re-read sale: %v", err)
 		}
 		if persisted.Paid {
-			t.Error("expected sale.paid to be reset to false")
+			t.Error("the cancelled sale reads as settled while the client's money is still in the till")
+		}
+
+		// The statement itself is untouched: the payment happened and still did.
+		var payments int64
+		tx.Model(&data.SalePayment{}).Where("sale_id = ?", sale.ID).Count(&payments)
+		if payments != 1 {
+			t.Errorf("statement has %d lines, want the original payment still there", payments)
+		}
+	})
+}
+
+// Unpaid: nothing came in, and the price is no longer owed either - so there is nothing
+// left to do on this sale at all. This is the case that used to read as owing its full
+// value forever, long after the ticket it was for had been cancelled.
+func TestCancelIssuance_AnUnpaidSaleHasNothingLeftToDo(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		issuance, user := seedIssuance(t, tx)
+		sale := data.Sale{IssuanceID: issuance.ID}
+		create(t, tx, &sale)
+
+		if rec := callCancel(tx, issuance.ID, user.ID, ""); rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+		}
+
+		var persisted data.Sale
+		if err := tx.First(&persisted, "id = ?", sale.ID).Error; err != nil {
+			t.Fatalf("failed to re-read sale: %v", err)
+		}
+		if !persisted.Paid {
+			t.Error("a cancelled sale nobody ever paid still counts as pending; there is nothing to collect")
 		}
 	})
 }
@@ -476,10 +517,13 @@ func callUncancel(tx *gorm.DB, id, userID string) *httptest.ResponseRecorder {
 func TestUncancelIssuance_Success(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		issuance, user := seedIssuance(t, tx)
-		// A paid sale so cancel resets it and records sale_paid_reset=true, which uncancel
-		// must then restore - exercising the full round-trip through the audit log.
-		sale := data.Sale{IssuanceID: issuance.ID, Paid: true}
+		// A sale paid in full, through the compatibility switch so its statement is real:
+		// what the client paid lives there, and neither cancel nor uncancel moves it.
+		sale := data.Sale{IssuanceID: issuance.ID}
 		create(t, tx, &sale)
+		if rec := callUpdateSale(t, tx, sale.ID, `{"paid":true}`); rec.Code != http.StatusOK {
+			t.Fatalf("marking paid: got %d (body: %s)", rec.Code, rec.Body.String())
+		}
 
 		if rec := callCancel(tx, issuance.ID, user.ID, `{"refunded_points": 800, "refunded_taxes": 1500}`); rec.Code != http.StatusOK {
 			t.Fatalf("cancel status: got %d, want 200 (body: %s)", rec.Code, rec.Body.String())
@@ -526,8 +570,9 @@ func TestUncancelIssuance_Success(t *testing.T) {
 		if err := tx.First(&persistedSale, "issuance_id = ?", issuance.ID).Error; err != nil {
 			t.Fatalf("failed to re-read sale: %v", err)
 		}
+		// Back to owing nothing: the ticket is a debt again and the payment still covers it.
 		if !persistedSale.Paid {
-			t.Error("expected sale.paid restored to true")
+			t.Error("the sale came back pending from a round trip that never moved any money")
 		}
 
 		var restoreLog data.AuditLog
@@ -540,11 +585,11 @@ func TestUncancelIssuance_Success(t *testing.T) {
 	})
 }
 
-func TestUncancelIssuance_RestoresOnlyWhenCancelResetSale(t *testing.T) {
+// The other half of the same rule: an unpaid sale is not fabricated into a paid one by a
+// round trip either. Neither direction of the cancellation touches the money.
+func TestUncancelIssuance_LeavesAnUnpaidSaleUnpaid(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		issuance, user := seedIssuance(t, tx)
-		// An unpaid sale: cancel leaves it untouched (sale_paid_reset=false), so uncancel
-		// must NOT flip it to paid - blindly restoring would fabricate a payment.
 		sale := data.Sale{IssuanceID: issuance.ID, Paid: false}
 		create(t, tx, &sale)
 
@@ -560,7 +605,7 @@ func TestUncancelIssuance_RestoresOnlyWhenCancelResetSale(t *testing.T) {
 			t.Fatalf("failed to re-read sale: %v", err)
 		}
 		if persistedSale.Paid {
-			t.Error("expected sale.paid to stay false (cancel never reset it)")
+			t.Error("a sale nobody had paid came back paid")
 		}
 	})
 }
