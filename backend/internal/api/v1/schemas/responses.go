@@ -62,6 +62,20 @@ type PersonSingleResponse struct {
 	Data    PersonResponse `json:"data"`
 }
 
+// MergePersonPreviewSingleResponse is the GET /people/{id}/merge-preview route response
+type MergePersonPreviewSingleResponse struct {
+	Success bool                       `json:"success" example:"true"`
+	Message string                     `json:"message" example:"Prévia calculada com sucesso"`
+	Data    MergePersonPreviewResponse `json:"data"`
+}
+
+// MergePersonResultSingleResponse is the POST /people/{id}/merge route response
+type MergePersonResultSingleResponse struct {
+	Success bool                      `json:"success" example:"true"`
+	Message string                    `json:"message" example:"Cadastros mesclados com sucesso"`
+	Data    MergePersonResultResponse `json:"data"`
+}
+
 // PersonNicknameListResponse is the GET /people/{id}/nicknames route response
 type PersonNicknameListResponse struct {
 	Success bool                     `json:"success" example:"true"`
@@ -291,4 +305,11 @@ type ErrorResponse struct {
 	Success bool   `json:"success" example:"false"`
 	Message string `json:"message" example:"Mensagem de erro"`
 	Data    any    `json:"data" swaggertype:"object"`
+}
+
+// MergeAccountPreviewSingleResponse is the GET /accounts/{id}/merge-preview route response
+type MergeAccountPreviewSingleResponse struct {
+	Success bool                        `json:"success" example:"true"`
+	Message string                      `json:"message" example:"Prévia calculada com sucesso"`
+	Data    MergeAccountPreviewResponse `json:"data"`
 }

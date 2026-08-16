@@ -59,3 +59,28 @@ type PersonResponse struct {
 	CreatedAt     time.Time                `json:"created_at"`
 	UpdatedAt     time.Time                `json:"updated_at"`
 }
+
+// MergePersonRequest names the person to absorb into the one in the URL.
+type MergePersonRequest struct {
+	SourceID string `json:"source_id" validate:"required,uuid"`
+	// KeepNickname registers the absorbed person's name as an alias of the survivor.
+	// Omitted means yes: the duplicate usually exists because that name was never
+	// registered, and leaving it unregistered invites the bot to recreate it.
+	KeepNickname *bool `json:"keep_nickname" validate:"omitempty"`
+}
+
+// MergePersonPreviewResponse is what a merge would move, counted before it runs.
+type MergePersonPreviewResponse struct {
+	Accounts     int64    `json:"accounts"`
+	Nicknames    int64    `json:"nicknames"`
+	FieldsToFill []string `json:"fields_to_fill"`
+	// Empty when the absorbed name cannot become an alias - it already belongs to a
+	// third person, or the two are named the same.
+	NicknameFromName string `json:"nickname_from_name"`
+}
+
+// MergePersonResultResponse is the surviving person, plus whatever the merge could not do.
+type MergePersonResultResponse struct {
+	Person  PersonResponse `json:"person"`
+	Warning string         `json:"warning"`
+}

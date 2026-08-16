@@ -10,6 +10,8 @@ import {
   createAccountSchema,
   deleteAccountNicknameSchema,
   deleteAccountSchema,
+  mergeAccountPreviewSchema,
+  mergeAccountSchema,
   updateAccountSchema,
 } from "@/schemas/account"
 import { z } from "zod"
@@ -265,5 +267,58 @@ export async function createAccountForIssuanceAction(name: string, loyaltyProgra
     success: true as const,
     account: { ...account.account, nicknames: [nickname.nickname] },
     nicknameId: nickname.nickname.id,
+  }
+}
+
+export async function previewMergeAccountAction(keepId: string, sourceId: string) {
+  const cookieStore = await cookies()
+  const token = cookieStore.get("auth_token")?.value
+
+  try {
+    const res = await fetch(
+      `${env.BACKEND_URL}/api/v1/accounts/${keepId}/merge-preview?source_id=${sourceId}`,
+      { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" },
+    )
+
+    const json = await res.json()
+    const parsed = mergeAccountPreviewSchema.response.safeParse(json)
+
+    if (!res.ok || !parsed.data?.data) {
+      return { error: parsed.data?.message || "Erro ao calcular a prévia." }
+    }
+
+    return { preview: parsed.data.data }
+  } catch {
+    return { error: "Erro de conexão com o servidor." }
+  }
+}
+
+// Absorbs sourceId into keepId and deletes it. Unlike the delete button, which only
+// archives, this one takes the row out - which is why the panel shows the preview first.
+export async function mergeAccountAction(keepId: string, sourceId: string) {
+  const cookieStore = await cookies()
+  const token = cookieStore.get("auth_token")?.value
+
+  try {
+    const res = await fetch(`${env.BACKEND_URL}/api/v1/accounts/${keepId}/merge`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ source_id: sourceId }),
+    })
+
+    const json = await res.json()
+    const parsed = mergeAccountSchema.response.safeParse(json)
+
+    if (!res.ok) {
+      // e.g. 422 "Só é possível mesclar contas do mesmo programa"
+      return { error: parsed.data?.message || "Erro ao mesclar as contas." }
+    }
+
+    return { success: true as const }
+  } catch {
+    return { error: "Erro de conexão com o servidor." }
   }
 }

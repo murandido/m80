@@ -9,6 +9,8 @@ import {
   createPersonSchema,
   deletePersonNicknameSchema,
   deletePersonSchema,
+  mergePersonPreviewSchema,
+  mergePersonSchema,
   updatePersonSchema,
 } from "@/schemas/person"
 import { z } from "zod"
@@ -200,6 +202,62 @@ export async function deletePersonAction(personId: string) {
     }
 
     return { success: true }
+  } catch {
+    return { error: "Erro de conexão com o servidor." }
+  }
+}
+
+export async function previewMergePersonAction(keepId: string, sourceId: string) {
+  const cookieStore = await cookies()
+  const token = cookieStore.get("auth_token")?.value
+
+  try {
+    const res = await fetch(
+      `${env.BACKEND_URL}/api/v1/people/${keepId}/merge-preview?source_id=${sourceId}`,
+      { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" },
+    )
+
+    const json = await res.json()
+    const parsed = mergePersonPreviewSchema.response.safeParse(json)
+
+    if (!res.ok || !parsed.data?.data) {
+      return { error: parsed.data?.message || "Erro ao calcular a prévia." }
+    }
+
+    return { preview: parsed.data.data }
+  } catch {
+    return { error: "Erro de conexão com o servidor." }
+  }
+}
+
+// Absorbs sourceId into keepId and deletes it. There is no undo, which is why the panel
+// only calls this after showing the preview above.
+export async function mergePersonAction(
+  keepId: string,
+  sourceId: string,
+  keepNickname: boolean,
+) {
+  const cookieStore = await cookies()
+  const token = cookieStore.get("auth_token")?.value
+
+  try {
+    const res = await fetch(`${env.BACKEND_URL}/api/v1/people/${keepId}/merge`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ source_id: sourceId, keep_nickname: keepNickname }),
+    })
+
+    const json = await res.json()
+    const parsed = mergePersonSchema.response.safeParse(json)
+
+    if (!res.ok) {
+      return { error: parsed.data?.message || "Erro ao mesclar os cadastros." }
+    }
+
+    return { success: true as const, warning: parsed.data?.data?.warning ?? "" }
   } catch {
     return { error: "Erro de conexão com o servidor." }
   }

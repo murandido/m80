@@ -137,3 +137,37 @@ export const checkNicknameAvailabilitySchema = {
     data: z.object({ available: z.boolean() }).nullish(),
   }),
 }
+
+// What a merge would move, asked for before the operator confirms: the action deletes a
+// record for good, so the panel has to be able to say what is about to happen.
+export const mergePersonPreviewSchema = {
+  response: z.object({
+    success: z.boolean(),
+    message: z.string(),
+    data: z
+      .object({
+        accounts: z.number(),
+        nicknames: z.number(),
+        fields_to_fill: z.array(z.string()).nullish(),
+        nickname_from_name: z.string(),
+      })
+      .nullish(),
+  }),
+}
+
+export const mergePersonSchema = {
+  response: z.object({
+    success: z.boolean(),
+    message: z.string(),
+    data: z
+      .object({
+        person: personSchema,
+        warning: z.string(),
+      })
+      .nullish(),
+  }),
+}
+
+export type MergePersonPreview = NonNullable<
+  z.infer<typeof mergePersonPreviewSchema.response>["data"]
+>

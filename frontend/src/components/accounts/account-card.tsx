@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { useRouter } from "next/navigation"
-import { Menu, Trash2 } from "lucide-react"
+import { Menu, Merge, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { Account } from "@/schemas/account"
@@ -12,18 +12,34 @@ import { LoyaltyProgramBadge } from "./loyalty-program-badge"
 import { CopyCredentialsMenu } from "./copy-credentials-menu"
 import { DeleteOverlay } from "./delete-overlay"
 import { EditAccountPanel } from "./edit-account-panel"
+import { MergeAccountPanel } from "./merge-account-panel"
 
 interface AccountCardProps {
   account: Account
   people: Person[]
   loyaltyPrograms: LoyaltyProgram[]
+  // Every account, for the merge picker. Empty for anyone who cannot merge, so the
+  // list is not shipped to browsers that have no use for it.
+  allAccounts: Account[]
+  canMerge: boolean
 }
 
-export function AccountCard({ account, people, loyaltyPrograms }: AccountCardProps) {
+export function AccountCard({
+  account,
+  people,
+  loyaltyPrograms,
+  allAccounts,
+  canMerge,
+}: AccountCardProps) {
   const router = useRouter()
   const [isDeleteOpen, setIsDeleteOpen] = useState(false)
-  const [isEditOpen, setIsEditOpen] = useState(false)
+  // One panel at a time: they share the card's bottom edge, and two open at once would
+  // both claim the rounded corner.
+  const [openPanel, setOpenPanel] = useState<"none" | "edit" | "merge">("none")
   const [isDeleted, setIsDeleted] = useState(false)
+
+  const isEditOpen = openPanel === "edit"
+  const isMergeOpen = openPanel === "merge"
 
   function handleCardFadeEnd() {
     if (isDeleted) router.refresh()
@@ -47,7 +63,7 @@ export function AccountCard({ account, people, loyaltyPrograms }: AccountCardPro
       <div
         className={cn(
           "relative overflow-hidden border border-slate-200 transition-opacity duration-300",
-          isEditOpen ? "rounded-t-md" : "rounded-md",
+          openPanel === "none" ? "rounded-md" : "rounded-t-md",
           isDeleted ? "opacity-0" : "opacity-100",
         )}
         onTransitionEnd={handleCardFadeEnd}
@@ -70,10 +86,29 @@ export function AccountCard({ account, people, loyaltyPrograms }: AccountCardPro
             >
               <Trash2 className="h-4 w-4" />
             </Button>
+            {canMerge && (
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() =>
+                  setOpenPanel((prev) => (prev === "merge" ? "none" : "merge"))
+                }
+                className={cn(
+                  "transition-colors duration-200",
+                  isMergeOpen
+                    ? "border-amber-600 bg-amber-600 text-white hover:border-amber-700 hover:bg-amber-700"
+                    : "border-slate-800 text-slate-800 hover:border-amber-400 hover:bg-amber-400 hover:text-white active:border-amber-800 active:bg-amber-800 active:text-white",
+                )}
+              >
+                <Merge className="h-4 w-4" />
+              </Button>
+            )}
             <Button
               variant="outline"
               size="icon"
-              onClick={() => setIsEditOpen((prev) => !prev)}
+              onClick={() =>
+                setOpenPanel((prev) => (prev === "edit" ? "none" : "edit"))
+              }
               className={cn(
                 "transition-colors duration-200",
                 isEditOpen
@@ -100,8 +135,19 @@ export function AccountCard({ account, people, loyaltyPrograms }: AccountCardPro
         people={people}
         loyaltyPrograms={loyaltyPrograms}
         isOpen={isEditOpen}
-        onSaved={() => setIsEditOpen(false)}
+        onSaved={() => setOpenPanel("none")}
       />
+
+      {canMerge && (
+        <MergeAccountPanel
+          account={account}
+          accounts={allAccounts}
+          people={people}
+          title={title}
+          isOpen={isMergeOpen}
+          onMerged={() => setOpenPanel("none")}
+        />
+      )}
     </div>
   )
 }

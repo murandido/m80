@@ -2,7 +2,9 @@ import type { Metadata } from "next"
 import { cookies } from "next/headers"
 import { Separator } from "@/components/ui/separator"
 import { env } from "@/lib/env"
-import { listPeopleSchema, Person } from "@/schemas/person"
+import { getPeopleSchema, listPeopleSchema, Person } from "@/schemas/person"
+import { getSessionUser } from "@/lib/session"
+import { canAccess } from "@/lib/navigation"
 import { ContasPessoasToggle } from "@/components/layout/contas-pessoas-toggle"
 import { PersonCard } from "@/components/people/person-card"
 import { CreatePersonForm } from "@/components/people/create-person-form"
@@ -41,6 +43,31 @@ export default async function PeoplePage({
 
   let people: Person[] = []
   let total = 0
+
+  // Merging rewrites who owns an account and then deletes a record for good, so the panel
+  // only offers it to admins - the backend refuses it for anyone else regardless.
+  const sessionUser = await getSessionUser()
+  const canMerge = canAccess(sessionUser?.role, ["admin"])
+  let allPeople: Person[] = []
+
+  if (canMerge) {
+    try {
+      // The unpaginated list, because the duplicate the operator is after is usually
+      // exactly the one the current page or search does not show.
+      const res = await fetch(`${env.BACKEND_URL}/api/v1/people`, {
+        headers: authHeader,
+        cache: "no-store",
+      })
+      const json = await res.json()
+
+      const parsed = getPeopleSchema.response.safeParse(json)
+      if (parsed.success && parsed.data.data) {
+        allPeople = parsed.data.data
+      }
+    } catch {
+      // silently fail — the merge picker just comes up empty
+    }
+  }
 
   try {
     // /people/manage rather than /people: the plain route stays unpaginated
@@ -94,18 +121,25 @@ export default async function PeoplePage({
           {people.length === 0 ? (
             <p className="text-sm text-slate-500">
               {params.q || complete
-                ? "Nenhuma pessoa encontrada para os filtros selecionados."
-                : "Nenhuma pessoa cadastrada."}
+                ? "Nenhum proprietário encontrado para os filtros selecionados."
+                : "Nenhum proprietário cadastrado."}
             </p>
           ) : (
-            people.map((person) => <PersonCard key={person.id} person={person} />)
+            people.map((person) => (
+              <PersonCard
+                key={person.id}
+                person={person}
+                people={allPeople}
+                canMerge={canMerge}
+              />
+            ))
           )}
         </div>
         <ListPagination
           total={total}
           page={params.page}
           limit={PAGE_LIMIT}
-          noun={["pessoa", "pessoas"]}
+          noun={["proprietário", "proprietários"]}
         />
       </div>
     </div>

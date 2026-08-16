@@ -203,6 +203,7 @@ func accountListQuery(db *gorm.DB, params listQuery, programID string, complete 
 // @Param        order               query  string  false  "Ordenação"  Enums(name_asc, name_desc, created_desc, created_asc)
 // @Param        loyalty_program_id  query  string  false  "UUID do programa de fidelidade"
 // @Param        complete            query  bool    false  "Somente contas completas (true) ou incompletas (false)"
+// @Param        include_archived    query  bool    false  "Inclui as contas arquivadas — usado pela tela de mesclagem, que precisa alcançá-las"
 // @Success      200  {object}  schemas.AccountListResponse
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao buscar contas"
@@ -210,8 +211,18 @@ func accountListQuery(db *gorm.DB, params listQuery, programID string, complete 
 func (h *AccountHandler) GetAccounts(w http.ResponseWriter, r *http.Request) {
 	var accounts []data.Account
 
+	db := h.DB
+	// Only the merge picker asks for this. Archiving was the only way to get rid of a
+	// duplicate before merging existed, so the duplicates that most need absorbing are
+	// exactly the archived ones - and their issuances are still sitting on them. Nothing
+	// new is exposed: the issuances grid already receives archived accounts embedded in
+	// old rows, which is why AccountResponse carries deleted_at at all.
+	if archived := parseOptionalBool(r.URL.Query().Get("include_archived")); archived != nil && *archived {
+		db = db.Unscoped()
+	}
+
 	query := accountListQuery(
-		h.DB,
+		db,
 		parseListQuery(r),
 		r.URL.Query().Get("loyalty_program_id"),
 		parseOptionalBool(r.URL.Query().Get("complete")),

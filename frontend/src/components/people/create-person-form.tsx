@@ -113,7 +113,7 @@ export function CreatePersonForm() {
       >
         <div className="flex w-full items-center justify-center gap-2 p-1 text-sm text-slate-50">
           {isOpen ? <X className="h-4 w-4" /> : <UserPlus className="h-4 w-4" />}
-          {isOpen ? "Cancelar Cadastro" : "Cadastrar Pessoa"}
+          {isOpen ? "Cancelar Cadastro" : "Cadastrar Proprietário"}
         </div>
       </Button>
 

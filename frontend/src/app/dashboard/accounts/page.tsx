@@ -12,6 +12,8 @@ import { ListFilterBar } from "@/components/shared/list-filter-bar"
 import { ListFilterSelect } from "@/components/shared/list-filter-select"
 import { listQueryString, resolveListParams } from "@/lib/list-params"
 import { readStickyFilters, stickySearchParams } from "@/lib/sticky-filters"
+import { getSessionUser } from "@/lib/session"
+import { canAccess } from "@/lib/navigation"
 
 export const metadata: Metadata = {
   title: "Contas",
@@ -42,6 +44,33 @@ export default async function AccountsPage({
   let accounts: Account[] = []
   let people: Person[] = []
   let loyaltyPrograms: LoyaltyProgram[] = []
+
+  // Merging moves issuance history and then deletes a record for good, so the panel only
+  // offers it to admins - the backend refuses it for anyone else regardless.
+  const sessionUser = await getSessionUser()
+  const canMerge = canAccess(sessionUser?.role, ["admin"])
+  let allAccounts: Account[] = []
+
+  if (canMerge) {
+    try {
+      // Unfiltered, because the duplicate the operator is after is usually exactly the
+      // one the current search does not show - the two are registered differently. And
+      // archived ones included, because archiving was the only way to get a duplicate off
+      // the screen before merging existed: those are the ones still holding issuances.
+      const res = await fetch(`${env.BACKEND_URL}/api/v1/accounts?include_archived=true`, {
+        headers: authHeader,
+        cache: "no-store",
+      })
+      const json = await res.json()
+
+      const parsed = getAccountsSchema.response.safeParse(json)
+      if (parsed.success && parsed.data.data) {
+        allAccounts = parsed.data.data
+      }
+    } catch {
+      // silently fail — the merge picker just comes up empty
+    }
+  }
 
   try {
     const res = await fetch(
@@ -140,6 +169,8 @@ export default async function AccountsPage({
                 account={account}
                 people={people}
                 loyaltyPrograms={loyaltyPrograms}
+                allAccounts={allAccounts}
+                canMerge={canMerge}
               />
             ))
           )}

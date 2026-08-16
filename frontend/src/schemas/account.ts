@@ -114,3 +114,32 @@ export const checkAccountNicknameAvailabilitySchema = {
     data: z.object({ available: z.boolean() }).nullish(),
   }),
 }
+
+// Same idea as mergePersonPreviewSchema: the counts the panel shows before an
+// irreversible merge. issuances includes the ones in the grid's trash.
+export const mergeAccountPreviewSchema = {
+  response: z.object({
+    success: z.boolean(),
+    message: z.string(),
+    data: z
+      .object({
+        issuances: z.number(),
+        nicknames: z.number(),
+        fields_to_fill: z.array(z.string()).nullish(),
+        colliding_nicknames: z.array(z.string()).nullish(),
+      })
+      .nullish(),
+  }),
+}
+
+export const mergeAccountSchema = {
+  response: z.object({
+    success: z.boolean(),
+    message: z.string(),
+    data: accountSchema.nullish(),
+  }),
+}
+
+export type MergeAccountPreview = NonNullable<
+  z.infer<typeof mergeAccountPreviewSchema.response>["data"]
+>

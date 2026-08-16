@@ -212,6 +212,9 @@ export function AccountCombobox({
                 </span>
                 <span className="text-muted-foreground truncate text-xs">
                   {account.loyalty_program.name}
+                  {/* Only the merge picker ever asks for archived accounts, and there
+                      they are the common case - saying so stops one reading as live. */}
+                  {account.deleted_at && " · arquivada"}
                 </span>
               </span>
               {account.id === value && <Check className="h-4 w-4 shrink-0" />}

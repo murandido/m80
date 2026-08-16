@@ -2,6 +2,7 @@ package routes
 
 import (
 	"github.com/go-chi/chi/v5"
+	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/handlers"
 	"gorm.io/gorm"
 )
@@ -9,6 +10,7 @@ import (
 // RegisterPeopleRoutes wires up the /people CRUD routes.
 func RegisterPeopleRoutes(r chi.Router, db *gorm.DB) {
 	peopleHandler := handlers.NewPeopleHandler(db)
+	requireAdmin := middleware.RequireAdmin()
 
 	r.Route("/people", func(r chi.Router) {
 		// create person
@@ -29,6 +31,11 @@ func RegisterPeopleRoutes(r chi.Router, db *gorm.DB) {
 
 		// delete person
 		r.Delete("/{id}", peopleHandler.DeletePerson)
+
+		// merge two people into one. Admin-only, like the legacy import: it rewrites
+		// who owns an account and then deletes a record for good, with no undo.
+		r.With(requireAdmin).Get("/{id}/merge-preview", peopleHandler.PreviewMergePerson)
+		r.With(requireAdmin).Post("/{id}/merge", peopleHandler.MergePerson)
 
 		// nicknames sub-resource
 		RegisterPersonNicknameRoutes(r, db)
