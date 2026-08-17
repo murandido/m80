@@ -29,6 +29,7 @@ import {
 import { cn } from "@/lib/utils"
 import type { Account } from "@/schemas/account"
 import type { Agency } from "@/schemas/agency"
+import type { LoyaltyProgram } from "@/schemas/loyalty-program"
 import type { Person } from "@/schemas/person"
 import type { User } from "@/schemas/user"
 import type {
@@ -41,11 +42,21 @@ import type {
   LegacyImportRowSelection,
 } from "@/schemas/legacy-import"
 
+// How many day buttons are shown at once, centred on the chosen day.
+const DAY_WINDOW = 31
+
+// The date box speaks ISO; the operator reads DD/MM/AAAA, as everywhere else in the panel.
+function formatDayLabel(date: string): string {
+  const [year, month, day] = date.split("-")
+  return `${day}/${month}/${year}`
+}
+
 interface LegacyImportScreenProps {
   accounts: Account[]
   people: Person[]
   users: User[]
   agencies: Agency[]
+  loyaltyPrograms: LoyaltyProgram[]
 }
 
 // The temporary screen that brings a day of the hand-kept spreadsheet into the panel.
@@ -56,6 +67,7 @@ export function LegacyImportScreen({
   people,
   users,
   agencies,
+  loyaltyPrograms,
 }: LegacyImportScreenProps) {
   const fileRef = useRef<HTMLInputElement>(null)
   const [file, setFile] = useState<File | null>(null)
@@ -68,6 +80,9 @@ export function LegacyImportScreen({
   )
   const [issuerChoices, setIssuerChoices] = useState<Record<string, string>>({})
   const [agencyId, setAgencyId] = useState("")
+  // The program the rows with no Companhia column fall back to. Two of the workbooks
+  // have no such column at all, so without this every row of theirs is refused.
+  const [defaultLoyaltyProgramId, setDefaultLoyaltyProgramId] = useState("")
   // Per-row agency overrides, keyed by rowKey. Absent means "follow the day's".
   const [rowAgencies, setRowAgencies] = useState<Record<string, string>>({})
   // Accounts created from inside the mapping combobox, folded into the list the page
@@ -77,6 +92,9 @@ export function LegacyImportScreen({
   // The exception, not the selection: every row the server calls "ok" is in unless the
   // operator took it out, so re-resolving after a mapping never undoes their choices.
   const [deselected, setDeselected] = useState<Set<string>>(new Set())
+
+  // Set when the date box names a day the workbook has no sheet for.
+  const [missingDate, setMissingDate] = useState("")
 
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
@@ -103,6 +121,7 @@ export function LegacyImportScreen({
           user_id: userId,
         })),
       agency_id: agencyId,
+      default_loyalty_program_id: defaultLoyaltyProgramId,
       row_agencies: Object.entries(rowAgencies).map(([key, id]) => {
         const [blockIndex, number] = key.split(":")
         return {
@@ -113,7 +132,7 @@ export function LegacyImportScreen({
       }),
       ...overrides,
     }),
-    [accountChoices, issuerChoices, agencyId, rowAgencies],
+    [accountChoices, issuerChoices, agencyId, defaultLoyaltyProgramId, rowAgencies],
   )
 
   const loadPreview = useCallback(
@@ -136,7 +155,12 @@ export function LegacyImportScreen({
         return
       }
 
-      setDays(response.preview.days)
+      // In date order, not sheet order: the operators move tabs around, so a workbook
+      // has 10-12 sitting before 09-12. The date box's range and the window of buttons
+      // around the chosen day both read this as a line.
+      setDays(
+        [...response.preview.days].sort((a, b) => a.date.localeCompare(b.date)),
+      )
       setPreview(response.preview.preview ?? null)
       if (response.preview.preview && !agencyId) {
         // Seeded from the server's answer, which is the default agency when the
@@ -158,6 +182,21 @@ export function LegacyImportScreen({
     setIssuerChoices({})
     setRowAgencies({})
     if (chosen) await loadPreview(chosen, "", buildMappings())
+  }
+
+  // The date box selects the day when the workbook has it, and says so when it does not -
+  // "nothing happened" would read as the screen being broken.
+  async function handleDatePick(date: string) {
+    if (!date) {
+      setMissingDate("")
+      return
+    }
+    if (!days.some((day) => day.date === date)) {
+      setMissingDate(formatDayLabel(date))
+      return
+    }
+    setMissingDate("")
+    await handleDay(date)
   }
 
   async function handleDay(date: string) {
@@ -211,6 +250,13 @@ export function LegacyImportScreen({
   // The commit revalidates the ids anyway.
   function handleAgencyChoice(nextAgencyId: string) {
     setAgencyId(nextAgencyId)
+  }
+
+  // Unlike the agency, this one does need the round trip: which program a row belongs to
+  // is what its account alias is looked up under, so the verdicts change with it.
+  async function handleDefaultLoyaltyProgram(nextProgramId: string) {
+    setDefaultLoyaltyProgramId(nextProgramId)
+    await reresolve(buildMappings({ default_loyalty_program_id: nextProgramId }))
   }
 
   function handleRowAgency(key: string, nextAgencyId: string) {
@@ -270,6 +316,18 @@ export function LegacyImportScreen({
     })
   }
 
+  // The window of buttons around the day in hand: enough to step to the one before or
+  // after without scrolling past a year of them. With no day chosen it is the tail of the
+  // file, which is where the migration is being worked from.
+  const visibleDays = (() => {
+    const chosen = days.findIndex((day) => day.date === selectedDate)
+    if (chosen < 0) return days.slice(-DAY_WINDOW)
+    return days.slice(
+      Math.max(0, chosen - Math.floor(DAY_WINDOW / 2)),
+      chosen + Math.ceil(DAY_WINDOW / 2),
+    )
+  })()
+
   const blocks = preview?.blocks ?? []
   const selectedRows: LegacyImportRowSelection[] = blocks.flatMap((block) =>
     (block.rows ?? [])
@@ -278,6 +336,16 @@ export function LegacyImportScreen({
           isSelectable(row) && !deselected.has(rowKey(block.index, row.number)),
       )
       .map((row) => ({ block_index: block.index, number: row.number })),
+  )
+  const selectedCancellations = blocks.reduce(
+    (sum, block) =>
+      sum +
+      (block.rows ?? []).filter(
+        (row) =>
+          row.verdict === "cancellation" &&
+          !deselected.has(rowKey(block.index, row.number)),
+      ).length,
+    0,
   )
   const totalRows = blocks.reduce(
     (sum, block) => sum + (block.rows ?? []).length,
@@ -312,10 +380,16 @@ export function LegacyImportScreen({
     }
 
     setResult(response.result)
+    const written =
+      response.result.imported + (response.result.created_and_cancelled ?? 0)
+    const cancelled =
+      (response.result.cancelled ?? 0) +
+      (response.result.created_and_cancelled ?? 0)
     toast.success(
-      `${response.result.imported} emiss${response.result.imported === 1 ? "ão" : "ões"} importada${
-        response.result.imported === 1 ? "" : "s"
-      }.`,
+      `${written} emiss${written === 1 ? "ão" : "ões"} gravada${written === 1 ? "" : "s"}` +
+        (cancelled > 0
+          ? `, ${cancelled} cancelada${cancelled === 1 ? "" : "s"}.`
+          : "."),
     )
     // Re-read the day so the rows that just landed come back as "already_imported" -
     // the screen then shows the state of the world rather than what it did last.
@@ -365,8 +439,27 @@ export function LegacyImportScreen({
       {days.length > 0 && (
         <section className="space-y-2">
           <h2 className="text-sm font-medium text-slate-800">2. Dia</h2>
+          {/* A personal workbook carries a sheet per day for over a year, so the
+              buttons alone would be five hundred of them. The date box goes straight
+              to one; the buttons stay for stepping to the day next to it. */}
+          <div className="flex flex-wrap items-center gap-3">
+            <input
+              type="date"
+              value={selectedDate}
+              min={days[0]?.date}
+              max={days[days.length - 1]?.date}
+              disabled={busy}
+              onChange={(event) => void handleDatePick(event.target.value)}
+              className="h-9 rounded-md border px-3 text-sm"
+              aria-label="Ir para uma data"
+            />
+            <span className="text-muted-foreground text-xs">
+              {days.length} dia{days.length === 1 ? "" : "s"} na planilha
+              {missingDate && ` — a planilha não tem a aba de ${missingDate}`}
+            </span>
+          </div>
           <div className="flex flex-wrap gap-2">
-            {days.map((day) => (
+            {visibleDays.map((day) => (
               <Button
                 key={day.date}
                 type="button"
@@ -392,6 +485,20 @@ export function LegacyImportScreen({
             <h2 className="text-sm font-medium text-slate-800">
               3. Conferir e mapear
             </h2>
+            {/* The workbooks disagree on whether the Pontos column is a point count or
+                a count of thousands, and reading one as the other is off by a factor of
+                a thousand that nothing else in the panel would catch. */}
+            {preview.points_unit && (
+              <p className="text-muted-foreground text-xs">
+                Pontos lidos como{" "}
+                <strong>
+                  {preview.points_unit === "raw"
+                    ? "valor cheio (64000 = 64 mil pontos)"
+                    : "milhares (64 = 64 mil pontos)"}
+                </strong>
+                . Confira a coluna Pontos abaixo antes de importar.
+              </p>
+            )}
             <LegacyImportMappings
               pendingAccounts={preview.pending_accounts ?? []}
               pendingIssuers={preview.pending_issuers ?? []}
@@ -399,9 +506,11 @@ export function LegacyImportScreen({
               people={people}
               users={users}
               agencies={agencies}
+              loyaltyPrograms={loyaltyPrograms}
               accountChoices={accountChoices}
               issuerChoices={issuerChoices}
               agencyId={agencyId || preview.agency_id}
+              defaultLoyaltyProgramId={defaultLoyaltyProgramId}
               onAccountChoice={(programCode, label, accountId) =>
                 void handleAccountChoice(programCode, label, accountId)
               }
@@ -409,6 +518,9 @@ export function LegacyImportScreen({
                 void handleIssuerChoice(issuerName, userId)
               }
               onAgencyChoice={handleAgencyChoice}
+              onDefaultLoyaltyProgramChoice={(programId) =>
+                void handleDefaultLoyaltyProgram(programId)
+              }
               onCreateAccount={(pending, name) =>
                 void handleCreateAccount(pending, name)
               }
@@ -435,6 +547,10 @@ export function LegacyImportScreen({
               <AlertDescription>
                 <span>
                   {result.imported} emissão(ões) gravada(s)
+                  {(result.cancelled ?? 0) > 0 &&
+                    `, ${result.cancelled} cancelada(s)`}
+                  {(result.created_and_cancelled ?? 0) > 0 &&
+                    `, ${result.created_and_cancelled} criada(s) já cancelada(s)`}
                   {result.registered_aliases > 0 &&
                     `, ${result.registered_aliases} apelido(s) de conta registrado(s)`}
                   {(result.skipped ?? []).length > 0 &&
@@ -458,9 +574,12 @@ export function LegacyImportScreen({
           <div className="bg-background/95 sticky bottom-0 flex flex-wrap items-center gap-3 border-t py-3 backdrop-blur">
             <span className="text-sm">
               <strong className="tabular-nums">{selectedRows.length}</strong> de{" "}
-              {totalRows} linha{totalRows === 1 ? "" : "s"}{" "}
-              {selectedRows.length === 1 ? "será" : "serão"} importada
+              {totalRows} linha{totalRows === 1 ? "" : "s"} {" "}
+              {selectedRows.length === 1 ? "será" : "serão"} gravada
               {selectedRows.length === 1 ? "" : "s"}
+              {/* Counted apart, because one of the two takes something away. */}
+              {selectedCancellations > 0 &&
+                `, ${selectedCancellations} delas cancelando emissão`}
               {alreadyImported > 0 &&
                 `; ${alreadyImported} já ${alreadyImported === 1 ? "está" : "estão"} no sistema`}
               .

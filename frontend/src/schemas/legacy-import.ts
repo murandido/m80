@@ -14,9 +14,30 @@ export const legacyImportVerdictSchema = z.enum([
   "needs_mapping",
   "duplicate_in_file",
   "invalid",
+  // A negative line: an estorno. It will be written like the others, but what it
+  // writes is a cancellation - see `cancellation` for which of the two shapes.
+  "cancellation",
 ])
 
 export type LegacyImportVerdict = z.infer<typeof legacyImportVerdictSchema>
+
+// What an estorno line will do. Present only on a "cancellation" row.
+export const legacyImportCancellationSchema = z.object({
+  // "cancel_existing": an issuance already carries this locator, so it is cancelled the
+  // same way the panel's own button cancels one. "create_and_cancel": nothing carries
+  // it - the day it was issued was never imported - so it is created and then cancelled.
+  action: z.enum(["cancel_existing", "create_and_cancel"]),
+  target_issuance_id: z.string(),
+  refunded_points: z.number(),
+  refunded_taxes: z.number().nullish(),
+  // What the issuance being cancelled is worth, when it is already in the database.
+  original_points: z.number().nullish(),
+  // The estorno gives back less than the issuance is worth - one leg, one passenger.
+  // The whole issuance is still cancelled: the panel has no half-cancelled state.
+  partial: z.boolean(),
+})
+
+export type LegacyImportCancellation = z.infer<typeof legacyImportCancellationSchema>
 
 export const legacyImportRowSchema = z.object({
   block_index: z.number(),
@@ -26,6 +47,7 @@ export const legacyImportRowSchema = z.object({
   reason: z.string(),
   // Things worth seeing that do not stop the row - today, a dropped airport code.
   notes: z.array(z.string()).nullish(),
+  cancellation: legacyImportCancellationSchema.nullish(),
 
   loyalty_program_id: z.string(),
   loyalty_program_name: z.string(),
@@ -86,6 +108,9 @@ export const legacyImportDayPreviewSchema = z.object({
   sheet_name: z.string(),
   agency_id: z.string(),
   agency_name: z.string(),
+  // How the sheet wrote its Pontos column, "raw" or "thousands". Shown because reading
+  // it wrong is a factor of a thousand and nothing else in the panel would catch it.
+  points_unit: z.string().nullish(),
   blocks: z.array(legacyImportBlockSchema).nullish(),
   pending_accounts: z.array(legacyImportPendingAccountSchema).nullish(),
   pending_issuers: z.array(legacyImportPendingIssuerSchema).nullish(),
@@ -126,6 +151,11 @@ export const legacyImportSkippedRowSchema = z.object({
 export const legacyImportCommitResultSchema = z.object({
   imported: z.number(),
   skipped: z.array(legacyImportSkippedRowSchema).nullish(),
+  // Issuances an estorno line cancelled, and estornos whose issuance had to be created
+  // first because it had never been imported. Counted apart from `imported`, which
+  // keeps meaning "written and live".
+  cancelled: z.number().nullish(),
+  created_and_cancelled: z.number().nullish(),
   // Aliases the operator's mappings taught the system, so the next day of the same
   // spreadsheet resolves on its own.
   registered_aliases: z.number(),
@@ -146,6 +176,9 @@ export interface LegacyImportMappings {
   issuers: { issuer_name: string; user_id: string }[]
   // The day's agency: where a row goes unless it was pointed somewhere else.
   agency_id: string
+  // The program a row falls back to when its sheet has no Companhia column at all -
+  // two of the operators' workbooks do not have one.
+  default_loyalty_program_id: string
   // Per-row overrides. Not resolved by the server for the preview - the operator picks
   // an id from a list this screen already has, so there is nothing to resolve and no
   // reason to re-upload the workbook on every pick.

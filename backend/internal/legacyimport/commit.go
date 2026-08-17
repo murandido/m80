@@ -9,6 +9,7 @@ import (
 	"github.com/murandido/m-80-backend/internal/data"
 	issuancesvc "github.com/murandido/m-80-backend/internal/issuance"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // RowSelection names one row of the sheet, by the block it sits in and its line number.
@@ -31,6 +32,13 @@ type SkippedRow struct {
 type CommitResult struct {
 	Imported int          `json:"imported"`
 	Skipped  []SkippedRow `json:"skipped"`
+	// Cancelled counts the issuances an estorno line cancelled - ones that were already
+	// in the database, whether the panel or an earlier row of this day put them there.
+	Cancelled int `json:"cancelled"`
+	// CreatedAndCancelled counts the estorno lines whose issuance had never been
+	// imported: it is created and cancelled in one go, so the day's points still add up
+	// even though the booking was never live in the panel.
+	CreatedAndCancelled int `json:"created_and_cancelled"`
 	// RegisteredAliases counts the account aliases the operator's mappings taught the
 	// system. They make the next day of the same spreadsheet resolve on its own, and
 	// the bot recognise the same word in an EMISSAO.
@@ -80,21 +88,25 @@ func Commit(
 			return err
 		}
 
-		var imported int
+		var imported, cancelled, createdAndCancelled int
 		var skipped []SkippedRow
+
+		skip := func(row ResolvedRow, reason string) {
+			skipped = append(skipped, SkippedRow{
+				BlockIndex: row.BlockIndex,
+				Number:     row.Number,
+				Locator:    row.ProgramLocator,
+				Reason:     reason,
+			})
+		}
 
 		for _, block := range preview.Blocks {
 			for _, row := range block.Rows {
 				if !wanted[RowSelection{BlockIndex: row.BlockIndex, Number: row.Number}] {
 					continue
 				}
-				if row.Verdict != VerdictOk {
-					skipped = append(skipped, SkippedRow{
-						BlockIndex: row.BlockIndex,
-						Number:     row.Number,
-						Locator:    row.ProgramLocator,
-						Reason:     row.Reason,
-					})
+				if row.Verdict != VerdictOk && row.Verdict != VerdictCancellation {
+					skip(row, row.Reason)
 					continue
 				}
 
@@ -104,17 +116,28 @@ func Commit(
 					agencyID = override
 				}
 
+				if row.Verdict == VerdictCancellation {
+					created, reason, err := commitCancellation(tx, day, agencyID, row, actorID)
+					if err != nil {
+						return fmt.Errorf("legacyimport: cancelling row %d: %w", row.Number, err)
+					}
+					switch {
+					case reason != "":
+						skip(row, reason)
+					case created:
+						createdAndCancelled++
+					default:
+						cancelled++
+					}
+					continue
+				}
+
 				if err := createIssuance(tx, day, agencyID, row, actorID); err != nil {
 					// The locator being taken is the one failure that is somebody
 					// else's normal work - a booking registered through the panel
 					// between the preview and now - so it is a skip, not an abort.
 					if isLocatorTaken(err) {
-						skipped = append(skipped, SkippedRow{
-							BlockIndex: row.BlockIndex,
-							Number:     row.Number,
-							Locator:    row.ProgramLocator,
-							Reason:     "Já existe uma emissão ativa com esse localizador",
-						})
+						skip(row, "Já existe uma emissão ativa com esse localizador")
 						continue
 					}
 					return fmt.Errorf("legacyimport: importing row %d: %w", row.Number, err)
@@ -124,14 +147,102 @@ func Commit(
 		}
 
 		result = CommitResult{
-			Imported:          imported,
-			Skipped:           skipped,
-			RegisteredAliases: registered,
+			Imported:            imported,
+			Skipped:             skipped,
+			Cancelled:           cancelled,
+			CreatedAndCancelled: createdAndCancelled,
+			RegisteredAliases:   registered,
 		}
 		return nil
 	})
 
 	return result, err
+}
+
+// commitCancellation leaves the issuance in the state the panel's own Cancelar button
+// leaves it in, by calling the same rule - internal/issuance.Cancel - so the refund
+// figures, the sale recalculation and the audit line are one implementation and not two.
+//
+// Which of the two paths it takes is decided here and not read off the preview: the
+// operator may have ticked the estorno while unticking the issuance it belongs to, and a
+// locator can be registered through the panel between the preview and the button.
+//
+// A non-empty reason means the row was not written and why; err is for the failures that
+// have to take the whole day down with them.
+func commitCancellation(
+	tx *gorm.DB,
+	day Day,
+	agencyID string,
+	row ResolvedRow,
+	actorID string,
+) (created bool, reason string, err error) {
+	issuance, found, err := lockIssuanceByLocator(tx, row.ProgramLocator, true)
+	if err != nil {
+		return false, "", err
+	}
+
+	if !found {
+		// Nothing active. If a cancelled one is already there, this day has been
+		// imported before: cancelling frees the locator, so without this check a second
+		// run would write a second cancelled issuance beside the first.
+		if _, alreadyCancelled, err := lockIssuanceByLocator(tx, row.ProgramLocator, false); err != nil {
+			return false, "", err
+		} else if alreadyCancelled {
+			return false, "A emissão desse localizador já está cancelada", nil
+		}
+
+		if err := createIssuance(tx, day, agencyID, row, actorID); err != nil {
+			if isLocatorTaken(err) {
+				return false, "Já existe uma emissão ativa com esse localizador", nil
+			}
+			return false, "", err
+		}
+		issuance, found, err = lockIssuanceByLocator(tx, row.ProgramLocator, true)
+		if err != nil {
+			return false, "", err
+		}
+		if !found {
+			return false, "", fmt.Errorf("the issuance just created for %q is gone", row.ProgramLocator)
+		}
+		created = true
+	}
+
+	plan := row.Cancellation
+	input := issuancesvc.CancelInput{
+		RefundedPoints: &plan.RefundedPoints,
+		RefundedTaxes:  plan.RefundedTaxes,
+		// The spreadsheet has no column for a cancellation fee, and nil says "nothing
+		// on that front" rather than "zero".
+		CancellationFee: nil,
+	}
+	if _, err := issuancesvc.Cancel(tx, issuance, input, actorID); err != nil {
+		if errors.Is(err, issuancesvc.ErrIssuanceAlreadyCancelled) {
+			return created, "A emissão desse localizador já está cancelada", nil
+		}
+		return created, "", err
+	}
+
+	return created, "", nil
+}
+
+// lockIssuanceByLocator loads the issuance a locator names, FOR UPDATE. The lock is what
+// keeps a cancellation the panel is making at this exact moment from being lost: Cancel
+// saves the whole row, so two cancellations racing on stale structs would have one
+// overwrite the other's refund figures.
+func lockIssuanceByLocator(tx *gorm.DB, locator string, active bool) (data.Issuance, bool, error) {
+	var issuance data.Issuance
+	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("UPPER(program_locator) = ?", strings.ToUpper(strings.TrimSpace(locator))).
+		Where("active = ?", active).
+		Order("created_at DESC").
+		First(&issuance).Error
+	if isNotFound(err) {
+		return data.Issuance{}, false, nil
+	}
+	if err != nil {
+		return data.Issuance{}, false, fmt.Errorf("legacyimport: locking the issuance of %q: %w", locator, err)
+	}
+	return issuance, true, nil
 }
 
 func createIssuance(

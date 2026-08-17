@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/murandido/m-80-backend/internal/data"
 	"gorm.io/gorm"
@@ -18,6 +19,17 @@ type resolvedAccount struct {
 	nicknameID *string
 }
 
+// existingIssuance is what one of the day's locators already points at. Enough of the row
+// to answer both questions the resolution asks: whether a positive row is a re-import, and
+// whether a negative one has something to cancel.
+type existingIssuance struct {
+	id          string
+	active      bool
+	points      int
+	cancelledAt *time.Time
+	createdAt   time.Time
+}
+
 // lookups holds everything a day's rows need, read once. A day has a few dozen rows over
 // at most a couple of dozen distinct aliases, so resolving row by row would be dozens of
 // round trips for the same handful of answers.
@@ -28,8 +40,9 @@ type lookups struct {
 	issuers map[string]string
 	// airports holds the IATA codes that exist, keyed folded, valued as stored.
 	airports map[string]string
-	// alreadyImported holds the upper-cased locators an active issuance already has.
-	alreadyImported map[string]bool
+	// existing holds what the database already has under the day's locators, keyed by
+	// the upper-cased locator.
+	existing map[string]existingIssuance
 
 	pendingAccounts []PendingAccount
 	pendingIssuers  []PendingIssuer
@@ -42,10 +55,10 @@ func newLookups(
 	mappings Mappings,
 ) (*lookups, error) {
 	out := &lookups{
-		accounts:        map[string]resolvedAccount{},
-		issuers:         map[string]string{},
-		airports:        map[string]string{},
-		alreadyImported: map[string]bool{},
+		accounts: map[string]resolvedAccount{},
+		issuers:  map[string]string{},
+		airports: map[string]string{},
+		existing: map[string]existingIssuance{},
 	}
 
 	if err := out.loadAirports(db, day); err != nil {
@@ -78,6 +91,12 @@ func accountKey(programID, label string) string {
 
 func (l *lookups) issuerID(name string) string {
 	return l.issuers[fold(name)]
+}
+
+// locator returns what the database has under a locator, active or not.
+func (l *lookups) locator(value string) (existingIssuance, bool) {
+	issuance, ok := l.existing[strings.ToUpper(strings.TrimSpace(value))]
+	return issuance, ok
 }
 
 func (l *lookups) account(program data.LoyaltyProgram, label string) (resolvedAccount, bool) {
@@ -121,9 +140,14 @@ func (l *lookups) loadAirports(db *gorm.DB, day Day) error {
 	return nil
 }
 
-// loadExistingLocators finds which of the day's locators the database already carries on
-// an active issuance. It is what makes re-running a day safe, and what quietly excludes
-// the bookings the operators already registered through the panel.
+// loadExistingLocators finds what the database already carries under the day's locators.
+// It is what makes re-running a day safe, and what quietly excludes the bookings the
+// operators already registered through the panel.
+//
+// Cancelled issuances are included on purpose. They are invisible to
+// idx_issuances_program_locator_active, but they are still the same booking, and an
+// estorno line needs to know both whether there is something to cancel and whether it has
+// already been cancelled.
 func (l *lookups) loadExistingLocators(db *gorm.DB, day Day) error {
 	locators := map[string]bool{}
 	forEachRow(day, func(_ Block, row Row) {
@@ -133,16 +157,37 @@ func (l *lookups) loadExistingLocators(db *gorm.DB, day Day) error {
 		return nil
 	}
 
-	var existing []string
+	var rows []struct {
+		ID             string
+		ProgramLocator string
+		Active         bool
+		Points         int
+		CancelledAt    *time.Time
+		CreatedAt      time.Time
+	}
 	err := db.Model(&data.Issuance{}).
+		Select("id", "program_locator", "active", "points", "cancelled_at", "created_at").
 		Where("UPPER(program_locator) IN ?", keys(locators)).
-		Where("active = ?", true).
-		Pluck("program_locator", &existing).Error
+		// Only the active row is unique per locator, so one locator can come back more
+		// than once: a cancelled booking and the one re-issued under the same code. The
+		// active one is the one an estorno means; failing that, the most recent.
+		Order("active DESC, created_at DESC").
+		Find(&rows).Error
 	if err != nil {
 		return fmt.Errorf("legacyimport: loading existing locators: %w", err)
 	}
-	for _, locator := range existing {
-		l.alreadyImported[strings.ToUpper(locator)] = true
+	for _, row := range rows {
+		key := strings.ToUpper(row.ProgramLocator)
+		if _, taken := l.existing[key]; taken {
+			continue
+		}
+		l.existing[key] = existingIssuance{
+			id:          row.ID,
+			active:      row.Active,
+			points:      row.Points,
+			cancelledAt: row.CancelledAt,
+			createdAt:   row.CreatedAt,
+		}
 	}
 	return nil
 }
@@ -166,7 +211,9 @@ func (l *lookups) loadAccounts(
 	pairs := map[string]pair{}
 	counts := map[string]int{}
 	forEachRow(day, func(_ Block, row Row) {
-		program, ok := programs[programKey(row.ProgramLabel)]
+		// The same fallback resolveRow uses, or a row whose sheet has no Companhia
+		// column would come back needing a mapping with no pending entry to make it.
+		program, ok := effectiveProgram(row, programs, mappings)
 		if !ok || strings.TrimSpace(row.AccountLabel) == "" {
 			return
 		}
@@ -293,11 +340,19 @@ func (l *lookups) loadIssuers(db *gorm.DB, day Day, mappings Mappings) error {
 		// A block with no rows needs no issuer. The template ships six of them per day
 		// and a quiet day fills two, so asking about the other four would be four
 		// questions whose answer changes nothing.
-		if strings.TrimSpace(block.IssuerName) == "" || len(block.Rows) == 0 {
+		if len(block.Rows) == 0 {
 			continue
 		}
-		names[fold(block.IssuerName)] = block.IssuerName
-		counts[fold(block.IssuerName)] += len(block.Rows)
+		// One question per name, whether it came from the title or from a row's own
+		// Emissor cell: the shared workbook puts three issuers inside one block.
+		for _, row := range block.Rows {
+			name := issuerNameOf(row, block)
+			if strings.TrimSpace(name) == "" {
+				continue
+			}
+			names[fold(name)] = name
+			counts[fold(name)]++
+		}
 	}
 	if len(names) == 0 {
 		return nil

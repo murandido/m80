@@ -4,6 +4,7 @@ import { z } from "zod"
 import { env } from "@/lib/env"
 import { getAccountsSchema } from "@/schemas/account"
 import { getAgenciesSchema } from "@/schemas/agency"
+import { getLoyaltyProgramsSchema } from "@/schemas/loyalty-program"
 import { getPeopleSchema } from "@/schemas/person"
 import { getUsersSchema } from "@/schemas/user"
 import { LegacyImportScreen } from "@/components/legacy-import/legacy-import-screen"
@@ -42,12 +43,14 @@ export default async function LegacyImportPage() {
   const api = `${env.BACKEND_URL}/api/v1`
 
   // What the mapping controls need: accounts to point an alias at (with the people that
-  // give an account its name), users to credit a block to, agencies to charge the day to.
-  const [accounts, people, users, agencies] = await Promise.all([
+  // give an account its name), users to credit a block to, agencies to charge the day to,
+  // and the loyalty programs, for the sheets whose rows do not say which program they are.
+  const [accounts, people, users, agencies, loyaltyPrograms] = await Promise.all([
     fetchList(`${api}/accounts`, getAccountsSchema.response, authHeader),
     fetchList(`${api}/people`, getPeopleSchema.response, authHeader),
     fetchList(`${api}/users`, getUsersSchema.response, authHeader),
     fetchList(`${api}/agencies`, getAgenciesSchema.response, authHeader),
+    fetchList(`${api}/loyalty-programs`, getLoyaltyProgramsSchema.response, authHeader),
   ])
 
   return (
@@ -66,6 +69,7 @@ export default async function LegacyImportPage() {
           people={people ?? []}
           users={users ?? []}
           agencies={agencies ?? []}
+          loyaltyPrograms={loyaltyPrograms ?? []}
         />
       </div>
     </div>

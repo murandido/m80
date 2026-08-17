@@ -28,9 +28,10 @@ export function rowKey(blockIndex: number, number: number): string {
 }
 
 // Only a row that fully resolved can be written; everything else the server would skip
-// anyway, so it is shown with its reason instead of a checkbox that would lie.
+// anyway, so it is shown with its reason instead of a checkbox that would lie. An estorno
+// resolves too - what it writes is a cancellation rather than an issuance.
 export function isSelectable(row: LegacyImportRow): boolean {
-  return row.verdict === "ok"
+  return row.verdict === "ok" || row.verdict === "cancellation"
 }
 
 const VERDICT_LABEL: Record<Exclude<LegacyImportVerdict, "ok">, string> = {
@@ -38,6 +39,27 @@ const VERDICT_LABEL: Record<Exclude<LegacyImportVerdict, "ok">, string> = {
   needs_mapping: "Falta mapear",
   duplicate_in_file: "Repetida na planilha",
   invalid: "Não dá para importar",
+  cancellation: "Vai cancelar",
+}
+
+// The sentence under the badge: what pressing importar does to this booking. Spelled out
+// because a cancellation is the one row on the screen that takes something away.
+function cancellationSummary(row: LegacyImportRow): string[] {
+  const plan = row.cancellation
+  if (!plan) return []
+
+  const lines: string[] =
+    plan.action === "cancel_existing"
+      ? ["Cancela a emissão que já existe com esse localizador."]
+      : ["A emissão não está no sistema: ela é criada e cancelada em seguida."]
+
+  lines.push(`Estorno de ${formatPoints(plan.refunded_points)} pontos.`)
+  if (plan.partial && plan.original_points != null) {
+    lines.push(
+      `Estorno parcial de ${formatPoints(plan.original_points)} — a emissão é cancelada por inteiro.`,
+    )
+  }
+  return lines
 }
 
 interface LegacyImportPreviewTableProps {
@@ -125,6 +147,9 @@ export function LegacyImportPreviewTable({
                       <TableHead className="text-right">Milheiro</TableHead>
                       <TableHead className="text-right">Taxa</TableHead>
                       <TableHead>Conta</TableHead>
+                      {/* One workbook names the issuer per row instead of in the block
+                          title, and three people share a day in it. */}
+                      <TableHead>Emissor</TableHead>
                       <TableHead className="w-52">Agência</TableHead>
                       <TableHead>Situação</TableHead>
                     </TableRow>
@@ -140,6 +165,8 @@ export function LegacyImportPreviewTable({
                           className={cn(
                             !isSelectable(row) &&
                               "text-muted-foreground bg-slate-50",
+                            // The one row on the screen that takes something away.
+                            row.verdict === "cancellation" && "bg-amber-50/60",
                           )}
                         >
                           <TableCell>
@@ -204,6 +231,9 @@ export function LegacyImportPreviewTable({
                               planilha: {row.account_label || "—"}
                             </span>
                           </TableCell>
+                          <TableCell className="max-w-32 truncate text-xs">
+                            {row.issuer_name || "—"}
+                          </TableCell>
                           <TableCell className="w-52">
                             {/* Which agency an issuance belongs to is a fact about
                               that issuance, and the spreadsheet has no column for it -
@@ -223,12 +253,25 @@ export function LegacyImportPreviewTable({
                               <Badge variant="secondary">Vai importar</Badge>
                             ) : (
                               <span className="flex flex-col gap-0.5">
-                                <Badge variant="outline">
+                                <Badge
+                                  variant="outline"
+                                  className={cn(
+                                    row.verdict === "cancellation" &&
+                                      "border-amber-300 bg-amber-50 text-amber-800",
+                                  )}
+                                >
                                   {VERDICT_LABEL[row.verdict]}
                                 </Badge>
-                                <span className="text-[11px]">
-                                  {row.reason}
-                                </span>
+                                {cancellationSummary(row).map((line) => (
+                                  <span key={line} className="text-[11px]">
+                                    {line}
+                                  </span>
+                                ))}
+                                {row.verdict !== "cancellation" && (
+                                  <span className="text-[11px]">
+                                    {row.reason}
+                                  </span>
+                                )}
                               </span>
                             )}
                             {(row.notes ?? []).map((note) => (

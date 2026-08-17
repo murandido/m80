@@ -41,9 +41,15 @@ func buildLegacyWorkbook(t *testing.T, programLabel, accountLabel string, locato
 	}
 
 	set("A1", "CONTROLE DE EMISSÕES - 01/08/2026 - MARCUS")
-	set("A2", "Nº")
-	set("B2", "Companhia")
-	set("C2", "Localizador")
+	// The whole header row, because the columns are read off it by name - the workbooks
+	// in use lay them out four different ways.
+	for column, label := range map[string]string{
+		"A2": "Nº", "B2": "Companhia", "C2": "Localizador", "D2": "Data do Voo",
+		"E2": "Passageiro Principal", "F2": "Origem", "G2": "Destino", "H2": "Pontos",
+		"I2": "Milheiro", "J2": "Taxa", "K2": "Total", "L2": "Conta", "M2": "Observação",
+	} {
+		set(column, label)
+	}
 
 	for index, locator := range locators {
 		row := 3 + index

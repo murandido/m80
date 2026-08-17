@@ -2,9 +2,11 @@
 
 import { AccountCombobox } from "@/components/accounts/account-combobox"
 import { AgencyCombobox } from "@/components/agencies/agency-combobox"
+import { LoyaltyProgramCombobox } from "@/components/loyalty-programs/loyalty-program-combobox"
 import { UserCombobox } from "@/components/users/user-combobox"
 import type { Account } from "@/schemas/account"
 import type { Agency } from "@/schemas/agency"
+import type { LoyaltyProgram } from "@/schemas/loyalty-program"
 import type { Person } from "@/schemas/person"
 import type { User } from "@/schemas/user"
 import type {
@@ -19,10 +21,12 @@ interface LegacyImportMappingsProps {
   people: Person[]
   users: User[]
   agencies: Agency[]
+  loyaltyPrograms: LoyaltyProgram[]
 
   accountChoices: Record<string, string>
   issuerChoices: Record<string, string>
   agencyId: string
+  defaultLoyaltyProgramId: string
 
   onAccountChoice: (
     programCode: string,
@@ -31,6 +35,7 @@ interface LegacyImportMappingsProps {
   ) => void
   onIssuerChoice: (issuerName: string, userId: string) => void
   onAgencyChoice: (agencyId: string) => void
+  onDefaultLoyaltyProgramChoice: (loyaltyProgramId: string) => void
   onCreateAccount: (pending: LegacyImportPendingAccount, name: string) => void
   disabled?: boolean
 }
@@ -60,12 +65,15 @@ export function LegacyImportMappings({
   people,
   users,
   agencies,
+  loyaltyPrograms,
   accountChoices,
   issuerChoices,
   agencyId,
+  defaultLoyaltyProgramId,
   onAccountChoice,
   onIssuerChoice,
   onAgencyChoice,
+  onDefaultLoyaltyProgramChoice,
   onCreateAccount,
   disabled,
 }: LegacyImportMappingsProps) {
@@ -85,6 +93,26 @@ export function LegacyImportMappings({
             value={agencyId}
             onChange={onAgencyChoice}
             clearable={false}
+            disabled={disabled}
+          />
+        </div>
+      </section>
+
+      <section className="space-y-2">
+        <h2 className="text-sm font-medium text-slate-800">
+          Programa padrão da planilha
+        </h2>
+        <p className="text-muted-foreground text-xs">
+          Nem toda planilha tem coluna de companhia. Este é o programa das linhas
+          que não dizem qual é — quem tem a coluna preenchida continua mandando
+          nela, e um nome de programa escrito errado continua sendo recusado.
+        </p>
+        <div className="max-w-sm">
+          <LoyaltyProgramCombobox
+            loyaltyPrograms={loyaltyPrograms}
+            value={defaultLoyaltyProgramId}
+            onChange={onDefaultLoyaltyProgramChoice}
+            placeholder="Nenhum — as linhas sem companhia serão recusadas"
             disabled={disabled}
           />
         </div>

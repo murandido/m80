@@ -41,14 +41,14 @@ func NewLegacyImportHandler(db *gorm.DB, broker *events.Broker) *LegacyImportHan
 
 // PreviewLegacyImport handles POST /issuances/legacy-import/preview
 // @Summary      Prévia da importação da planilha manual
-// @Description  Lê a planilha enviada e devolve os dias que ela contém. Com o campo day (YYYY-MM-DD), devolve também a prévia daquele dia: cada linha já resolvida em ids, com o veredito de importação, mais os apelidos de conta e os nomes de emissor que faltam mapear. Nada é gravado. mappings é o JSON com as escolhas feitas na tela, para a prévia refletir o que o commit faria.
+// @Description  Lê a planilha enviada e devolve os dias que ela contém. Com o campo day (YYYY-MM-DD), devolve também a prévia daquele dia: cada linha já resolvida em ids, com o veredito de importação, mais os apelidos de conta e os nomes de emissor que faltam mapear. Uma linha de pontos negativos é um estorno: vem com o veredito cancellation e um objeto cancellation dizendo se ela cancela a emissão que já existe ou se cria e cancela. Nada é gravado. mappings é o JSON com as escolhas feitas na tela, para a prévia refletir o que o commit faria.
 // @Tags         Emissões
 // @Accept       multipart/form-data
 // @Produce      json
 // @Security     BearerAuth
 // @Param        file     formData  file    true   "Planilha .xlsx"
 // @Param        day      formData  string  false  "Dia a detalhar (YYYY-MM-DD)"
-// @Param        mappings formData  string  false  "JSON com as escolhas de conta, emissor e agência"
+// @Param        mappings formData  string  false  "JSON com as escolhas de conta, emissor, agência e programa padrão"
 // @Success      200  {object}  schemas.LegacyImportPreviewSingleResponse
 // @Failure      400  {object}  schemas.ErrorResponse "Arquivo ausente, grande demais ou ilegível"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
@@ -84,14 +84,14 @@ func (h *LegacyImportHandler) PreviewLegacyImport(w http.ResponseWriter, r *http
 
 // CommitLegacyImport handles POST /issuances/legacy-import/commit
 // @Summary      Importar um dia da planilha manual
-// @Description  Grava as linhas marcadas de um dia da planilha. O arquivo é lido e resolvido de novo do zero - a prévia é conselho, não contrato -, então o cliente manda quais linhas quer (rows), nunca o conteúdo delas. Linhas que não resolvem, ou cujo localizador já existe, são puladas com o motivo em vez de derrubar o dia inteiro. As emissões nascem incompletas, com created_at no dia da aba e imported=true.
+// @Description  Grava as linhas marcadas de um dia da planilha. O arquivo é lido e resolvido de novo do zero - a prévia é conselho, não contrato -, então o cliente manda quais linhas quer (rows), nunca o conteúdo delas. Linhas que não resolvem, ou cujo localizador já existe, são puladas com o motivo em vez de derrubar o dia inteiro. As emissões nascem incompletas, com created_at no dia da aba e imported=true. Uma linha de estorno cancela a emissão do localizador do mesmo jeito que o botão Cancelar do painel; se ela não existir, é criada e cancelada em seguida, e a resposta conta as duas coisas separadas em cancelled e created_and_cancelled.
 // @Tags         Emissões
 // @Accept       multipart/form-data
 // @Produce      json
 // @Security     BearerAuth
 // @Param        file     formData  file    true   "Planilha .xlsx"
 // @Param        day      formData  string  true   "Dia a importar (YYYY-MM-DD)"
-// @Param        mappings formData  string  false  "JSON com as escolhas de conta, emissor e agência"
+// @Param        mappings formData  string  false  "JSON com as escolhas de conta, emissor, agência e programa padrão"
 // @Param        rows     formData  string  true   "JSON com as linhas marcadas ([{block_index, number}])"
 // @Success      200  {object}  schemas.LegacyImportCommitSingleResponse
 // @Failure      400  {object}  schemas.ErrorResponse "Arquivo, dia ou seleção inválidos"
@@ -107,12 +107,25 @@ func (h *LegacyImportHandler) CommitLegacyImport(w http.ResponseWriter, r *http.
 		return
 	}
 
-	days, mappings, ok := h.readRequest(w, r)
+	// Only the chosen day is read here, unlike the preview: the commit answers with the
+	// day it wrote and not with the list of the others, and a personal workbook carries
+	// five hundred sheets whose contents this route has no use for.
+	content, mappings, ok := h.readUpload(w, r)
 	if !ok {
 		return
 	}
 
-	day, found := findDay(days, r.FormValue("day"))
+	wanted, err := time.Parse("2006-01-02", r.FormValue("day"))
+	if err != nil {
+		utils.SendError(w, r, http.StatusBadRequest, "Dia inválido")
+		return
+	}
+	day, found, err := legacyimport.ParseDay(content, wanted)
+	if err != nil {
+		utils.SendError(w, r, http.StatusBadRequest,
+			"O arquivo não parece ser a planilha de controle de emissões")
+		return
+	}
 	if !found {
 		utils.SendError(w, r, http.StatusBadRequest, "A planilha não tem uma aba para esse dia")
 		return
@@ -142,8 +155,11 @@ func (h *LegacyImportHandler) CommitLegacyImport(w http.ResponseWriter, r *http.
 	// One event for the whole day rather than one per issuance: every panel refetches
 	// the list with its own filters anyway, and a few hundred broadcasts in a row would
 	// be a few hundred refetches in every open browser.
-	if result.Imported > 0 {
+	if result.Imported+result.CreatedAndCancelled > 0 {
 		h.broadcastIssuance(eventIssuanceCreated, "")
+	}
+	if result.Cancelled+result.CreatedAndCancelled > 0 {
+		h.broadcastIssuance(eventIssuanceCancelled, "")
 	}
 
 	utils.SendJSON(w, r, http.StatusOK, "Legacy import committed", result)
@@ -166,6 +182,32 @@ func (h *LegacyImportHandler) readRequest(
 	w http.ResponseWriter,
 	r *http.Request,
 ) ([]legacyimport.Day, legacyimport.Mappings, bool) {
+	content, mappings, ok := h.readUpload(w, r)
+	if !ok {
+		return nil, mappings, false
+	}
+
+	days, err := legacyimport.Parse(content)
+	if err != nil {
+		utils.SendError(w, r, http.StatusBadRequest,
+			"O arquivo não parece ser a planilha de controle de emissões")
+		return nil, mappings, false
+	}
+	if len(days) == 0 {
+		utils.SendError(w, r, http.StatusBadRequest,
+			"A planilha não tem nenhuma aba de dia (as abas de dia se chamam DD-MM-AA)")
+		return nil, mappings, false
+	}
+
+	return days, mappings, true
+}
+
+// readUpload reads the file and the operator's mappings off the request, without deciding
+// how much of the workbook to parse - which is where the two routes differ.
+func (h *LegacyImportHandler) readUpload(
+	w http.ResponseWriter,
+	r *http.Request,
+) ([]byte, legacyimport.Mappings, bool) {
 	var mappings legacyimport.Mappings
 
 	r.Body = http.MaxBytesReader(w, r.Body, legacyImportMaxUpload)
@@ -191,18 +233,6 @@ func (h *LegacyImportHandler) readRequest(
 		return nil, mappings, false
 	}
 
-	days, err := legacyimport.Parse(content)
-	if err != nil {
-		utils.SendError(w, r, http.StatusBadRequest,
-			"O arquivo não parece ser a planilha de controle de emissões")
-		return nil, mappings, false
-	}
-	if len(days) == 0 {
-		utils.SendError(w, r, http.StatusBadRequest,
-			"A planilha não tem nenhuma aba de dia (as abas de dia se chamam DD-MM-AA)")
-		return nil, mappings, false
-	}
-
 	if raw := r.FormValue("mappings"); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &mappings); err != nil {
 			utils.SendError(w, r, http.StatusBadRequest, "Mapeamentos inválidos")
@@ -210,7 +240,7 @@ func (h *LegacyImportHandler) readRequest(
 		}
 	}
 
-	return days, mappings, true
+	return content, mappings, true
 }
 
 // findDay picks the sheet for a "YYYY-MM-DD" day. The client sends the date rather than
