@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -145,14 +146,23 @@ func peopleListQuery(db *gorm.DB, params listQuery, complete *bool) *gorm.DB {
 
 	if params.Q != "" {
 		like := likePattern(params.Q)
-		query = query.Where(
-			db.Where(unaccentedLike("people.name"), like).
-				Or(unaccentedLike("people.cpf"), like).
-				Or(unaccentedLike("people.email"), like).
-				Or(unaccentedLike("people.phone"), like).
-				Or(unaccentedLike("people.city"), like).
-				Or(nicknameMatch("person_nicknames", "person_id", "people", false), like),
-		)
+		search := db.Where(unaccentedLike("people.name"), like).
+			Or(unaccentedLike("people.email"), like).
+			Or(unaccentedLike("people.phone"), like).
+			Or(unaccentedLike("people.city"), like).
+			Or(nicknameMatch("person_nicknames", "person_id", "people", false), like)
+
+		// The CPF is no longer a LIKE, and cannot be: the column holds ciphertext with a random
+		// nonce, so there is nothing to match a fragment against. What is left is equality over
+		// the blind index, which means the whole document - typing five digits used to find
+		// somebody and now finds nobody. That is the trade migration 38 made deliberately.
+		//
+		// Masked or bare, both reach the same fingerprint: the term is normalized first.
+		if fingerprint, ok := searchFingerprint(params.Q); ok {
+			search = search.Or("people.cpf_fingerprint = ?", fingerprint)
+		}
+
+		query = query.Where(search)
 	}
 
 	if complete != nil {
@@ -162,13 +172,37 @@ func peopleListQuery(db *gorm.DB, params listQuery, complete *bool) *gorm.DB {
 	return query.Order(orderClause(params.Order, peopleOrder, peopleOrder["name_asc"]))
 }
 
+// searchFingerprint turns a search term into the blind index of a CPF.
+//
+// It normalizes exactly the way Person.BeforeSave does - leniently, via NormalizeCPFForIndex -
+// and that is not a detail: the registry holds documents that fail the check digits, and
+// validating here would make those people impossible to find by their own CPF. The index is
+// built from what was typed, so the search has to ask the same question.
+//
+// A fragment still finds nothing, which is the trade migration 38 made: this is equality over
+// a digest, so "52998" only matches somebody whose stored document is literally "52998".
+func searchFingerprint(term string) (string, bool) {
+	normalized, ok := utils.NormalizeCPFForIndex(term)
+	if !ok {
+		return "", false
+	}
+	fingerprint, err := utils.Fingerprint(normalized)
+	if err != nil {
+		// CPF_INDEX_KEY missing or malformed. Searching by name still works, so this degrades
+		// rather than failing the request - but it is worth a line in the log.
+		slog.Error("cannot fingerprint a search term, CPF search is disabled", "err", err)
+		return "", false
+	}
+	return fingerprint, true
+}
+
 // GetPeople handles the GET /people route.
 // @Summary      Listar pessoas
 // @Description  Retorna todas as pessoas cadastradas no sistema. Sem paginação — é a rota que alimenta os seletores de titular, administrador e passageiro. Para a tela de gestão, use /people/manage.
 // @Tags         Pessoas
 // @Produce      json
 // @Security     BearerAuth
-// @Param        q      query  string  false  "Busca por nome, CPF, e-mail, telefone, cidade ou apelido"
+// @Param        q      query  string  false  "Busca por nome, e-mail, telefone, cidade ou apelido. O CPF é buscado por igualdade e exige os 11 dígitos, porque a coluna é cifrada."
 // @Param        order  query  string  false  "Ordenação"  Enums(name_asc, name_desc, created_desc, created_asc)
 // @Param        complete  query  bool  false  "Somente pessoas completas (true) ou incompletas (false)"
 // @Success      200  {object}  schemas.PersonListResponse
@@ -198,7 +232,7 @@ func (h *PeopleHandler) GetPeople(w http.ResponseWriter, r *http.Request) {
 // @Tags         Pessoas
 // @Produce      json
 // @Security     BearerAuth
-// @Param        q      query  string  false  "Busca por nome, CPF, e-mail, telefone, cidade ou apelido"
+// @Param        q      query  string  false  "Busca por nome, e-mail, telefone, cidade ou apelido. O CPF é buscado por igualdade e exige os 11 dígitos, porque a coluna é cifrada."
 // @Param        order  query  string  false  "Ordenação"  Enums(name_asc, name_desc, created_desc, created_asc)
 // @Param        page   query  int     false  "Página (padrão 1)"
 // @Param        limit  query  int     false  "Itens por página (padrão 20, máximo 100)"

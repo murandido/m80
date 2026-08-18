@@ -94,6 +94,13 @@ func main() {
 		log.Fatal("❌ Failed to seed loyalty programs: ", err)
 	}
 
+	// Encrypts whatever CPFs migration 38 left in plain text. Not fatal on purpose: it reports
+	// the rows it could not rewrite and lets the API come up, because a single duplicate
+	// document is not a reason to leave the panel down.
+	if err := data.BackfillPersonCPFs(data.DB); err != nil {
+		slog.Error("could not finish encrypting the CPFs in plain text", "err", err)
+	}
+
 	// One broker per process, threaded through the router the same way the DB is.
 	// It lives as long as the server, so connected clients survive across requests.
 	broker := events.NewBroker()

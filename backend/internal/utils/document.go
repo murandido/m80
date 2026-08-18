@@ -47,6 +47,35 @@ func NormalizeCPF(raw string) (string, bool) {
 	return string(digits), true
 }
 
+// NormalizeCPFForIndex is the lenient sibling of NormalizeCPF, for the one job that cannot
+// afford to be strict: keeping a CPF from being registered to two different people.
+//
+// The registry has always accepted whatever was typed - the old unique index was over the raw
+// string - so some rows hold documents that fail the check digits. Fingerprinting only the
+// valid ones would leave those rows with no fingerprint, no uniqueness, and a silent way to
+// register the same person twice. So this normalizes rather than validates.
+//
+// For a valid CPF it returns exactly what NormalizeCPF returns, which is the point: a person
+// and an account beneficiary holding the same document produce the same fingerprint, and the
+// account holder is recognised without either side storing the number.
+//
+// Falls back to the trimmed original when there are no digits at all, so even junk keeps
+// whatever uniqueness it had.
+func NormalizeCPFForIndex(raw string) (string, bool) {
+	digits := make([]rune, 0, 11)
+	for _, r := range raw {
+		if unicode.IsDigit(r) {
+			digits = append(digits, r)
+		}
+	}
+	if len(digits) > 0 {
+		return string(digits), true
+	}
+
+	trimmed := strings.TrimSpace(raw)
+	return trimmed, trimmed != ""
+}
+
 // validCPFCheckDigits applies the two mod-11 check digits the Receita Federal defines.
 func validCPFCheckDigits(digits []rune) bool {
 	for _, position := range []int{9, 10} {

@@ -49,7 +49,6 @@ func callCreateBeneficiary(tx *gorm.DB, accountID, body string) *httptest.Respon
 }
 
 func TestAccountListCarriesTheCategoryAndTheUsage(t *testing.T) {
-	t.Setenv("CPF_INDEX_KEY", testCPFIndexKey)
 
 	runInTx(t, func(tx *gorm.DB) {
 		world := seedCPFWorld(t, tx, 25, data.CPFLimitWindowCalendarYear, data.CPFLimitModeDistinctPeople)
@@ -79,7 +78,6 @@ func TestAccountListCarriesTheCategoryAndTheUsage(t *testing.T) {
 }
 
 func TestAccountListFiltersByCategory(t *testing.T) {
-	t.Setenv("CPF_INDEX_KEY", testCPFIndexKey)
 
 	runInTx(t, func(tx *gorm.DB) {
 		world := seedCPFWorld(t, tx, 25, data.CPFLimitWindowCalendarYear, data.CPFLimitModeDistinctPeople)
@@ -122,7 +120,6 @@ func TestAccountListFiltersByCategory(t *testing.T) {
 }
 
 func TestBeneficiaryResponseNeverCarriesTheCPF(t *testing.T) {
-	t.Setenv("CPF_INDEX_KEY", testCPFIndexKey)
 
 	runInTx(t, func(tx *gorm.DB) {
 		world := seedCPFWorld(t, tx, 25, data.CPFLimitWindowCalendarYear, data.CPFLimitModeDistinctPeople)
@@ -165,7 +162,6 @@ func TestBeneficiaryResponseNeverCarriesTheCPF(t *testing.T) {
 }
 
 func TestAddingABeneficiaryByHandConsumesASlot(t *testing.T) {
-	t.Setenv("CPF_INDEX_KEY", testCPFIndexKey)
 
 	runInTx(t, func(tx *gorm.DB) {
 		world := seedCPFWorld(t, tx, 25, data.CPFLimitWindowCalendarYear, data.CPFLimitModeDistinctPeople)
@@ -189,7 +185,6 @@ func TestAddingABeneficiaryByHandConsumesASlot(t *testing.T) {
 }
 
 func TestMergingTwoBeneficiariesKeepsTheIssuances(t *testing.T) {
-	t.Setenv("CPF_INDEX_KEY", testCPFIndexKey)
 
 	runInTx(t, func(tx *gorm.DB) {
 		world := seedCPFWorld(t, tx, 24, data.CPFLimitWindowRolling12Months, data.CPFLimitModePerIssuance)
@@ -236,7 +231,6 @@ func TestMergingTwoBeneficiariesKeepsTheIssuances(t *testing.T) {
 }
 
 func TestReconcileRebuildsFromTheIssuancesAndIsIdempotent(t *testing.T) {
-	t.Setenv("CPF_INDEX_KEY", testCPFIndexKey)
 
 	runInTx(t, func(tx *gorm.DB) {
 		world := seedCPFWorld(t, tx, 25, data.CPFLimitWindowCalendarYear, data.CPFLimitModeDistinctPeople)

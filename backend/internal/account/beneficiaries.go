@@ -187,11 +187,14 @@ func create(
 // must not eat the account's slots.
 func matchesHolder(tx *gorm.DB, accountID, normalizedName string, fingerprint *string) (bool, error) {
 	var holder struct {
-		Name string
-		CPF  *string
+		Name           string
+		CPFFingerprint *string
 	}
+	// The fingerprint rather than the CPF: since migration 38 the column is ciphertext, and
+	// people.cpf_fingerprint is derived with the same key and the same normalization this
+	// package uses - so the two sides compare directly, and neither has to hold the number.
 	err := tx.Table("accounts").
-		Select("people.name AS name, people.cpf AS cpf").
+		Select("people.name AS name, people.cpf_fingerprint AS cpf_fingerprint").
 		Joins("JOIN people ON people.id = accounts.holder_id").
 		Where("accounts.id = ?", accountID).
 		Scan(&holder).Error
@@ -203,14 +206,10 @@ func matchesHolder(tx *gorm.DB, accountID, normalizedName string, fingerprint *s
 		return false, nil
 	}
 
-	// people.cpf is still plain text, so the strong match is available today. When that
-	// column is encrypted this branch stops matching and the name below carries it.
-	if fingerprint != nil && holder.CPF != nil {
-		if normalized, ok := utils.NormalizeCPF(*holder.CPF); ok {
-			if digest, err := utils.Fingerprint(normalized); err == nil && digest == *fingerprint {
-				return true, nil
-			}
-		}
+	// The document is the strong claim; the name is the fallback for the holder who has no
+	// CPF on file, which is most of the older registry.
+	if fingerprint != nil && holder.CPFFingerprint != nil && *holder.CPFFingerprint == *fingerprint {
+		return true, nil
 	}
 
 	return utils.NormalizeName(holder.Name) == normalizedName, nil

@@ -172,8 +172,9 @@ JOIN account_beneficiaries
 
 DROP TABLE issuance_people;
 
--- Mark the account holders so they stay out of the count. people.cpf is plain text today, so
--- this can still match on it; when that column is encrypted the name match below carries it.
+-- Mark the account holders so they stay out of the count, by name: this runs before
+-- migration 38 gives people a fingerprint, so there is nothing stronger to match on here.
+-- From 38 onwards account.Register compares fingerprints as well.
 UPDATE account_beneficiaries
 SET is_holder = TRUE
 FROM accounts

@@ -247,8 +247,10 @@ func (h *PeopleHandler) MergePerson(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// The delete comes before the copy on purpose: idx_people_cpf is unique, so writing
-		// the absorbed CPF onto the survivor while that row still holds it is refused.
+		// The delete comes before the copy on purpose: the CPF is unique across people -
+		// idx_people_cpf_fingerprint since migration 38 - so writing the absorbed CPF onto the
+		// survivor while that row still holds it is refused. The fingerprint follows the number
+		// automatically: Person.BeforeSave derives it on the Save below.
 		if err := tx.Delete(&data.Person{}, "id = ?", dropID).Error; err != nil {
 			return err
 		}

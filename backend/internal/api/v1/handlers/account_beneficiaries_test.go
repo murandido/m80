@@ -20,9 +20,6 @@ import (
 const (
 	cpfAlice = "529.982.247-25"
 	cpfBruno = "111.444.777-35"
-
-	// Any valid 32-byte key: the fingerprint only has to be stable within a test run.
-	testCPFIndexKey = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 )
 
 type cpfWorld struct {
@@ -102,7 +99,6 @@ func register(t *testing.T, tx *gorm.DB, accountID, issuanceID, name string, cpf
 }
 
 func TestSameCPFDoesNotConsumeASecondSlot(t *testing.T) {
-	t.Setenv("CPF_INDEX_KEY", testCPFIndexKey)
 
 	runInTx(t, func(tx *gorm.DB) {
 		world := seedCPFWorld(t, tx, 25, data.CPFLimitWindowCalendarYear, data.CPFLimitModeDistinctPeople)
@@ -123,7 +119,6 @@ func TestSameCPFDoesNotConsumeASecondSlot(t *testing.T) {
 }
 
 func TestWithoutACPFTheNameCarriesTheMatch(t *testing.T) {
-	t.Setenv("CPF_INDEX_KEY", testCPFIndexKey)
 
 	runInTx(t, func(tx *gorm.DB) {
 		world := seedCPFWorld(t, tx, 25, data.CPFLimitWindowCalendarYear, data.CPFLimitModeDistinctPeople)
@@ -147,7 +142,6 @@ func TestWithoutACPFTheNameCarriesTheMatch(t *testing.T) {
 }
 
 func TestACPFArrivingLaterCompletesTheBeneficiary(t *testing.T) {
-	t.Setenv("CPF_INDEX_KEY", testCPFIndexKey)
 
 	runInTx(t, func(tx *gorm.DB) {
 		world := seedCPFWorld(t, tx, 25, data.CPFLimitWindowCalendarYear, data.CPFLimitModeDistinctPeople)
@@ -179,7 +173,6 @@ func TestACPFArrivingLaterCompletesTheBeneficiary(t *testing.T) {
 }
 
 func TestRegisteringTheSameIssuanceTwiceChargesOneSlot(t *testing.T) {
-	t.Setenv("CPF_INDEX_KEY", testCPFIndexKey)
 
 	// Per-issuance mode, because in distinct-people mode this would pass for the wrong
 	// reason. A Traveos resync deletes and reinserts the passengers, so it re-registers.
@@ -198,7 +191,6 @@ func TestRegisteringTheSameIssuanceTwiceChargesOneSlot(t *testing.T) {
 }
 
 func TestTheTwoCountingModesReadTheSameRowsDifferently(t *testing.T) {
-	t.Setenv("CPF_INDEX_KEY", testCPFIndexKey)
 
 	runInTx(t, func(tx *gorm.DB) {
 		world := seedCPFWorld(t, tx, 25, data.CPFLimitWindowCalendarYear, data.CPFLimitModeDistinctPeople)
@@ -223,7 +215,6 @@ func TestTheTwoCountingModesReadTheSameRowsDifferently(t *testing.T) {
 }
 
 func TestTheHolderDoesNotConsumeASlot(t *testing.T) {
-	t.Setenv("CPF_INDEX_KEY", testCPFIndexKey)
 
 	runInTx(t, func(tx *gorm.DB) {
 		world := seedCPFWorld(t, tx, 25, data.CPFLimitWindowCalendarYear, data.CPFLimitModeDistinctPeople)
@@ -250,7 +241,6 @@ func TestTheHolderDoesNotConsumeASlot(t *testing.T) {
 }
 
 func TestCancellingAnIssuanceDoesNotGiveTheSlotBack(t *testing.T) {
-	t.Setenv("CPF_INDEX_KEY", testCPFIndexKey)
 
 	runInTx(t, func(tx *gorm.DB) {
 		world := seedCPFWorld(t, tx, 25, data.CPFLimitWindowCalendarYear, data.CPFLimitModeDistinctPeople)
@@ -280,7 +270,6 @@ func TestCancellingAnIssuanceDoesNotGiveTheSlotBack(t *testing.T) {
 }
 
 func TestTheWindowDecidesWhatStillCounts(t *testing.T) {
-	t.Setenv("CPF_INDEX_KEY", testCPFIndexKey)
 
 	runInTx(t, func(tx *gorm.DB) {
 		world := seedCPFWorld(t, tx, 25, data.CPFLimitWindowCalendarYear, data.CPFLimitModeDistinctPeople)
@@ -325,7 +314,6 @@ func TestTheWindowDecidesWhatStillCounts(t *testing.T) {
 }
 
 func TestOnlyStandardAccountsWithAResearchedLimitShowACounter(t *testing.T) {
-	t.Setenv("CPF_INDEX_KEY", testCPFIndexKey)
 
 	runInTx(t, func(tx *gorm.DB) {
 		world := seedCPFWorld(t, tx, 25, data.CPFLimitWindowCalendarYear, data.CPFLimitModeDistinctPeople)
@@ -355,7 +343,6 @@ func TestOnlyStandardAccountsWithAResearchedLimitShowACounter(t *testing.T) {
 }
 
 func TestReplacingTheUsesFollowsACorrectedPassenger(t *testing.T) {
-	t.Setenv("CPF_INDEX_KEY", testCPFIndexKey)
 
 	runInTx(t, func(tx *gorm.DB) {
 		world := seedCPFWorld(t, tx, 25, data.CPFLimitWindowCalendarYear, data.CPFLimitModeDistinctPeople)

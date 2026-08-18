@@ -102,7 +102,10 @@ export default async function PeoplePage({
 
         <CreatePersonForm />
         <ListFilterBar
-          searchPlaceholder="Buscar por nome, CPF, e-mail, telefone, cidade ou apelido"
+          // The CPF is stored encrypted, so it is matched whole rather than by fragment -
+          // the placeholder says so, because "CPF" alone would promise a partial search that
+          // silently returns nothing.
+          searchPlaceholder="Buscar por nome, e-mail, telefone, cidade, apelido ou CPF completo"
           order={params.order}
         >
           <ListFilterSelect
