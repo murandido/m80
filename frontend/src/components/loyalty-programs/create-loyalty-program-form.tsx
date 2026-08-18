@@ -14,6 +14,7 @@ import {
   InputGroupInput,
 } from "@/components/ui/input-group"
 import { Separator } from "@/components/ui/separator"
+import { CPFLimitFields } from "./cpf-limit-fields"
 import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 import { createLoyaltyProgramSchema } from "@/schemas/loyalty-program"
@@ -41,6 +42,9 @@ export function CreateLoyaltyProgramForm({ airlines }: CreateLoyaltyProgramFormP
       code: "",
       color: "#64748B",
       default_airline_id: "",
+      cpf_limit: "",
+      cpf_limit_window: "",
+      cpf_limit_mode: "",
     },
   })
 
@@ -202,6 +206,9 @@ export function CreateLoyaltyProgramForm({ airlines }: CreateLoyaltyProgramFormP
                     )}
                   />
                 </div>
+
+                <Separator />
+                <CPFLimitFields control={form.control} disabled={isPending} idPrefix="create" />
 
                 <Separator />
 

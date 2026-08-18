@@ -14,9 +14,17 @@ import {
   InputGroupButton,
   InputGroupInput,
 } from "@/components/ui/input-group"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
 import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
+import { ACCOUNT_CATEGORY_OPTIONS } from "@/lib/account-category"
 import { Account, updateAccountSchema } from "@/schemas/account"
 import { Person } from "@/schemas/person"
 import { LoyaltyProgram } from "@/schemas/loyalty-program"
@@ -42,6 +50,7 @@ function toFormValues(account: Account): FormData {
     password: account.password ?? "",
     holder_id: account.holder_id ?? "",
     administrator_id: account.administrator_id ?? "",
+    category: account.category,
   }
 }
 
@@ -203,6 +212,42 @@ export function EditAccountPanel({
                           </InputGroupButton>
                         </InputGroupAddon>
                       </InputGroup>
+                      {fieldState.invalid && (
+                        <FieldError errors={[fieldState.error]} />
+                      )}
+                    </>
+                  )}
+                />
+              </div>
+
+              {/* category */}
+              <div className="flex flex-col gap-1 text-sm">
+                <Controller
+                  name="category"
+                  control={form.control}
+                  render={({ field, fieldState }) => (
+                    <>
+                      <FieldLabel htmlFor="edit-account-category">Categoria</FieldLabel>
+                      <Select
+                        value={field.value ?? "unidentified"}
+                        onValueChange={field.onChange}
+                        disabled={isPending}
+                      >
+                        <SelectTrigger id="edit-account-category" className="bg-slate-200">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {ACCOUNT_CATEGORY_OPTIONS.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-slate-500">
+                        O controle de CPFs só vale em contas normais: a liminar suspende o
+                        limite, e em conta não identificada não dá para afirmar que ele existe.
+                      </p>
                       {fieldState.invalid && (
                         <FieldError errors={[fieldState.error]} />
                       )}

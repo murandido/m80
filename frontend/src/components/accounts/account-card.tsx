@@ -2,13 +2,16 @@
 
 import { useState } from "react"
 import { useRouter } from "next/navigation"
-import { Menu, Merge, Trash2 } from "lucide-react"
+import { Menu, Merge, Trash2, Users } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { Account } from "@/schemas/account"
 import { Person } from "@/schemas/person"
 import { LoyaltyProgram } from "@/schemas/loyalty-program"
 import { LoyaltyProgramBadge } from "./loyalty-program-badge"
+import { AccountCategoryBadge } from "./account-category-badge"
+import { CPFUsageMeter } from "./cpf-usage-meter"
+import { AccountBeneficiariesPanel } from "./account-beneficiaries-panel"
 import { CopyCredentialsMenu } from "./copy-credentials-menu"
 import { DeleteOverlay } from "./delete-overlay"
 import { EditAccountPanel } from "./edit-account-panel"
@@ -35,11 +38,14 @@ export function AccountCard({
   const [isDeleteOpen, setIsDeleteOpen] = useState(false)
   // One panel at a time: they share the card's bottom edge, and two open at once would
   // both claim the rounded corner.
-  const [openPanel, setOpenPanel] = useState<"none" | "edit" | "merge">("none")
+  const [openPanel, setOpenPanel] = useState<"none" | "edit" | "merge" | "beneficiaries">(
+    "none",
+  )
   const [isDeleted, setIsDeleted] = useState(false)
 
   const isEditOpen = openPanel === "edit"
   const isMergeOpen = openPanel === "merge"
+  const isBeneficiariesOpen = openPanel === "beneficiaries"
 
   function handleCardFadeEnd() {
     if (isDeleted) router.refresh()
@@ -70,7 +76,11 @@ export function AccountCard({
       >
         <div className="flex items-center justify-between px-4 py-3">
           <div className="flex flex-col gap-1">
-            <LoyaltyProgramBadge loyaltyProgram={account.loyalty_program} />
+            <div className="flex flex-wrap items-center gap-2">
+              <LoyaltyProgramBadge loyaltyProgram={account.loyalty_program} />
+              <AccountCategoryBadge category={account.category} />
+              {account.cpf_usage && <CPFUsageMeter usage={account.cpf_usage} />}
+            </div>
             <span className="text-sm font-medium text-slate-800">{title}</span>
             {subtitle && (
               <span className="text-xs text-slate-500">{subtitle}</span>
@@ -78,6 +88,25 @@ export function AccountCard({
           </div>
           <div className="flex gap-2">
             <CopyCredentialsMenu login={account.login} password={account.password} />
+            <Button
+              variant="outline"
+              size="icon"
+              title="Pessoas emitidas nesta conta"
+              aria-label="Pessoas emitidas nesta conta"
+              onClick={() =>
+                setOpenPanel((prev) =>
+                  prev === "beneficiaries" ? "none" : "beneficiaries",
+                )
+              }
+              className={cn(
+                "transition-colors duration-200",
+                isBeneficiariesOpen
+                  ? "border-violet-600 bg-violet-600 text-white hover:border-violet-700 hover:bg-violet-700"
+                  : "border-slate-800 text-slate-800 hover:border-violet-400 hover:bg-violet-400 hover:text-white active:border-violet-800 active:bg-violet-800 active:text-white",
+              )}
+            >
+              <Users className="h-4 w-4" />
+            </Button>
             <Button
               variant="outline"
               size="icon"
@@ -129,6 +158,12 @@ export function AccountCard({
           onDeleted={() => setIsDeleted(true)}
         />
       </div>
+
+      <AccountBeneficiariesPanel
+        account={account}
+        isOpen={isBeneficiariesOpen}
+        canReconcile={canMerge}
+      />
 
       <EditAccountPanel
         account={account}

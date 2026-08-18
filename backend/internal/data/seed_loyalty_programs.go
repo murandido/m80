@@ -20,9 +20,16 @@ type loyaltyProgramSeedRecord struct {
 	// DefaultAirlineCode, not an id: uuids are generated per database, so the seed
 	// file refers to the carrier the same way an operator does and the code is
 	// resolved at seed time.
-	DefaultAirlineCode string   `json:"default_airline_code"`
-	Color              string   `json:"color"`
-	Aliases            []string `json:"aliases"`
+	DefaultAirlineCode string `json:"default_airline_code"`
+	Color              string `json:"color"`
+	// The program's beneficiary cap, for the environments where the seeder creates the
+	// program from scratch. Migration 37 sets the same values on databases that already
+	// had the programs - the seeder runs after the migrations, so it cannot be the only
+	// source. Nil for a program whose rule nobody has researched.
+	CPFLimit       *int     `json:"cpf_limit"`
+	CPFLimitWindow *string  `json:"cpf_limit_window"`
+	CPFLimitMode   *string  `json:"cpf_limit_mode"`
+	Aliases        []string `json:"aliases"`
 }
 
 // SeedLoyaltyPrograms creates the loyalty programs that are missing, and stops
@@ -70,6 +77,9 @@ func SeedLoyaltyPrograms(db *gorm.DB) error {
 				Name:             record.Name,
 				Color:            record.Color,
 				DefaultAirlineID: airline.ID,
+				CPFLimit:         record.CPFLimit,
+				CPFLimitWindow:   record.CPFLimitWindow,
+				CPFLimitMode:     record.CPFLimitMode,
 			}
 			if err := tx.Create(&program).Error; err != nil {
 				return fmt.Errorf("creating loyalty program %s: %w", record.Code, err)

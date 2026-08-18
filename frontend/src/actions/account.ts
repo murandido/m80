@@ -5,7 +5,9 @@ import { env } from "@/lib/env"
 import { stripEmptyFields } from "@/lib/strip-empty-fields"
 import { createPersonAction } from "@/actions/person"
 import {
+  accountBeneficiaryMutationSchema,
   checkAccountNicknameAvailabilitySchema,
+  getAccountBeneficiariesSchema,
   createAccountNicknameSchema,
   createAccountSchema,
   deleteAccountNicknameSchema,
@@ -317,6 +319,124 @@ export async function mergeAccountAction(keepId: string, sourceId: string) {
       return { error: parsed.data?.message || "Erro ao mesclar as contas." }
     }
 
+    return { success: true as const }
+  } catch {
+    return { error: "Erro de conexão com o servidor." }
+  }
+}
+
+// --- Beneficiaries: the manual half of the CPF control ---------------------------------
+//
+// The automatic half derives the ledger from the issuances, and where no document arrived
+// it matches passengers by name - which on the bot path is a surname. So the list needs to
+// be correctable by hand, and these are the corrections.
+
+const beneficiariesUrl = (accountId: string) =>
+  `${env.BACKEND_URL}/api/v1/accounts/${accountId}/beneficiaries`
+
+async function authHeaders() {
+  const cookieStore = await cookies()
+  return {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${cookieStore.get("auth_token")?.value}`,
+  }
+}
+
+export async function getAccountBeneficiariesAction(accountId: string) {
+  try {
+    const res = await fetch(beneficiariesUrl(accountId), {
+      headers: await authHeaders(),
+      cache: "no-store",
+    })
+    const json = await res.json()
+    const parsed = getAccountBeneficiariesSchema.response.safeParse(json)
+
+    if (!res.ok || !parsed.success) {
+      return { error: parsed.data?.message || "Erro ao buscar os beneficiários." }
+    }
+    return { beneficiaries: parsed.data.data ?? [] }
+  } catch {
+    return { error: "Erro de conexão com o servidor." }
+  }
+}
+
+// The CPF is sent whole and comes back only as a mask: the API derives a fingerprint from
+// it and discards the number, which is why nothing here ever reads a full document back.
+export async function createAccountBeneficiaryAction(
+  accountId: string,
+  data: { name: string; cpf?: string },
+) {
+  return beneficiaryMutation(beneficiariesUrl(accountId), "POST", data, "Erro ao adicionar o beneficiário.")
+}
+
+export async function updateAccountBeneficiaryAction(
+  accountId: string,
+  beneficiaryId: string,
+  data: { name?: string; cpf?: string; is_holder?: boolean },
+) {
+  return beneficiaryMutation(
+    `${beneficiariesUrl(accountId)}/${beneficiaryId}`,
+    "PATCH",
+    data,
+    "Erro ao atualizar o beneficiário.",
+  )
+}
+
+export async function deleteAccountBeneficiaryAction(accountId: string, beneficiaryId: string) {
+  return beneficiaryMutation(
+    `${beneficiariesUrl(accountId)}/${beneficiaryId}`,
+    "DELETE",
+    undefined,
+    "Erro ao remover o beneficiário.",
+  )
+}
+
+// Moves sourceId's issuances onto beneficiaryId and deletes it - the fix for one person
+// who entered twice under two spellings.
+export async function mergeAccountBeneficiariesAction(
+  accountId: string,
+  beneficiaryId: string,
+  sourceId: string,
+) {
+  return beneficiaryMutation(
+    `${beneficiariesUrl(accountId)}/${beneficiaryId}/merge`,
+    "POST",
+    { source_id: sourceId },
+    "Erro ao juntar os beneficiários.",
+  )
+}
+
+// Admin-only at the API, and irreversible: it throws away every manual correction and
+// rebuilds the list from the issuances.
+export async function reconcileAccountBeneficiariesAction(accountId: string) {
+  return beneficiaryMutation(
+    `${beneficiariesUrl(accountId)}/reconcile`,
+    "POST",
+    undefined,
+    "Erro ao reconstruir os beneficiários.",
+  )
+}
+
+async function beneficiaryMutation(
+  url: string,
+  method: string,
+  body: unknown,
+  fallbackMessage: string,
+) {
+  try {
+    const res = await fetch(url, {
+      method,
+      headers: await authHeaders(),
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    })
+    const json = await res.json()
+    const parsed = accountBeneficiaryMutationSchema.response.safeParse(json)
+
+    if (!res.ok) {
+      // The API answers 400 with a readable reason for an invalid CPF, which is the one
+      // the operator actually needs to see.
+      return { error: parsed.data?.message || fallbackMessage }
+    }
     return { success: true as const }
   } catch {
     return { error: "Erro de conexão com o servidor." }

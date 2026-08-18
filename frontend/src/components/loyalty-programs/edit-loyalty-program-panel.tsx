@@ -14,6 +14,7 @@ import {
   InputGroupInput,
 } from "@/components/ui/input-group"
 import { Separator } from "@/components/ui/separator"
+import { CPFLimitFields } from "./cpf-limit-fields"
 import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 import { LoyaltyProgram, updateLoyaltyProgramSchema } from "@/schemas/loyalty-program"
@@ -45,6 +46,9 @@ export function EditLoyaltyProgramPanel({
     code: loyaltyProgram.code,
     color: loyaltyProgram.color,
     default_airline_id: loyaltyProgram.default_airline_id,
+    cpf_limit: loyaltyProgram.cpf_limit != null ? String(loyaltyProgram.cpf_limit) : "",
+    cpf_limit_window: loyaltyProgram.cpf_limit_window ?? "",
+    cpf_limit_mode: loyaltyProgram.cpf_limit_mode ?? "",
   }
 
   const form = useForm<FormData>({
@@ -217,6 +221,13 @@ export function EditLoyaltyProgramPanel({
                   )}
                 />
               </div>
+
+              <Separator />
+              <CPFLimitFields
+                control={form.control}
+                disabled={isPending}
+                idPrefix={`edit-${loyaltyProgram.id}`}
+              />
 
               <Separator />
 

@@ -35,5 +35,8 @@ func RegisterAccountRoutes(r chi.Router, db *gorm.DB) {
 
 		// nicknames sub-resource
 		RegisterAccountNicknameRoutes(r, db)
+
+		// beneficiaries sub-resource: the manual half of the CPF control
+		RegisterAccountBeneficiaryRoutes(r, db, requireAdmin)
 	})
 }

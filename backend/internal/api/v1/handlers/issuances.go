@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
+	"github.com/murandido/m-80-backend/internal/account"
 	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
@@ -694,6 +695,11 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Captured before the patch is merged in below, so the beneficiary bookkeeping at the
+	// end of the transaction can tell whether the passenger moved at all.
+	previousPassengerName := issuance.MainPassengerName
+	previousAccountID := issuance.AccountID
+
 	var req schemas.UpdateIssuanceRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		utils.SendError(w, r, http.StatusBadRequest, "Invalid JSON payload")
@@ -837,6 +843,10 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 			return err
 		}
 
+		if err := syncIssuanceBeneficiary(tx, issuance, previousPassengerName, previousAccountID); err != nil {
+			return err
+		}
+
 		if flightDate == nil {
 			return nil
 		}
@@ -867,6 +877,52 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 	h.broadcastIssuance(eventIssuanceUpdated, issuance.ID)
 
 	utils.SendJSON(w, r, http.StatusOK, "Issuance updated successfully", toIssuanceResponse(issuance))
+}
+
+// syncIssuanceBeneficiary keeps the account's CPF consumption in step with a patched
+// issuance. It only acts when the passenger or the account actually moved, because the grid
+// PATCHes on every cell edit and re-registering on each one would be pure noise.
+//
+// Two corrections it has to handle, and both are why this replaces rather than adds:
+//
+//   - the passenger name was fixed. The slot follows the new name; the old beneficiary is
+//     dropped if this issuance was the only thing keeping it alive.
+//   - the issuance was moved to another account. The slot has to leave the account that
+//     never issued it, or that account carries a phantom forever.
+//
+// An issuance whose passengers came from Traveos is deliberately left alone: the vendor
+// knows the whole booking (a family of four, not one name), and overwriting that with the
+// single main_passenger_name would throw the other three away.
+func syncIssuanceBeneficiary(
+	tx *gorm.DB,
+	issuance data.Issuance,
+	previousPassengerName *string,
+	previousAccountID string,
+) error {
+	if issuance.TraveosSyncedAt != nil {
+		return nil
+	}
+
+	nameChanged := !equalStringPointers(previousPassengerName, issuance.MainPassengerName)
+	if !nameChanged && issuance.AccountID == previousAccountID {
+		return nil
+	}
+
+	var passengers []account.Passenger
+	if issuance.MainPassengerName != nil {
+		passengers = append(passengers, account.Passenger{Name: *issuance.MainPassengerName})
+	}
+
+	return account.ReplaceIssuanceUses(
+		tx, issuance.AccountID, issuance.ID, passengers, issuance.CreatedAt,
+	)
+}
+
+func equalStringPointers(a, b *string) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
 }
 
 // DeleteIssuance handles the DELETE /issuances/{id} route.

@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
 	"github.com/jackc/pgx/v5/pgconn"
+	acct "github.com/murandido/m-80-backend/internal/account"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/utils"
@@ -38,7 +39,13 @@ func archivedAt(deletedAt gorm.DeletedAt) *time.Time {
 	return &deletedAt.Time
 }
 
+// toAccountResponse renders an account without its CPF consumption. Most callers do not
+// have it: computing it costs a query, and the create/update round-trips do not need it.
 func toAccountResponse(account data.Account) schemas.AccountResponse {
+	return toAccountResponseWithUsage(account, nil)
+}
+
+func toAccountResponseWithUsage(account data.Account, usage *acct.Usage) schemas.AccountResponse {
 	nicknames := make([]schemas.AccountNicknameResponse, 0, len(account.Nicknames))
 	for _, nickname := range account.Nicknames {
 		nicknames = append(nicknames, toAccountNicknameResponse(nickname))
@@ -60,6 +67,8 @@ func toAccountResponse(account data.Account) schemas.AccountResponse {
 
 	return schemas.AccountResponse{
 		ID:               account.ID,
+		Category:         account.Category,
+		CPFUsage:         usage,
 		LoyaltyProgramID: account.LoyaltyProgramID,
 		LoyaltyProgram:   loyaltyProgram,
 		Login:            account.Login,
@@ -107,6 +116,9 @@ func (h *AccountHandler) CreateAccount(w http.ResponseWriter, r *http.Request) {
 		Password:         req.Password,
 		HolderID:         req.HolderID,
 		AdministratorID:  req.AdministratorID,
+	}
+	if req.Category != nil {
+		account.Category = *req.Category
 	}
 
 	if req.Complete != nil {
@@ -167,7 +179,7 @@ var accountOrder = map[string]string{
 
 // accountListQuery applies the optional search and the ordering. The join to holders is
 // unconditional because the default ordering reads from it.
-func accountListQuery(db *gorm.DB, params listQuery, programID string, complete *bool) *gorm.DB {
+func accountListQuery(db *gorm.DB, params listQuery, programID, category string, complete *bool) *gorm.DB {
 	query := db.Model(&data.Account{}).
 		Joins("LEFT JOIN people AS holders ON holders.id = accounts.holder_id")
 
@@ -186,6 +198,9 @@ func accountListQuery(db *gorm.DB, params listQuery, programID string, complete 
 	if programID != "" {
 		query = query.Where("accounts.loyalty_program_id = ?", programID)
 	}
+	if category != "" {
+		query = query.Where("accounts.category = ?", category)
+	}
 	if complete != nil {
 		query = query.Where("accounts.complete = ?", *complete)
 	}
@@ -202,6 +217,7 @@ func accountListQuery(db *gorm.DB, params listQuery, programID string, complete 
 // @Param        q                   query  string  false  "Busca por login, titular, administrador, programa ou apelido"
 // @Param        order               query  string  false  "Ordenação"  Enums(name_asc, name_desc, created_desc, created_asc)
 // @Param        loyalty_program_id  query  string  false  "UUID do programa de fidelidade"
+// @Param        category            query  string  false  "Categoria da conta"  Enums(unidentified, standard, injunction)
 // @Param        complete            query  bool    false  "Somente contas completas (true) ou incompletas (false)"
 // @Param        include_archived    query  bool    false  "Inclui as contas arquivadas — usado pela tela de mesclagem, que precisa alcançá-las"
 // @Success      200  {object}  schemas.AccountListResponse
@@ -225,6 +241,7 @@ func (h *AccountHandler) GetAccounts(w http.ResponseWriter, r *http.Request) {
 		db,
 		parseListQuery(r),
 		r.URL.Query().Get("loyalty_program_id"),
+		r.URL.Query().Get("category"),
 		parseOptionalBool(r.URL.Query().Get("complete")),
 	)
 	if err := query.Preload("Nicknames").Preload("LoyaltyProgram").Find(&accounts).Error; err != nil {
@@ -232,12 +249,34 @@ func (h *AccountHandler) GetAccounts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	usage, err := h.cpfUsage(accounts)
+	if err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to compute the CPF usage")
+		return
+	}
+
 	resp := make([]schemas.AccountResponse, 0, len(accounts))
 	for _, account := range accounts {
-		resp = append(resp, toAccountResponse(account))
+		resp = append(resp, toAccountResponseWithUsage(account, usage[account.ID]))
 	}
 
 	utils.SendJSON(w, r, http.StatusOK, "Accounts fetched successfully", resp)
+}
+
+// cpfUsage computes the beneficiary-cap consumption of a whole listing at once. The
+// accounts must already carry their preloaded LoyaltyProgram - that is where the limit,
+// the window and the counting mode live.
+//
+// One query for the listing rather than one per row: the accounts screen renders every
+// account the operator has, and a per-card query would be a query per card.
+func (h *AccountHandler) cpfUsage(accounts []data.Account) (map[string]*acct.Usage, error) {
+	programs := make(map[string]data.LoyaltyProgram, len(accounts))
+	for _, account := range accounts {
+		if account.LoyaltyProgram != nil {
+			programs[account.LoyaltyProgramID] = *account.LoyaltyProgram
+		}
+	}
+	return acct.UsageForMany(h.DB, accounts, programs)
 }
 
 // GetAccount handles the GET /accounts/{id} route
@@ -260,7 +299,14 @@ func (h *AccountHandler) GetAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	utils.SendJSON(w, r, http.StatusOK, "Account fetched successfully", toAccountResponse(account))
+	usage, err := h.cpfUsage([]data.Account{account})
+	if err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to compute the CPF usage")
+		return
+	}
+
+	utils.SendJSON(w, r, http.StatusOK, "Account fetched successfully",
+		toAccountResponseWithUsage(account, usage[account.ID]))
 }
 
 // UpdateAccount handles the PUT /accounts/{id} route
@@ -308,6 +354,9 @@ func (h *AccountHandler) UpdateAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.AdministratorID != nil {
 		account.AdministratorID = req.AdministratorID
+	}
+	if req.Category != nil {
+		account.Category = *req.Category
 	}
 
 	if req.Complete != nil {

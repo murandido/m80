@@ -19,6 +19,30 @@ export const accountNicknameSchema = z.object({
 
 export type AccountNickname = z.infer<typeof accountNicknameSchema>
 
+// The three categories, in the order the panel reads them. The values are the ones the
+// API stores; the Portuguese labels live in account-category.ts, next to the badge.
+export const accountCategorySchema = z.enum(["unidentified", "standard", "injunction"])
+
+export type AccountCategory = z.infer<typeof accountCategorySchema>
+
+// How much of the loyalty program's beneficiary cap the account has used. Null whenever
+// there is no cap to report - an injunction suspends it, an unclassified account gives no
+// basis to claim one, and a program nobody has researched has no limit. Null means "show
+// no counter", which is not the same as a counter reading zero.
+export const cpfUsageSchema = z.object({
+  used: z.number(),
+  limit: z.number(),
+  remaining: z.number(),
+  // "calendar_year" resets on 1 January; "rolling_12_months" slides day by day.
+  window: z.enum(["calendar_year", "rolling_12_months"]),
+  // "distinct_people" reuses a slot for someone already issued (Smiles, Azul);
+  // "per_issuance" charges one for every issuance, same person or not (LATAM).
+  mode: z.enum(["distinct_people", "per_issuance"]),
+  resets_at: z.string().nullish(),
+})
+
+export type CPFUsage = z.infer<typeof cpfUsageSchema>
+
 export const accountSchema = z.object({
   id: z.string(),
   loyalty_program_id: z.string(),
@@ -28,6 +52,10 @@ export const accountSchema = z.object({
   holder_id: z.string().nullable(),
   administrator_id: z.string().nullable(),
   nicknames: z.array(accountNicknameSchema),
+  // Defaulted rather than required: an older API that predates the category still answers
+  // the panel, and the two are published by independent labels.
+  category: accountCategorySchema.nullish().transform((value) => value ?? "unidentified"),
+  cpf_usage: cpfUsageSchema.nullish(),
   complete: z.boolean(),
   created_at: z.string(),
   updated_at: z.string(),
@@ -57,6 +85,7 @@ export const createAccountSchema = {
     password: optionalTextField,
     holder_id: optionalUuidField,
     administrator_id: optionalUuidField,
+    category: accountCategorySchema.optional(),
     nicknames: z.array(z.string().min(1)).optional(),
   }),
   response: z.object({
@@ -73,6 +102,7 @@ export const updateAccountSchema = {
     password: optionalTextField,
     holder_id: optionalUuidField,
     administrator_id: optionalUuidField,
+    category: accountCategorySchema.optional(),
   }),
   response: z.object({
     success: z.boolean(),
@@ -143,3 +173,37 @@ export const mergeAccountSchema = {
 export type MergeAccountPreview = NonNullable<
   z.infer<typeof mergeAccountPreviewSchema.response>["data"]
 >
+
+// One person on an account's beneficiary ledger. The CPF is never returned in full because
+// it is never stored in full: cpf_masked is built from the number at write time, and
+// has_cpf says whether the row is identified by a document at all - which is what tells the
+// operator how much to trust the match.
+export const accountBeneficiarySchema = z.object({
+  id: z.string(),
+  account_id: z.string(),
+  name: z.string(),
+  cpf_masked: z.string().nullish(),
+  has_cpf: z.boolean(),
+  is_holder: z.boolean(),
+  uses: z.number(),
+  last_used_at: z.string().nullish(),
+  created_at: z.string(),
+})
+
+export type AccountBeneficiary = z.infer<typeof accountBeneficiarySchema>
+
+export const getAccountBeneficiariesSchema = {
+  response: z.object({
+    success: z.boolean(),
+    message: z.string(),
+    data: z.array(accountBeneficiarySchema).nullish(),
+  }),
+}
+
+export const accountBeneficiaryMutationSchema = {
+  response: z.object({
+    success: z.boolean(),
+    message: z.string(),
+    data: z.unknown().nullish(),
+  }),
+}

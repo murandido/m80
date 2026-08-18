@@ -14,6 +14,7 @@ import { listQueryString, resolveListParams } from "@/lib/list-params"
 import { readStickyFilters, stickySearchParams } from "@/lib/sticky-filters"
 import { getSessionUser } from "@/lib/session"
 import { canAccess } from "@/lib/navigation"
+import { ACCOUNT_CATEGORY_OPTIONS } from "@/lib/account-category"
 
 export const metadata: Metadata = {
   title: "Contas",
@@ -21,7 +22,7 @@ export const metadata: Metadata = {
     "As contas de programa de fidelidade de onde saem os pontos, com as credenciais de acesso.",
 }
 
-const ACCOUNTS_URL_KEYS = ["q", "order", "loyalty_program_id", "complete"] as const
+const ACCOUNTS_URL_KEYS = ["q", "order", "loyalty_program_id", "category", "complete"] as const
 
 export default async function AccountsPage({
   searchParams,
@@ -39,6 +40,7 @@ export default async function AccountsPage({
   )
   const params = resolveListParams(raw)
   const loyaltyProgramId = raw.loyalty_program_id ?? ""
+  const category = raw.category ?? ""
   const complete = raw.complete ?? ""
 
   let accounts: Account[] = []
@@ -76,6 +78,7 @@ export default async function AccountsPage({
     const res = await fetch(
       `${env.BACKEND_URL}/api/v1/accounts?${listQueryString(params, {
         loyalty_program_id: loyaltyProgramId,
+        category,
         complete,
       })}`,
       { headers: authHeader, cache: "no-store" },
@@ -144,6 +147,14 @@ export default async function AccountsPage({
             }))}
           />
           <ListFilterSelect
+            name="category"
+            label="Categoria"
+            allLabel="Todas"
+            value={category}
+            className="w-44"
+            options={ACCOUNT_CATEGORY_OPTIONS}
+          />
+          <ListFilterSelect
             name="complete"
             label="Cadastro"
             allLabel="Todos"
@@ -158,7 +169,7 @@ export default async function AccountsPage({
         <div className="flex flex-col gap-2">
           {accounts.length === 0 ? (
             <p className="text-sm text-slate-500">
-              {params.q || loyaltyProgramId || complete
+              {params.q || loyaltyProgramId || category || complete
                 ? "Nenhuma conta encontrada para os filtros selecionados."
                 : "Nenhuma conta cadastrada."}
             </p>

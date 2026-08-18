@@ -40,6 +40,9 @@ func toLoyaltyProgramResponse(loyaltyProgram data.LoyaltyProgram) schemas.Loyalt
 		Color:            loyaltyProgram.Color,
 		DefaultAirlineID: loyaltyProgram.DefaultAirlineID,
 		DefaultAirline:   defaultAirline,
+		CPFLimit:         loyaltyProgram.CPFLimit,
+		CPFLimitWindow:   loyaltyProgram.CPFLimitWindow,
+		CPFLimitMode:     loyaltyProgram.CPFLimitMode,
 		CreatedAt:        loyaltyProgram.CreatedAt,
 		UpdatedAt:        loyaltyProgram.UpdatedAt,
 		DeletedAt:        archivedAt(loyaltyProgram.DeletedAt),
@@ -83,6 +86,11 @@ func (h *LoyaltyProgramHandler) CreateLoyaltyProgram(w http.ResponseWriter, r *h
 	if req.Color != nil {
 		loyaltyProgram.Color = *req.Color
 	}
+	// Assigned straight through, nil included: a program whose rule nobody has looked up
+	// has no cap, which the panel renders as no counter rather than as a cap of zero.
+	loyaltyProgram.CPFLimit = req.CPFLimit
+	loyaltyProgram.CPFLimitWindow = req.CPFLimitWindow
+	loyaltyProgram.CPFLimitMode = req.CPFLimitMode
 
 	if err := h.DB.Create(&loyaltyProgram).Error; err != nil {
 		var pgErr *pgconn.PgError
@@ -228,6 +236,12 @@ func (h *LoyaltyProgramHandler) UpdateLoyaltyProgram(w http.ResponseWriter, r *h
 	if req.DefaultAirlineID != nil {
 		loyaltyProgram.DefaultAirlineID = *req.DefaultAirlineID
 	}
+	// The three cap fields move as a unit: the form always sends all of them, so an
+	// absent one means "cleared" rather than "unchanged" - which is how the panel says
+	// this program has no researched limit.
+	loyaltyProgram.CPFLimit = req.CPFLimit
+	loyaltyProgram.CPFLimitWindow = req.CPFLimitWindow
+	loyaltyProgram.CPFLimitMode = req.CPFLimitMode
 
 	if err := h.DB.Save(&loyaltyProgram).Error; err != nil {
 		var pgErr *pgconn.PgError

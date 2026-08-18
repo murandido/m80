@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/murandido/m-80-backend/internal/account"
 	"github.com/murandido/m-80-backend/internal/data"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
@@ -145,6 +146,18 @@ func Create(db *gorm.DB, in CreateInput, actorID string) (data.Issuance, error) 
 
 		if err := tx.Create(&issuance).Error; err != nil {
 			return err
+		}
+
+		// The loyalty programs cap how many people an account may issue for, so every
+		// issuance consumes something the operator has to be able to see. At this point
+		// all we have is the name - the document, when there is one, arrives with the
+		// Traveos sync and is attached to the same beneficiary then.
+		if in.MainPassengerName != nil {
+			if err := account.Register(
+				tx, issuance.AccountID, issuance.ID, *in.MainPassengerName, nil, issuance.CreatedAt,
+			); err != nil {
+				return err
+			}
 		}
 
 		// Every issuance is born owing money, so its sale is created in the same

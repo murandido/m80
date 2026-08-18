@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/murandido/m-80-backend/internal/account"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/traveos"
 	"gorm.io/datatypes"
@@ -42,6 +43,17 @@ func applyTraveosData(
 	}
 
 	if err := insertPassengers(tx, issuance.ID, details, flights); err != nil {
+		return err
+	}
+
+	// This is where real documents enter the system: everywhere else a passenger is just a
+	// name. Registering every passenger, not only the main one, because the cap counts
+	// people on the booking - a family of four consumes four slots, not one.
+	//
+	// Idempotent by design, which matters here more than anywhere: the block above deletes
+	// and reinserts the passengers on every resync, and a resync must not consume the
+	// account's slots a second time.
+	if err := registerBeneficiaries(tx, issuance, details); err != nil {
 		return err
 	}
 
@@ -173,6 +185,31 @@ func resolveAirportCode(tx *gorm.DB, code string) *string {
 		return nil
 	}
 	return &code
+}
+
+// registerBeneficiaries charges this issuance's passengers against the account's cap.
+//
+// Traveos is authoritative about who was on the booking, so this replaces whatever the
+// issuance had consumed rather than adding to it - see account.ReplaceIssuanceUses for why
+// appending would double-count the main passenger on the bot path.
+//
+// Every passenger, not only the main one: the cap counts people on the booking, so a family
+// of four consumes four slots.
+//
+// The documents are read straight off the Traveos payload rather than back from the rows
+// just written: those are encrypted on save, and reading them back would mean decrypting
+// what we already have in the clear right here.
+func registerBeneficiaries(tx *gorm.DB, issuance *data.Issuance, details *traveos.TicketData) error {
+	passengers := make([]account.Passenger, 0, len(details.Emission.Passengers))
+	for _, source := range details.Emission.Passengers {
+		name := strings.TrimSpace(cleanGivenName(source.FirstName) + " " + strings.TrimSpace(source.LastName))
+		passengers = append(passengers, account.Passenger{Name: name, CPF: source.Document})
+	}
+
+	// Dated by the issuance, not by the sync: a booking made in December and synced in
+	// January belongs to December's window - the program charged the slot when the ticket
+	// was issued, not when we got around to reading it.
+	return account.ReplaceIssuanceUses(tx, issuance.AccountID, issuance.ID, passengers, issuance.CreatedAt)
 }
 
 func insertPassengers(

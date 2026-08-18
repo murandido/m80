@@ -9,6 +9,20 @@ import (
 	"gorm.io/gorm"
 )
 
+// The categories an account can be in. Stored in English like every other enum in the
+// schema (one_way, outbound, created); the Portuguese labels live only on the screen.
+const (
+	// AccountCategoryUnidentified is the default for everything that predates this
+	// classification: nobody has said what the account is, so no cap is asserted.
+	AccountCategoryUnidentified = "unidentified"
+	// AccountCategoryStandard is an account the loyalty program's beneficiary cap
+	// applies to. The only category that gets a CPF counter.
+	AccountCategoryStandard = "standard"
+	// AccountCategoryInjunction is an account under a court order ("liminar") that
+	// suspends the cap. It has no limit to show.
+	AccountCategoryInjunction = "injunction"
+)
+
 type Account struct {
 	ID               string            `gorm:"primaryKey;type:uuid" json:"id"`
 	LoyaltyProgramID string            `gorm:"column:loyalty_program_id;type:uuid;not null" json:"loyalty_program_id"`
@@ -20,9 +34,14 @@ type Account struct {
 	AdministratorID  *string           `gorm:"column:administrator_id;type:uuid" json:"administrator_id"`
 	Administrator    *Person           `gorm:"foreignKey:AdministratorID;references:ID" json:"administrator,omitempty"`
 	Nicknames        []AccountNickname `gorm:"foreignKey:AccountID;references:ID" json:"nicknames,omitempty"`
-	Complete         bool              `gorm:"not null;default:false" json:"complete"`
-	CreatedAt        time.Time         `json:"created_at"`
-	UpdatedAt        time.Time         `json:"updated_at"`
+	// Category decides whether the program's beneficiary cap applies at all.
+	// "injunction" is an account under a court order suspending the cap, and
+	// "unidentified" is one nobody has classified yet - only "standard" is counted.
+	// See AccountCategory* below and migration 37.
+	Category  string    `gorm:"type:account_category;not null;default:'unidentified'" json:"category"`
+	Complete  bool      `gorm:"not null;default:false" json:"complete"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 	// Archiving, not a trash can to restore from. issuances.account_id is ON DELETE
 	// RESTRICT and issuances are themselves soft-deleted, so a real delete on an
 	// account that ever issued is refused by Postgres forever. Turning the delete

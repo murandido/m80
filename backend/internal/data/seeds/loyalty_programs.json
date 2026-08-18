@@ -4,6 +4,9 @@
     "name": "Smiles",
     "default_airline_code": "GOL",
     "color": "#FF6B00",
+    "cpf_limit": 25,
+    "cpf_limit_window": "calendar_year",
+    "cpf_limit_mode": "distinct_people",
     "aliases": []
   },
   {
@@ -11,20 +14,35 @@
     "name": "LATAM Pass",
     "default_airline_code": "LATAM",
     "color": "#E30613",
-    "aliases": ["LATAMPASS", "LATAM PASS"]
+    "cpf_limit": 24,
+    "cpf_limit_window": "rolling_12_months",
+    "cpf_limit_mode": "per_issuance",
+    "aliases": [
+      "LATAMPASS",
+      "LATAM PASS"
+    ]
   },
   {
     "code": "AZUL",
     "name": "Azul",
     "default_airline_code": "AZUL",
     "color": "#0067B1",
-    "aliases": ["TUDOAZUL", "TUDO AZUL"]
+    "cpf_limit": 5,
+    "cpf_limit_window": "calendar_year",
+    "cpf_limit_mode": "distinct_people",
+    "aliases": [
+      "TUDOAZUL",
+      "TUDO AZUL"
+    ]
   },
   {
     "code": "AA",
     "name": "AA",
     "default_airline_code": "AA",
     "color": "#0078D2",
-    "aliases": ["AADVANTAGE", "AMERICAN"]
+    "aliases": [
+      "AADVANTAGE",
+      "AMERICAN"
+    ]
   }
 ]

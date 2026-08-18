@@ -1,6 +1,10 @@
 package schemas
 
-import "time"
+import (
+	"time"
+
+	"github.com/murandido/m-80-backend/internal/account"
+)
 
 // CreateAccountRequest defines the expected payload to create a new account
 type CreateAccountRequest struct {
@@ -9,6 +13,9 @@ type CreateAccountRequest struct {
 	Password         *string `json:"password" validate:"omitempty"`
 	HolderID         *string `json:"holder_id" validate:"omitempty,uuid"`
 	AdministratorID  *string `json:"administrator_id" validate:"omitempty,uuid"`
+	// Category decides whether the program's beneficiary cap applies. Omitted means
+	// "unidentified", the honest default for an account nobody has classified.
+	Category *string `json:"category" validate:"omitempty,oneof=unidentified standard injunction"`
 	// Complete overrides the automatically computed value when provided
 	Complete *bool `json:"complete" validate:"omitempty"`
 }
@@ -21,6 +28,7 @@ type UpdateAccountRequest struct {
 	Password         *string `json:"password" validate:"omitempty"`
 	HolderID         *string `json:"holder_id" validate:"omitempty,uuid"`
 	AdministratorID  *string `json:"administrator_id" validate:"omitempty,uuid"`
+	Category         *string `json:"category" validate:"omitempty,oneof=unidentified standard injunction"`
 	// Complete overrides the automatically recomputed value when provided
 	Complete *bool `json:"complete" validate:"omitempty"`
 }
@@ -37,9 +45,17 @@ type AccountResponse struct {
 	HolderID         *string                   `json:"holder_id"`
 	AdministratorID  *string                   `json:"administrator_id"`
 	Nicknames        []AccountNicknameResponse `json:"nicknames"`
-	Complete         bool                      `json:"complete"`
-	CreatedAt        time.Time                 `json:"created_at"`
-	UpdatedAt        time.Time                 `json:"updated_at"`
+	// Category is "unidentified", "standard" or "injunction" - the Portuguese labels
+	// live on the screen. See data.AccountCategory*.
+	Category string `json:"category"`
+	// CPFUsage is how much of the program's beneficiary cap this account has consumed,
+	// and is null whenever there is no cap to report: an injunction suspends it, an
+	// unidentified account gives no basis to claim one, and a program nobody has
+	// researched has no limit. Null means "render no counter", not "zero".
+	CPFUsage  *account.Usage `json:"cpf_usage"`
+	Complete  bool           `json:"complete"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
 	// Only ever non-null on an account reached through a past issuance - the account
 	// list itself never returns archived ones. It is what lets the grid label an old
 	// row with an archived account while keeping it out of the picker.

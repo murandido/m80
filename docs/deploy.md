@@ -206,6 +206,7 @@ Gere os segredos na hora — **não reaproveite os de dev**:
 
 ```bash
 openssl rand -hex 32     # ENCRYPTION_KEY_PROD (64 hex = 32 bytes, exigido pelo AES-256-GCM)
+openssl rand -hex 32     # CPF_INDEX_KEY_PROD (idem — HMAC do blind index de CPF)
 openssl rand -base64 48  # JWT_SECRET_PROD
 openssl rand -base64 24  # DB_PASSWORD_PROD e ADMIN_PASSWORD_PROD
 ```
@@ -440,6 +441,9 @@ script — é o comando acima.
 
 Nada disto é pré-requisito para ir ao ar, mas nenhum está feito:
 
-- rotação de `JWT_SECRET` / `ENCRYPTION_KEY`;
+- rotação de `JWT_SECRET` / `ENCRYPTION_KEY` / `CPF_INDEX_KEY` — e note que as duas últimas
+  não são descartáveis: `ENCRYPTION_KEY` decifra senha de conta e documento de passageiro, e
+  `CPF_INDEX_KEY` é o que faz o beneficiário já gravado ser reconhecido pelo CPF. Trocar
+  qualquer uma sem migrar o dado existente não dá erro — passa a errar em silêncio;
 - cópia off-site do backup — hoje o dump vive no mesmo disco do banco (ver `backup.md`);
 - 2FA no painel e política de senha no cadastro de usuário.
