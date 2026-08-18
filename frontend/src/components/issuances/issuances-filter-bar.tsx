@@ -1,8 +1,8 @@
 "use client"
 
 import { useRef, useState } from "react"
-import { usePathname, useRouter } from "next/navigation"
-import { CalendarDays, RotateCcw } from "lucide-react"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
+import { CalendarDays, Info, RotateCcw } from "lucide-react"
 import type { DateRange } from "react-day-picker"
 import { Button } from "@/components/ui/button"
 import { Calendar } from "@/components/ui/calendar"
@@ -24,14 +24,16 @@ import {
 import { LoyaltyProgramCombobox } from "@/components/loyalty-programs/loyalty-program-combobox"
 import { AirlineCombobox } from "@/components/airlines/airline-combobox"
 import { AccountCombobox } from "@/components/accounts/account-combobox"
+import { AgencyCombobox } from "@/components/agencies/agency-combobox"
 import { UserCombobox } from "@/components/users/user-combobox"
 import type { LoyaltyProgram } from "@/schemas/loyalty-program"
 import type { Airline } from "@/schemas/airline"
 import type { Account } from "@/schemas/account"
+import type { Agency } from "@/schemas/agency"
 import type { Person } from "@/schemas/person"
 import type { User } from "@/schemas/user"
 
-// The six filter dimensions carried in the URL. Empty string means "not filtered"
+// The seven filter dimensions carried in the URL. Empty string means "not filtered"
 // on that dimension; the page treats a URL with any of these keys present as
 // "user-controlled" and stops applying the today + current-user defaults.
 const FILTER_KEYS = [
@@ -40,6 +42,7 @@ const FILTER_KEYS = [
   "loyalty_program_id",
   "airline_id",
   "account_id",
+  "agency_id",
   "issuer_id",
 ] as const
 
@@ -49,23 +52,31 @@ interface IssuancesFilterBarProps {
   loyaltyPrograms: LoyaltyProgram[]
   airlines: Airline[]
   accounts: Account[]
+  agencies: Agency[]
   people: Person[]
   users: User[]
   // Effective filters resolved by the server (defaults on a clean load, or the
   // exact URL values otherwise). Seed the controls from these.
   initialFilters: FilterState
+  // True while the search box has a term. The backend drops the date and issuer
+  // filters in that case, so the two controls are greyed out rather than left
+  // looking like they still apply.
+  hasSearch: boolean
 }
 
 export function IssuancesFilterBar({
   loyaltyPrograms,
   airlines,
   accounts,
+  agencies,
   people,
   users,
   initialFilters,
+  hasSearch,
 }: IssuancesFilterBarProps) {
   const router = useRouter()
   const pathname = usePathname()
+  const searchParams = useSearchParams()
   useStickyFilters()
 
   const [filters, setFilters] = useState<FilterState>(initialFilters)
@@ -83,11 +94,15 @@ export function IssuancesFilterBar({
   // remounts (re-seeding state from initialFilters) whenever the server hands down
   // new effective filters - e.g. after "Limpar filtros" or browser back/forward.
 
-  // Writes ALL six keys (empty when cleared) so clearing one dimension never
-  // drops the URL back to "no keys" and re-triggers the defaults.
+  // Writes ALL the keys (empty when cleared) so clearing one dimension never
+  // drops the URL back to "no keys" and re-triggers the defaults. The search term
+  // is carried over by hand: this builds a fresh URLSearchParams, so anything not
+  // written here is erased - and erasing it would clear the box mid-search.
   function pushFilters(next: FilterState) {
     const params = new URLSearchParams()
     for (const key of FILTER_KEYS) params.set(key, next[key])
+    const search = searchParams.get("q")
+    if (search) params.set("q", search)
     router.replace(`${pathname}?${params.toString()}`)
   }
 
@@ -134,7 +149,9 @@ export function IssuancesFilterBar({
   }
 
   const today = startOfToday()
-  const hasAnyFilter = FILTER_KEYS.some((key) => filters[key] !== "")
+  const hasAnyFilter = hasSearch || FILTER_KEYS.some((key) => filters[key] !== "")
+  const searchOverrideTitle =
+    "A busca procura em todas as emissões, ignorando data e emissor. Limpe a busca para voltar a usar estes filtros."
 
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -143,6 +160,8 @@ export function IssuancesFilterBar({
           <Button
             type="button"
             variant="outline"
+            disabled={hasSearch}
+            title={hasSearch ? searchOverrideTitle : undefined}
             className={cn(
               "w-44 justify-start gap-2 bg-slate-200 font-normal hover:bg-slate-200",
               !filters.date_from && !filters.date_to && "text-muted-foreground",
@@ -266,13 +285,35 @@ export function IssuancesFilterBar({
       </div>
 
       <div className="w-44">
+        <AgencyCombobox
+          agencies={agencies}
+          value={filters.agency_id}
+          onChange={(id) => update({ agency_id: id })}
+          placeholder="Todas as agências"
+        />
+      </div>
+
+      <div className="w-44" title={hasSearch ? searchOverrideTitle : undefined}>
         <UserCombobox
           users={users}
           value={filters.issuer_id}
           onChange={(id) => update({ issuer_id: id })}
           placeholder="Todos os emissores"
+          disabled={hasSearch}
         />
       </div>
+
+      {hasSearch && (
+        // Without this the two greyed-out controls read as a broken screen rather
+        // than as a deliberate consequence of searching.
+        <span
+          className="flex items-center gap-1 text-xs text-muted-foreground"
+          title={searchOverrideTitle}
+        >
+          <Info aria-hidden className="h-3.5 w-3.5" />
+          Busca ignora data e emissor
+        </span>
+      )}
 
       <AutocompleteToggle />
 

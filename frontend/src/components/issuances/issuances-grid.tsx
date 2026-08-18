@@ -285,11 +285,24 @@ export function IssuancesGrid({
   }, [interaction])
 
   useEffect(() => {
-    if (!interaction.editing) {
-      // preventScroll: the catcher sits off-screen; focusing it must not yank
-      // the viewport away from the cell the user is actually on.
-      pasteCatcherRef.current?.focus({ preventScroll: true })
-    }
+    if (interaction.editing) return
+
+    // This effect also runs on mount, and the grid is remounted by the page on every
+    // filter change - including each keystroke committed by the search box, which
+    // lives outside the grid. Grabbing the catcher there would move the cursor out
+    // of the field mid-word, so a text field the operator is typing in outside the
+    // grid keeps the focus. Anything inside the grid (cells, the catcher itself)
+    // still hands it over, which is what keyboard navigation depends on.
+    const active = document.activeElement as HTMLElement | null
+    const typingOutsideTheGrid =
+      !!active &&
+      !containerRef.current?.contains(active) &&
+      (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.isContentEditable)
+    if (typingOutsideTheGrid) return
+
+    // preventScroll: the catcher sits off-screen; focusing it must not yank
+    // the viewport away from the cell the user is actually on.
+    pasteCatcherRef.current?.focus({ preventScroll: true })
   }, [interaction.editing, interaction.sel.r, interaction.sel.c])
 
   // Keeps the selected cell in view as the user navigates. The catcher holds focus

@@ -1,4 +1,5 @@
 import type { Metadata } from "next"
+import { Suspense } from "react"
 import { cookies } from "next/headers"
 import { AlertTriangle } from "lucide-react"
 import { z } from "zod"
@@ -15,6 +16,7 @@ import { getPeopleSchema } from "@/schemas/person"
 import { getAirportsSchema } from "@/schemas/airport"
 import { IssuancesGrid } from "@/components/issuances/issuances-grid"
 import { IssuancesFilterBar } from "@/components/issuances/issuances-filter-bar"
+import { ListSearchBar } from "@/components/shared/list-search-bar"
 
 export const metadata: Metadata = {
   title: "Emissões",
@@ -29,12 +31,20 @@ const FILTER_KEYS = [
   "loyalty_program_id",
   "airline_id",
   "account_id",
+  "agency_id",
   "issuer_id",
 ] as const
 
 type FilterState = Record<(typeof FILTER_KEYS)[number], string>
 
-type IssuancesSearchParams = Partial<Record<(typeof FILTER_KEYS)[number], string>>
+// `q` is deliberately outside FILTER_KEYS: it must not count as one of the keys
+// that switch the page off its "today + me" defaults, and it is not part of the
+// sticky-restore set either. A pasted /dashboard/issuances?q=ABC therefore still
+// gets the remembered dimension filters - and the backend ignores date and issuer
+// while a search is active anyway.
+type IssuancesSearchParams = Partial<Record<(typeof FILTER_KEYS)[number], string>> & {
+  q?: string
+}
 
 // Returns null when the request or the parse failed - distinct from an empty list,
 // which is a legitimate result. Each call swallows its own error so one dead endpoint
@@ -94,6 +104,7 @@ function resolveFilters(
       loyalty_program_id: "",
       airline_id: "",
       account_id: "",
+      agency_id: "",
       issuer_id: currentUserId ?? "",
     }
   }
@@ -104,6 +115,7 @@ function resolveFilters(
     loyalty_program_id: params.loyalty_program_id ?? "",
     airline_id: params.airline_id ?? "",
     account_id: params.account_id ?? "",
+    agency_id: params.agency_id ?? "",
     issuer_id: params.issuer_id ?? "",
   }
 }
@@ -135,18 +147,27 @@ export default async function IssuancesPage({
   // Second wave: the filtered issuance list, which needs currentUserId to build the defaults.
   // A bare URL (every sidebar link is one) falls back to the filters this browser session
   // last used here, so the screen is already filtered on the first paint.
+  const requested = await searchParams
   const filters = resolveFilters(
     stickySearchParams(
-      await searchParams,
+      requested,
       readStickyFilters(cookieStore, "/dashboard/issuances"),
       FILTER_KEYS,
     ),
     currentUserId,
   )
+  // Read straight off the request: stickySearchParams only ever returns the keys it
+  // was asked about, so routing `q` through it would drop the search on exactly the
+  // URL that carries nothing else.
+  const search = (requested.q ?? "").trim()
   const issuanceQuery = new URLSearchParams()
   for (const key of FILTER_KEYS) {
     if (filters[key]) issuanceQuery.set(key, filters[key])
   }
+  // Sent alongside the dimension filters even though the backend drops date and
+  // issuer while it is present: clearing the search has to restore them, so their
+  // values stay in the URL rather than being erased here.
+  if (search) issuanceQuery.set("q", search)
   const issuancesUrl = issuanceQuery.toString()
     ? `${api}/issuances?${issuanceQuery.toString()}`
     : `${api}/issuances`
@@ -171,7 +192,18 @@ export default async function IssuancesPage({
   return (
     <div className="p-6 sm:p-8">
       <div className="flex flex-col gap-2 sm:gap-6">
-        <h1 className="text-lg font-semibold text-slate-800">Emissões</h1>
+        {/* The search box sits here, outside <IssuancesGrid>, on purpose: the grid is
+            keyed on the resolved filters and remounts on every filter change, taking
+            the filter bar with it. A text input in that subtree would lose focus each
+            time the debounce fired. As a sibling it survives the remount. */}
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <h1 className="text-lg font-semibold text-slate-800">Emissões</h1>
+          <div className="w-full sm:w-96">
+            <Suspense fallback={<div className="h-14" />}>
+              <ListSearchBar placeholder="PNR, passageiro, origem ou destino" />
+            </Suspense>
+          </div>
+        </div>
 
         {issuances === null ? (
           // The grid is deliberately not rendered: showing an empty spreadsheet after a
@@ -202,15 +234,17 @@ export default async function IssuancesPage({
               // which re-renders this Server Component but does not remount the grid) forces a
               // remount. Without it the grid seeds `rows` from initialIssuances only on first
               // mount and keeps showing the previous filter's issuances until a full reload.
-              key={FILTER_KEYS.map((key) => filters[key]).join("|")}
+              key={[...FILTER_KEYS.map((key) => filters[key]), search].join("|")}
               filters={
                 <IssuancesFilterBar
                   loyaltyPrograms={loyaltyPrograms ?? []}
                   airlines={airlines ?? []}
                   accounts={accounts ?? []}
                   people={people ?? []}
+                  agencies={agencies ?? []}
                   users={users ?? []}
                   initialFilters={filters}
+                  hasSearch={search !== ""}
                 />
               }
               initialIssuances={issuances}

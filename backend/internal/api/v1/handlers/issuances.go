@@ -309,12 +309,12 @@ func preloadIssuanceAssociations(query *gorm.DB) *gorm.DB {
 }
 
 // applyIssuanceListFilters narrows an issuance list query by the optional query
-// params (issuer_id, account_id, loyalty_program_id, airline_id, date_from,
-// date_to). Every param is optional: an absent or empty one leaves that
-// dimension unfiltered.
+// params (issuer_id, account_id, loyalty_program_id, airline_id, agency_id,
+// date_from, date_to). Every param is optional: an absent or empty one leaves
+// that dimension unfiltered.
 //
-// account_id/loyalty_program_id/airline_id are plain ANDed filters that apply to
-// every row. issuer_id + date_from/date_to are instead coupled into an OR of two
+// account_id/loyalty_program_id/airline_id/agency_id are plain ANDed filters that
+// apply to every row. issuer_id + date_from/date_to are instead coupled into an OR of two
 // branches so a cancelled issuance surfaces in the flow of whoever cancelled it,
 // on the day they cancelled it - not only in the creator's creation-day flow:
 //
@@ -326,17 +326,32 @@ func preloadIssuanceAssociations(query *gorm.DB) *gorm.DB {
 // Each present dimension feeds both branches (issuer -> issuer_id/cancelled_by_id,
 // dates -> created_at/cancelled_at). When neither issuer nor dates are given the
 // OR group is skipped entirely and the query stays unfiltered on those dimensions.
-func applyIssuanceListFilters(query *gorm.DB, r *http.Request) *gorm.DB {
+//
+// q is the free-text search and it deliberately suspends the issuer/date group:
+// somebody typing a locator is looking for one issuance in the whole history, and
+// the screen opens filtered on "today + me". Searching inside that window would
+// answer "does not exist" for every issuance older than this morning. The panel
+// greys the two controls out while a search is active so the suspension is visible
+// rather than surprising; the other dimensions keep applying as plain ANDs.
+func applyIssuanceListFilters(db *gorm.DB, query *gorm.DB, r *http.Request) *gorm.DB {
 	q := r.URL.Query()
 
 	for column, param := range map[string]string{
 		"account_id":         "account_id",
 		"loyalty_program_id": "loyalty_program_id",
 		"airline_id":         "airline_id",
+		"agency_id":          "agency_id",
 	} {
 		if value := q.Get(param); value != "" {
 			query = query.Where(column+" = ?", value)
 		}
+	}
+
+	if search := strings.TrimSpace(q.Get("q")); search != "" {
+		query = query.Where(issuanceSearchGroup(db, search))
+		// The issuer/date group is skipped on purpose while searching - see the
+		// function comment.
+		return query
 	}
 
 	// created_at/cancelled_at are UTC in the DB; parseDateRange resolves the local
@@ -376,9 +391,42 @@ func applyIssuanceListFilters(query *gorm.DB, r *http.Request) *gorm.DB {
 	return query.Where(condition, append(creationArgs, cancellationArgs...)...)
 }
 
+// issuanceSearchGroup builds the free-text predicate over the fields an operator
+// actually has in hand when hunting for an issuance: the three locators, the
+// passenger, and the route. Every branch is accent- and case-insensitive, because
+// "joao" not finding "João" is how the same booking gets registered twice.
+//
+// Returned as a single grouped *gorm.DB rather than chained onto the caller's
+// query: the caller ANDs other dimensions on top, and an ungrouped Or() would
+// escape those parentheses and widen the whole filter.
+//
+// The child tables are reached with EXISTS rather than a join - the list only
+// Preloads, and joining would return the same issuance once per passenger and per
+// flight leg.
+//
+// issuance_passengers.document is deliberately absent: it is encrypted at rest
+// (data.IssuancePassenger.BeforeSave), so no SQL predicate can match it.
+func issuanceSearchGroup(db *gorm.DB, search string) *gorm.DB {
+	like := likePattern(search)
+
+	return db.Where(unaccentedLike("program_locator"), like).
+		Or(unaccentedLike("airline_locator"), like).
+		Or(unaccentedLike("latam_purchase_number"), like).
+		Or(unaccentedLike("main_passenger_name"), like).
+		Or(unaccentedLike("origin_iata_code"), like).
+		Or(unaccentedLike("destination_iata_code"), like).
+		Or("EXISTS (SELECT 1 FROM issuance_passengers"+
+			" WHERE issuance_passengers.issuance_id = issuances.id AND "+
+			unaccentedLike("issuance_passengers.first_name || ' ' || issuance_passengers.last_name")+")", like).
+		Or("EXISTS (SELECT 1 FROM issuance_flights"+
+			" WHERE issuance_flights.issuance_id = issuances.id AND ("+
+			unaccentedLike("issuance_flights.origin_iata_code")+" OR "+
+			unaccentedLike("issuance_flights.destination_iata_code")+"))", like, like)
+}
+
 // GetIssuances handles the GET /issuances route.
 // @Summary      Listar emissões
-// @Description  Retorna as emissões cadastradas no sistema (exclui as removidas), da mais antiga para a mais recente. Aceita filtros opcionais por data, programa de fidelidade, cia aérea, conta e emissor. As emissões canceladas também entram no filtro de data/usuário pela data e pelo usuário do cancelamento (cancelled_at/cancelled_by_id), não só pela criação.
+// @Description  Retorna as emissões cadastradas no sistema (exclui as removidas), da mais antiga para a mais recente. Aceita filtros opcionais por data, programa de fidelidade, cia aérea, conta, agência e emissor. As emissões canceladas também entram no filtro de data/usuário pela data e pelo usuário do cancelamento (cancelled_at/cancelled_by_id), não só pela criação.
 // @Tags         Emissões
 // @Produce      json
 // @Security     BearerAuth
@@ -387,6 +435,8 @@ func applyIssuanceListFilters(query *gorm.DB, r *http.Request) *gorm.DB {
 // @Param        loyalty_program_id  query  string  false  "UUID do programa de fidelidade"
 // @Param        airline_id          query  string  false  "UUID da cia aérea"
 // @Param        account_id          query  string  false  "UUID da conta"
+// @Param        agency_id           query  string  false  "UUID da agência"
+// @Param        q                   query  string  false  "Busca por localizador, passageiro, origem ou destino. Quando presente, os filtros de data e emissor são ignorados."
 // @Param        issuer_id           query  string  false  "UUID do emissor (usuário)"
 // @Success      200  {object}  schemas.IssuanceListResponse
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
@@ -402,7 +452,7 @@ func (h *IssuanceHandler) GetIssuances(w http.ResponseWriter, r *http.Request) {
 	// Oldest first: the grid is read top to bottom in the order the issuances actually
 	// happened, and its draft row lives at the bottom - so a row created there stays
 	// where it was typed instead of jumping to the top on the next refresh.
-	query = applyIssuanceListFilters(query, r).Order("created_at asc")
+	query = applyIssuanceListFilters(h.DB, query, r).Order("created_at asc")
 
 	if err := query.Find(&issuances).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch issuances")
@@ -419,7 +469,7 @@ func (h *IssuanceHandler) GetIssuances(w http.ResponseWriter, r *http.Request) {
 
 // GetIssuancesExport handles the GET /issuances/export route.
 // @Summary      Exportar emissões (.xlsx)
-// @Description  Gera uma planilha .xlsx das emissões filtradas, a partir do modelo padrão, na mesma ordem da listagem (da mais antiga para a mais recente). Aceita os mesmos filtros da listagem (data, programa de fidelidade, cia aérea, conta e emissor).
+// @Description  Gera uma planilha .xlsx das emissões filtradas, a partir do modelo padrão, na mesma ordem da listagem (da mais antiga para a mais recente). Aceita os mesmos filtros da listagem (data, programa de fidelidade, cia aérea, conta, agência e emissor).
 // @Tags         Emissões
 // @Produce      application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
 // @Security     BearerAuth
@@ -428,6 +478,8 @@ func (h *IssuanceHandler) GetIssuances(w http.ResponseWriter, r *http.Request) {
 // @Param        loyalty_program_id  query  string  false  "UUID do programa de fidelidade"
 // @Param        airline_id          query  string  false  "UUID da cia aérea"
 // @Param        account_id          query  string  false  "UUID da conta"
+// @Param        agency_id           query  string  false  "UUID da agência"
+// @Param        q                   query  string  false  "Busca por localizador, passageiro, origem ou destino. Quando presente, os filtros de data e emissor são ignorados."
 // @Param        issuer_id           query  string  false  "UUID do emissor (usuário)"
 // @Success      200  {file}    binary  "Planilha .xlsx das emissões filtradas"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
@@ -443,7 +495,7 @@ func (h *IssuanceHandler) GetIssuancesExport(w http.ResponseWriter, r *http.Requ
 		Preload("Flights", func(db *gorm.DB) *gorm.DB {
 			return db.Where("direction = ?", "outbound").Order("leg_order asc")
 		})
-	query = applyIssuanceListFilters(query, r).Order("created_at asc")
+	query = applyIssuanceListFilters(h.DB, query, r).Order("created_at asc")
 
 	if err := query.Find(&issuances).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch issuances")
