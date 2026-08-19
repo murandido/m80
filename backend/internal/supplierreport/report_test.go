@@ -87,17 +87,17 @@ func TestLogoFor_CarriesAViewBox(t *testing.T) {
 }
 
 func TestPageHeight_GrowsWithTheContentAndStaysBounded(t *testing.T) {
-	short := pageHeightMM(ViewModel{Sections: []Section{{Lines: make([]Line, 3)}}})
+	short := pageHeightMM(ViewModel{Groups: []Group{{Sections: []Section{{Lines: make([]Line, 3)}}}}})
 	if short != pageMinMM {
 		t.Errorf("a short document should sit at the minimum page: got %d, want %d", short, pageMinMM)
 	}
 
-	long := pageHeightMM(ViewModel{Sections: []Section{{Lines: make([]Line, 60)}}})
+	long := pageHeightMM(ViewModel{Groups: []Group{{Sections: []Section{{Lines: make([]Line, 60)}}}}})
 	if long <= short {
 		t.Errorf("a longer document needs a taller page: got %d, previous %d", long, short)
 	}
 
-	huge := pageHeightMM(ViewModel{Sections: []Section{{Lines: make([]Line, 100000)}}})
+	huge := pageHeightMM(ViewModel{Groups: []Group{{Sections: []Section{{Lines: make([]Line, 100000)}}}}})
 	if huge != pageMaxMM {
 		t.Errorf("the page must stay bounded: got %d, want %d", huge, pageMaxMM)
 	}

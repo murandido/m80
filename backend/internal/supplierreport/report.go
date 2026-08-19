@@ -33,15 +33,35 @@ var tpl = template.Must(template.New("report.gohtml").Parse(templateSource))
 // ViewModel is one document. It carries several sections when the operator asked for every
 // filtered account at once, and exactly one when they asked for a single account's summary.
 type ViewModel struct {
-	Sections []Section
+	// Groups wrap the sections. Grouped by account there is one section per group and no
+	// group heading, so the document renders exactly as it did before groups existed;
+	// grouped by administrator a group is the administrator and its sections are their
+	// accounts, each keeping its own programme colour.
+	Groups []Group
 
 	// ShowGrandTotal is set only on a multi-account document. On a single-account one the
 	// section's own total is already the answer, and repeating it reads like a second,
 	// different number.
 	ShowGrandTotal bool
 	GrandTotal     string
+	// The same two figures the sections already close with, added up across the document.
+	// They sit under the money on purpose and with less weight: what is owed is the number
+	// the reader came for, and these are the two it was built from.
+	GrandTotalPoints string
+	GrandTotalTaxes  string
 
 	PageHeightMM int
+}
+
+// Group is a run of sections that belong together. An empty Label means the group is only
+// a container - there is nothing to say above the section that the section does not already
+// say - and neither the heading nor the subtotal is drawn.
+type Group struct {
+	Label       string
+	Sections    []Section
+	TotalPoints string
+	TotalTaxes  string
+	TotalAmount string
 }
 
 // Section is one account's statement.
@@ -215,9 +235,15 @@ const (
 	// pagar" panel and the gap to the next section - measured from real renders at
 	// 62dpi, not guessed on paper, and rounded up. Underestimating this is what pushed
 	// the grand total onto a second page the first time.
-	sectionMM     = 56
-	lineMM        = 7
-	grandTotalMM  = 30
+	sectionMM = 56
+	lineMM    = 7
+	// Two lines now, not one: the breakdown under the payable sits inside the same block.
+	// Underestimating this is what pushed the grand total onto a second page once already.
+	grandTotalMM = 40
+	// groupMM is the administrator heading plus its subtotal panel, drawn only on a grouped
+	// document. Same trade as sectionMM: measured generously, because the cost of guessing
+	// low is a page break in the middle of a total.
+	groupMM       = 34
 	pageMinMM     = 160
 	pageMaxMM     = 1200
 	pageRoundToMM = 10
@@ -227,8 +253,13 @@ const (
 // so two documents of similar length come out the same size.
 func pageHeightMM(model ViewModel) int {
 	height := pageChromeMM
-	for _, section := range model.Sections {
-		height += sectionMM + lineMM*len(section.Lines)
+	for _, group := range model.Groups {
+		if group.Label != "" {
+			height += groupMM
+		}
+		for _, section := range group.Sections {
+			height += sectionMM + lineMM*len(section.Lines)
+		}
 	}
 	if model.ShowGrandTotal {
 		height += grandTotalMM
@@ -248,13 +279,35 @@ func pageHeightMM(model ViewModel) int {
 	return height
 }
 
+// SectionCount is how many statements the document carries, across every group. It is what
+// decides whether a grand total means anything: on a document with one statement the
+// section's own total already is the answer.
+func (m ViewModel) SectionCount() int {
+	count := 0
+	for _, group := range m.Groups {
+		count += len(group.Sections)
+	}
+	return count
+}
+
+// Totals is what a document adds up to across its sections. A struct rather than three int
+// arguments: points and centavos are both plain ints, so a positional call is one that
+// silently compiles with the taxes and the amount swapped.
+type Totals struct {
+	Points      int
+	TaxesCents  int
+	AmountCents int
+}
+
 // Finalize computes what the document needs but a caller should not have to: the grand
-// total across sections and the paper height. Callers build the sections and hand the model
+// totals across sections and the paper height. Callers build the sections and hand the model
 // here rather than doing this arithmetic themselves.
-func Finalize(model ViewModel, grandTotalCents int) ViewModel {
-	model.ShowGrandTotal = len(model.Sections) > 1
+func Finalize(model ViewModel, totals Totals) ViewModel {
+	model.ShowGrandTotal = model.SectionCount() > 1
 	if model.ShowGrandTotal {
-		model.GrandTotal = FormatBRL(grandTotalCents)
+		model.GrandTotal = FormatBRL(totals.AmountCents)
+		model.GrandTotalPoints = FormatPoints(totals.Points)
+		model.GrandTotalTaxes = FormatBRL(totals.TaxesCents)
 	}
 	model.PageHeightMM = pageHeightMM(model)
 	return model

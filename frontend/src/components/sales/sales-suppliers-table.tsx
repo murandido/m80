@@ -2,7 +2,18 @@
 
 import { useMemo, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
-import { Check, ChevronDown, ChevronRight, FileText, TriangleAlert, X } from "lucide-react"
+import {
+  Check,
+  CheckCheck,
+  ChevronDown,
+  ChevronRight,
+  EyeOff,
+  FileText,
+  Minus,
+  Square,
+  TriangleAlert,
+  X,
+} from "lucide-react"
 import { toast } from "sonner"
 import {
   Table,
@@ -35,11 +46,18 @@ import {
 import { updateSupplierIssuancesAction } from "@/actions/supplier-issuances"
 import { formatCurrencyBRL, parseCurrencyBRLInput } from "@/lib/currency"
 import { formatPoints } from "@/lib/format"
+import {
+  GROUP_BY_ADMINISTRATOR,
+  NO_ADMINISTRATOR_KEY,
+} from "@/app/dashboard/sales/period-params"
 import { cn } from "@/lib/utils"
 import type { SupplierBalance, SupplierIssuance } from "@/schemas/sale"
 
 interface SalesSuppliersTableProps {
   balances: SupplierBalance[]
+  // "account" or "administrator". Resolved by the page from the URL so the table, the
+  // document and the address bar can never disagree about what a row is.
+  groupBy: string
   // The query the page used to fetch these balances, so the PDF covers exactly the same
   // set. Passed as a string rather than rebuilt here: rebuilding is how the document and
   // the screen start disagreeing.
@@ -58,17 +76,34 @@ interface SalesSuppliersTableProps {
 //   6 Taxas
 //   7 Milheiro de custo
 //   8 Valor
-const COLUMN_COUNT = 8
+//   9 Conferido
+const COLUMN_COUNT = 9
 
-type PaymentTerms = { costOfTheThousand?: number | null; taxesIncludedInCost?: boolean }
+type PaymentTerms = {
+  costOfTheThousand?: number | null
+  taxesIncludedInCost?: boolean
+  reviewed?: boolean
+}
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString("pt-BR")
 }
 
-function reportHref(query: string, accountID?: string): string {
+// `hidden` only reaches the document on the report that covers everything. The per-account
+// one is already narrowed to a single account, and excluding others from it would either be
+// a no-op or, if that account were itself hidden, produce an empty PDF from a button the
+// operator just pressed.
+function reportHref(
+  query: string,
+  excludedAccountIds: string[],
+  group?: { key: string; byAdministrator: boolean },
+): string {
   const params = new URLSearchParams(query)
-  if (accountID) params.set("account_id", accountID)
+  if (group) {
+    params.set(group.byAdministrator ? "administrator_id" : "account_id", group.key)
+  } else if (excludedAccountIds.length > 0) {
+    params.set("exclude_account_ids", excludedAccountIds.join(","))
+  }
   return `/api/sales/suppliers/report?${params.toString()}`
 }
 
@@ -127,7 +162,19 @@ function ReportButton({
   )
 }
 
-export function SalesSuppliersTable({ balances, query }: SalesSuppliersTableProps) {
+// A row is an account or an administrator depending on the grouping, and the fields that
+// identify it are new. Falling back to the account ones keeps the screen working against an
+// API published before this - which is a normal state here, not an edge case.
+function groupKeyOf(balance: SupplierBalance): string {
+  return balance.group_key ?? balance.account_id
+}
+
+function groupLabelOf(balance: SupplierBalance): string {
+  return balance.group_label ?? balance.account_label
+}
+
+export function SalesSuppliersTable({ balances, query, groupBy }: SalesSuppliersTableProps) {
+  const byAdministrator = groupBy === GROUP_BY_ADMINISTRATOR
   const router = useRouter()
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [saving, setSaving] = useState<Set<string>>(new Set())
@@ -137,16 +184,58 @@ export function SalesSuppliersTable({ balances, query }: SalesSuppliersTableProp
   )
   const [, startTransition] = useTransition()
 
+  // Accounts the operator has parked while reconciling. Deliberately component state and
+  // not a URL key or a sticky filter: it dies with the screen, so a reload always shows the
+  // whole period again. An account still hidden tomorrow is how a month gets closed against
+  // a total that quietly left something out.
+  const [hidden, setHidden] = useState<Set<string>>(new Set())
+
+  const visible = useMemo(
+    () => balances.filter((balance) => !hidden.has(groupKeyOf(balance))),
+    [balances, hidden],
+  )
+
+  // The document is filtered by account whichever way the screen is grouped, because that
+  // is the column the backend can exclude on. Hiding an administrator therefore means
+  // hiding every account behind them, which is what the row said it would do.
+  const excludedAccountIds = useMemo(
+    () =>
+      [
+        ...new Set(
+          balances
+            .filter((balance) => hidden.has(groupKeyOf(balance)))
+            .flatMap((balance) => balance.issuances.map((line) => line.account_id ?? balance.account_id)),
+        ),
+      ].filter(Boolean) as string[],
+    [balances, hidden],
+  )
+  const hiddenCount = balances.length - visible.length
+
   // Summed in the browser rather than asked of the API: the table does not paginate, so
   // these are exactly the rows on screen - which is what "total do que está aparecendo"
   // means. A server-side total could disagree with the visible rows and nobody would know
-  // which one to trust.
-  const totals = useMemo(() => sumSupplierBalances(balances), [balances])
+  // which one to trust. Hiding an account is the same argument, one step further: it leaves
+  // the total because it left the screen.
+  const totals = useMemo(() => sumSupplierBalances(visible), [visible])
 
+  // Over the visible accounts, so the bulk buttons write to what the operator is looking at.
+  // Taking the hidden ones out of the total but leaving them in here would mark as settled
+  // an account they had just decided not to look at.
   const allIssuanceIds = useMemo(
-    () => [...new Set(balances.flatMap((b) => b.issuances.map((i) => i.issuance_id)))],
-    [balances],
+    () => [...new Set(visible.flatMap((b) => b.issuances.map((i) => i.issuance_id)))],
+    [visible],
   )
+
+  // Counted over the visible lines, for the same reason the money totals are: the footer
+  // must describe the rows on screen and nothing else.
+  const reviewedSummary = useMemo(() => {
+    const lines = visible.flatMap((balance) => balance.issuances)
+    return { reviewed: lines.filter((line) => line.reviewed).length, total: lines.length }
+  }, [visible])
+
+  function hideGroup(key: string) {
+    setHidden((current) => new Set(current).add(key))
+  }
 
   function toggleExpanded(accountID: string) {
     setExpanded((current) => {
@@ -197,9 +286,26 @@ export function SalesSuppliersTable({ balances, query }: SalesSuppliersTableProp
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex justify-end">
+      <div className="flex items-center justify-end gap-3">
+        {/* Hiding is invisible by nature, and a total that silently leaves rows out is the
+            one thing this screen must never do. The count is the receipt. */}
+        {hiddenCount > 0 && (
+          <span className="flex items-center gap-2 text-sm text-muted-foreground">
+            <EyeOff className="h-4 w-4" />
+            {hiddenCount === 1 ? "1 conta oculta" : `${hiddenCount} contas ocultas`}
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2 text-xs"
+              onClick={() => setHidden(new Set())}
+            >
+              Mostrar todas
+            </Button>
+          </span>
+        )}
         <ReportButton
-          href={reportHref(query)}
+          href={reportHref(query, excludedAccountIds)}
           missingCost={totals.missingCost}
           label="Gerar PDF de todas"
         />
@@ -210,9 +316,12 @@ export function SalesSuppliersTable({ balances, query }: SalesSuppliersTableProp
           <TableHeader className="sticky top-0 z-10 bg-slate-100">
             <TableRow>
               <TableHead className="w-8" />
-              <TableHead>Conta</TableHead>
+              {/* The first column is whatever a row is, and the fourth carries what the
+                  grouping took away: grouped by administrator the programme is no longer a
+                  single value, so the useful thing to show is how many accounts fed it. */}
+              <TableHead>{byAdministrator ? "Administrador" : "Conta"}</TableHead>
               <TableHead>Programa</TableHead>
-              <TableHead>Administrador</TableHead>
+              <TableHead>{byAdministrator ? "Contas" : "Administrador"}</TableHead>
               <TableHead className="text-right">Milhas líquidas</TableHead>
 
               {/* The two bulk controls live in the header of the column they write to,
@@ -291,37 +400,71 @@ export function SalesSuppliersTable({ balances, query }: SalesSuppliersTableProp
               </TableHead>
 
               <TableHead className="text-right">Valor</TableHead>
+
+              {/* Same placement rule as the two controls above: the bulk button lives in
+                  the header of the column it writes to. It covers the visible accounts,
+                  so a hidden one is not quietly signed off. */}
+              <TableHead className="text-center">
+                <div className="flex flex-col items-center gap-1 py-1">
+                  <span>Conferido</span>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-6 px-2 text-xs"
+                    disabled={allIssuanceIds.length === 0}
+                    onClick={() => askBulk({ reviewed: true }, "Marcar como conferidas")}
+                  >
+                    Todas
+                  </Button>
+                </div>
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {balances.length === 0 && (
+            {visible.length === 0 && (
               <TableRow>
                 <TableCell
                   colSpan={COLUMN_COUNT}
                   className="py-10 text-center text-sm text-muted-foreground"
                 >
-                  Nenhuma emissão no período selecionado.
+                  {balances.length === 0
+                    ? "Nenhuma emissão no período selecionado."
+                    : "Tudo que o período tinha está oculto."}
                 </TableCell>
               </TableRow>
             )}
-            {balances.map((balance) => (
+            {visible.map((balance) => (
               <SupplierAccountRows
-                key={balance.account_id}
+                key={groupKeyOf(balance)}
                 balance={balance}
-                isOpen={expanded.has(balance.account_id)}
-                onToggle={() => toggleExpanded(balance.account_id)}
+                byAdministrator={byAdministrator}
+                isOpen={expanded.has(groupKeyOf(balance))}
+                onToggle={() => toggleExpanded(groupKeyOf(balance))}
+                onHide={() => hideGroup(groupKeyOf(balance))}
                 lines={sumSupplierLines(balance.issuances)}
                 saving={saving}
-                reportHref={reportHref(query, balance.account_id)}
+                reportHref={reportHref(query, excludedAccountIds, {
+                  key: groupKeyOf(balance),
+                  byAdministrator,
+                })}
                 onCommit={commit}
               />
             ))}
           </TableBody>
-          {balances.length > 0 && (
+          {visible.length > 0 && (
             <TableFooter className="sticky bottom-0 bg-slate-100">
               <TableRow>
                 <TableCell colSpan={4} className="font-medium">
-                  Total ({balances.length} {balances.length === 1 ? "conta" : "contas"})
+                  Total ({visible.length}{" "}
+                  {byAdministrator
+                    ? visible.length === 1
+                      ? "administrador"
+                      : "administradores"
+                    : visible.length === 1
+                      ? "conta"
+                      : "contas"}
+                  )
                 </TableCell>
                 <TableCell
                   className={cn(
@@ -342,6 +485,9 @@ export function SalesSuppliersTable({ balances, query }: SalesSuppliersTableProp
                   )}
                 >
                   {formatCurrencyBRL(totals.amount)}
+                </TableCell>
+                <TableCell className="text-center text-xs font-medium tabular-nums text-muted-foreground">
+                  {reviewedSummary.reviewed}/{reviewedSummary.total}
                 </TableCell>
               </TableRow>
             </TableFooter>
@@ -385,21 +531,32 @@ export function SalesSuppliersTable({ balances, query }: SalesSuppliersTableProp
 
 function SupplierAccountRows({
   balance,
+  byAdministrator,
   isOpen,
   onToggle,
+  onHide,
   lines,
   saving,
   reportHref,
   onCommit,
 }: {
   balance: SupplierBalance
+  byAdministrator: boolean
   isOpen: boolean
   onToggle: () => void
+  onHide: () => void
   lines: ReturnType<typeof sumSupplierLines>
   saving: Set<string>
   reportHref: string
   onCommit: (ids: string[], terms: PaymentTerms, describe: (n: number) => string) => void
 }) {
+  // An issuance created and cancelled in the same period is two lines from one row, so
+  // both carry the same flag - counting lines rather than issuances is still right here,
+  // because they agree by construction.
+  const reviewedCount = balance.issuances.filter((line) => line.reviewed).length
+  const allReviewed = reviewedCount > 0 && reviewedCount === balance.issuances.length
+  const someReviewed = reviewedCount > 0 && !allReviewed
+
   return (
     <>
       <TableRow className="cursor-pointer" onClick={onToggle}>
@@ -408,27 +565,59 @@ function SupplierAccountRows({
         </TableCell>
         <TableCell className="font-medium">
           <span className="flex items-center gap-2">
-            {balance.account_label}
-            <span onClick={(e) => e.stopPropagation()}>
-              <ReportButton
-                href={reportHref}
-                missingCost={lines.missingCost}
-                label={`Gerar PDF de ${balance.account_label}`}
-                iconOnly
-              />
+            {groupLabelOf(balance)}
+            <span onClick={(e) => e.stopPropagation()} className="flex items-center gap-1">
+              {/* The bucket for accounts nobody administers is not an administrator id, so
+                  there is no filter that would reproduce this row in a document. Better no
+                  button than one that generates the wrong PDF. */}
+              {groupKeyOf(balance) !== NO_ADMINISTRATOR_KEY && (
+                <ReportButton
+                  href={reportHref}
+                  missingCost={lines.missingCost}
+                  label={`Gerar PDF de ${groupLabelOf(balance)}`}
+                  iconOnly
+                />
+              )}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="outline"
+                    className="h-7 w-7"
+                    aria-label={`Ocultar ${groupLabelOf(balance)}`}
+                    onClick={onHide}
+                  >
+                    <EyeOff className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  Tira esta linha da lista, dos totais e do PDF até recarregar a página.
+                </TooltipContent>
+              </Tooltip>
             </span>
           </span>
         </TableCell>
+        {/* One administrator can run accounts on several programmes, so naming one of them
+            here would be picking a winner. The column stays for alignment. */}
         <TableCell>
-          <span className="flex min-w-0 items-center gap-2">
-            <span
-              className="h-2.5 w-2.5 shrink-0 rounded-full border border-slate-300"
-              style={{ backgroundColor: balance.loyalty_program_color }}
-            />
-            <span className="truncate">{balance.loyalty_program_name}</span>
-          </span>
+          {byAdministrator ? (
+            <span className="text-muted-foreground">—</span>
+          ) : (
+            <span className="flex min-w-0 items-center gap-2">
+              <span
+                className="h-2.5 w-2.5 shrink-0 rounded-full border border-slate-300"
+                style={{ backgroundColor: balance.loyalty_program_color }}
+              />
+              <span className="truncate">{balance.loyalty_program_name}</span>
+            </span>
+          )}
         </TableCell>
-        <TableCell>{balance.administrator_name ?? "—"}</TableCell>
+        <TableCell className={byAdministrator ? "tabular-nums" : undefined}>
+          {byAdministrator
+            ? (balance.account_count ?? 1)
+            : (balance.administrator_name ?? "—")}
+        </TableCell>
         <TableCell
           className={cn(
             "text-right font-medium tabular-nums",
@@ -454,6 +643,38 @@ function SupplierAccountRows({
         >
           {formatCurrencyBRL(lines.amount)}
         </TableCell>
+
+        {/* Three states rather than a checkbox: "algumas" is a real answer here and a
+            two-state box would have to round it to one of the other two. Clicking settles
+            the account either way, which is the move the operator actually wants. */}
+        <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
+          <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            className="h-7 w-7"
+            aria-label={
+              allReviewed
+                ? `Desmarcar as emissões de ${balance.account_label}`
+                : `Marcar as emissões de ${balance.account_label} como conferidas`
+            }
+            onClick={() =>
+              onCommit(
+                balance.issuances.map((line) => line.issuance_id),
+                { reviewed: !allReviewed },
+                () => (allReviewed ? "Conferência desfeita." : "Emissões conferidas."),
+              )
+            }
+          >
+            {allReviewed ? (
+              <CheckCheck className="h-4 w-4 text-emerald-700" />
+            ) : someReviewed ? (
+              <Minus className="h-4 w-4 text-amber-600" />
+            ) : (
+              <Square className="h-4 w-4 text-slate-300" />
+            )}
+          </Button>
+        </TableCell>
       </TableRow>
 
       {isOpen &&
@@ -464,6 +685,7 @@ function SupplierAccountRows({
             // unique here.
             key={`${line.issuance_id}-${line.kind}-${index}`}
             line={line}
+            showAccount={byAdministrator}
             saving={saving.has(line.issuance_id)}
             onCommit={onCommit}
           />
@@ -474,10 +696,12 @@ function SupplierAccountRows({
 
 function SupplierIssuanceRow({
   line,
+  showAccount,
   saving,
   onCommit,
 }: {
   line: SupplierIssuance
+  showAccount: boolean
   saving: boolean
   onCommit: (ids: string[], terms: PaymentTerms, describe: (n: number) => string) => void
 }) {
@@ -489,7 +713,14 @@ function SupplierIssuanceRow({
       <TableCell />
       <TableCell className={cn("font-medium", isRefund && "text-red-700")}>
         <span className="flex items-center gap-1.5">
-          {line.program_locator}
+          <span className="flex flex-col">
+            {line.program_locator}
+            {showAccount && line.account_label && (
+              <span className="text-xs font-normal text-muted-foreground">
+                {line.account_label}
+              </span>
+            )}
+          </span>
           {isRefund && (
             <span className="rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-red-800 uppercase">
               estorno
@@ -560,6 +791,25 @@ function SupplierIssuanceRow({
         )}
       >
         {amount === null ? <span className="text-amber-700">—</span> : formatCurrencyBRL(amount)}
+      </TableCell>
+
+      <TableCell className="text-center">
+        <input
+          type="checkbox"
+          checked={line.reviewed}
+          disabled={saving}
+          aria-label="Marcar esta emissão como conferida"
+          // Same reason as the tax tick above: the new value is read once here and closed
+          // over, because by the time the toast callback runs the controlled box has already
+          // re-rendered back to the old prop.
+          onChange={(e) => {
+            const reviewed = e.target.checked
+            onCommit([line.issuance_id], { reviewed }, () =>
+              reviewed ? "Emissão conferida." : "Conferência desfeita.",
+            )
+          }}
+          className="h-3.5 w-3.5 shrink-0 accent-emerald-700"
+        />
       </TableCell>
     </TableRow>
   )

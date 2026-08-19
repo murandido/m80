@@ -139,12 +139,49 @@ pagar" is the only thing set large. Everything else is deliberately quiet.
   }
   .grandTotal .amount { font-size: 18px; }
 
+  /* The two figures the payable was built from. Deliberately quiet: a literal colour
+     rather than opacity or color-mix(), which WeasyPrint 61.2 renders as black. */
+  /* The administrator a run of accounts belongs to. Quiet by design: the coloured band on
+     each account below is what the eye lands on, and this only says who they add up to. */
+  .groupHeading {
+    margin-top: 22px;
+    margin-bottom: 8px;
+    padding-bottom: 5px;
+    border-bottom: 1.5px solid #cbd5e1;
+    font-size: 13px;
+    font-weight: 700;
+    color: #334155;
+  }
+
+  .groupTotal {
+    margin-top: 10px;
+    padding: 9px 14px;
+    border-radius: 6px;
+    background: #334155;
+    color: #f8fafc;
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .groupTotal .amount { font-size: 15px; }
+
+  .grandTotalBreakdown {
+    margin-top: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    color: #cbd5e1;
+  }
+
   .empty { color: #94a3b8; font-style: italic; }
 </style>
 </head>
 <body>
 
-{{ range .Sections }}
+{{ range $group := .Groups }}
+{{ if $group.Label }}
+<div class="groupHeading">{{ $group.Label }}</div>
+{{ end }}
+
+{{ range $group.Sections }}
 <div class="section">
   <div class="header" style="background: {{ .Brand }}; color: {{ .BrandOn }}">
     <div class="headerText">
@@ -201,8 +238,23 @@ pagar" is the only thing set large. Everything else is deliberately quiet.
 </div>
 {{ end }}
 
+{{ if $group.Label }}
+<div class="groupTotal">
+  <div>Total de {{ $group.Label }} <span class="amount">{{ $group.TotalAmount }}</span></div>
+  <div class="grandTotalBreakdown">
+    {{ $group.TotalPoints }} pontos · {{ $group.TotalTaxes }} em taxas
+  </div>
+</div>
+{{ end }}
+{{ end }}
+
 {{ if .ShowGrandTotal }}
-<div class="grandTotal">Total geral a pagar <span class="amount">{{ .GrandTotal }}</span></div>
+<div class="grandTotal">
+  <div>Total geral a pagar <span class="amount">{{ .GrandTotal }}</span></div>
+  <div class="grandTotalBreakdown">
+    {{ .GrandTotalPoints }} pontos · {{ .GrandTotalTaxes }} em taxas
+  </div>
+</div>
 {{ end }}
 
 </body>

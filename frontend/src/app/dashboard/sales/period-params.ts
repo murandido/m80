@@ -24,6 +24,11 @@ export const SALES_FILTER_KEYS = [
   "issuer_id",
   "client_id",
   "paid",
+  // group_by is the suppliers view's choice between one row per account and one row per
+  // account administrator. It rides with the filters so it reaches the backend, the sticky
+  // cookie and the PDF link for free; anything other than "administrator" means account,
+  // on both sides.
+  "group_by",
 ] as const
 
 // ALL_AGENCIES is the explicit "every agency" token. It has to match allAgenciesToken in
@@ -56,8 +61,20 @@ export function resolveSalesFilters(params: SalesSearchParams): SalesFilterState
     issuer_id: params.issuer_id ?? "",
     client_id: params.client_id ?? "",
     paid: params.paid ?? "",
+    group_by: params.group_by ?? "",
   }
 }
+
+// GROUP_BY_ADMINISTRATOR has to match groupByAdministrator in
+// backend/internal/api/v1/handlers/sales.go.
+export const GROUP_BY_ADMINISTRATOR = "administrator"
+export const GROUP_BY_ACCOUNT = "account"
+
+// The bucket the backend puts accounts nobody administers in. It is not a uuid on purpose,
+// so it can never be mistaken for one - which also means it cannot be passed back as an
+// administrator_id filter, and the row's own PDF button is hidden for it. Has to match
+// noAdministratorKey in backend/internal/api/v1/handlers/sales.go.
+export const NO_ADMINISTRATOR_KEY = "administrator:none"
 
 // parseAgencyIds turns the URL's agency_ids into the list the picker holds. Both "all" and
 // an absent value come back empty, because the picker draws them the same way - the

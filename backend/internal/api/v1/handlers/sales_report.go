@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -33,7 +34,9 @@ type supplierReportBrand struct {
 // @Param        agency_ids          query  string  false  "UUIDs de agências separados por vírgula, ou 'all' para todas"
 // @Param        loyalty_program_id  query  string  false  "UUID do programa de fidelidade"
 // @Param        account_id          query  string  false  "UUID da conta - restringe o documento a ela"
+// @Param        exclude_account_ids query  string  false  "UUIDs de contas separados por vírgula a excluir do documento"
 // @Param        administrator_id    query  string  false  "UUID do administrador da conta"
+// @Param        group_by            query  string  false  "Agrupamento das seções: account (padrão) ou administrator"
 // @Success      200  {file}    file  "PDF do resumo"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      403  {object}  schemas.ErrorResponse "Usuário não é administrador"
@@ -47,7 +50,7 @@ func (h *SaleHandler) GetSupplierReportPDF(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	balances := aggregateSupplierBalances(rows, from, to)
+	balances := aggregateSupplierBalances(rows, from, to, resolveSupplierGrouping(r))
 
 	// The brand is looked up from the same rows the balances came from, so a document can
 	// never be headed with a program the statement below it does not belong to.
@@ -63,7 +66,8 @@ func (h *SaleHandler) GetSupplierReportPDF(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	model, missing := buildSupplierReport(balances, brands, supplierPeriodLabel(from, to))
+	model, missing := buildSupplierReport(
+		balances, brands, supplierPeriodLabel(from, to), resolveSupplierGrouping(r))
 
 	// Refusing is the point. A summary that silently drops - or zeroes - an issuance whose
 	// cost was never agreed understates what the agency owes, and the supplier is the only
@@ -72,7 +76,7 @@ func (h *SaleHandler) GetSupplierReportPDF(w http.ResponseWriter, r *http.Reques
 		utils.SendError(w, r, http.StatusUnprocessableEntity, supplierMissingCostMessage(missing))
 		return
 	}
-	if len(model.Sections) == 0 {
+	if model.SectionCount() == 0 {
 		utils.SendError(w, r, http.StatusUnprocessableEntity,
 			"Nenhuma emissão no período selecionado para gerar o resumo")
 		return
@@ -111,70 +115,138 @@ func buildSupplierReport(
 	balances []schemas.SupplierBalanceResponse,
 	brands map[string]supplierReportBrand,
 	periodLabel string,
+	grouping supplierGrouping,
 ) (supplierreport.ViewModel, int) {
 	model := supplierreport.ViewModel{}
-	grandTotal := 0
+	grand := supplierreport.Totals{}
 	missing := 0
 
 	for _, balance := range balances {
-		brand := brands[balance.AccountID]
-		section := supplierreport.Section{
-			AccountLabel: balance.AccountLabel,
-			PeriodLabel:  periodLabel,
-			ProgramName:  brand.programName,
-			Brand:        brand.programColor,
-			BrandOn:      supplierreport.ContrastColour(brand.programColor),
-			Logo:         supplierreport.LogoFor(brand.programCode, brand.defaultAirline),
-		}
-		if balance.AdministratorName != nil {
-			section.Administrator = *balance.AdministratorName
-		}
+		group := supplierreport.Group{}
+		groupTotals := supplierreport.Totals{}
 
-		totalPoints, totalTaxes, totalAmount := 0, 0, 0
-		for _, line := range balance.Issuances {
-			if line.CostOfTheThousand == nil {
-				missing++
+		// Grouped by account the balance is already one statement. Grouped by administrator
+		// it mixes their accounts, and it is split back apart here rather than upstream: a
+		// section is what carries the programme colour and logo, and those are per account,
+		// so one heading over the lot would have to pick a programme and be wrong.
+		for _, part := range splitBalanceByAccount(balance, grouping) {
+			brand := brands[part.accountID]
+			section := supplierreport.Section{
+				AccountLabel: part.accountLabel,
+				PeriodLabel:  periodLabel,
+				ProgramName:  brand.programName,
+				Brand:        brand.programColor,
+				BrandOn:      supplierreport.ContrastColour(brand.programColor),
+				Logo:         supplierreport.LogoFor(brand.programCode, brand.defaultAirline),
+			}
+			if balance.AdministratorName != nil {
+				section.Administrator = *balance.AdministratorName
+			}
+
+			totals := supplierreport.Totals{}
+			for _, line := range part.lines {
+				if line.CostOfTheThousand == nil {
+					missing++
+					continue
+				}
+
+				amount := supplierLineAmount(line)
+				totals.Points += line.Points
+				totals.AmountCents += amount
+				// Only the taxes that were actually reimbursed are totalled, so the column
+				// adds up to the part of "Total a pagar" it is responsible for.
+				if line.TaxesIncludedInCost && line.Taxes != nil {
+					totals.TaxesCents += *line.Taxes
+				}
+
+				section.Lines = append(section.Lines, supplierreport.Line{
+					Locator:     line.ProgramLocator,
+					Date:        line.Date.In(supplierReportLocation()).Format("02/01/2006"),
+					Origin:      derefString(line.OriginIATACode),
+					Destination: derefString(line.DestinationIATACode),
+					Points:      supplierreport.FormatPoints(line.Points),
+					Milheiro:    supplierreport.FormatBRL(*line.CostOfTheThousand),
+					Taxes:       supplierReportTaxes(line),
+					Amount:      supplierreport.FormatBRL(amount),
+					Refund:      line.Kind == "refund",
+				})
+			}
+
+			// An account whose every line was skipped contributes no section - but `missing`
+			// is already non-zero by then, so the request fails rather than producing a
+			// document that quietly omits it.
+			if len(section.Lines) == 0 {
 				continue
 			}
 
-			amount := supplierLineAmount(line)
-			totalPoints += line.Points
-			totalAmount += amount
-			// Only the taxes that were actually reimbursed are totalled, so the column
-			// adds up to the part of "Total a pagar" it is responsible for.
-			if line.TaxesIncludedInCost && line.Taxes != nil {
-				totalTaxes += *line.Taxes
-			}
+			section.TotalPoints = supplierreport.FormatPoints(totals.Points)
+			section.TotalTaxes = supplierreport.FormatBRL(totals.TaxesCents)
+			section.TotalAmount = supplierreport.FormatBRL(totals.AmountCents)
 
-			section.Lines = append(section.Lines, supplierreport.Line{
-				Locator:     line.ProgramLocator,
-				Date:        line.Date.In(supplierReportLocation()).Format("02/01/2006"),
-				Origin:      derefString(line.OriginIATACode),
-				Destination: derefString(line.DestinationIATACode),
-				Points:      supplierreport.FormatPoints(line.Points),
-				Milheiro:    supplierreport.FormatBRL(*line.CostOfTheThousand),
-				Taxes:       supplierReportTaxes(line),
-				Amount:      supplierreport.FormatBRL(amount),
-				Refund:      line.Kind == "refund",
-			})
+			groupTotals.Points += totals.Points
+			groupTotals.TaxesCents += totals.TaxesCents
+			groupTotals.AmountCents += totals.AmountCents
+			group.Sections = append(group.Sections, section)
 		}
 
-		// An account whose every line was skipped contributes no section - but `missing`
-		// is already non-zero by then, so the request fails rather than producing a
-		// document that quietly omits it.
-		if len(section.Lines) == 0 {
+		if len(group.Sections) == 0 {
 			continue
 		}
 
-		section.TotalPoints = supplierreport.FormatPoints(totalPoints)
-		section.TotalTaxes = supplierreport.FormatBRL(totalTaxes)
-		section.TotalAmount = supplierreport.FormatBRL(totalAmount)
-		grandTotal += totalAmount
+		// Only a grouped document gets a heading and a subtotal. Left empty, the group is
+		// just a container and the page renders exactly as it did before groups existed.
+		if grouping == groupByAdministrator {
+			group.Label = balance.GroupLabel
+			group.TotalPoints = supplierreport.FormatPoints(groupTotals.Points)
+			group.TotalTaxes = supplierreport.FormatBRL(groupTotals.TaxesCents)
+			group.TotalAmount = supplierreport.FormatBRL(groupTotals.AmountCents)
+		}
 
-		model.Sections = append(model.Sections, section)
+		grand.Points += groupTotals.Points
+		grand.TaxesCents += groupTotals.TaxesCents
+		grand.AmountCents += groupTotals.AmountCents
+		model.Groups = append(model.Groups, group)
 	}
 
-	return supplierreport.Finalize(model, grandTotal), missing
+	return supplierreport.Finalize(model, grand), missing
+}
+
+// balancePart is one account's worth of a balance's statement.
+type balancePart struct {
+	accountID    string
+	accountLabel string
+	lines        []schemas.SupplierIssuanceResponse
+}
+
+// splitBalanceByAccount returns the statements a balance should become. Grouped by account
+// that is the balance itself; grouped by administrator it is one per account behind it, in
+// a stable order so two identical requests produce the same document.
+func splitBalanceByAccount(
+	balance schemas.SupplierBalanceResponse,
+	grouping supplierGrouping,
+) []balancePart {
+	if grouping != groupByAdministrator {
+		return []balancePart{{
+			accountID:    balance.AccountID,
+			accountLabel: balance.AccountLabel,
+			lines:        balance.Issuances,
+		}}
+	}
+
+	parts := make([]balancePart, 0, 2)
+	index := map[string]int{}
+	for _, line := range balance.Issuances {
+		at, ok := index[line.AccountID]
+		if !ok {
+			at = len(parts)
+			index[line.AccountID] = at
+			parts = append(parts, balancePart{accountID: line.AccountID, accountLabel: line.AccountLabel})
+		}
+		parts[at].lines = append(parts[at].lines, line)
+	}
+
+	sort.Slice(parts, func(i, j int) bool { return parts[i].accountLabel < parts[j].accountLabel })
+	return parts
 }
 
 // supplierLineAmount is what the agency pays for one statement line, in centavos.
@@ -281,10 +353,15 @@ func supplierReportLocation() *time.Location {
 // supplierReportFilename names the download. One account gets its own name on the file, so
 // a folder of summaries is sortable; several get a generic one.
 func supplierReportFilename(model supplierreport.ViewModel) string {
-	if len(model.Sections) != 1 {
+	// A grouped document is named after the group even when it holds a single account, and
+	// a run of accounts under one administrator has no single account to be named after.
+	if len(model.Groups) == 1 && model.Groups[0].Label != "" {
+		return "resumo-" + slugify(model.Groups[0].Label) + ".pdf"
+	}
+	if model.SectionCount() != 1 {
 		return "resumo-fornecedores.pdf"
 	}
-	return "resumo-" + slugify(model.Sections[0].AccountLabel) + ".pdf"
+	return "resumo-" + slugify(model.Groups[0].Sections[0].AccountLabel) + ".pdf"
 }
 
 func derefString(value *string) string {

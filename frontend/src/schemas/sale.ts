@@ -97,6 +97,8 @@ export const updateSaleSchema = {
 // arrive already signed - negative on a refund - so the table only ever sums.
 export const supplierIssuanceSchema = z.object({
   issuance_id: z.string(),
+  account_id: z.string().nullish(),
+  account_label: z.string().nullish(),
   kind: z.enum(["issued", "refund"]),
   date: z.string(),
   program_locator: z.string(),
@@ -107,11 +109,24 @@ export const supplierIssuanceSchema = z.object({
   taxes: z.number().nullable(),
   cost_of_the_thousand: z.number().nullable(),
   taxes_included_in_cost: z.boolean(),
+  // Tolerated as absent, not required: the API and the panel are published by independent
+  // labels, so this screen can be live for days against a backend that does not send the
+  // field yet. Missing reads as "not checked", which is what every row meant before it.
+  reviewed: z
+    .boolean()
+    .nullish()
+    .transform((value) => value ?? false),
 })
 
 export type SupplierIssuance = z.infer<typeof supplierIssuanceSchema>
 
 export const supplierBalanceSchema = z.object({
+  // Identifies the row itself, whichever grouping was asked for. Tolerated as absent so the
+  // panel can be live against an API published before it: the account fields are the
+  // fallback, which is what every row meant when account was the only grouping.
+  group_key: z.string().nullish(),
+  group_label: z.string().nullish(),
+  account_count: z.number().nullish(),
   account_id: z.string(),
   account_label: z.string(),
   loyalty_program_name: z.string(),

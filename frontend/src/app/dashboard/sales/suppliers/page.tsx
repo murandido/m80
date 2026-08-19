@@ -1,3 +1,4 @@
+import { Suspense } from "react"
 import type { Metadata } from "next"
 import { cookies } from "next/headers"
 import Link from "next/link"
@@ -17,6 +18,7 @@ import { SalesViewToggle } from "@/components/sales/sales-view-toggle"
 import { PeriodFilter } from "@/components/filters/period-filter"
 import { SalesFilterBar } from "@/components/sales/sales-filter-bar"
 import { SalesSuppliersTable } from "@/components/sales/sales-suppliers-table"
+import { SupplierGroupToggle } from "@/components/sales/supplier-group-toggle"
 import { LiveRefresh } from "@/components/layout/live-refresh"
 import {
   ALL_AGENCIES,
@@ -116,7 +118,12 @@ export default async function SalesSuppliersPage({
           </Button>
         </div>
 
-        <SalesViewToggle active="suppliers" canSeeSuppliers />
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <SalesViewToggle active="suppliers" canSeeSuppliers />
+          <Suspense fallback={<div className="h-8" />}>
+            <SupplierGroupToggle groupBy={filters.group_by} />
+          </Suspense>
+        </div>
 
         <SalesFilterBar
           variant="suppliers"
@@ -146,7 +153,11 @@ export default async function SalesSuppliersPage({
             </AlertDescription>
           </Alert>
         ) : (
-          <SalesSuppliersTable balances={balances} query={query.toString()} />
+          <SalesSuppliersTable
+            balances={balances}
+            query={query.toString()}
+            groupBy={filters.group_by}
+          />
         )}
       </div>
     </div>

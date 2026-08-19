@@ -41,9 +41,14 @@ type Issuance struct {
 	// issuance. Per issuance because it is per deal: some administrators are reimbursed
 	// the taxes they paid the airline and some are not, and one account can have both.
 	// Admin-only for the same reason CostOfTheThousand is.
-	TaxesIncludedInCost bool     `gorm:"column:taxes_included_in_cost;not null;default:false" json:"taxes_included_in_cost"`
-	AccountID           string   `gorm:"column:account_id;type:uuid;not null" json:"account_id"`
-	Account             *Account `gorm:"foreignKey:AccountID;references:ID" json:"account,omitempty"`
+	TaxesIncludedInCost bool `gorm:"column:taxes_included_in_cost;not null;default:false" json:"taxes_included_in_cost"`
+	// Reviewed records that somebody already checked this line while reconciling what the
+	// agency owes the supplier. It is a control marking and not a payment: the sell side
+	// settles through sales/sale_payments, the supplier side has no ledger, and the two are
+	// meant to be able to disagree in both directions. Admin-only, like the two above.
+	Reviewed  bool     `gorm:"column:reviewed;not null;default:false" json:"reviewed"`
+	AccountID string   `gorm:"column:account_id;type:uuid;not null" json:"account_id"`
+	Account   *Account `gorm:"foreignKey:AccountID;references:ID" json:"account,omitempty"`
 	// AccountNicknameID records which of the account's aliases the operator picked.
 	// It is a FK rather than a copied string so renaming an alias propagates to past
 	// issuances instead of leaving them showing a stale name.

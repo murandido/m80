@@ -203,6 +203,19 @@ func resolveAgencyFilter(db *gorm.DB, r *http.Request) (string, error) {
 // every partner's issuances.
 const allAgenciesToken = "all"
 
+// splitIDs reads one of the comma-separated id params the suppliers view sends. Blank
+// entries are dropped rather than passed through: a trailing comma would otherwise reach
+// the query as an empty string and, in a NOT IN, match nothing at all.
+func splitIDs(raw string) []string {
+	ids := make([]string, 0, 4)
+	for _, id := range strings.Split(raw, ",") {
+		if id = strings.TrimSpace(id); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
 // resolveSupplierAgencyFilter reads the suppliers view's multi-valued agency choice. It
 // returns nil when the caller asked for every agency, and otherwise the ids to restrict to.
 //
@@ -223,12 +236,7 @@ func resolveSupplierAgencyFilter(db *gorm.DB, r *http.Request) ([]string, error)
 		return nil, nil
 	}
 
-	ids := make([]string, 0, 4)
-	for _, id := range strings.Split(raw, ",") {
-		if id = strings.TrimSpace(id); id != "" {
-			ids = append(ids, id)
-		}
-	}
+	ids := splitIDs(raw)
 	// A list that parsed down to nothing is a malformed param, not a request for
 	// everything - fall back rather than quietly widening the query.
 	if len(ids) == 0 {
@@ -526,6 +534,7 @@ type supplierIssuanceRow struct {
 	RefundedTaxes       *int
 	CostOfTheThousand   *int
 	TaxesIncludedInCost bool
+	Reviewed            bool
 
 	AccountLogin        *string
 	AccountNickname     *string
@@ -554,7 +563,9 @@ type supplierIssuanceRow struct {
 // @Param        agency_ids          query  string  false  "UUIDs de agências separados por vírgula, ou 'all' para todas. Tem precedência sobre agency_id"
 // @Param        loyalty_program_id  query  string  false  "UUID do programa de fidelidade"
 // @Param        account_id          query  string  false  "UUID da conta"
+// @Param        exclude_account_ids query  string  false  "UUIDs de contas separados por vírgula a excluir do resultado"
 // @Param        administrator_id    query  string  false  "UUID do administrador da conta (people.id)"
+// @Param        group_by            query  string  false  "Agrupamento das linhas: account (padrão) ou administrator"
 // @Success      200  {object}  schemas.SupplierBalanceListResponse
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      403  {object}  schemas.ErrorResponse "Usuário não é administrador"
@@ -567,7 +578,7 @@ func (h *SaleHandler) GetSupplierBalances(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	balances := aggregateSupplierBalances(rows, from, to)
+	balances := aggregateSupplierBalances(rows, from, to, resolveSupplierGrouping(r))
 
 	utils.SendJSON(w, r, http.StatusOK, "Supplier balances fetched successfully", balances)
 }
@@ -608,6 +619,7 @@ func (h *SaleHandler) fetchSupplierRows(r *http.Request) ([]supplierIssuanceRow,
 			issuances.refunded_taxes,
 			issuances.cost_of_the_thousand,
 			issuances.taxes_included_in_cost,
+		issuances.reviewed,
 			accounts.login AS account_login,
 			-- Sub-select rather than a join: an account can hold several nicknames, and
 			-- joining would multiply the issuance rows this aggregation counts. Oldest
@@ -651,6 +663,14 @@ func (h *SaleHandler) fetchSupplierRows(r *http.Request) ([]supplierIssuanceRow,
 		}
 	}
 
+	// Accounts the operator parked on the screen while reconciling. It is the one filter
+	// that subtracts rather than narrows, so it is a separate clause: the loop above reads
+	// a single value per key, and this one is a list. Empty entries are dropped so a
+	// trailing comma cannot turn into a NOT IN ('') that matches nothing.
+	if excluded := splitIDs(q.Get("exclude_account_ids")); len(excluded) > 0 {
+		query = query.Where("issuances.account_id NOT IN ?", excluded)
+	}
+
 	// Narrow to rows that can contribute to the period at all: issued in it, or
 	// cancelled in it. Without this the aggregation would read the whole table.
 	if from != nil || to != nil {
@@ -676,6 +696,45 @@ func (h *SaleHandler) fetchSupplierRows(r *http.Request) ([]supplierIssuanceRow,
 	return rows, from, to, nil
 }
 
+// supplierGrouping is what a row of the suppliers view stands for. The screen offers both
+// because they answer different questions: an account is who the miles came out of, an
+// administrator is who gets paid, and one administrator can run several accounts.
+type supplierGrouping string
+
+const (
+	groupByAccount       supplierGrouping = "account"
+	groupByAdministrator supplierGrouping = "administrator"
+)
+
+// resolveSupplierGrouping defaults to account, so an old bookmark, an empty param and a
+// panel that predates the choice all keep the behaviour they had.
+func resolveSupplierGrouping(r *http.Request) supplierGrouping {
+	if r.URL.Query().Get("group_by") == string(groupByAdministrator) {
+		return groupByAdministrator
+	}
+	return groupByAccount
+}
+
+// noAdministratorKey buckets the accounts nobody administers. It has to be a key of its own
+// and not the empty administrator id, because those accounts still owe miles and dropping
+// them would make the totals quietly disagree with the account view.
+const noAdministratorKey = "administrator:none"
+
+// supplierGroupOf answers which row of the screen an issuance belongs to, and what that row
+// is called.
+func supplierGroupOf(row supplierIssuanceRow, grouping supplierGrouping) (key, label string) {
+	if grouping == groupByAdministrator {
+		if row.AdministratorID == nil || *row.AdministratorID == "" {
+			return noAdministratorKey, "Sem administrador"
+		}
+		if row.AdministratorName != nil && *row.AdministratorName != "" {
+			return *row.AdministratorID, *row.AdministratorName
+		}
+		return *row.AdministratorID, *row.AdministratorID
+	}
+	return row.AccountID, supplierAccountLabel(row)
+}
+
 // aggregateSupplierBalances folds per-issuance rows into one balance per account: miles
 // issued inside the period minus miles refunded by cancellations inside the same period.
 // An issuance created and cancelled in the same period contributes to both sides, which
@@ -683,21 +742,30 @@ func (h *SaleHandler) fetchSupplierRows(r *http.Request) ([]supplierIssuanceRow,
 //
 // The same two branches also emit the account's statement, so the lines the panel shows can
 // never describe a different set of issuances than the totals beside them.
-func aggregateSupplierBalances(rows []supplierIssuanceRow, from, to *time.Time) []schemas.SupplierBalanceResponse {
+func aggregateSupplierBalances(
+	rows []supplierIssuanceRow,
+	from, to *time.Time,
+	grouping supplierGrouping,
+) []schemas.SupplierBalanceResponse {
 	type accumulator struct {
 		row            supplierIssuanceRow
+		key            string
+		label          string
+		accountCount   map[string]struct{}
 		issuedPoints   int
 		refundedPoints int
 		statement      []schemas.SupplierIssuanceResponse
 	}
 
-	byAccount := map[string]*accumulator{}
+	byGroup := map[string]*accumulator{}
 	for _, row := range rows {
-		acc, ok := byAccount[row.AccountID]
+		key, label := supplierGroupOf(row, grouping)
+		acc, ok := byGroup[key]
 		if !ok {
-			acc = &accumulator{row: row}
-			byAccount[row.AccountID] = acc
+			acc = &accumulator{row: row, key: key, label: label, accountCount: map[string]struct{}{}}
+			byGroup[key] = acc
 		}
+		acc.accountCount[row.AccountID] = struct{}{}
 
 		if inRange(&row.CreatedAt, from, to) {
 			acc.issuedPoints += row.Points
@@ -711,8 +779,8 @@ func aggregateSupplierBalances(rows []supplierIssuanceRow, from, to *time.Time) 
 		}
 	}
 
-	balances := make([]schemas.SupplierBalanceResponse, 0, len(byAccount))
-	for accountID, acc := range byAccount {
+	balances := make([]schemas.SupplierBalanceResponse, 0, len(byGroup))
+	for _, acc := range byGroup {
 		// Chronological, so a statement reads like one: what was issued, then what came
 		// back. Ranging over a map randomises the input order, so this is also what makes
 		// the response stable across identical requests.
@@ -721,7 +789,10 @@ func aggregateSupplierBalances(rows []supplierIssuanceRow, from, to *time.Time) 
 		})
 
 		balance := schemas.SupplierBalanceResponse{
-			AccountID:           accountID,
+			GroupKey:            acc.key,
+			GroupLabel:          acc.label,
+			AccountCount:        len(acc.accountCount),
+			AccountID:           acc.row.AccountID,
 			AccountLabel:        supplierAccountLabel(acc.row),
 			LoyaltyProgramName:  acc.row.LoyaltyProgramName,
 			LoyaltyProgramColor: acc.row.LoyaltyProgramColor,
@@ -741,7 +812,7 @@ func aggregateSupplierBalances(rows []supplierIssuanceRow, from, to *time.Time) 
 		if balances[i].NetPoints != balances[j].NetPoints {
 			return balances[i].NetPoints > balances[j].NetPoints
 		}
-		return balances[i].AccountLabel < balances[j].AccountLabel
+		return balances[i].GroupLabel < balances[j].GroupLabel
 	})
 
 	return balances
@@ -800,6 +871,9 @@ func (h *SaleHandler) UpdateSupplierIssuances(w http.ResponseWriter, r *http.Req
 	if req.TaxesIncludedInCost != nil {
 		updates["taxes_included_in_cost"] = *req.TaxesIncludedInCost
 	}
+	if req.Reviewed != nil {
+		updates["reviewed"] = *req.Reviewed
+	}
 	if len(updates) == 0 {
 		utils.SendError(w, r, http.StatusBadRequest, "No fields to update")
 		return
@@ -833,6 +907,8 @@ func (h *SaleHandler) UpdateSupplierIssuances(w http.ResponseWriter, r *http.Req
 func supplierStatementLine(row supplierIssuanceRow, kind string, date time.Time, points int, taxes *int) schemas.SupplierIssuanceResponse {
 	return schemas.SupplierIssuanceResponse{
 		IssuanceID:          row.IssuanceID,
+		AccountID:           row.AccountID,
+		AccountLabel:        supplierAccountLabel(row),
 		Kind:                kind,
 		Date:                date,
 		ProgramLocator:      row.ProgramLocator,
@@ -843,6 +919,7 @@ func supplierStatementLine(row supplierIssuanceRow, kind string, date time.Time,
 		Taxes:               taxes,
 		CostOfTheThousand:   row.CostOfTheThousand,
 		TaxesIncludedInCost: row.TaxesIncludedInCost,
+		Reviewed:            row.Reviewed,
 	}
 }
 

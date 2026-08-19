@@ -93,17 +93,17 @@ func TestBuildSupplierReport_ACreditCancelsItsBooking(t *testing.T) {
 		statementLine("refund", -1500, intPtr(-8400), cost),
 	)
 
-	model, missing := buildSupplierReport(balances, noBrands, "03/08/2026")
+	model, missing := buildSupplierReport(balances, noBrands, "03/08/2026", groupByAccount)
 	if missing != 0 {
 		t.Fatalf("missing: got %d, want 0", missing)
 	}
-	if len(model.Sections) != 1 {
-		t.Fatalf("sections: got %d, want 1", len(model.Sections))
+	if model.SectionCount() != 1 {
+		t.Fatalf("sections: got %d, want 1", model.SectionCount())
 	}
-	if got := model.Sections[0].TotalAmount; got != "R$ 0,00" {
+	if got := model.Groups[0].Sections[0].TotalAmount; got != "R$ 0,00" {
 		t.Errorf("total: got %q, want %q", got, "R$ 0,00")
 	}
-	if !model.Sections[0].Lines[1].Refund {
+	if !model.Groups[0].Sections[0].Lines[1].Refund {
 		t.Error("the credit line must be marked as a refund so the document shows why")
 	}
 }
@@ -116,7 +116,7 @@ func TestBuildSupplierReport_CountsIssuancesWithoutACost(t *testing.T) {
 		statementLine("issued", 30000, nil, nil),
 	)
 
-	_, missing := buildSupplierReport(balances, noBrands, "03/08/2026")
+	_, missing := buildSupplierReport(balances, noBrands, "03/08/2026", groupByAccount)
 	if missing != 2 {
 		t.Errorf("missing: got %d, want 2", missing)
 	}
@@ -138,12 +138,12 @@ func TestBuildSupplierReport_HidesTaxesThatAreNotBeingPaid(t *testing.T) {
 		statementLineWithTaxes("issued", 10000, intPtr(7700), intPtr(2000), true),
 	)
 
-	model, missing := buildSupplierReport(balances, noBrands, "03/08/2026")
+	model, missing := buildSupplierReport(balances, noBrands, "03/08/2026", groupByAccount)
 	if missing != 0 {
 		t.Fatalf("missing: got %d, want 0", missing)
 	}
 
-	hidden, shown := model.Sections[0].Lines[0], model.Sections[0].Lines[1]
+	hidden, shown := model.Groups[0].Sections[0].Lines[0], model.Groups[0].Sections[0].Lines[1]
 	if hidden.Taxes != "—" {
 		t.Errorf("an unreimbursed tax must render as a dash, got %q", hidden.Taxes)
 	}
@@ -163,8 +163,8 @@ func TestBuildSupplierReport_HidesTaxesThatAreNotBeingPaid(t *testing.T) {
 	}
 	// It is also left out of the column total, so the total cannot be used to work the
 	// hidden figure back out by subtraction.
-	if model.Sections[0].TotalTaxes != "R$ 77,00" {
-		t.Errorf("tax total: got %q, want %q", model.Sections[0].TotalTaxes, "R$ 77,00")
+	if model.Groups[0].Sections[0].TotalTaxes != "R$ 77,00" {
+		t.Errorf("tax total: got %q, want %q", model.Groups[0].Sections[0].TotalTaxes, "R$ 77,00")
 	}
 }
 
@@ -173,7 +173,7 @@ func TestBuildSupplierReport_HidesTaxesThatAreNotBeingPaid(t *testing.T) {
 func TestBuildSupplierReport_GrandTotalOnlyWhenSeveralAccounts(t *testing.T) {
 	line := statementLine("issued", 10000, nil, intPtr(2000))
 
-	single, _ := buildSupplierReport(oneBalance(line), noBrands, "03/08/2026")
+	single, _ := buildSupplierReport(oneBalance(line), noBrands, "03/08/2026", groupByAccount)
 	if single.ShowGrandTotal {
 		t.Error("a single-account document must not repeat its total as a grand total")
 	}
@@ -181,7 +181,7 @@ func TestBuildSupplierReport_GrandTotalOnlyWhenSeveralAccounts(t *testing.T) {
 	two := append(oneBalance(line), schemas.SupplierBalanceResponse{
 		AccountID: "acc-2", AccountLabel: "Outra Conta", Issuances: []schemas.SupplierIssuanceResponse{line},
 	})
-	multi, _ := buildSupplierReport(two, noBrands, "03/08/2026")
+	multi, _ := buildSupplierReport(two, noBrands, "03/08/2026", groupByAccount)
 	if !multi.ShowGrandTotal {
 		t.Fatal("a multi-account document needs a grand total")
 	}
@@ -225,8 +225,8 @@ func TestSupplierPeriodLabel_SingleDayIsNotARange(t *testing.T) {
 // The label goes into a Content-Disposition header, so anything that could close the quoted
 // string has to be gone before it gets there.
 func TestSupplierReportFilename_IsSafeInAHeader(t *testing.T) {
-	model := supplierreport.ViewModel{Sections: []supplierreport.Section{
-		{AccountLabel: `João "Zé" da Silva; rm -rf`},
+	model := supplierreport.ViewModel{Groups: []supplierreport.Group{
+		{Sections: []supplierreport.Section{{AccountLabel: `João "Zé" da Silva; rm -rf`}}},
 	}}
 
 	got := supplierReportFilename(model)
@@ -237,7 +237,9 @@ func TestSupplierReportFilename_IsSafeInAHeader(t *testing.T) {
 		t.Errorf("filename: got %q", got)
 	}
 
-	many := supplierreport.ViewModel{Sections: []supplierreport.Section{{}, {}}}
+	many := supplierreport.ViewModel{Groups: []supplierreport.Group{
+		{Sections: []supplierreport.Section{{}, {}}},
+	}}
 	if got := supplierReportFilename(many); got != "resumo-fornecedores.pdf" {
 		t.Errorf("multi-account filename: got %q", got)
 	}
@@ -251,7 +253,7 @@ func TestBuildSupplierReport_RendersACompleteDocument(t *testing.T) {
 		statementLine("refund", -20000, intPtr(-3000), intPtr(1650)),
 	)
 
-	model, missing := buildSupplierReport(balances, noBrands, "01/08/2026 a 12/08/2026")
+	model, missing := buildSupplierReport(balances, noBrands, "01/08/2026 a 12/08/2026", groupByAccount)
 	if missing != 0 {
 		t.Fatalf("missing: got %d, want 0", missing)
 	}
@@ -282,5 +284,104 @@ func TestBuildSupplierReport_RendersACompleteDocument(t *testing.T) {
 		if strings.Contains(document, forbidden) {
 			t.Errorf("document uses %q, which WeasyPrint 61.2 does not render", forbidden)
 		}
+	}
+}
+
+// A line grouped by administrator has to say which account it came out of, because the row
+// above it no longer does. Everything downstream - the split into sections, the brand
+// lookup, the file name - keys off that, so a line without it silently collapses several
+// accounts into one nameless section.
+func administratorBalance(lines ...schemas.SupplierIssuanceResponse) []schemas.SupplierBalanceResponse {
+	return []schemas.SupplierBalanceResponse{{
+		GroupKey:          "adm-1",
+		GroupLabel:        "Maria Souza",
+		AccountCount:      2,
+		AccountID:         "acc-1",
+		AccountLabel:      "João da Silva",
+		AdministratorName: strPtr("Maria Souza"),
+		Issuances:         lines,
+	}}
+}
+
+func lineFromAccount(id, label string, points int, cost *int) schemas.SupplierIssuanceResponse {
+	line := statementLine("issued", points, nil, cost)
+	line.AccountID = id
+	line.AccountLabel = label
+	return line
+}
+
+func TestBuildSupplierReport_GroupsAccountsUnderTheirAdministrator(t *testing.T) {
+	balances := administratorBalance(
+		lineFromAccount("acc-2", "Zulmira", 10000, intPtr(1000)),
+		lineFromAccount("acc-1", "Ambrosina", 20000, intPtr(1000)),
+		lineFromAccount("acc-2", "Zulmira", 30000, intPtr(1000)),
+	)
+
+	model, missing := buildSupplierReport(balances, noBrands, "03/08/2026", groupByAdministrator)
+	if missing != 0 {
+		t.Fatalf("missing: got %d, want 0", missing)
+	}
+
+	if len(model.Groups) != 1 {
+		t.Fatalf("groups: got %d, want 1", len(model.Groups))
+	}
+	group := model.Groups[0]
+	if group.Label != "Maria Souza" {
+		t.Errorf("group label: got %q, want %q", group.Label, "Maria Souza")
+	}
+
+	// One section per account, so each keeps its own programme colour - and in a stable
+	// order, or two identical requests would produce different documents.
+	if len(group.Sections) != 2 {
+		t.Fatalf("sections: got %d, want 2", len(group.Sections))
+	}
+	if group.Sections[0].AccountLabel != "Ambrosina" || group.Sections[1].AccountLabel != "Zulmira" {
+		t.Errorf("sections out of order: %q then %q",
+			group.Sections[0].AccountLabel, group.Sections[1].AccountLabel)
+	}
+	if len(group.Sections[1].Lines) != 2 {
+		t.Errorf("Zulmira's lines: got %d, want 2", len(group.Sections[1].Lines))
+	}
+
+	// The subtotal is the whole administrator, not whichever account happened to be last.
+	// 60.000 pontos a R$ 10,00 o milheiro.
+	if group.TotalAmount != "R$ 600,00" {
+		t.Errorf("group total: got %q, want %q", group.TotalAmount, "R$ 600,00")
+	}
+	if group.TotalPoints != "60.000" {
+		t.Errorf("group points: got %q, want %q", group.TotalPoints, "60.000")
+	}
+}
+
+// Grouping must not change what the document is worth - only how it is arranged. This is
+// the check that catches a bucket dropped on the way through.
+func TestBuildSupplierReport_GroupingDoesNotChangeTheTotals(t *testing.T) {
+	lines := []schemas.SupplierIssuanceResponse{
+		lineFromAccount("acc-1", "Ambrosina", 20000, intPtr(1650)),
+		lineFromAccount("acc-2", "Zulmira", 31000, intPtr(1650)),
+	}
+
+	byAccount, _ := buildSupplierReport(oneBalance(lines...), noBrands, "03/08/2026", groupByAccount)
+	byAdmin, _ := buildSupplierReport(administratorBalance(lines...), noBrands, "03/08/2026", groupByAdministrator)
+
+	if byAccount.GrandTotal != "" && byAccount.GrandTotal == byAdmin.GrandTotal {
+		return // both multi-section and equal, which is the point
+	}
+	// One section against two means only the sections' own totals are comparable.
+	sum := byAdmin.Groups[0].TotalAmount
+	if want := byAccount.Groups[0].Sections[0].TotalAmount; sum != want {
+		t.Errorf("administrator subtotal %q does not match the account total %q", sum, want)
+	}
+}
+
+// A document grouped by administrator has no single account to be named after.
+func TestSupplierReportFilename_UsesTheGroupWhenThereIsOne(t *testing.T) {
+	model := supplierreport.ViewModel{Groups: []supplierreport.Group{{
+		Label:    "Maria Souza",
+		Sections: []supplierreport.Section{{AccountLabel: "Ambrosina"}, {AccountLabel: "Zulmira"}},
+	}}}
+
+	if got := supplierReportFilename(model); got != "resumo-maria-souza.pdf" {
+		t.Errorf("filename: got %q, want %q", got, "resumo-maria-souza.pdf")
 	}
 }

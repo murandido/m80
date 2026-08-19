@@ -1,0 +1,20 @@
+-- Reconciling what the agency owes a supplier is done by eye, a period at a time,
+-- and until now nothing recorded how far that got. Reopening the screen the next
+-- day meant starting the sweep over, or trusting memory about where it stopped.
+--
+-- reviewed is that mark, and it lives on the issuance rather than on the account
+-- row the screen groups into: the grouping is computed per request from the
+-- period and the filters, so a flag stored against it would vanish the moment the
+-- operator changed either. On the issuance it survives changing the period, the
+-- filters and the grouping - which is exactly when it is needed.
+--
+-- Deliberately NOT the same thing as being paid. Payment lives on the sell side,
+-- in sales/sale_payments, and the supplier side has no ledger at all today; this
+-- is a control marking of who already looked, and the two can disagree in both
+-- directions on purpose.
+--
+-- NOT NULL with a default because there is no undecided state - an issuance has
+-- either been checked or it has not, and false is what every existing row means.
+-- Postgres writes a default into the catalogue instead of rewriting the table, so
+-- this stays cheap on a table with real data in it.
+ALTER TABLE issuances ADD COLUMN reviewed BOOLEAN NOT NULL DEFAULT false;

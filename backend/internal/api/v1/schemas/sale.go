@@ -97,6 +97,9 @@ type UpdateSupplierIssuancesRequest struct {
 	CostOfTheThousand *int `json:"cost_of_the_thousand" validate:"omitempty,min=0" example:"1650"`
 	// TaxesIncludedInCost says whether the taxes are reimbursed on these issuances.
 	TaxesIncludedInCost *bool `json:"taxes_included_in_cost" example:"true"`
+	// Reviewed marks these issuances as already checked while reconciling. Unlike the two
+	// terms above it changes no money - it records who has already looked.
+	Reviewed *bool `json:"reviewed" example:"true"`
 }
 
 // UpdateSupplierIssuancesResponse reports how many issuances the write actually touched,
@@ -120,6 +123,11 @@ type UpdateSupplierIssuancesResponse struct {
 // from CostOfTheThousand.
 type SupplierIssuanceResponse struct {
 	IssuanceID string `json:"issuance_id"`
+	// AccountID and AccountLabel say which account the line came out of. Redundant when the
+	// view is grouped by account and the point of the line when it is grouped by
+	// administrator, where one row mixes several accounts.
+	AccountID    string `json:"account_id"`
+	AccountLabel string `json:"account_label"`
 	// Kind is "issued" or "refund".
 	Kind string `json:"kind" example:"issued"`
 	// Date is the issuance's created_at, or its cancelled_at on a refund line.
@@ -137,12 +145,25 @@ type SupplierIssuanceResponse struct {
 	CostOfTheThousand *int `json:"cost_of_the_thousand" example:"1650"`
 	// TaxesIncludedInCost says whether Taxes is part of what is paid for this line.
 	TaxesIncludedInCost bool `json:"taxes_included_in_cost" example:"true"`
+	// Reviewed says somebody already checked this line while reconciling. Both lines of an
+	// issuance that was created and cancelled in the same period carry the same value: the
+	// flag is on the issuance, and the two lines are two views of it.
+	Reviewed bool `json:"reviewed" example:"false"`
 }
 
 // SupplierBalanceResponse is one row of the "Vendas > Fornecedores" table: how many miles
 // are owed to the administrator of a given account for a period, and the statement of the
 // issuances behind that figure.
 type SupplierBalanceResponse struct {
+	// GroupKey and GroupLabel identify the row itself, whichever way the caller asked the
+	// view to be grouped. The account fields below stay populated so a client that predates
+	// group_by keeps working; on an administrator-grouped response they describe one of the
+	// administrator's accounts, not the row, and GroupKey is the thing to key on.
+	GroupKey   string `json:"group_key"`
+	GroupLabel string `json:"group_label"`
+	// AccountCount is how many accounts fed this row - always 1 when grouped by account.
+	AccountCount int `json:"account_count" example:"3"`
+
 	AccountID           string  `json:"account_id"`
 	AccountLabel        string  `json:"account_label"`
 	LoyaltyProgramName  string  `json:"loyalty_program_name"`
