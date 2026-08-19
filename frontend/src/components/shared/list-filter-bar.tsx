@@ -49,8 +49,10 @@ function FilterBar({
   const hasAnyFilter = searchParams.toString() !== ""
 
   function clearAll() {
-    // Forget first, then navigate. The other way round, useStickyFilters would see
-    // the bare URL and immediately restore the cookie that was just dropped.
+    // useStickyFilters also drops the cookie when the URL goes bare on a screen the
+    // operator is already on, so this is belt and braces - but it happens now
+    // rather than on the next effect pass, and it says out loud that "Limpar
+    // filtros" is meant to be forgotten, not just navigated away from.
     clearStickyFilters(pathname)
     router.replace(pathname)
   }

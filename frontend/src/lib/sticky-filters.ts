@@ -51,10 +51,16 @@ function parseStickyFilters(raw: string | undefined): URLSearchParams | null {
   }
 }
 
+// One working day. A session cookie would be the obvious choice and is not good
+// enough: closing a tab never ends the session, only quitting the browser does,
+// and Chrome hands session cookies back when it restores tabs ("continue where
+// you left off", Ctrl+Shift+T). Filters were surviving for days that way. An
+// explicit lifetime is the only one we control, and it guarantees the thing that
+// actually matters - "Hoje + eu" on a fresh morning, never yesterday's filters.
+const MAX_AGE_SECONDS = 8 * 60 * 60
+
 export function writeStickyFilters(pathname: string, query: string): void {
-  // No Max-Age: a session cookie dies with the browser, which is the lifetime the
-  // operator expects. "Hoje + eu" is the right thing to see on a fresh morning.
-  document.cookie = `${stickyFilterCookieName(pathname)}=${encodeURIComponent(query)}; path=/; SameSite=Lax`
+  document.cookie = `${stickyFilterCookieName(pathname)}=${encodeURIComponent(query)}; path=/; Max-Age=${MAX_AGE_SECONDS}; SameSite=Lax`
 }
 
 export function clearStickyFilters(pathname: string): void {

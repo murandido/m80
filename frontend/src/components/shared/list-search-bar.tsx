@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useId, useState } from "react"
+import { useEffect, useId, useRef, useState } from "react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { Search, X } from "lucide-react"
 import {
@@ -9,6 +9,7 @@ import {
   InputGroupInput,
 } from "@/components/ui/input-group"
 import { Label } from "@/components/ui/label"
+import { clearStickyFilters, writeStickyFilters } from "@/lib/sticky-filters"
 
 interface ListSearchBarProps {
   /** Names the fields the search covers, so nobody has to guess what it matches. */
@@ -28,31 +29,63 @@ export function ListSearchBar({
   const urlQuery = searchParams.get("q") ?? ""
   const [value, setValue] = useState(urlQuery)
 
-  // Re-seed when the URL's q changes from outside this component - which is what
-  // happens when useStickyFilters restores a remembered filter, since that lands
-  // after mount. Without it the list comes back filtered while the box reads
-  // empty, and the debounce below then wipes the filter the operator never saw.
+  // The `q` this component last navigated to, or null when nothing it wrote is
+  // still travelling. It exists because router.replace into a Server Component
+  // only lands when the RSC payload comes back, so without it the box cannot tell
+  // "the URL changed because someone else changed it" from "the URL is echoing
+  // what I typed several keystrokes ago" - and it would obey the echo.
+  const pendingWrite = useRef<string | null>(null)
+
+  // Re-seed when `q` changes from outside this component - which is what happens
+  // when useStickyFilters restores a remembered filter, since that lands after
+  // mount. Without it the list comes back filtered while the box reads empty, and
+  // the debounce below then wipes the filter the operator never saw.
   const [lastUrlQuery, setLastUrlQuery] = useState(urlQuery)
   if (urlQuery !== lastUrlQuery) {
     setLastUrlQuery(urlQuery)
-    setValue(urlQuery)
+    if (pendingWrite.current === null) {
+      setValue(urlQuery)
+    } else if (urlQuery === pendingWrite.current) {
+      // Our own write arrived; `value` already says this. Anything typed since is
+      // newer than the URL and the effect below will carry it over.
+      pendingWrite.current = null
+    }
+    // Otherwise this is a stale echo of a write the operator has already typed
+    // past - deleting "joao" one character at a time makes several of them - and
+    // obeying it would put the deleted characters back and, worse, leave `value`
+    // matching the URL so the real deletion is never written at all.
   }
 
   // Debounce URL updates so we don't refetch on every keystroke. Resetting to
   // page 1 keeps the result window valid after the filter changes.
   useEffect(() => {
+    // Compared trimmed because it is written trimmed. Comparing the raw value
+    // against a trimmed URL never converges for a lone space, and re-arms this
+    // timeout forever.
+    const desired = value.trim()
     const current = searchParams.get("q") ?? ""
-    if (value === current) return
+    if (desired === current) return
 
     const timeout = setTimeout(() => {
       const params = new URLSearchParams(searchParams.toString())
-      if (value.trim()) {
-        params.set("q", value.trim())
+      if (desired) {
+        params.set("q", desired)
       } else {
         params.delete("q")
       }
       params.delete("page")
-      router.replace(`${pathname}?${params.toString()}`)
+
+      // Keep the memory in step with the navigation instead of letting
+      // useStickyFilters observe the new URL against a cookie one step behind.
+      const query = params.toString()
+      if (query) {
+        writeStickyFilters(pathname, query)
+      } else {
+        clearStickyFilters(pathname)
+      }
+
+      pendingWrite.current = desired
+      router.replace(`${pathname}?${query}`)
     }, 350)
 
     return () => clearTimeout(timeout)

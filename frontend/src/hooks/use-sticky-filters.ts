@@ -1,11 +1,15 @@
 "use client"
 
-import { useEffect } from "react"
+import { useEffect, useRef } from "react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
-import { readStickyFiltersFromDocument, writeStickyFilters } from "@/lib/sticky-filters"
+import {
+  clearStickyFilters,
+  readStickyFiltersFromDocument,
+  writeStickyFilters,
+} from "@/lib/sticky-filters"
 
 // Keeps a screen's filters across navigation, from a single place: it remembers
-// whatever the URL currently says, and puts it back when the operator returns to a
+// whatever the URL currently says, and puts it back when the operator arrives at a
 // bare URL (every sidebar link points at the path with no query string).
 //
 // Restoring writes the filters back into the URL instead of only rendering with
@@ -20,16 +24,33 @@ export function useStickyFilters() {
   const pathname = usePathname()
   const searchParams = useSearchParams()
 
+  // Restoring happens once per arrival at a screen, not every time the URL goes
+  // bare. Without this the hook cannot tell "the operator just got here" from "the
+  // operator just emptied the filters", and it would put back what they cleared -
+  // which is what made the search box retype itself the moment it was emptied.
+  //
+  // Keyed by pathname rather than a plain boolean so a hook instance that outlives
+  // a route change still treats the new screen as a fresh arrival.
+  const settledFor = useRef<string | null>(null)
+
   useEffect(() => {
     const current = searchParams.toString()
+
     if (current !== "") {
+      settledFor.current = pathname
       writeStickyFilters(pathname, current)
       return
     }
 
-    // Bare URL: either the operator just arrived, or they cleared the filters -
-    // and clearing deletes the cookie first, so there is nothing to put back.
-    const remembered = readStickyFiltersFromDocument(pathname)
-    if (remembered) router.replace(`${pathname}?${remembered}`)
+    if (settledFor.current !== pathname) {
+      settledFor.current = pathname
+      const remembered = readStickyFiltersFromDocument(pathname)
+      if (remembered) router.replace(`${pathname}?${remembered}`)
+      return
+    }
+
+    // Bare URL after the operator was already here: they cleared the filters
+    // themselves. Forget, so coming back to the screen does not resurrect them.
+    clearStickyFilters(pathname)
   }, [pathname, router, searchParams])
 }
