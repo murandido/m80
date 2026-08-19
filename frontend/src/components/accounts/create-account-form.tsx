@@ -20,6 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Switch } from "@/components/ui/switch"
 import { Separator } from "@/components/ui/separator"
 import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
@@ -58,6 +59,7 @@ export function CreateAccountForm({ people, loyaltyPrograms }: CreateAccountForm
       holder_id: "",
       administrator_id: "",
       category: "unidentified" as const,
+      waives_redemption_fee: false,
       nicknames: [],
     },
   })
@@ -243,6 +245,32 @@ export function CreateAccountForm({ people, loyaltyPrograms }: CreateAccountForm
                         {fieldState.invalid && (
                           <FieldError errors={[fieldState.error]} />
                         )}
+                      </>
+                    )}
+                  />
+                </div>
+
+                {/* waives_redemption_fee */}
+                <div className="flex flex-col gap-1 text-sm">
+                  <Controller
+                    name="waives_redemption_fee"
+                    control={form.control}
+                    render={({ field }) => (
+                      <>
+                        <div className="flex items-center justify-between gap-3">
+                          <FieldLabel htmlFor="waives-redemption-fee">
+                            Isenta de taxa de resgate
+                          </FieldLabel>
+                          <Switch
+                            id="waives-redemption-fee"
+                            checked={field.value ?? false}
+                            onCheckedChange={field.onChange}
+                            disabled={isPending}
+                          />
+                        </div>
+                        <p className="text-xs text-slate-500">
+                          É o caso das contas Azul Diamante Unique.
+                        </p>
                       </>
                     )}
                   />

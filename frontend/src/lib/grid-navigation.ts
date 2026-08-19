@@ -8,8 +8,8 @@ export type Direction = "down" | "up" | "tab-right" | "tab-left"
 
 // "Cia aérea", "Localizador", "Data do voo", "Passageiro principal", "Origem",
 // "Destino", "Pontos", "Valor milheiro", "Taxas", "Valor total" (calculated),
-// "Conta", "Emissor", "Agência", "Status", "Observação".
-export const COLUMN_COUNT = 15
+// "Conta", "Emissor", "Agência", "Status", "Observação", "Taxa de resgate".
+export const COLUMN_COUNT = 16
 export const LOCATOR_COLUMN_INDEX = 1
 export const PASSENGER_COLUMN_INDEX = 3
 export const ORIGIN_COLUMN_INDEX = 4
@@ -18,6 +18,7 @@ export const VALUE_OF_THE_THOUSAND_COLUMN_INDEX = 7
 export const CALCULATED_COLUMN_INDEX = 9
 export const ACCOUNT_COLUMN_INDEX = 10
 export const OBSERVATION_COLUMN_INDEX = 14
+export const REDEMPTION_FEE_COLUMN_INDEX = 15
 
 function isSkippableRow(row: NavigableRow): boolean {
   return row.status === "cancelled"

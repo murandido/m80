@@ -13,6 +13,12 @@ export const loyaltyProgramSchema = z.object({
   cpf_limit: z.number().nullish(),
   cpf_limit_window: z.enum(["calendar_year", "rolling_12_months"]).nullish(),
   cpf_limit_mode: z.enum(["distinct_people", "per_issuance"]).nullish(),
+  // The airline's redemption fee, charged per passenger and per trecho when the ticket is
+  // issued fewer than redemption_fee_advance_days days before the flight. Null means the
+  // program charges no such fee, which is not a fee of zero: nothing is computed at all.
+  redemption_fee_domestic_cents: z.number().nullish(),
+  redemption_fee_international_cents: z.number().nullish(),
+  redemption_fee_advance_days: z.number().nullish(),
   created_at: z.string(),
   updated_at: z.string(),
   // Same as accountSchema.deleted_at: only ever set on a program reached through a
@@ -53,6 +59,18 @@ export const createLoyaltyProgramSchema = {
     cpf_limit_mode: z
       .union([z.literal(""), z.enum(["distinct_people", "per_issuance"])])
       .optional(),
+    // Same "" convention as the cap, and the same reason: an empty input is how the form
+    // says this program charges no redemption fee. The two amounts are typed in reais and
+    // converted to centavos by the action; the window is a plain count of days.
+    redemption_fee_domestic: z
+      .union([z.literal(""), z.string().regex(/^\d+([.,]\d{1,2})?$/, "Informe um valor")])
+      .optional(),
+    redemption_fee_international: z
+      .union([z.literal(""), z.string().regex(/^\d+([.,]\d{1,2})?$/, "Informe um valor")])
+      .optional(),
+    redemption_fee_advance_days: z
+      .union([z.literal(""), z.string().regex(/^\d+$/, "Informe um número inteiro")])
+      .optional(),
   }),
   response: z.object({
     success: z.boolean(),
@@ -79,6 +97,18 @@ export const updateLoyaltyProgramSchema = {
       .optional(),
     cpf_limit_mode: z
       .union([z.literal(""), z.enum(["distinct_people", "per_issuance"])])
+      .optional(),
+    // Same "" convention as the cap, and the same reason: an empty input is how the form
+    // says this program charges no redemption fee. The two amounts are typed in reais and
+    // converted to centavos by the action; the window is a plain count of days.
+    redemption_fee_domestic: z
+      .union([z.literal(""), z.string().regex(/^\d+([.,]\d{1,2})?$/, "Informe um valor")])
+      .optional(),
+    redemption_fee_international: z
+      .union([z.literal(""), z.string().regex(/^\d+([.,]\d{1,2})?$/, "Informe um valor")])
+      .optional(),
+    redemption_fee_advance_days: z
+      .union([z.literal(""), z.string().regex(/^\d+$/, "Informe um número inteiro")])
       .optional(),
   }),
   response: z.object({

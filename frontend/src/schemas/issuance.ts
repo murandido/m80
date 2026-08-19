@@ -45,6 +45,21 @@ export const issuanceSchema = z.object({
   points: z.number(),
   value_of_the_thousand: z.number(),
   taxes: z.number().nullable(),
+  // The airline's redemption fee this issuance did not pay, because the account it was made
+  // on is exempt. Null on every ordinary account and whenever the rule could not be applied -
+  // which is not the same as zero, and zero is a real answer: the rule ran and there was no
+  // fee to avoid. It does not take part in what the client owes.
+  //
+  // Tolerated as absent rather than required: the API and the panel are published by
+  // independent labels, so this screen can be live for days against a backend that does not
+  // send the field yet.
+  redemption_fee_saved_cents: z.number().nullish(),
+  // An operator typed the amount by hand, which is what stops the next Traveos sync from
+  // recomputing over the correction.
+  redemption_fee_manual: z
+    .boolean()
+    .nullish()
+    .transform((value) => value ?? false),
   account_id: z.string(),
   account: accountSchema.nullish(),
   account_nickname_id: z.string().nullable(),
@@ -110,6 +125,9 @@ export const createIssuanceSchema = {
     origin_iata_code: z.string().optional(),
     destination_iata_code: z.string().optional(),
     taxes: z.number().int().optional(),
+    // Nullable, not just optional: an explicit null is what releases the issuance back to
+    // the automatic calculation, and the backend tells the two apart by key presence.
+    redemption_fee_saved_cents: z.number().int().nullable().optional(),
     observation: z.string().optional(),
     // ISO YYYY-MM-DD - converted from the grid's DD/MM/AAAA mask before sending.
     flight_date: z.string().optional(),
@@ -143,6 +161,9 @@ export const updateIssuanceSchema = {
     points: z.number().int().optional(),
     value_of_the_thousand: z.number().int().optional(),
     taxes: z.number().int().optional(),
+    // Nullable, not just optional: an explicit null is what releases the issuance back to
+    // the automatic calculation, and the backend tells the two apart by key presence.
+    redemption_fee_saved_cents: z.number().int().nullable().optional(),
     observation: z.string().optional(),
     status: issuanceStatusSchema.optional(),
     // ISO YYYY-MM-DD - converted from the grid's DD/MM/AAAA mask before sending.

@@ -30,6 +30,9 @@
     "cpf_limit": 5,
     "cpf_limit_window": "calendar_year",
     "cpf_limit_mode": "distinct_people",
+    "redemption_fee_domestic_cents": 6990,
+    "redemption_fee_international_cents": 17490,
+    "redemption_fee_advance_days": 120,
     "aliases": [
       "TUDOAZUL",
       "TUDO AZUL"

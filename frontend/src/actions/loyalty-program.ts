@@ -2,6 +2,7 @@
 
 import { cookies } from "next/headers"
 import { env } from "@/lib/env"
+import { parseCurrencyBRLInput } from "@/lib/currency"
 import { createLoyaltyProgramSchema, updateLoyaltyProgramSchema } from "@/schemas/loyalty-program"
 import { z } from "zod"
 
@@ -17,7 +18,30 @@ function withNullableCaps<T extends Record<string, unknown>>(data: T) {
   if (typeof normalized.cpf_limit === "string") {
     normalized.cpf_limit = Number(normalized.cpf_limit)
   }
+
+  // The redemption fee's three parameters follow the same "" = "not configured" rule. The
+  // two amounts are typed in reais and stored in centavos, so they are renamed on the way
+  // out as well as converted - the form field is not the API field.
+  normalized.redemption_fee_domestic_cents = toCents(normalized.redemption_fee_domestic)
+  normalized.redemption_fee_international_cents = toCents(
+    normalized.redemption_fee_international,
+  )
+  delete normalized.redemption_fee_domestic
+  delete normalized.redemption_fee_international
+  normalized.redemption_fee_advance_days =
+    normalized.redemption_fee_advance_days === "" ||
+    normalized.redemption_fee_advance_days === undefined
+      ? null
+      : Number(normalized.redemption_fee_advance_days)
+
   return normalized
+}
+
+// Reais as typed into the form, into integer centavos. Null for an empty field, which is
+// what tells the API this program has no fee at all.
+function toCents(value: unknown): number | null {
+  if (typeof value !== "string" || value.trim() === "") return null
+  return parseCurrencyBRLInput(value)
 }
 
 export async function createLoyaltyProgramAction(

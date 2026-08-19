@@ -45,6 +45,7 @@ import {
   COLUMN_COUNT,
   LOCATOR_COLUMN_INDEX,
   OBSERVATION_COLUMN_INDEX,
+  REDEMPTION_FEE_COLUMN_INDEX,
   clampMove,
   resolveNextCell,
   Direction,
@@ -62,6 +63,8 @@ import {
   syncIssuanceWithTraveosAction,
 } from "@/actions/issuance"
 import { CancelIssuanceInput } from "@/schemas/issuance"
+import { RedemptionFeeSummary } from "@/components/issuances/redemption-fee-summary"
+import { acceptsRedemptionFee } from "@/components/issuances/redemption-fee"
 import { createAccountForIssuanceAction } from "@/actions/account"
 import { z } from "zod"
 
@@ -83,6 +86,9 @@ const COLUMN_LABELS = [
   // Last, not next to Agência: inserting it in the middle would renumber every
   // column index in grid-cell.tsx, column-fields.ts and grid-navigation.ts.
   "Observação",
+  // Appended for the same reason, even though it reads as money and would sit more
+  // naturally next to Taxas.
+  "Taxa de resgate",
 ]
 
 // Overlays the records this session learned about on top of the server-rendered list. The
@@ -249,6 +255,9 @@ export function IssuancesGrid({
   // Mirrors syncingRowKeys for the stable callbacks, same reason as interactionRef:
   // onCellClick must not change identity every time a sync starts or ends.
   const syncingRowKeysRef = useRef(syncingRowKeys)
+  // Mirrors the merged account list, same reason again: onCellClick needs to know whether
+  // the row's account is exempt before it lets the redemption fee cell into edit mode.
+  const accountsRef = useRef<Account[]>([])
   // Undo/redo history. Each entry is the inverse patch (the field values as they were
   // before a change) plus the row it targets. Every value mutation funnels through
   // applyPatch, which records the inverse here; Ctrl+Z/Ctrl+Y replay entries between the
@@ -275,6 +284,10 @@ export function IssuancesGrid({
   useEffect(() => {
     syncingRowKeysRef.current = syncingRowKeys
   }, [syncingRowKeys])
+
+  useEffect(() => {
+    accountsRef.current = accounts
+  }, [accounts])
 
   useEffect(() => {
     rowsRef.current = rows
@@ -441,10 +454,18 @@ export function IssuancesGrid({
         return
       }
 
-      // Only `status` is taken from the response: it's the sole displayed field the server
-      // derives on its own, and a fuller merge risks a late reply clobbering a cell the
-      // user has edited since this save started.
-      if (result.issuance) updateRow(row.key, { status: result.issuance.status })
+      // `status` and the redemption fee are taken from the response: they are the displayed
+      // fields the server derives on its own, and the fee moves on patches that never
+      // mention it - clearing the cell recomputes it, and moving the row to an ordinary
+      // account wipes it. A fuller merge is still avoided, since a late reply would clobber
+      // a cell the user has edited since this save started.
+      if (result.issuance) {
+        updateRow(row.key, {
+          status: result.issuance.status,
+          redemption_fee_saved_cents: result.issuance.redemption_fee_saved_cents ?? null,
+          redemption_fee_manual: result.issuance.redemption_fee_manual,
+        })
+      }
 
       flashSaveStatus(row.key, "success")
     },
@@ -538,6 +559,12 @@ export function IssuancesGrid({
     "issuance.deleted": scheduleRefresh,
   })
 
+  // The redemption fee column measures an exemption an ordinary account does not have, so
+  // every path that would write into it is closed there: click-to-edit, F2, type-to-replace,
+  // Delete and paste. See acceptsRedemptionFee.
+  const isLockedRedemptionFee = (c: number, row: IssuanceRow | undefined): boolean =>
+    c === REDEMPTION_FEE_COLUMN_INDEX && row !== undefined && !acceptsRedemptionFee(row, accounts)
+
   const onCellClick = useCallback((r: number, c: number) => {
     activeCellSaveRef.current?.()
     activeCellSaveRef.current = null
@@ -546,11 +573,13 @@ export function IssuancesGrid({
     // A row with a Traveos fetch in flight is locked too: the fetch overwrites the
     // route and the passenger, so anything typed into it now would be replaced
     // seconds later without the operator seeing why.
+    // The redemption fee column is locked on an ordinary account - see acceptsRedemptionFee.
     const row = rowsRef.current[r]
     const editable =
       c !== CALCULATED_COLUMN_INDEX &&
       row?.status !== "cancelled" &&
-      !(row && isRowSyncing(row, syncingRowKeysRef.current))
+      !(row && isRowSyncing(row, syncingRowKeysRef.current)) &&
+      !(c === REDEMPTION_FEE_COLUMN_INDEX && row && !acceptsRedemptionFee(row, accountsRef.current))
     dispatch({ type: "CLICK_CELL", r, c, editable })
   }, [])
 
@@ -1008,6 +1037,7 @@ export function IssuancesGrid({
 
     if (e.key === "F2") {
       if (rowIsCancelled) return
+      if (isLockedRedemptionFee(interaction.sel.c, rows[interaction.sel.r])) return
       e.preventDefault()
       dispatch({ type: "ENTER_EDIT" })
       return
@@ -1017,6 +1047,7 @@ export function IssuancesGrid({
       if (rowIsCancelled) return
       const patch = clearPatchForColumn(interaction.sel.c)
       const row = rows[interaction.sel.r]
+      if (isLockedRedemptionFee(interaction.sel.c, row)) return
       if (patch && row) {
         e.preventDefault()
         applyPatch(row, patch)
@@ -1036,6 +1067,7 @@ export function IssuancesGrid({
 
     if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
       if (rowIsCancelled) return
+      if (isLockedRedemptionFee(interaction.sel.c, rows[interaction.sel.r])) return
       dispatch({ type: "TYPE_REPLACE", char: e.key })
     }
   }
@@ -1069,6 +1101,7 @@ export function IssuancesGrid({
     if (interaction.sel.c === CALCULATED_COLUMN_INDEX) return
     // A cancelled row is read-only - a paste must not seed an edit into it.
     if (rows[interaction.sel.r]?.status === "cancelled") return
+    if (isLockedRedemptionFee(interaction.sel.c, rows[interaction.sel.r])) return
     e.preventDefault()
     const text = e.clipboardData.getData("text/plain")
     if (text) dispatch({ type: "TYPE_REPLACE", char: text })
@@ -1343,6 +1376,8 @@ export function IssuancesGrid({
           </TableBody>
         </table>
       </div>
+
+      <RedemptionFeeSummary rows={rows} />
 
       {/* Confirmation for the keyboard row-delete (Ctrl+Shift+Backspace). The per-row
           trash button in RowActions has its own trigger-based dialog; this one is opened

@@ -46,9 +46,25 @@ type Issuance struct {
 	// agency owes the supplier. It is a control marking and not a payment: the sell side
 	// settles through sales/sale_payments, the supplier side has no ledger, and the two are
 	// meant to be able to disagree in both directions. Admin-only, like the two above.
-	Reviewed  bool     `gorm:"column:reviewed;not null;default:false" json:"reviewed"`
-	AccountID string   `gorm:"column:account_id;type:uuid;not null" json:"account_id"`
-	Account   *Account `gorm:"foreignKey:AccountID;references:ID" json:"account,omitempty"`
+	Reviewed bool `gorm:"column:reviewed;not null;default:false" json:"reviewed"`
+	// RedemptionFeeSavedCents is the airline's redemption fee this issuance did NOT pay
+	// because the account it was made on is exempt - Azul's Diamante Unique. It is what
+	// prices the decision of issuing there rather than on an ordinary account.
+	//
+	// Nil on every ordinary account, and nil whenever the rule could not be applied (no
+	// synced itinerary, or a program with no fee configured). Deliberately not zero: zero
+	// would claim the rule ran and found nothing to save.
+	//
+	// What an ordinary account actually paid the airline is not recorded anywhere: it is
+	// settled outside this system and has no reader here. Nor does this take part in what
+	// the client owes - see sale.PointsValueCents.
+	RedemptionFeeSavedCents *int `gorm:"column:redemption_fee_saved_cents" json:"redemption_fee_saved_cents"`
+	// RedemptionFeeManual is set the moment an operator types the amount by hand, and is
+	// what stops the next Traveos sync from overwriting the correction. Clearing the cell
+	// turns it off and hands the issuance back to the rule.
+	RedemptionFeeManual bool     `gorm:"column:redemption_fee_manual;not null;default:false" json:"redemption_fee_manual"`
+	AccountID           string   `gorm:"column:account_id;type:uuid;not null" json:"account_id"`
+	Account             *Account `gorm:"foreignKey:AccountID;references:ID" json:"account,omitempty"`
 	// AccountNicknameID records which of the account's aliases the operator picked.
 	// It is a FK rather than a copied string so renaming an alias propagates to past
 	// issuances instead of leaving them showing a stale name.

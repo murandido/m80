@@ -26,10 +26,16 @@ type loyaltyProgramSeedRecord struct {
 	// program from scratch. Migration 37 sets the same values on databases that already
 	// had the programs - the seeder runs after the migrations, so it cannot be the only
 	// source. Nil for a program whose rule nobody has researched.
-	CPFLimit       *int     `json:"cpf_limit"`
-	CPFLimitWindow *string  `json:"cpf_limit_window"`
-	CPFLimitMode   *string  `json:"cpf_limit_mode"`
-	Aliases        []string `json:"aliases"`
+	CPFLimit       *int    `json:"cpf_limit"`
+	CPFLimitWindow *string `json:"cpf_limit_window"`
+	CPFLimitMode   *string `json:"cpf_limit_mode"`
+	// The redemption fee's parameters, same arrangement as the cap above: migration 40
+	// sets them on databases that already had the program, and this covers the ones the
+	// seeder creates from scratch. Nil for a program that charges no such fee.
+	RedemptionFeeDomesticCents      *int     `json:"redemption_fee_domestic_cents"`
+	RedemptionFeeInternationalCents *int     `json:"redemption_fee_international_cents"`
+	RedemptionFeeAdvanceDays        *int     `json:"redemption_fee_advance_days"`
+	Aliases                         []string `json:"aliases"`
 }
 
 // SeedLoyaltyPrograms creates the loyalty programs that are missing, and stops
@@ -80,6 +86,10 @@ func SeedLoyaltyPrograms(db *gorm.DB) error {
 				CPFLimit:         record.CPFLimit,
 				CPFLimitWindow:   record.CPFLimitWindow,
 				CPFLimitMode:     record.CPFLimitMode,
+
+				RedemptionFeeDomesticCents:      record.RedemptionFeeDomesticCents,
+				RedemptionFeeInternationalCents: record.RedemptionFeeInternationalCents,
+				RedemptionFeeAdvanceDays:        record.RedemptionFeeAdvanceDays,
 			}
 			if err := tx.Create(&program).Error; err != nil {
 				return fmt.Errorf("creating loyalty program %s: %w", record.Code, err)

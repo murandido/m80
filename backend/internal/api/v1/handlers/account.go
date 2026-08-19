@@ -66,20 +66,21 @@ func toAccountResponseWithUsage(account data.Account, usage *acct.Usage) schemas
 	}
 
 	return schemas.AccountResponse{
-		ID:               account.ID,
-		Category:         account.Category,
-		CPFUsage:         usage,
-		LoyaltyProgramID: account.LoyaltyProgramID,
-		LoyaltyProgram:   loyaltyProgram,
-		Login:            account.Login,
-		Password:         account.Password,
-		HolderID:         account.HolderID,
-		AdministratorID:  account.AdministratorID,
-		Nicknames:        nicknames,
-		Complete:         account.Complete,
-		CreatedAt:        account.CreatedAt,
-		UpdatedAt:        account.UpdatedAt,
-		DeletedAt:        archivedAt(account.DeletedAt),
+		ID:                  account.ID,
+		Category:            account.Category,
+		WaivesRedemptionFee: account.WaivesRedemptionFee,
+		CPFUsage:            usage,
+		LoyaltyProgramID:    account.LoyaltyProgramID,
+		LoyaltyProgram:      loyaltyProgram,
+		Login:               account.Login,
+		Password:            account.Password,
+		HolderID:            account.HolderID,
+		AdministratorID:     account.AdministratorID,
+		Nicknames:           nicknames,
+		Complete:            account.Complete,
+		CreatedAt:           account.CreatedAt,
+		UpdatedAt:           account.UpdatedAt,
+		DeletedAt:           archivedAt(account.DeletedAt),
 	}
 }
 
@@ -116,6 +117,9 @@ func (h *AccountHandler) CreateAccount(w http.ResponseWriter, r *http.Request) {
 		Password:         req.Password,
 		HolderID:         req.HolderID,
 		AdministratorID:  req.AdministratorID,
+	}
+	if req.WaivesRedemptionFee != nil {
+		account.WaivesRedemptionFee = *req.WaivesRedemptionFee
 	}
 	if req.Category != nil {
 		account.Category = *req.Category
@@ -354,6 +358,9 @@ func (h *AccountHandler) UpdateAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.AdministratorID != nil {
 		account.AdministratorID = req.AdministratorID
+	}
+	if req.WaivesRedemptionFee != nil {
+		account.WaivesRedemptionFee = *req.WaivesRedemptionFee
 	}
 	if req.Category != nil {
 		account.Category = *req.Category

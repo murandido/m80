@@ -10,7 +10,7 @@ import { applyPaddedThousandsMask } from "@/lib/number-mask"
 interface NumberCellProps extends CellStateProps {
   r: number
   c: number
-  field: "points" | "value_of_the_thousand" | "taxes"
+  field: "points" | "value_of_the_thousand" | "taxes" | "redemption_fee_saved_cents"
   mode: "integer" | "currency"
 }
 
@@ -64,6 +64,15 @@ export const NumberCell = memo(function NumberCell({ r, c, field, mode, row, isE
   function commit(direction: Direction | null) {
     if (savedRef.current) return
     savedRef.current = true
+
+    // An emptied cell clears the field, the same thing Delete on the selected cell does.
+    // Only a blank buffer counts: text that simply fails to parse ("abc", a stray "-")
+    // is a typo, and wiping the stored value over one would lose data the operator never
+    // meant to touch.
+    if (text.trim() === "") {
+      onSaveAndMove(r, { [field]: null } as Partial<IssuanceRow>, direction)
+      return
+    }
 
     const parsed = mode === "integer" ? parseIntOrNull(text) : parseCurrencyBRLInput(text)
     if (parsed === null) {

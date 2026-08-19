@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/input-group"
 import { Separator } from "@/components/ui/separator"
 import { CPFLimitFields } from "./cpf-limit-fields"
+import { RedemptionFeeFields } from "./redemption-fee-fields"
 import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 import { createLoyaltyProgramSchema } from "@/schemas/loyalty-program"
@@ -45,6 +46,9 @@ export function CreateLoyaltyProgramForm({ airlines }: CreateLoyaltyProgramFormP
       cpf_limit: "",
       cpf_limit_window: "",
       cpf_limit_mode: "",
+      redemption_fee_domestic: "",
+      redemption_fee_international: "",
+      redemption_fee_advance_days: "",
     },
   })
 
@@ -209,6 +213,13 @@ export function CreateLoyaltyProgramForm({ airlines }: CreateLoyaltyProgramFormP
 
                 <Separator />
                 <CPFLimitFields control={form.control} disabled={isPending} idPrefix="create" />
+
+                <Separator />
+                <RedemptionFeeFields
+                  control={form.control}
+                  disabled={isPending}
+                  idPrefix="create"
+                />
 
                 <Separator />
 

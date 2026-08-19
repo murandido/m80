@@ -24,8 +24,15 @@ export async function createAccountAction(
   const cookieStore = await cookies()
   const token = cookieStore.get("auth_token")?.value
 
-  const { loyalty_program_id, nicknames, ...rest } = data
-  const body = { loyalty_program_id, ...stripEmptyFields(rest) }
+  // waives_redemption_fee is pulled out of stripEmptyFields on purpose: that helper drops
+  // every falsy value, and `false` is a real answer here, not an empty field. Left inside,
+  // turning the exemption off would send nothing and the account would stay exempt.
+  const { loyalty_program_id, nicknames, waives_redemption_fee, ...rest } = data
+  const body = {
+    loyalty_program_id,
+    waives_redemption_fee: waives_redemption_fee ?? false,
+    ...stripEmptyFields(rest),
+  }
 
   try {
     const res = await fetch(`${env.BACKEND_URL}/api/v1/accounts`, {
@@ -83,7 +90,12 @@ export async function updateAccountAction(
   const cookieStore = await cookies()
   const token = cookieStore.get("auth_token")?.value
 
-  const body = stripEmptyFields(data)
+  // Same reason as in createAccountAction: `false` must survive the strip.
+  const { waives_redemption_fee, ...rest } = data
+  const body = {
+    ...stripEmptyFields(rest),
+    ...(waives_redemption_fee === undefined ? {} : { waives_redemption_fee }),
+  }
 
   try {
     const res = await fetch(`${env.BACKEND_URL}/api/v1/accounts/${accountId}`, {

@@ -27,6 +27,14 @@ export interface IssuanceRow {
   points: number | null
   value_of_the_thousand: number | null // centavos
   taxes: number | null // centavos
+  // The airline's redemption fee this issuance did not pay, because the account it was made
+  // on is exempt. Centavos. Null on an ordinary account and whenever the rule could not be
+  // applied; zero means it ran and there was no fee to avoid. Does not take part in the
+  // row's "Valor total".
+  redemption_fee_saved_cents: number | null
+  // An operator typed the amount by hand, which stops the next Traveos sync recomputing
+  // over the correction. Read-only here: it is set by the server from the patch itself.
+  redemption_fee_manual: boolean
   account_id: string | null
   // Which of the account's aliases was picked. Null for accounts with no registered
   // alias, which are still selectable - see grid-cell.tsx.
@@ -97,6 +105,8 @@ export function issuanceToRow(issuance: Issuance): IssuanceRow {
     points: issuance.points,
     value_of_the_thousand: issuance.value_of_the_thousand,
     taxes: issuance.taxes,
+    redemption_fee_saved_cents: issuance.redemption_fee_saved_cents ?? null,
+    redemption_fee_manual: issuance.redemption_fee_manual,
     account_id: issuance.account_id,
     account_nickname_id: issuance.account_nickname_id,
     issuer_id: issuance.issuer_id,
@@ -140,6 +150,10 @@ export function makeDraftRow(
     points: null,
     value_of_the_thousand: null,
     taxes: null,
+    // A draft has no itinerary, so there is nothing to compute yet - the amount arrives from
+    // the server once the row exists and the Traveos sync has run.
+    redemption_fee_saved_cents: null,
+    redemption_fee_manual: false,
     account_id: null,
     account_nickname_id: null,
     issuer_id: issuerId ?? null,

@@ -55,6 +55,13 @@ export const accountSchema = z.object({
   // Defaulted rather than required: an older API that predates the category still answers
   // the panel, and the two are published by independent labels.
   category: accountCategorySchema.nullish().transform((value) => value ?? "unidentified"),
+  // The account pays no redemption fee at all - on Azul that is the Diamante Unique tier.
+  // Defaulted for the same reason as category: an API published before this field still
+  // parses, and false is what every account meant before it existed.
+  waives_redemption_fee: z
+    .boolean()
+    .nullish()
+    .transform((value) => value ?? false),
   cpf_usage: cpfUsageSchema.nullish(),
   complete: z.boolean(),
   created_at: z.string(),
@@ -86,6 +93,7 @@ export const createAccountSchema = {
     holder_id: optionalUuidField,
     administrator_id: optionalUuidField,
     category: accountCategorySchema.optional(),
+    waives_redemption_fee: z.boolean().optional(),
     nicknames: z.array(z.string().min(1)).optional(),
   }),
   response: z.object({
@@ -103,6 +111,7 @@ export const updateAccountSchema = {
     holder_id: optionalUuidField,
     administrator_id: optionalUuidField,
     category: accountCategorySchema.optional(),
+    waives_redemption_fee: z.boolean().optional(),
   }),
   response: z.object({
     success: z.boolean(),

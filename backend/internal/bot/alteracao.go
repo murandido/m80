@@ -185,6 +185,13 @@ func applyCorrection(tx *gorm.DB, issuance data.Issuance, fields alteracaoFields
 		return correctionOutcome{}, err
 	}
 
+	// A correction can move the account the issuance was made on, which is what decides
+	// whether the redemption fee is owed or merely saved. Same transaction as the write it
+	// derives from, like everywhere else.
+	if err := issuancesvc.RecalculateRedemptionFee(tx, corrected.ID); err != nil {
+		return correctionOutcome{}, err
+	}
+
 	return correctionOutcome{
 		Changed:      true,
 		IssuanceID:   corrected.ID,

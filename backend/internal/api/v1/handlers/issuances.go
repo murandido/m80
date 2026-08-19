@@ -112,25 +112,29 @@ func toIssuanceResponse(issuance data.Issuance) schemas.IssuanceResponse {
 		Points:              issuance.Points,
 		ValueOfTheThousand:  issuance.ValueOfTheThousand,
 		Taxes:               issuance.Taxes,
-		AccountID:           issuance.AccountID,
-		IssuerID:            issuance.IssuerID,
-		AgencyID:            issuance.AgencyID,
-		Complete:            issuance.Complete,
-		TraveosSyncedAt:     issuance.TraveosSyncedAt,
-		TraveosSyncingAt:    freshTraveosSyncing(issuance.TraveosSyncingAt),
-		TraveosAttemptedAt:  issuance.TraveosAttemptedAt,
-		Imported:            issuance.Imported,
-		Status:              deriveIssuanceStatus(issuance.Complete, issuance.CancelledAt),
-		AdditionalServices:  issuance.AdditionalServices,
-		Observation:         issuance.Observation,
-		Active:              issuance.Active,
-		CancelledAt:         issuance.CancelledAt,
-		CancelledByID:       issuance.CancelledByID,
-		RefundedPoints:      issuance.RefundedPoints,
-		RefundedTaxes:       issuance.RefundedTaxes,
-		CancellationFee:     issuance.CancellationFee,
-		CreatedAt:           issuance.CreatedAt,
-		UpdatedAt:           issuance.UpdatedAt,
+
+		RedemptionFeeSavedCents: issuance.RedemptionFeeSavedCents,
+		RedemptionFeeManual:     issuance.RedemptionFeeManual,
+
+		AccountID:          issuance.AccountID,
+		IssuerID:           issuance.IssuerID,
+		AgencyID:           issuance.AgencyID,
+		Complete:           issuance.Complete,
+		TraveosSyncedAt:    issuance.TraveosSyncedAt,
+		TraveosSyncingAt:   freshTraveosSyncing(issuance.TraveosSyncingAt),
+		TraveosAttemptedAt: issuance.TraveosAttemptedAt,
+		Imported:           issuance.Imported,
+		Status:             deriveIssuanceStatus(issuance.Complete, issuance.CancelledAt),
+		AdditionalServices: issuance.AdditionalServices,
+		Observation:        issuance.Observation,
+		Active:             issuance.Active,
+		CancelledAt:        issuance.CancelledAt,
+		CancelledByID:      issuance.CancelledByID,
+		RefundedPoints:     issuance.RefundedPoints,
+		RefundedTaxes:      issuance.RefundedTaxes,
+		CancellationFee:    issuance.CancellationFee,
+		CreatedAt:          issuance.CreatedAt,
+		UpdatedAt:          issuance.UpdatedAt,
 	}
 
 	if issuance.LoyaltyProgram != nil {
@@ -700,8 +704,24 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 	previousPassengerName := issuance.MainPassengerName
 	previousAccountID := issuance.AccountID
 
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		utils.SendError(w, r, http.StatusBadRequest, "Invalid JSON payload")
+		return
+	}
+
 	var req schemas.UpdateIssuanceRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.Unmarshal(body, &req); err != nil {
+		utils.SendError(w, r, http.StatusBadRequest, "Invalid JSON payload")
+		return
+	}
+
+	// Decoded a second time, the same way UpdateSupplierIssuances is: the struct carries
+	// the values, the raw map tells an omitted redemption fee (leave the correction alone)
+	// from an explicit null (drop it and let the rule recompute). Every other field here
+	// only needs "absent means unchanged", which a *int already says.
+	var present map[string]json.RawMessage
+	if err := json.Unmarshal(body, &present); err != nil {
 		utils.SendError(w, r, http.StatusBadRequest, "Invalid JSON payload")
 		return
 	}
@@ -786,6 +806,13 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 	if req.Taxes != nil {
 		issuance.Taxes = req.Taxes
 	}
+
+	// A value pins the correction; an explicit null releases the issuance and lets the
+	// recalculation at the end of the transaction fill the amount back in.
+	if _, present := present["redemption_fee_saved_cents"]; present {
+		issuance.RedemptionFeeManual = req.RedemptionFeeSavedCents != nil
+		issuance.RedemptionFeeSavedCents = req.RedemptionFeeSavedCents
+	}
 	if req.Observation != nil {
 		issuance.Observation = req.Observation
 	}
@@ -817,7 +844,7 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 		flightDate = &parsed
 	}
 
-	err := h.DB.Transaction(func(tx *gorm.DB) error {
+	err = h.DB.Transaction(func(tx *gorm.DB) error {
 		// The airline's requires_last_name/requires_purchase_number flags are
 		// enforced here rather than on create so the grid's autosave keeps
 		// working: a draft row is POSTed the moment its five mandatory fields
@@ -847,11 +874,18 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 			return err
 		}
 
-		if flightDate == nil {
-			return nil
+		if flightDate != nil {
+			if err := issuancesvc.UpsertPrimaryOutboundFlight(tx, issuance.ID, *flightDate); err != nil {
+				return err
+			}
 		}
 
-		return issuancesvc.UpsertPrimaryOutboundFlight(tx, issuance.ID, *flightDate)
+		// After the flight upsert, never before: the Save above runs while the departure
+		// date is still the old one, so a fee computed any earlier would be derived from
+		// the itinerary this very PATCH is replacing. Moving the issuance to another
+		// account matters just as much - the account is what decides whether the amount
+		// is owed or saved.
+		return issuancesvc.RecalculateRedemptionFee(tx, issuance.ID)
 	})
 
 	if err != nil {

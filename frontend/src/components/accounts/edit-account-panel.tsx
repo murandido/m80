@@ -22,6 +22,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
+import { Switch } from "@/components/ui/switch"
 import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 import { ACCOUNT_CATEGORY_OPTIONS } from "@/lib/account-category"
@@ -51,6 +52,7 @@ function toFormValues(account: Account): FormData {
     holder_id: account.holder_id ?? "",
     administrator_id: account.administrator_id ?? "",
     category: account.category,
+    waives_redemption_fee: account.waives_redemption_fee,
   }
 }
 
@@ -251,6 +253,35 @@ export function EditAccountPanel({
                       {fieldState.invalid && (
                         <FieldError errors={[fieldState.error]} />
                       )}
+                    </>
+                  )}
+                />
+              </div>
+
+
+              {/* waives_redemption_fee */}
+              <div className="flex flex-col gap-1 text-sm">
+                <Controller
+                  name="waives_redemption_fee"
+                  control={form.control}
+                  render={({ field }) => (
+                    <>
+                      <div className="flex items-center justify-between gap-3">
+                        <FieldLabel htmlFor="edit-account-waives-redemption-fee">
+                          Isenta de taxa de resgate
+                        </FieldLabel>
+                        <Switch
+                          id="edit-account-waives-redemption-fee"
+                          checked={field.value ?? false}
+                          onCheckedChange={field.onChange}
+                          disabled={isPending}
+                        />
+                      </div>
+                      <p className="text-xs text-slate-500">
+                        Contas Azul Diamante Unique não pagam a taxa de resgate. As emissões
+                        feitas aqui passam a registrar quanto foi economizado; nas demais
+                        contas a coluna fica vazia.
+                      </p>
                     </>
                   )}
                 />

@@ -43,9 +43,13 @@ func toLoyaltyProgramResponse(loyaltyProgram data.LoyaltyProgram) schemas.Loyalt
 		CPFLimit:         loyaltyProgram.CPFLimit,
 		CPFLimitWindow:   loyaltyProgram.CPFLimitWindow,
 		CPFLimitMode:     loyaltyProgram.CPFLimitMode,
-		CreatedAt:        loyaltyProgram.CreatedAt,
-		UpdatedAt:        loyaltyProgram.UpdatedAt,
-		DeletedAt:        archivedAt(loyaltyProgram.DeletedAt),
+
+		RedemptionFeeDomesticCents:      loyaltyProgram.RedemptionFeeDomesticCents,
+		RedemptionFeeInternationalCents: loyaltyProgram.RedemptionFeeInternationalCents,
+		RedemptionFeeAdvanceDays:        loyaltyProgram.RedemptionFeeAdvanceDays,
+		CreatedAt:                       loyaltyProgram.CreatedAt,
+		UpdatedAt:                       loyaltyProgram.UpdatedAt,
+		DeletedAt:                       archivedAt(loyaltyProgram.DeletedAt),
 	}
 }
 
@@ -91,6 +95,9 @@ func (h *LoyaltyProgramHandler) CreateLoyaltyProgram(w http.ResponseWriter, r *h
 	loyaltyProgram.CPFLimit = req.CPFLimit
 	loyaltyProgram.CPFLimitWindow = req.CPFLimitWindow
 	loyaltyProgram.CPFLimitMode = req.CPFLimitMode
+	loyaltyProgram.RedemptionFeeDomesticCents = req.RedemptionFeeDomesticCents
+	loyaltyProgram.RedemptionFeeInternationalCents = req.RedemptionFeeInternationalCents
+	loyaltyProgram.RedemptionFeeAdvanceDays = req.RedemptionFeeAdvanceDays
 
 	if err := h.DB.Create(&loyaltyProgram).Error; err != nil {
 		var pgErr *pgconn.PgError
@@ -242,6 +249,9 @@ func (h *LoyaltyProgramHandler) UpdateLoyaltyProgram(w http.ResponseWriter, r *h
 	loyaltyProgram.CPFLimit = req.CPFLimit
 	loyaltyProgram.CPFLimitWindow = req.CPFLimitWindow
 	loyaltyProgram.CPFLimitMode = req.CPFLimitMode
+	loyaltyProgram.RedemptionFeeDomesticCents = req.RedemptionFeeDomesticCents
+	loyaltyProgram.RedemptionFeeInternationalCents = req.RedemptionFeeInternationalCents
+	loyaltyProgram.RedemptionFeeAdvanceDays = req.RedemptionFeeAdvanceDays
 
 	if err := h.DB.Save(&loyaltyProgram).Error; err != nil {
 		var pgErr *pgconn.PgError

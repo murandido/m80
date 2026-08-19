@@ -38,10 +38,15 @@ type Account struct {
 	// "injunction" is an account under a court order suspending the cap, and
 	// "unidentified" is one nobody has classified yet - only "standard" is counted.
 	// See AccountCategory* below and migration 37.
-	Category  string    `gorm:"type:account_category;not null;default:'unidentified'" json:"category"`
-	Complete  bool      `gorm:"not null;default:false" json:"complete"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Category string `gorm:"type:account_category;not null;default:'unidentified'" json:"category"`
+	// WaivesRedemptionFee says this account pays no redemption fee at all - on Azul that
+	// is the Diamante Unique tier. Phrased as the effect rather than the tier because the
+	// effect is what the calculation needs, and because the fee itself is not tier-specific:
+	// every Azul level below Unique pays the same domestic amount today. See migration 40.
+	WaivesRedemptionFee bool      `gorm:"column:waives_redemption_fee;not null;default:false" json:"waives_redemption_fee"`
+	Complete            bool      `gorm:"not null;default:false" json:"complete"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
 	// Archiving, not a trash can to restore from. issuances.account_id is ON DELETE
 	// RESTRICT and issuances are themselves soft-deleted, so a real delete on an
 	// account that ever issued is refused by Postgres forever. Turning the delete

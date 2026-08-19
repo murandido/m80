@@ -16,6 +16,9 @@ type CreateAccountRequest struct {
 	// Category decides whether the program's beneficiary cap applies. Omitted means
 	// "unidentified", the honest default for an account nobody has classified.
 	Category *string `json:"category" validate:"omitempty,oneof=unidentified standard injunction"`
+	// WaivesRedemptionFee marks an account that pays no redemption fee - Azul's Diamante
+	// Unique. Omitted means false, which is what every account paid before this existed.
+	WaivesRedemptionFee *bool `json:"waives_redemption_fee" validate:"omitempty"`
 	// Complete overrides the automatically computed value when provided
 	Complete *bool `json:"complete" validate:"omitempty"`
 }
@@ -29,6 +32,11 @@ type UpdateAccountRequest struct {
 	HolderID         *string `json:"holder_id" validate:"omitempty,uuid"`
 	AdministratorID  *string `json:"administrator_id" validate:"omitempty,uuid"`
 	Category         *string `json:"category" validate:"omitempty,oneof=unidentified standard injunction"`
+	// WaivesRedemptionFee marks an account that pays no redemption fee - Azul's Diamante
+	// Unique. Changing it does not rewrite what past issuances already recorded: the saving
+	// is stored on the issuance and only moves when that issuance is written again. See
+	// data.Issuance.RedemptionFeeSavedCents.
+	WaivesRedemptionFee *bool `json:"waives_redemption_fee" validate:"omitempty"`
 	// Complete overrides the automatically recomputed value when provided
 	Complete *bool `json:"complete" validate:"omitempty"`
 }
@@ -48,6 +56,10 @@ type AccountResponse struct {
 	// Category is "unidentified", "standard" or "injunction" - the Portuguese labels
 	// live on the screen. See data.AccountCategory*.
 	Category string `json:"category"`
+	// WaivesRedemptionFee is true on an account exempt from the airline's redemption fee -
+	// Azul's Diamante Unique. It is what turns a computed fee into "saved" instead of
+	// "owed" on the issuances made through this account.
+	WaivesRedemptionFee bool `json:"waives_redemption_fee"`
 	// CPFUsage is how much of the program's beneficiary cap this account has consumed,
 	// and is null whenever there is no cap to report: an injunction suspends it, an
 	// unidentified account gives no basis to claim one, and a program nobody has
