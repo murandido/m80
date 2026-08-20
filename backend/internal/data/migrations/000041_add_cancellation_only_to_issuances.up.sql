@@ -1,0 +1,21 @@
+-- An estorno on the spreadsheet is a cancellation and nothing else. The booking it undoes
+-- was made on a day the panel never imported, so there is no issuance to cancel - the
+-- importer creates one anyway (internal/legacyimport.commitCancellation) purely so the
+-- refund has something to hang off. That ticket was never live here.
+--
+-- Which means the row is not an emission, and counting its points as miles issued makes
+-- the day net to zero when the sheet the operator is reconciling against reads minus the
+-- refund. This column is what lets the supplier balance drop the issued side and keep the
+-- refund side.
+--
+-- It has to be stored rather than derived, and that is the whole reason it exists: an
+-- issuance genuinely made and cancelled on the same tab has the same created_at and the
+-- same cancelled_at as one the importer invented, and the same pair of audit rows. Nothing
+-- in the data tells them apart - and that one must still net to zero.
+--
+-- NOT NULL with a default because there is no undecided state, and false is what every
+-- existing row means, including the estornos already imported: they cannot be classified
+-- after the fact for the same reason, so they are left alone rather than guessed at.
+-- Postgres writes the default into the catalogue instead of rewriting the table, so this
+-- stays cheap on a table with real data in it.
+ALTER TABLE issuances ADD COLUMN cancellation_only BOOLEAN NOT NULL DEFAULT false;

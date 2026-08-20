@@ -107,9 +107,20 @@ type Issuance struct {
 	RefundedPoints     *int                `gorm:"column:refunded_points" json:"refunded_points"`
 	RefundedTaxes      *int                `gorm:"column:refunded_taxes" json:"refunded_taxes"`
 	CancellationFee    *int                `gorm:"column:cancellation_fee" json:"cancellation_fee"`
-	CreatedAt          time.Time           `json:"created_at"`
-	UpdatedAt          time.Time           `json:"updated_at"`
-	DeletedAt          gorm.DeletedAt      `gorm:"index" json:"-"`
+	// CancellationOnly marks a row that exists only to carry an estorno. The
+	// spreadsheet importer writes one when a negative row names a booking the panel
+	// never had: there is nothing to cancel, so it invents an issuance to hang the
+	// refund off (internal/legacyimport.commitCancellation). Its points were never
+	// miles this agency issued, so the supplier balance counts the refund and not the
+	// booking - which is what makes the day read minus the refund, like the sheet.
+	//
+	// Stored rather than worked out, because it cannot be worked out: an issuance
+	// genuinely made and cancelled on the same tab is identical in every column, and
+	// that one has to keep netting to zero.
+	CancellationOnly bool           `gorm:"not null;default:false" json:"cancellation_only"`
+	CreatedAt        time.Time      `json:"created_at"`
+	UpdatedAt        time.Time      `json:"updated_at"`
+	DeletedAt        gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
 func (i *Issuance) BeforeCreate(tx *gorm.DB) error {

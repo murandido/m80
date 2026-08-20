@@ -124,6 +124,7 @@ func toIssuanceResponse(issuance data.Issuance) schemas.IssuanceResponse {
 		TraveosSyncingAt:   freshTraveosSyncing(issuance.TraveosSyncingAt),
 		TraveosAttemptedAt: issuance.TraveosAttemptedAt,
 		Imported:           issuance.Imported,
+		CancellationOnly:   issuance.CancellationOnly,
 		Status:             deriveIssuanceStatus(issuance.Complete, issuance.CancelledAt),
 		AdditionalServices: issuance.AdditionalServices,
 		Observation:        issuance.Observation,
@@ -237,6 +238,7 @@ func toIssuanceSummaryResponse(issuance data.Issuance) schemas.IssuanceSummaryRe
 		TraveosSyncingAt:    freshTraveosSyncing(issuance.TraveosSyncingAt),
 		TraveosAttemptedAt:  issuance.TraveosAttemptedAt,
 		Imported:            issuance.Imported,
+		CancellationOnly:    issuance.CancellationOnly,
 		Status:              status,
 	}
 
@@ -1130,6 +1132,11 @@ func (h *IssuanceHandler) UncancelIssuance(w http.ResponseWriter, r *http.Reques
 	issuance.RefundedPoints = nil
 	issuance.RefundedTaxes = nil
 	issuance.CancellationFee = nil
+	// Reverting a cancellation asserts the booking is live, which is the opposite of what
+	// cancellation_only claims. Left set, the row would count neither as issued (the flag
+	// suppresses it) nor as refunded (cancelled_at is nil now), and it would vanish from
+	// the supplier balance on both sides.
+	issuance.CancellationOnly = false
 
 	details, err := json.Marshal(map[string]any{
 		"restored_at": now,

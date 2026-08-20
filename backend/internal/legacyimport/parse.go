@@ -293,11 +293,22 @@ func headerColumns(cells []string) (columns, bool) {
 		// ("conferido" is harmless, but the column is a checkbox and not data).
 		case strings.Contains(label, "extrato"):
 			continue
+		// Also checked before the airline: "agencia" contains "cia", so it matched the
+		// Companhia case below and - being to the right of it - overwrote the real index,
+		// leaving every row claiming to be issued on a loyalty program named after an
+		// agency. There is no agency column to read here: the agency of an imported day
+		// comes from the operator's mapping, not from the sheet.
+		case strings.Contains(label, "agencia"):
+			continue
 		case strings.Contains(label, "localizador"):
 			found[columnLocator] = index
 		case strings.Contains(label, "cia") || strings.Contains(label, "companhia"):
 			found[columnProgram] = index
-		case strings.Contains(label, "data do voo"):
+		// "Data do Voo" in some layouts and a bare "Data Voo" in others - including the
+		// template this repository ships - so the word that identifies the column is
+		// "voo". Matching on the full phrase silently left the flight date empty, and
+		// "data" alone would swallow the Data da Compra column beside it.
+		case strings.Contains(label, "voo"):
 			found[columnFlightDate] = index
 		case strings.Contains(label, "passageiro"):
 			found[columnPassenger] = index
@@ -313,13 +324,21 @@ func headerColumns(cells []string) (columns, bool) {
 		// of the four layouts has it at all.
 		case strings.HasPrefix(label, "taxa"):
 			found[columnTaxes] = index
-		case label == "total":
+		// "Total" bare in some layouts, "Vlr. Total" in the template this repository
+		// ships. Worth matching loosely: this column is not imported, it is what
+		// detectPointsUnit divides by to work out whether a "64" in the points column
+		// means 64 points or 64 mil. Without it that decision falls back to a much
+		// weaker guess, and getting it wrong is a thousand-fold error on every row.
+		case strings.Contains(label, "total"):
 			found[columnTotal] = index
 		case strings.Contains(label, "conta"):
 			found[columnAccount] = index
 		case strings.Contains(label, "emissor"):
 			found[columnIssuer] = index
-		case strings.Contains(label, "observ"):
+		// Spelled out in some layouts, abbreviated to "Obs." in the template this
+		// repository ships - where it was matching neither, so every note the operators
+		// had written beside a booking was dropped in silence.
+		case strings.Contains(label, "observ") || strings.HasPrefix(label, "obs"):
 			found[columnObservation] = index
 		case label == "no" || label == "n":
 			found[columnSequence] = index

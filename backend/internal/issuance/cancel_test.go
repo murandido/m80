@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/murandido/m-80-backend/internal/data"
 	"gorm.io/gorm"
@@ -135,6 +136,75 @@ func TestCancel_NoRefundLeavesFieldsNil(t *testing.T) {
 		}
 		if cancelled.RefundedPoints != nil || cancelled.RefundedTaxes != nil || cancelled.CancellationFee != nil {
 			t.Error("expected all refund fields to stay nil")
+		}
+	})
+}
+
+// The spreadsheet importer cancels an estorno on the day of the sheet tab it was written
+// on, not on the day somebody clicked Importar. Both the column and the audit details have
+// to carry that date: a fix that reached only one of them would leave the trail disagreeing
+// with the row it describes, and nothing would say which one to believe.
+func TestCancel_UsesTheGivenCancelledAt(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		f := seedFixture(t, tx, data.Airline{})
+		issuance, err := Create(tx, f.input(), f.User.ID)
+		if err != nil {
+			t.Fatalf("Create failed: %v", err)
+		}
+
+		sheetDay := time.Date(2025, 11, 4, 15, 0, 0, 0, time.UTC)
+		points := 800
+		cancelled, err := Cancel(tx, issuance, CancelInput{
+			RefundedPoints: &points,
+			CancelledAt:    &sheetDay,
+		}, f.User.ID)
+		if err != nil {
+			t.Fatalf("Cancel failed: %v", err)
+		}
+
+		if cancelled.CancelledAt == nil || !cancelled.CancelledAt.Equal(sheetDay) {
+			t.Errorf("cancelled_at = %v, want %v", cancelled.CancelledAt, sheetDay)
+		}
+
+		var log data.AuditLog
+		if err := tx.Where("issuance_id = ? AND action = ?", issuance.ID, auditActionCancelled).
+			First(&log).Error; err != nil {
+			t.Fatalf("loading the audit log: %v", err)
+		}
+		var details struct {
+			CancelledAt time.Time `json:"cancelled_at"`
+		}
+		if err := json.Unmarshal(log.Details, &details); err != nil {
+			t.Fatalf("parsing the audit details: %v", err)
+		}
+		if !details.CancelledAt.Equal(sheetDay) {
+			t.Errorf("audit details cancelled_at = %v, want %v", details.CancelledAt, sheetDay)
+		}
+	})
+}
+
+// The panel and the bot cancel things as they happen, so leaving the field out has to keep
+// stamping the clock. This is the guard that says the seam above changed nothing for them.
+func TestCancel_WithoutACancelledAtStampsNow(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		f := seedFixture(t, tx, data.Airline{})
+		issuance, err := Create(tx, f.input(), f.User.ID)
+		if err != nil {
+			t.Fatalf("Create failed: %v", err)
+		}
+
+		before := time.Now().Add(-time.Minute)
+		cancelled, err := Cancel(tx, issuance, CancelInput{}, f.User.ID)
+		if err != nil {
+			t.Fatalf("Cancel failed: %v", err)
+		}
+		after := time.Now().Add(time.Minute)
+
+		if cancelled.CancelledAt == nil {
+			t.Fatal("expected cancelled_at to be set")
+		}
+		if cancelled.CancelledAt.Before(before) || cancelled.CancelledAt.After(after) {
+			t.Errorf("cancelled_at = %v, want roughly now", cancelled.CancelledAt)
 		}
 	})
 }

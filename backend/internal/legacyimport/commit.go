@@ -132,7 +132,7 @@ func Commit(
 					continue
 				}
 
-				if err := createIssuance(tx, day, agencyID, row, actorID); err != nil {
+				if err := createIssuance(tx, day, agencyID, row, actorID, false); err != nil {
 					// The locator being taken is the one failure that is somebody
 					// else's normal work - a booking registered through the panel
 					// between the preview and now - so it is a skip, not an abort.
@@ -191,7 +191,10 @@ func commitCancellation(
 			return false, "A emissão desse localizador já está cancelada", nil
 		}
 
-		if err := createIssuance(tx, day, agencyID, row, actorID); err != nil {
+		// cancellationOnly: this row is not a booking anybody made through the panel, it is
+		// a peg for the estorno to hang off. Counting its points as miles issued would net
+		// the day to zero, when the tab being reconciled reads minus the refund.
+		if err := createIssuance(tx, day, agencyID, row, actorID, true); err != nil {
 			if isLocatorTaken(err) {
 				return false, "Já existe uma emissão ativa com esse localizador", nil
 			}
@@ -208,12 +211,21 @@ func commitCancellation(
 	}
 
 	plan := row.Cancellation
+	// The sheet's day, not now(). The spreadsheet has no cancellation-date column at all -
+	// an estorno is a negative row on the tab of the day it was written, so the tab's own
+	// day IS the date. cancelled_at is what the supplier balance reads as the day the miles
+	// came back, so an estorno from a March tab stamped with now() puts its refund in
+	// whatever month somebody happened to click Importar, and leaves March showing the
+	// booking with nothing to offset it.
+	cancelledAt := middayOf(day.Date)
+
 	input := issuancesvc.CancelInput{
 		RefundedPoints: &plan.RefundedPoints,
 		RefundedTaxes:  plan.RefundedTaxes,
 		// The spreadsheet has no column for a cancellation fee, and nil says "nothing
 		// on that front" rather than "zero".
 		CancellationFee: nil,
+		CancelledAt:     &cancelledAt,
 	}
 	if _, err := issuancesvc.Cancel(tx, issuance, input, actorID); err != nil {
 		if errors.Is(err, issuancesvc.ErrIssuanceAlreadyCancelled) {
@@ -251,6 +263,7 @@ func createIssuance(
 	agencyID string,
 	row ResolvedRow,
 	actorID string,
+	cancellationOnly bool,
 ) error {
 	// The sheet's day, not now(). created_at is what every date filter and the grid
 	// itself read as the day of the issuance.
@@ -274,9 +287,10 @@ func createIssuance(
 		FlightDate:          row.FlightDate,
 		// Never complete: the spreadsheet has no passenger list and no itinerary, so
 		// an imported issuance is exactly as unfinished as one the bot writes.
-		Complete:  false,
-		Imported:  true,
-		CreatedAt: &createdAt,
+		Complete:         false,
+		Imported:         true,
+		CreatedAt:        &createdAt,
+		CancellationOnly: cancellationOnly,
 	}
 
 	_, err := issuancesvc.Create(tx, input, actorID)

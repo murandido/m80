@@ -51,7 +51,13 @@ function cancellationSummary(row: LegacyImportRow): string[] {
   const lines: string[] =
     plan.action === "cancel_existing"
       ? ["Cancela a emissão que já existe com esse localizador."]
-      : ["A emissão não está no sistema: ela é criada e cancelada em seguida."]
+      : [
+          // Spelled out because the arithmetic surprises people: the created row is a peg
+          // for the estorno, not a booking, so it does not add milhas emitidas anywhere -
+          // the day ends up negative, exactly like the aba it came from.
+          "A emissão não está no sistema: ela é criada e cancelada em seguida.",
+          "Ela não conta como emitida — o dia fica negativo, como na planilha.",
+        ]
 
   lines.push(`Estorno de ${formatPoints(plan.refunded_points)} pontos.`)
   if (plan.partial && plan.original_points != null) {

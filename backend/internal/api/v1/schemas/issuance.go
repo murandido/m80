@@ -147,6 +147,12 @@ type IssuanceResponse struct {
 	// uses it to stop the automatic Traveos lookup after a single attempt, and the
 	// server uses it to refuse issuing the ticket at the vendor.
 	Imported bool `json:"imported"`
+	// CancellationOnly says the row exists only to carry an estorno the spreadsheet
+	// recorded for a booking the panel never had. Its points are not miles this agency
+	// issued, so the supplier balance counts its refund and not its booking - which is
+	// what the panel needs in order to explain a cancelled issuance whose points never
+	// show up as issued anywhere.
+	CancellationOnly bool `json:"cancellation_only"`
 	// RedemptionFeeSavedCents is the airline's redemption fee this issuance did not pay,
 	// because the account it was made on is exempt. Null on every ordinary account and
 	// whenever the rule could not be applied (no synced itinerary, or a program with no fee
@@ -198,6 +204,7 @@ type IssuanceSummaryResponse struct {
 	TraveosSyncingAt    *time.Time `json:"traveos_syncing_at"`
 	TraveosAttemptedAt  *time.Time `json:"traveos_attempted_at"`
 	Imported            bool       `json:"imported"`
+	CancellationOnly    bool       `json:"cancellation_only"`
 	// Status is derived: "incomplete" | "complete" | "cancelled".
 	Status string `json:"status" example:"incomplete"`
 }

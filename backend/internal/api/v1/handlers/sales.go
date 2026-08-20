@@ -525,6 +525,10 @@ type supplierIssuanceRow struct {
 	RefundedPoints *int
 	CreatedAt      time.Time
 	CancelledAt    *time.Time
+	// CancellationOnly says the row was invented by the spreadsheet importer purely to
+	// carry an estorno - see data.Issuance.CancellationOnly. Its points were never miles
+	// this agency issued, so only its refund side counts.
+	CancellationOnly bool
 
 	ProgramLocator      string
 	AirlineLocator      *string
@@ -620,6 +624,7 @@ func (h *SaleHandler) fetchSupplierRows(r *http.Request) ([]supplierIssuanceRow,
 			issuances.cost_of_the_thousand,
 			issuances.taxes_included_in_cost,
 		issuances.reviewed,
+			issuances.cancellation_only,
 			accounts.login AS account_login,
 			-- Sub-select rather than a join: an account can hold several nicknames, and
 			-- joining would multiply the issuance rows this aggregation counts. Oldest
@@ -738,7 +743,11 @@ func supplierGroupOf(row supplierIssuanceRow, grouping supplierGrouping) (key, l
 // aggregateSupplierBalances folds per-issuance rows into one balance per account: miles
 // issued inside the period minus miles refunded by cancellations inside the same period.
 // An issuance created and cancelled in the same period contributes to both sides, which
-// is what makes the two cancel out to zero without any same-day special case.
+// is what makes the two cancel out to zero without any same-day special case - as long as
+// it was really issued here. The one exception is a cancellation-only row, which the
+// spreadsheet importer invents so an estorno for a booking the panel never had has
+// something to hang off; that one contributes its refund and nothing else, so the day
+// reads minus the refund the way the tab it came from does.
 //
 // The same two branches also emit the account's statement, so the lines the panel shows can
 // never describe a different set of issuances than the totals beside them.
@@ -767,7 +776,11 @@ func aggregateSupplierBalances(
 		}
 		acc.accountCount[row.AccountID] = struct{}{}
 
-		if inRange(&row.CreatedAt, from, to) {
+		// A cancellation-only row never issued anything: it exists so an estorno for a
+		// booking the panel never had has something to hang off. Counting its points here
+		// would pair a phantom emission with its own refund and net the day to zero, when
+		// the spreadsheet tab being reconciled reads minus the refund.
+		if !row.CancellationOnly && inRange(&row.CreatedAt, from, to) {
 			acc.issuedPoints += row.Points
 			acc.statement = append(acc.statement, supplierStatementLine(row, "issued", row.CreatedAt, row.Points, row.Taxes))
 		}

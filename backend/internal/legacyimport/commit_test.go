@@ -358,6 +358,24 @@ func countAudit(t *testing.T, tx *gorm.DB, issuanceID, action string) int64 {
 	return count
 }
 
+// assertReadsAsDay checks a timestamp the way every screen in the panel reads it - as a
+// calendar day in the listing timezone - rather than as an instant. That is the only
+// comparison that means anything here: middayOf deliberately picks an hour that survives
+// the UTC conversion, and asserting the instant would just restate middayOf's arithmetic.
+func assertReadsAsDay(t *testing.T, label string, at *time.Time, want string) {
+	t.Helper()
+	if at == nil {
+		t.Fatalf("%s is nil, want %s", label, want)
+	}
+	loc, err := time.LoadLocation("America/Sao_Paulo")
+	if err != nil {
+		t.Fatalf("loading the listing timezone: %v", err)
+	}
+	if got := at.In(loc).Format("2006-01-02"); got != want {
+		t.Errorf("%s reads as %s, want %s", label, got, want)
+	}
+}
+
 func TestCommit_CancelsTheIssuanceTheEstornoNames(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		w := seedWorld(t, tx, "SMILES")
@@ -395,6 +413,17 @@ func TestCommit_CancelsTheIssuanceTheEstornoNames(t *testing.T) {
 		if issuance.CancellationFee != nil {
 			t.Errorf("cancellation fee = %v, want nil - the sheet has no such column", issuance.CancellationFee)
 		}
+		// Somebody else's booking, really issued and now cancelled - not a peg the importer
+		// invented, so its points stay counted as miles issued on the day it was made.
+		if issuance.CancellationOnly {
+			t.Error("cancellation_only = true, want false when the issuance was already there")
+		}
+
+		// The day of the sheet tab the estorno was written on, not the afternoon somebody
+		// clicked Importar. cancelled_at is what the supplier balance reads as the day
+		// the miles came back.
+		assertReadsAsDay(t, "cancelled_at", issuance.CancelledAt, "2026-08-01")
+
 		// The same trail the panel's own button leaves, because it is the same rule.
 		if got := countAudit(t, tx, issuance.ID, "cancelled"); got != 1 {
 			t.Errorf("cancelled audit rows = %d, want 1", got)
@@ -430,12 +459,20 @@ func TestCommit_CreatesTheIssuanceItIsAboutToCancel(t *testing.T) {
 		if issuance.Points != 24000 {
 			t.Errorf("points = %d, want the positive 24000", issuance.Points)
 		}
-		loc, err := time.LoadLocation("America/Sao_Paulo")
-		if err != nil {
-			t.Fatalf("loading the listing timezone: %v", err)
+		// The row is a peg for the estorno, not a booking. Without this the supplier
+		// balance counts its points as miles issued and the day nets to zero, when the
+		// tab reads minus the refund.
+		if !issuance.CancellationOnly {
+			t.Error("cancellation_only = false, want true on an issuance the estorno invented")
 		}
-		if got := issuance.CreatedAt.In(loc).Format("2006-01-02"); got != "2026-08-01" {
-			t.Errorf("created_at reads as %s, want the sheet's day 2026-08-01", got)
+		assertReadsAsDay(t, "created_at", &issuance.CreatedAt, "2026-08-01")
+		assertReadsAsDay(t, "cancelled_at", issuance.CancelledAt, "2026-08-01")
+		// Both come from the same middayOf, so they are the same instant and not merely
+		// the same day. That is what keeps the issued and refund lines of the supplier
+		// balance in one bucket however the period is sliced.
+		if !issuance.CancelledAt.Equal(issuance.CreatedAt) {
+			t.Errorf("cancelled_at %v and created_at %v should be the same instant",
+				issuance.CancelledAt, issuance.CreatedAt)
 		}
 
 		// Born owing money like any other issuance, and the cancellation recalculated
@@ -452,6 +489,29 @@ func TestCommit_CreatesTheIssuanceItIsAboutToCancel(t *testing.T) {
 		if got := countAudit(t, tx, issuance.ID, "cancelled"); got != 1 {
 			t.Errorf("cancelled audit rows = %d, want 1", got)
 		}
+	})
+}
+
+// The regression guard for the bug this fixes. dayWith's tab sits in the month the suite
+// runs in, so a tab from a different month is what actually proves the date came from the
+// sheet rather than from the clock - that is the shape the real data was in when it was
+// found: a November tab imported the following August, leaving November showing the
+// booking and August showing a refund for a booking August never made.
+func TestCommit_CancelsOnTheSheetsDayAndNotToday(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		w := seedWorld(t, tx, "SMILES")
+		account := seedAccount(t, tx, w, "Ana Vieira", "ANA")
+		seedIssuance(t, tx, w, account, "ARISRR", 3400)
+
+		day := dayWith(w.user.Name, estornoRow(w.program.Code, "ARISRR", "ANA", 3400))
+		day.Date = time.Date(2025, time.November, 4, 0, 0, 0, 0, time.UTC)
+		day.SheetName = "04-11-25"
+
+		if _, err := Commit(tx, day, Mappings{AgencyID: w.agency.ID}, allRows(day), w.user.ID); err != nil {
+			t.Fatalf("Commit: %v", err)
+		}
+
+		assertReadsAsDay(t, "cancelled_at", fetchIssuance(t, tx, "ARISRR").CancelledAt, "2025-11-04")
 	})
 }
 
@@ -478,8 +538,18 @@ func TestCommit_ImportsAnIssuanceAndItsEstornoInOneDay(t *testing.T) {
 		if count != 1 {
 			t.Fatalf("issuances = %d, want 1 - the estorno undoes the row above it", count)
 		}
-		if issuance := fetchIssuance(t, tx, "UM1FHZ"); issuance.Active {
+		issuance := fetchIssuance(t, tx, "UM1FHZ")
+		if issuance.Active {
 			t.Error("active = true, want the issuance cancelled")
+		}
+		// Issued and cancelled on the same tab, so both dates are that tab's day and the
+		// supplier balance nets this pair to zero. Everything about the cancellation-only
+		// flag exists to keep THIS case zeroing while the invented-issuance case does not.
+		assertReadsAsDay(t, "created_at", &issuance.CreatedAt, "2026-08-01")
+		assertReadsAsDay(t, "cancelled_at", issuance.CancelledAt, "2026-08-01")
+		if issuance.CancellationOnly {
+			t.Error("cancellation_only = true on a booking that really was issued here - " +
+				"this pair has to keep netting to zero, which is the constraint the whole flag exists to respect")
 		}
 	})
 }

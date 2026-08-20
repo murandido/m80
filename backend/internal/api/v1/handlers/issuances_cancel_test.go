@@ -655,3 +655,37 @@ func TestUncancelIssuance_DeletedIsNotFound(t *testing.T) {
 		}
 	})
 }
+
+// Reverting a cancellation asserts the booking is live, which is the opposite of what
+// cancellation_only claims. Left set, the row counts neither as issued - the flag
+// suppresses it - nor as refunded, because cancelled_at is nil again: it disappears from
+// the supplier balance on both sides at once, which is the worst kind of wrong number
+// because nothing on any screen says it is missing.
+func TestUncancelIssuance_ClearsCancellationOnly(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		issuance, user := seedIssuance(t, tx)
+		if err := tx.Model(&issuance).Update("cancellation_only", true).Error; err != nil {
+			t.Fatalf("marking the issuance cancellation-only: %v", err)
+		}
+		if rec := callCancel(tx, issuance.ID, user.ID, `{"refunded_points": 800}`); rec.Code != http.StatusOK {
+			t.Fatalf("cancel status: got %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+		}
+
+		if rec := callUncancel(tx, issuance.ID, user.ID); rec.Code != http.StatusOK {
+			t.Fatalf("uncancel status: got %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+		}
+
+		var persisted data.Issuance
+		if err := tx.First(&persisted, "id = ?", issuance.ID).Error; err != nil {
+			t.Fatalf("failed to re-read issuance: %v", err)
+		}
+		if !persisted.Active || persisted.CancelledAt != nil {
+			t.Fatalf("active = %v, cancelled_at = %v, want the cancellation reverted",
+				persisted.Active, persisted.CancelledAt)
+		}
+		if persisted.CancellationOnly {
+			t.Error("cancellation_only is still set: the row would vanish from the supplier " +
+				"balance, counted neither as issued nor as refunded")
+		}
+	})
+}

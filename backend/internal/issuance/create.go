@@ -72,6 +72,11 @@ type CreateInput struct {
 	// keeps Traveos from being asked to *issue* the booking - see findOrEmit - and
 	// unlike the importer itself, it stays after the migration is over.
 	Imported bool
+	// CancellationOnly marks a row invented purely to carry an estorno. Only the
+	// importer sets it, and only on the path where the negative row names a booking
+	// the panel never had - see data.Issuance.CancellationOnly for what it costs the
+	// supplier balance to get this wrong.
+	CancellationOnly bool
 }
 
 // Create persists an issuance together with the two rows that must always
@@ -102,6 +107,7 @@ func Create(db *gorm.DB, in CreateInput, actorID string) (data.Issuance, error) 
 		IssuerID:            actorID,
 		Complete:            in.Complete,
 		Imported:            in.Imported,
+		CancellationOnly:    in.CancellationOnly,
 	}
 
 	// GORM only stamps CreatedAt when it is still the zero value, so setting it here

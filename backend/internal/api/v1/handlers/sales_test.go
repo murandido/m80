@@ -1128,3 +1128,85 @@ func TestGetSupplierBalances_LabelsAccountByNicknameAndNeverByFullUUID(t *testin
 		}
 	})
 }
+
+// An estorno the importer had to invent an issuance for is a refund and nothing else. The
+// booking it undoes was made on a day the panel never imported, so counting the invented
+// row's points as miles issued would pair a phantom emission with its own refund and net
+// the day to zero - when the spreadsheet tab being reconciled reads minus the refund.
+//
+// Deliberately an HTTP test rather than a call into aggregateSupplierBalances: only going
+// through fetchSupplierRows proves the SELECT actually carries the column, and a forgotten
+// `issuances.cancellation_only,` would leave the flag false in every row with the pure
+// function passing happily.
+func TestGetSupplierBalances_ACancellationOnlyIssuanceOnlyRefunds(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		main := defaultAgency(t, tx)
+		issuance, _ := seedSaleFixture(t, tx, main.ID)
+
+		if err := tx.Model(&issuance).Updates(map[string]any{
+			"points":                10000,
+			"value_of_the_thousand": 2000,
+			"active":                false,
+			"cancelled_at":          time.Now(),
+			"refunded_points":       10000,
+			"cancellation_only":     true,
+		}).Error; err != nil {
+			t.Fatalf("failed to set up the cancellation-only issuance: %v", err)
+		}
+
+		today := spDay(t, 0)
+		got := findBalance(callGetSupplierBalances(t, tx, "date_from="+today+"&date_to="+today), issuance.AccountID)
+		if got == nil {
+			t.Fatal("account missing from the supplier balances")
+		}
+		if got.IssuedPoints != 0 {
+			t.Errorf("issued_points: got %d, want 0 - this row never issued anything", got.IssuedPoints)
+		}
+		if got.RefundedPoints != 10000 {
+			t.Errorf("refunded_points: got %d, want 10000", got.RefundedPoints)
+		}
+		if got.NetPoints != -10000 {
+			t.Errorf("net_points: got %d, want -10000 - the day has to read minus the refund", got.NetPoints)
+		}
+		if len(got.Issuances) != 1 || got.Issuances[0].Kind != "refund" {
+			t.Errorf("statement = %+v, want a single refund line", got.Issuances)
+		}
+	})
+}
+
+// The paired guard, and the constraint the whole flag exists to respect: a booking really
+// issued here and cancelled on the same day still contributes to both sides and still nets
+// to zero. The two cases are identical in every date, which is why the distinction has to
+// be a stored flag and cannot be worked out from the row.
+func TestGetSupplierBalances_ARealIssuanceCancelledTheSameDayStillNetsToZero(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		main := defaultAgency(t, tx)
+		issuance, _ := seedSaleFixture(t, tx, main.ID)
+
+		if err := tx.Model(&issuance).Updates(map[string]any{
+			"points":                10000,
+			"value_of_the_thousand": 2000,
+			"active":                false,
+			"cancelled_at":          time.Now(),
+			"refunded_points":       10000,
+			"cancellation_only":     false,
+		}).Error; err != nil {
+			t.Fatalf("failed to set up the cancelled issuance: %v", err)
+		}
+
+		today := spDay(t, 0)
+		got := findBalance(callGetSupplierBalances(t, tx, "date_from="+today+"&date_to="+today), issuance.AccountID)
+		if got == nil {
+			t.Fatal("account missing from the supplier balances")
+		}
+		if got.IssuedPoints != 10000 {
+			t.Errorf("issued_points: got %d, want 10000", got.IssuedPoints)
+		}
+		if got.NetPoints != 0 {
+			t.Errorf("net_points: got %d, want 0 - a booking and its own credit cancel out", got.NetPoints)
+		}
+		if len(got.Issuances) != 2 {
+			t.Errorf("statement lines = %d, want 2 - the booking and the credit", len(got.Issuances))
+		}
+	})
+}

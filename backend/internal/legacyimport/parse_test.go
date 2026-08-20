@@ -1,6 +1,7 @@
 package legacyimport
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -543,5 +544,88 @@ func TestParseSheetDate(t *testing.T) {
 				t.Fatalf("date = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// The headers of the template this repository ships in assets/templates. Every layout the
+// team uses is a variation on it, so if this one does not map, nothing does - and it did
+// not: "AGÊNCIA" folds to "agencia", which contains "cia", so it matched the Companhia
+// case and, sitting to the right of the real one, overwrote its index. Every row then
+// claimed a loyalty program named after an agency and was refused, unless the operator
+// picked a default program by hand.
+//
+// Written against the literal header strings rather than a fixture so it fails on the
+// matching rule itself, which is the thing that was wrong.
+func TestHeaderColumns_MapsTheProjectsOwnTemplate(t *testing.T) {
+	cells := []string{
+		"Nº", "COMPANHIA", "LOCALIZADOR", "DATA COMPRA", "DATA VOO", "NOME PASSAGEIRO",
+		"ORIGEM", "DESTINO", "PONTOS", "VLR. MILHEIRO", "TAXAS", "VLR. TOTAL", "CONTA",
+		"OBS.", "EMISSOR", "AGÊNCIA",
+	}
+
+	got, ok := headerColumns(cells)
+	if !ok {
+		t.Fatal("the template's header row was not recognised at all")
+	}
+
+	for _, want := range []struct {
+		column string
+		index  int
+	}{
+		{columnSequence, 0},
+		{columnProgram, 1},
+		{columnLocator, 2},
+		{columnFlightDate, 4},
+		{columnPassenger, 5},
+		{columnOrigin, 6},
+		{columnDestination, 7},
+		{columnPoints, 8},
+		{columnValueOfTheThousand, 9},
+		{columnTaxes, 10},
+		// Not imported, but it is what detectPointsUnit divides by to tell 64 points
+		// from 64 mil.
+		{columnTotal, 11},
+		{columnAccount, 12},
+		{columnObservation, 13},
+		{columnIssuer, 14},
+	} {
+		index, found := got[want.column]
+		if !found {
+			t.Errorf("%s: not found, want index %d (%q)", want.column, want.index, cells[want.index])
+			continue
+		}
+		if index != want.index {
+			t.Errorf("%s: got index %d (%q), want %d (%q)",
+				want.column, index, cells[index], want.index, cells[want.index])
+		}
+	}
+
+	// The agency is not a column this package reads: an imported day is charged to the
+	// agency the operator picked, not to whatever the sheet happens to say.
+	if index, found := got[columnProgram]; found && strings.EqualFold(cells[index], "AGÊNCIA") {
+		t.Error("the airline column is pointing at AGÊNCIA")
+	}
+}
+
+// Data da Compra sits right beside Data do Voo in most layouts, and matching the flight
+// date on "data" would take whichever came last. Only "voo" identifies it.
+func TestHeaderColumns_TellsTheFlightDateFromThePurchaseDate(t *testing.T) {
+	for _, layout := range [][]string{
+		{"LOCALIZADOR", "DATA COMPRA", "DATA VOO"},
+		{"LOCALIZADOR", "DATA DA COMPRA", "DATA DO VOO"},
+		{"LOCALIZADOR", "DATA DO VOO", "DATA COMPRA"},
+	} {
+		got, ok := headerColumns(layout)
+		if !ok {
+			t.Fatalf("%v: header row not recognised", layout)
+		}
+		index, found := got[columnFlightDate]
+		if !found {
+			t.Errorf("%v: flight date not found", layout)
+			continue
+		}
+		if !strings.Contains(strings.ToUpper(layout[index]), "VOO") {
+			t.Errorf("%v: flight date points at %q", layout, layout[index])
+		}
 	}
 }
