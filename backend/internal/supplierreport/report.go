@@ -50,7 +50,40 @@ type ViewModel struct {
 	GrandTotalPoints string
 	GrandTotalTaxes  string
 
+	// Summary is the closing recap: one line per account administrator, whichever way the
+	// document itself was grouped. It answers the question the body of the document only
+	// answers by hunting - who gets paid how much - and it is deliberately built from the
+	// same section totals the statements above print, so the two can never disagree.
+	ShowSummary bool
+	Summary     []SummaryRow
+	// SummaryAccountCount closes the "Contas" column. The money columns of that row reuse
+	// the grand total, which is the same sum arrived at by a different route.
+	SummaryAccountCount string
+
 	PageHeightMM int
+}
+
+// SummaryRow is one administrator in the closing recap.
+type SummaryRow struct {
+	Administrator string
+	// Programs are the loyalty programs behind this administrator's accounts. Several,
+	// because an administrator can run accounts in more than one - which is also why the
+	// row itself carries no single brand colour.
+	Programs     []ProgramChip
+	AccountCount string
+
+	Points string
+	// Taxes is a dash when nothing was reimbursed, for the same reason the statement lines
+	// use one: a figure printed there would read as money owed.
+	Taxes  string
+	Amount string
+}
+
+// ProgramChip is one loyalty program badge, drawn in the program's own colour.
+type ProgramChip struct {
+	Name    string
+	Brand   string
+	BrandOn string
 }
 
 // Group is a run of sections that belong together. An empty Label means the group is only
@@ -243,10 +276,15 @@ const (
 	// groupMM is the administrator heading plus its subtotal panel, drawn only on a grouped
 	// document. Same trade as sectionMM: measured generously, because the cost of guessing
 	// low is a page break in the middle of a total.
-	groupMM       = 34
-	pageMinMM     = 160
-	pageMaxMM     = 1200
-	pageRoundToMM = 10
+	groupMM = 34
+	// summaryChromeMM is the recap's heading, its column head, its TOTAL row and the gap
+	// above it; summaryRowMM is one administrator. Measured generously, the same trade as
+	// sectionMM: guessing low costs a page break in the middle of a total.
+	summaryChromeMM = 34
+	summaryRowMM    = 8
+	pageMinMM       = 160
+	pageMaxMM       = 1200
+	pageRoundToMM   = 10
 )
 
 // pageHeightMM sizes the paper to the content, rounded up to a round number of millimetres
@@ -263,6 +301,9 @@ func pageHeightMM(model ViewModel) int {
 	}
 	if model.ShowGrandTotal {
 		height += grandTotalMM
+	}
+	if model.ShowSummary {
+		height += summaryChromeMM + summaryRowMM*len(model.Summary)
 	}
 
 	if remainder := height % pageRoundToMM; remainder != 0 {
@@ -304,6 +345,9 @@ type Totals struct {
 // here rather than doing this arithmetic themselves.
 func Finalize(model ViewModel, totals Totals) ViewModel {
 	model.ShowGrandTotal = model.SectionCount() > 1
+	// Same rule as the grand total, for the same reason: on a document with a single
+	// statement the recap would be that statement, restated with fewer columns.
+	model.ShowSummary = model.ShowGrandTotal && len(model.Summary) > 0
 	if model.ShowGrandTotal {
 		model.GrandTotal = FormatBRL(totals.AmountCents)
 		model.GrandTotalPoints = FormatPoints(totals.Points)

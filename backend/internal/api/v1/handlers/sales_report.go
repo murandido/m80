@@ -121,9 +121,17 @@ func buildSupplierReport(
 	grand := supplierreport.Totals{}
 	missing := 0
 
+	// The recap is folded as the sections are built rather than in a pass of its own, so it
+	// can only ever add up the very figures that were printed. Keyed by administrator, not
+	// by group: grouped by administrator a group already is one, but grouped by account
+	// several accounts land on the same person and have to meet somewhere.
+	byAdministrator := map[string]*summaryAccumulator{}
+	accounts := 0
+
 	for _, balance := range balances {
 		group := supplierreport.Group{}
 		groupTotals := supplierreport.Totals{}
+		adminKey, adminLabel := supplierAdministratorOf(balance)
 
 		// Grouped by account the balance is already one statement. Grouped by administrator
 		// it mixes their accounts, and it is split back apart here rather than upstream: a
@@ -187,6 +195,20 @@ func buildSupplierReport(
 			groupTotals.TaxesCents += totals.TaxesCents
 			groupTotals.AmountCents += totals.AmountCents
 			group.Sections = append(group.Sections, section)
+
+			summary, known := byAdministrator[adminKey]
+			if !known {
+				summary = &summaryAccumulator{label: adminLabel, programs: map[string]string{}}
+				byAdministrator[adminKey] = summary
+			}
+			summary.accounts++
+			summary.totals.Points += totals.Points
+			summary.totals.TaxesCents += totals.TaxesCents
+			summary.totals.AmountCents += totals.AmountCents
+			if brand.programName != "" {
+				summary.programs[brand.programName] = brand.programColor
+			}
+			accounts++
 		}
 
 		if len(group.Sections) == 0 {
@@ -208,7 +230,99 @@ func buildSupplierReport(
 		model.Groups = append(model.Groups, group)
 	}
 
+	model.Summary = buildSupplierSummary(byAdministrator)
+	model.SummaryAccountCount = supplierAccountCountLabel(accounts)
+
 	return supplierreport.Finalize(model, grand), missing
+}
+
+// summaryAccumulator is one administrator's running total while the sections are built.
+type summaryAccumulator struct {
+	label    string
+	accounts int
+	// programs maps a loyalty program's name to its colour, so an administrator holding
+	// three accounts in one program is badged once rather than three times.
+	programs map[string]string
+	totals   supplierreport.Totals
+}
+
+// supplierAdministratorOf answers which recap line a balance belongs to. It repeats the
+// fallbacks of supplierGroupOf rather than sharing them because it starts from the response
+// and not from a row - but the two have to agree, or the recap would name an administrator
+// the group heading above it does not.
+func supplierAdministratorOf(balance schemas.SupplierBalanceResponse) (key, label string) {
+	if balance.AdministratorID == nil || *balance.AdministratorID == "" {
+		return noAdministratorKey, "Sem administrador"
+	}
+	if balance.AdministratorName != nil && *balance.AdministratorName != "" {
+		return *balance.AdministratorID, *balance.AdministratorName
+	}
+	return *balance.AdministratorID, *balance.AdministratorID
+}
+
+// buildSupplierSummary formats the recap, biggest debt first with the name as a tiebreak -
+// the same order aggregateSupplierBalances puts the screen in, so the closing table reads
+// in the order the operator already knows. The tiebreak is what makes two identical requests
+// produce an identical document: map iteration order is not.
+func buildSupplierSummary(byAdministrator map[string]*summaryAccumulator) []supplierreport.SummaryRow {
+	ordered := make([]*summaryAccumulator, 0, len(byAdministrator))
+	for _, summary := range byAdministrator {
+		ordered = append(ordered, summary)
+	}
+	sort.Slice(ordered, func(i, j int) bool {
+		if ordered[i].totals.AmountCents != ordered[j].totals.AmountCents {
+			return ordered[i].totals.AmountCents > ordered[j].totals.AmountCents
+		}
+		return ordered[i].label < ordered[j].label
+	})
+
+	rows := make([]supplierreport.SummaryRow, 0, len(ordered))
+	for _, summary := range ordered {
+		names := make([]string, 0, len(summary.programs))
+		for name := range summary.programs {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+
+		chips := make([]supplierreport.ProgramChip, 0, len(names))
+		for _, name := range names {
+			colour := summary.programs[name]
+			chips = append(chips, supplierreport.ProgramChip{
+				Name:    name,
+				Brand:   colour,
+				BrandOn: supplierreport.ContrastColour(colour),
+			})
+		}
+
+		rows = append(rows, supplierreport.SummaryRow{
+			Administrator: summary.label,
+			Programs:      chips,
+			AccountCount:  supplierAccountCountLabel(summary.accounts),
+			Points:        supplierreport.FormatPoints(summary.totals.Points),
+			Taxes:         supplierSummaryTaxes(summary.totals.TaxesCents),
+			Amount:        supplierreport.FormatBRL(summary.totals.AmountCents),
+		})
+	}
+
+	return rows
+}
+
+// supplierSummaryTaxes leaves the column empty-looking when nothing was reimbursed. A "R$
+// 0,00" there reads as a figure that was checked and came to zero; the dash says the taxes
+// were simply not part of what is being paid, which is what the statement lines above
+// already say line by line.
+func supplierSummaryTaxes(cents int) string {
+	if cents == 0 {
+		return "—"
+	}
+	return supplierreport.FormatBRL(cents)
+}
+
+func supplierAccountCountLabel(accounts int) string {
+	if accounts == 1 {
+		return "1 conta"
+	}
+	return fmt.Sprintf("%d contas", accounts)
 }
 
 // balancePart is one account's worth of a balance's statement.

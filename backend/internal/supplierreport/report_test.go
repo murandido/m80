@@ -102,3 +102,47 @@ func TestPageHeight_GrowsWithTheContentAndStaysBounded(t *testing.T) {
 		t.Errorf("the page must stay bounded: got %d, want %d", huge, pageMaxMM)
 	}
 }
+
+// The recap is the last block on the page, so a page budget that ignores it puts the one
+// table the reader came for on a sheet of its own. Two comments in report.go record that
+// exact mistake being made twice already.
+func TestPageHeight_MakesRoomForTheRecap(t *testing.T) {
+	body := ViewModel{Groups: []Group{
+		{Sections: []Section{{Lines: make([]Line, 40)}}},
+		{Sections: []Section{{Lines: make([]Line, 40)}}},
+	}}
+	withRecap := body
+	withRecap.ShowSummary = true
+	withRecap.Summary = make([]SummaryRow, 6)
+
+	if pageHeightMM(withRecap) <= pageHeightMM(body) {
+		t.Errorf("the recap needs room: %d with, %d without",
+			pageHeightMM(withRecap), pageHeightMM(body))
+	}
+
+	taller := withRecap
+	taller.Summary = make([]SummaryRow, 20)
+	if pageHeightMM(taller) <= pageHeightMM(withRecap) {
+		t.Error("more administrators need a taller page")
+	}
+}
+
+// Same rule as the grand total: on a single-statement document the recap would be that
+// statement with fewer columns.
+func TestFinalize_RecapOnlyWhenSeveralAccounts(t *testing.T) {
+	one := Finalize(ViewModel{
+		Groups:  []Group{{Sections: []Section{{}}}},
+		Summary: []SummaryRow{{Administrator: "Maria Souza"}},
+	}, Totals{})
+	if one.ShowSummary {
+		t.Error("a one-account document must not carry the recap")
+	}
+
+	many := Finalize(ViewModel{
+		Groups:  []Group{{Sections: []Section{{}, {}}}},
+		Summary: []SummaryRow{{Administrator: "Maria Souza"}},
+	}, Totals{})
+	if !many.ShowSummary {
+		t.Error("a multi-account document must carry the recap")
+	}
+}

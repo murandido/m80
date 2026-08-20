@@ -171,6 +171,69 @@ pagar" is the only thing set large. Everything else is deliberately quiet.
     color: #cbd5e1;
   }
 
+  /* The closing recap. Same table idiom as .lines - grid is not implemented in
+     WeasyPrint 61.2 - and the same quiet palette, because this block restates
+     figures the reader has already been shown rather than announcing new ones. */
+  .summaryHeading {
+    margin-top: 24px;
+    margin-bottom: 8px;
+    padding-bottom: 5px;
+    border-bottom: 1.5px solid #cbd5e1;
+    font-size: 13px;
+    font-weight: 700;
+    color: #334155;
+  }
+
+  /* border-spacing zeroed explicitly: the TOTAL row is a filled band, and the default
+     spacing between cells shows through it as white gutters. */
+  .summaryTable { width: 100%; display: table; border-collapse: collapse; border-spacing: 0; }
+  .summaryRow { display: table-row; page-break-inside: avoid; }
+  .summaryRow > span {
+    display: table-cell;
+    padding: 5px 8px 5px 0;
+    border-bottom: 1px solid #eef2f7;
+    vertical-align: middle;
+  }
+  .summaryHead > span {
+    font-size: 8.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.7px;
+    color: #94a3b8;
+    border-bottom: none;
+    padding-bottom: 2px;
+  }
+
+  .colAdmin { width: 26%; font-weight: 700; }
+  .colPrograms { width: 23%; }
+  .colAccounts { width: 9%; color: #64748b; }
+  .colSumPoints { width: 15%; text-align: right; }
+  .colSumTaxes { width: 12%; text-align: right; color: #64748b; }
+  .colSumAmount { width: 15%; text-align: right; font-weight: 700; }
+
+  /* One badge per program the administrator holds an account in. This is the only
+     colour in the block: the row belongs to a person, not to an airline, so tinting
+     the whole line would have to pick one program and be wrong about the others. */
+  .chip {
+    display: inline-block;
+    border-radius: 3px;
+    padding: 1px 5px;
+    margin-right: 3px;
+    font-size: 8px;
+    font-weight: 700;
+  }
+
+  /* The band goes on the row, not on the cells: painted per cell it comes out with a
+     white seam at every column boundary. */
+  .summaryTotal { background: #0f172a; border-radius: 4px; }
+  .summaryTotal > span {
+    color: #f8fafc;
+    font-weight: 700;
+    border-bottom: none;
+    padding: 7px 8px 7px 0;
+  }
+  .summaryTotal > span:first-child { padding-left: 8px; }
+
   .empty { color: #94a3b8; font-style: italic; }
 </style>
 </head>
@@ -253,6 +316,40 @@ pagar" is the only thing set large. Everything else is deliberately quiet.
   <div>Total geral a pagar <span class="amount">{{ .GrandTotal }}</span></div>
   <div class="grandTotalBreakdown">
     {{ .GrandTotalPoints }} pontos · {{ .GrandTotalTaxes }} em taxas
+  </div>
+</div>
+{{ end }}
+
+{{ if .ShowSummary }}
+<div class="summaryHeading">Pontos &times; pagamentos</div>
+<div class="summaryTable">
+  <div class="summaryRow summaryHead">
+    <span class="colAdmin">Administrador</span>
+    <span class="colPrograms">Programas</span>
+    <span class="colAccounts">Contas</span>
+    <span class="colSumPoints">Pontos</span>
+    <span class="colSumTaxes">Taxas</span>
+    <span class="colSumAmount">Pag.</span>
+  </div>
+
+  {{ range .Summary }}
+  <div class="summaryRow">
+    <span class="colAdmin">{{ .Administrator }}</span>
+    <span class="colPrograms">{{ range .Programs }}<span class="chip" style="background: {{ .Brand }}; color: {{ .BrandOn }}">{{ .Name }}</span>{{ end }}</span>
+    <span class="colAccounts">{{ .AccountCount }}</span>
+    <span class="colSumPoints">{{ .Points }}</span>
+    <span class="colSumTaxes">{{ .Taxes }}</span>
+    <span class="colSumAmount">{{ .Amount }}</span>
+  </div>
+  {{ end }}
+
+  <div class="summaryRow summaryTotal">
+    <span class="colAdmin">TOTAL</span>
+    <span class="colPrograms"></span>
+    <span class="colAccounts">{{ .SummaryAccountCount }}</span>
+    <span class="colSumPoints">{{ .GrandTotalPoints }}</span>
+    <span class="colSumTaxes">{{ .GrandTotalTaxes }}</span>
+    <span class="colSumAmount">{{ .GrandTotal }}</span>
   </div>
 </div>
 {{ end }}

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -383,5 +384,237 @@ func TestSupplierReportFilename_UsesTheGroupWhenThereIsOne(t *testing.T) {
 
 	if got := supplierReportFilename(model); got != "resumo-maria-souza.pdf" {
 		t.Errorf("filename: got %q, want %q", got, "resumo-maria-souza.pdf")
+	}
+}
+
+// balanceFor is one account's balance the way the account-grouped view produces it, with the
+// administrator filled in - which the older helpers above deliberately leave off, since they
+// predate the recap and cover the document body instead.
+func balanceFor(
+	adminID, adminName, accountID, accountLabel string,
+	lines ...schemas.SupplierIssuanceResponse,
+) schemas.SupplierBalanceResponse {
+	for i := range lines {
+		lines[i].AccountID = accountID
+		lines[i].AccountLabel = accountLabel
+	}
+	return schemas.SupplierBalanceResponse{
+		GroupKey:          accountID,
+		GroupLabel:        accountLabel,
+		AccountCount:      1,
+		AccountID:         accountID,
+		AccountLabel:      accountLabel,
+		AdministratorID:   strPtr(adminID),
+		AdministratorName: strPtr(adminName),
+		Issuances:         lines,
+	}
+}
+
+// Two accounts of the same administrator in different programmes, plus a third account of
+// somebody else. R$ 10,00 the thousand throughout, so the arithmetic is readable: Maria is
+// owed 20.000 + 30.000 points = R$ 500,00 and Joana 10.000 points plus R$ 84,00 of taxes.
+func recapBalances() ([]schemas.SupplierBalanceResponse, map[string]supplierReportBrand) {
+	balances := []schemas.SupplierBalanceResponse{
+		balanceFor("adm-1", "Maria Souza", "acc-1", "Ambrosina",
+			statementLine("issued", 20000, nil, intPtr(1000))),
+		balanceFor("adm-1", "Maria Souza", "acc-2", "Zulmira",
+			statementLine("issued", 30000, nil, intPtr(1000))),
+		balanceFor("adm-2", "Joana Lima", "acc-3", "Benedita",
+			statementLineWithTaxes("issued", 10000, intPtr(8400), intPtr(1000), true)),
+	}
+	brands := map[string]supplierReportBrand{
+		"acc-1": {programName: "TudoAzul", programColor: "#0a3d91"},
+		"acc-2": {programName: "Smiles", programColor: "#ff7a00"},
+		"acc-3": {programName: "TudoAzul", programColor: "#0a3d91"},
+	}
+	return balances, brands
+}
+
+// The recap is the only place in the document that answers "who gets paid how much" in one
+// line, so an administrator's accounts have to meet there even though each one prints its
+// own statement further up.
+func TestBuildSupplierReport_SummaryAddsUpPerAdministrator(t *testing.T) {
+	balances, brands := recapBalances()
+
+	model, missing := buildSupplierReport(balances, brands, "03/08/2026", groupByAccount)
+	if missing != 0 {
+		t.Fatalf("missing: got %d, want 0", missing)
+	}
+	if !model.ShowSummary {
+		t.Fatal("a document with three accounts must carry the recap")
+	}
+	if len(model.Summary) != 2 {
+		t.Fatalf("recap rows: got %d, want 2", len(model.Summary))
+	}
+
+	// Biggest debt first, the same order the screen is in.
+	maria := model.Summary[0]
+	if maria.Administrator != "Maria Souza" {
+		t.Fatalf("first row: got %q, want %q", maria.Administrator, "Maria Souza")
+	}
+	if maria.AccountCount != "2 contas" {
+		t.Errorf("accounts: got %q, want %q", maria.AccountCount, "2 contas")
+	}
+	if maria.Points != "50.000" {
+		t.Errorf("points: got %q, want %q", maria.Points, "50.000")
+	}
+	if maria.Amount != "R$ 500,00" {
+		t.Errorf("amount: got %q, want %q", maria.Amount, "R$ 500,00")
+	}
+	// Nothing was reimbursed, and a "R$ 0,00" there would read as a figure that was checked.
+	if maria.Taxes != "—" {
+		t.Errorf("taxes: got %q, want a dash", maria.Taxes)
+	}
+	// One badge per programme, not one per account, and in a stable order.
+	if len(maria.Programs) != 2 ||
+		maria.Programs[0].Name != "Smiles" || maria.Programs[1].Name != "TudoAzul" {
+		t.Errorf("programmes: got %+v, want Smiles then TudoAzul", maria.Programs)
+	}
+	if maria.Programs[0].Brand != "#ff7a00" || maria.Programs[0].BrandOn == "" {
+		t.Errorf("the Smiles badge lost its colour: %+v", maria.Programs[0])
+	}
+
+	joana := model.Summary[1]
+	if joana.Administrator != "Joana Lima" || joana.AccountCount != "1 conta" {
+		t.Errorf("second row: got %q with %q", joana.Administrator, joana.AccountCount)
+	}
+	if joana.Amount != "R$ 184,00" {
+		t.Errorf("amount: got %q, want %q", joana.Amount, "R$ 184,00")
+	}
+	if joana.Taxes != "R$ 84,00" {
+		t.Errorf("taxes: got %q, want %q", joana.Taxes, "R$ 84,00")
+	}
+
+	if model.SummaryAccountCount != "3 contas" {
+		t.Errorf("total accounts: got %q, want %q", model.SummaryAccountCount, "3 contas")
+	}
+}
+
+// The recap answers a question about people, and the grouping only decides how the pages
+// beneath it are arranged - so the two documents have to close with the same table. This is
+// the invariant that catches an administrator dropped on the way through one of the branches.
+func TestBuildSupplierReport_SummaryIsTheSameInBothGroupings(t *testing.T) {
+	balances, brands := recapBalances()
+
+	byAccount, _ := buildSupplierReport(balances, brands, "03/08/2026", groupByAccount)
+
+	// The same issuances as the administrator-grouped view produces them: one balance per
+	// administrator, each carrying the lines of all their accounts.
+	maria := balances[0]
+	maria.GroupKey, maria.GroupLabel, maria.AccountCount = "adm-1", "Maria Souza", 2
+	maria.Issuances = append(append([]schemas.SupplierIssuanceResponse{}, balances[0].Issuances...),
+		balances[1].Issuances...)
+	joana := balances[2]
+	joana.GroupKey, joana.GroupLabel = "adm-2", "Joana Lima"
+
+	byAdmin, _ := buildSupplierReport(
+		[]schemas.SupplierBalanceResponse{maria, joana}, brands, "03/08/2026", groupByAdministrator)
+
+	if len(byAccount.Summary) != len(byAdmin.Summary) {
+		t.Fatalf("recap rows: %d grouped by account, %d by administrator",
+			len(byAccount.Summary), len(byAdmin.Summary))
+	}
+	for i := range byAccount.Summary {
+		if !reflect.DeepEqual(byAccount.Summary[i], byAdmin.Summary[i]) {
+			t.Errorf("row %d differs:\n by account: %+v\n by admin:   %+v",
+				i, byAccount.Summary[i], byAdmin.Summary[i])
+		}
+	}
+	if byAccount.SummaryAccountCount != byAdmin.SummaryAccountCount {
+		t.Errorf("account count: %q vs %q",
+			byAccount.SummaryAccountCount, byAdmin.SummaryAccountCount)
+	}
+}
+
+// An account nobody administers still owes miles. Dropping it would make the recap quietly
+// add up to less than the grand total printed right above it.
+func TestBuildSupplierReport_SummaryBucketsAccountsWithoutAnAdministrator(t *testing.T) {
+	orphan := balanceFor("", "", "acc-9", "Órfã", statementLine("issued", 10000, nil, intPtr(1000)))
+	orphan.AdministratorID = nil
+	orphan.AdministratorName = nil
+
+	balances := []schemas.SupplierBalanceResponse{
+		balanceFor("adm-1", "Maria Souza", "acc-1", "Ambrosina",
+			statementLine("issued", 20000, nil, intPtr(1000))),
+		orphan,
+	}
+
+	model, _ := buildSupplierReport(balances, noBrands, "03/08/2026", groupByAccount)
+	if len(model.Summary) != 2 {
+		t.Fatalf("recap rows: got %d, want 2", len(model.Summary))
+	}
+	// Same wording as the group heading uses, so the two never name the same bucket
+	// differently in one document.
+	if model.Summary[1].Administrator != "Sem administrador" {
+		t.Errorf("orphan row: got %q, want %q", model.Summary[1].Administrator, "Sem administrador")
+	}
+	if model.SummaryAccountCount != "2 contas" {
+		t.Errorf("total accounts: got %q, want %q", model.SummaryAccountCount, "2 contas")
+	}
+}
+
+// On a single-account document the recap would be that account, restated with fewer columns.
+func TestBuildSupplierReport_NoSummaryOnASingleAccount(t *testing.T) {
+	balances := []schemas.SupplierBalanceResponse{
+		balanceFor("adm-1", "Maria Souza", "acc-1", "Ambrosina",
+			statementLine("issued", 20000, nil, intPtr(1000))),
+	}
+
+	model, _ := buildSupplierReport(balances, noBrands, "03/08/2026", groupByAccount)
+	if model.ShowSummary {
+		t.Error("a one-account document must not repeat itself as a recap")
+	}
+}
+
+// The recap's TOTAL row and the "Total geral a pagar" above it are two routes to the same
+// sum. If they ever disagree, the reader has no way to tell which one to send money against.
+func TestBuildSupplierReport_SummaryTotalMatchesTheGrandTotal(t *testing.T) {
+	balances := []schemas.SupplierBalanceResponse{
+		balanceFor("adm-1", "Maria Souza", "acc-1", "Ambrosina",
+			statementLine("issued", 20000, nil, intPtr(1650))),
+		balanceFor("adm-1", "Maria Souza", "acc-2", "Zulmira",
+			statementLine("issued", 31000, nil, intPtr(1650))),
+	}
+
+	model, _ := buildSupplierReport(balances, noBrands, "03/08/2026", groupByAccount)
+	if len(model.Summary) != 1 {
+		t.Fatalf("recap rows: got %d, want 1", len(model.Summary))
+	}
+	// One administrator holds everything, so their row is the whole document.
+	if model.Summary[0].Amount != model.GrandTotal {
+		t.Errorf("recap says %q, grand total says %q", model.Summary[0].Amount, model.GrandTotal)
+	}
+	if model.Summary[0].Points != model.GrandTotalPoints {
+		t.Errorf("recap points %q, grand total points %q",
+			model.Summary[0].Points, model.GrandTotalPoints)
+	}
+}
+
+// The recap has to survive the template as well as the arithmetic, and it is the last block
+// on the page - which is exactly where a broken conditional shows up as silence.
+func TestBuildSupplierReport_RendersTheRecap(t *testing.T) {
+	balances, brands := recapBalances()
+
+	model, _ := buildSupplierReport(balances, brands, "01/08/2026 a 12/08/2026", groupByAccount)
+	document, err := supplierreport.Render(model)
+	if err != nil {
+		t.Fatalf("rendering failed: %v", err)
+	}
+
+	for _, want := range []string{
+		"Pontos &times; pagamentos",
+		"Administrador",
+		"Maria Souza",
+		"Joana Lima",
+		"2 contas",
+		"TOTAL",
+		"#ff7a00",
+	} {
+		if !strings.Contains(document, want) {
+			t.Errorf("recap is missing %q", want)
+		}
+	}
+	if strings.Index(document, "Pontos &times; pagamentos") < strings.Index(document, "Total geral a pagar") {
+		t.Error("the recap has to close the document, after the grand total")
 	}
 }
