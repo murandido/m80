@@ -35,8 +35,10 @@ export function addDays(date: Date, days: number): Date {
 }
 
 // The period granularities the reports offer. Kept here rather than in a component so the
-// Dashboard can reuse the same vocabulary when it lands.
-export const PERIOD_PRESETS = ["day", "week", "month", "year"] as const
+// Dashboard can reuse the same vocabulary when it lands. "custom" is the odd one out: it
+// carries no shape of its own, the two ends of the range are what the user picked - the
+// reconciliation of two or three days at a time is what it exists for.
+export const PERIOD_PRESETS = ["day", "week", "month", "year", "custom"] as const
 
 export type PeriodPreset = (typeof PERIOD_PRESETS)[number]
 
@@ -45,6 +47,7 @@ export const PERIOD_LABELS: Record<PeriodPreset, string> = {
   week: "Semanal",
   month: "Mensal",
   year: "Anual",
+  custom: "Personalizado",
 }
 
 export interface DateRangeParams {
@@ -54,12 +57,19 @@ export interface DateRangeParams {
 
 // Expands a preset plus a reference day into the inclusive [date_from, date_to] the API
 // expects. Weeks start on Monday, matching how the agency reports its numbers.
+//
+// "custom" has no expansion - its range lives in the URL's own date_from/date_to, which
+// resolvePeriod prefers over whatever comes back from here. The reference day is returned
+// so a custom period with nothing else in the URL still filters something narrow rather
+// than falling through to every date.
 export function resolvePeriodRange(
   preset: PeriodPreset,
   reference: Date,
 ): DateRangeParams {
   switch (preset) {
+    // custom shares the day's expansion only as a fallback - see the note above.
     case "day":
+    case "custom":
       return { date_from: formatYmd(reference), date_to: formatYmd(reference) }
     case "week": {
       // getDay() is 0 for Sunday, so Sunday has to walk back six days, not zero.

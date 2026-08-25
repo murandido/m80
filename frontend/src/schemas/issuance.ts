@@ -92,6 +92,9 @@ export const issuanceSchema = z.object({
   refunded_points: z.number().nullable(),
   refunded_taxes: z.number().nullable(),
   cancellation_fee: z.number().nullable(),
+  // The row exists only to carry an estorno: the booking was made outside the panel,
+  // so the supplier balance counts its refund and not its points.
+  cancellation_only: z.boolean().default(false),
   created_at: z.string(),
   updated_at: z.string(),
 })
@@ -190,6 +193,9 @@ export const cancelIssuanceSchema = {
     refunded_points: z.number().int().nonnegative().optional(),
     refunded_taxes: z.number().int().nonnegative().optional(),
     cancellation_fee: z.number().int().nonnegative().optional(),
+    // True when the booking was never in the panel and the issuance was registered
+    // just to hang this estorno off it. Omitted (false) on an ordinary cancellation.
+    cancellation_only: z.boolean().optional(),
   }),
   response: z.object({
     success: z.boolean(),

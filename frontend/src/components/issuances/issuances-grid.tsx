@@ -761,6 +761,7 @@ export function IssuancesGrid({
         refunded_points: result.issuance?.refunded_points ?? null,
         refunded_taxes: result.issuance?.refunded_taxes ?? null,
         cancellation_fee: result.issuance?.cancellation_fee ?? null,
+        cancellation_only: result.issuance?.cancellation_only ?? false,
       })
       return { success: true as const }
     },
@@ -787,6 +788,9 @@ export function IssuancesGrid({
         refunded_points: null,
         refunded_taxes: null,
         cancellation_fee: null,
+        // Reverting asserts the booking is live, which is the opposite of what an
+        // estorno-only row claims; the backend clears the flag with it.
+        cancellation_only: false,
       })
       return { success: true as const }
     },

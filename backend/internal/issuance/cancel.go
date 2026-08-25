@@ -33,6 +33,17 @@ type CancelInput struct {
 	// Nil everywhere else. The panel's Cancelar button and the bot's CANCELAMENTO are
 	// cancelling something as it happens, so for them now() is the truth.
 	CancelledAt *time.Time
+
+	// CancellationOnly says this cancellation is an estorno for a booking the panel
+	// never had: the row exists only to carry the refund, so the supplier balance must
+	// count its refund and not its points - see data.Issuance.CancellationOnly.
+	//
+	// The spreadsheet importer sets it when it creates such a row
+	// (internal/legacyimport), and the panel sets it when an operator registers the
+	// booking by hand in order to estornar it. Without it the only way to make the day
+	// read minus the refund is to type twice the points into the refund, which leaves
+	// the statement claiming miles that were never issued here.
+	CancellationOnly bool
 }
 
 // Cancel marks an issuance cancelled - the rule shared by the panel's own
@@ -67,6 +78,11 @@ func Cancel(db *gorm.DB, issuance data.Issuance, in CancelInput, actorID string)
 	issuance.RefundedPoints = in.RefundedPoints
 	issuance.RefundedTaxes = in.RefundedTaxes
 	issuance.CancellationFee = in.CancellationFee
+	// Only ever turned on here: a plain cancellation of a booking this system really made
+	// must leave the flag alone, and reverting a cancellation clears it (UncancelIssuance).
+	if in.CancellationOnly {
+		issuance.CancellationOnly = true
+	}
 
 	if err := db.Save(&issuance).Error; err != nil {
 		return data.Issuance{}, err
@@ -85,10 +101,11 @@ func Cancel(db *gorm.DB, issuance data.Issuance, in CancelInput, actorID string)
 	}
 
 	details, err := json.Marshal(map[string]any{
-		"refunded_points":  in.RefundedPoints,
-		"refunded_taxes":   in.RefundedTaxes,
-		"cancellation_fee": in.CancellationFee,
-		"cancelled_at":     now,
+		"refunded_points":   in.RefundedPoints,
+		"refunded_taxes":    in.RefundedTaxes,
+		"cancellation_fee":  in.CancellationFee,
+		"cancelled_at":      now,
+		"cancellation_only": in.CancellationOnly,
 	})
 	if err != nil {
 		return data.Issuance{}, err

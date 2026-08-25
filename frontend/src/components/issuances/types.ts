@@ -69,6 +69,9 @@ export interface IssuanceRow {
   refunded_points: number | null
   refunded_taxes: number | null // centavos
   cancellation_fee: number | null // centavos
+  // The row stands for an estorno alone: the booking was made outside the panel, so
+  // the supplier balance counts the refund and not the points. Set at cancellation.
+  cancellation_only: boolean
   saveStatus: SaveStatus
   // Sticks until the row next saves successfully, unlike saveStatus which flashes
   // for 900ms and resets. Drives the persistent red row highlight so a failed save
@@ -122,6 +125,7 @@ export function issuanceToRow(issuance: Issuance): IssuanceRow {
     refunded_points: issuance.refunded_points,
     refunded_taxes: issuance.refunded_taxes,
     cancellation_fee: issuance.cancellation_fee,
+    cancellation_only: issuance.cancellation_only,
     saveStatus: "idle",
     hasError: false,
   }
@@ -171,6 +175,7 @@ export function makeDraftRow(
     refunded_points: null,
     refunded_taxes: null,
     cancellation_fee: null,
+    cancellation_only: false,
     saveStatus: "idle",
     hasError: false,
   }

@@ -25,6 +25,7 @@ import {
   InputGroupText,
 } from "@/components/ui/input-group"
 import { Spinner } from "@/components/ui/spinner"
+import { Switch } from "@/components/ui/switch"
 import { useGridContext } from "@/components/issuances/grid-context"
 import { parseCurrencyBRLInput } from "@/lib/currency"
 import type { CancelIssuanceInput } from "@/schemas/issuance"
@@ -41,6 +42,10 @@ const cancelFormSchema = z.object({
   cancellation_fee: z
     .string()
     .refine((v) => v.trim() === "" || parseCurrencyBRLInput(v) !== null, "Valor inválido"),
+  // The booking was made outside the panel and was only registered here so this estorno
+  // has something to hang off. It is a property of the cancellation, not of the refund,
+  // so it carries no amount.
+  cancellation_only: z.boolean(),
 })
 
 type CancelFormData = z.infer<typeof cancelFormSchema>
@@ -49,6 +54,7 @@ const emptyForm: CancelFormData = {
   refunded_points: "",
   refunded_taxes: "",
   cancellation_fee: "",
+  cancellation_only: false,
 }
 
 export function CancelIssuanceButton({ r }: { r: number }) {
@@ -71,6 +77,7 @@ export function CancelIssuanceButton({ r }: { r: number }) {
       if (taxes !== null) data.refunded_taxes = taxes
       const fee = parseCurrencyBRLInput(values.cancellation_fee)
       if (fee !== null) data.cancellation_fee = fee
+      if (values.cancellation_only) data.cancellation_only = true
 
       const result = await onCancelRow(r, data)
       if ("error" in result) {
@@ -164,6 +171,32 @@ export function CancelIssuanceButton({ r }: { r: number }) {
                     />
                   </InputGroup>
                   {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
+                </Field>
+              )}
+            />
+
+            <Controller
+              name="cancellation_only"
+              control={form.control}
+              render={({ field }) => (
+                <Field>
+                  <div className="flex items-center justify-between gap-3">
+                    <FieldLabel htmlFor="cancellation_only">
+                      A emissão não existia no sistema
+                    </FieldLabel>
+                    <Switch
+                      id="cancellation_only"
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                      disabled={isPending}
+                    />
+                  </div>
+                  <p className="text-xs text-slate-500">
+                    Ligue quando a reserva foi feita fora do painel e você a cadastrou só
+                    para lançar este estorno. Os pontos deixam de contar como emitidos e o
+                    saldo do fornecedor fica só com o reembolso — sem precisar dobrar os
+                    pontos reembolsados.
+                  </p>
                 </Field>
               )}
             />

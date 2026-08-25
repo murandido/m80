@@ -82,6 +82,11 @@ type CancelIssuanceRequest struct {
 	RefundedPoints  *int `json:"refunded_points" validate:"omitempty"`
 	RefundedTaxes   *int `json:"refunded_taxes" validate:"omitempty"`
 	CancellationFee *int `json:"cancellation_fee" validate:"omitempty"`
+	// CancellationOnly marks the issuance as a row that exists only to carry this
+	// estorno: the booking was made outside the panel, so its points were never miles
+	// issued here and the supplier balance must count the refund alone. Registering the
+	// booking and then cancelling it with twice the points is what this replaces.
+	CancellationOnly bool `json:"cancellation_only" validate:"omitempty"`
 }
 
 // IssuanceFlightResponse defines how a flight leg should be returned nested in an issuance response.

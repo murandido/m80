@@ -57,6 +57,12 @@ function CancellationDetails({ row, users }: { row: IssuanceRow; users: User[] }
         <span className="text-muted-foreground">Em</span>
         <span className="font-medium">{cancelledAt}</span>
       </div>
+      {row.cancellation_only && (
+        <div className="border-t pt-2 text-amber-700">
+          Estorno avulso: a reserva não existia no painel, então os pontos não contam
+          como emitidos — só o reembolso entra no saldo do fornecedor.
+        </div>
+      )}
       <div className="border-t pt-2">
         {hasRefund ? (
           <div className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-1">

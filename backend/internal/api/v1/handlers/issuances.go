@@ -476,7 +476,7 @@ func (h *IssuanceHandler) GetIssuances(w http.ResponseWriter, r *http.Request) {
 
 // GetIssuancesExport handles the GET /issuances/export route.
 // @Summary      Exportar emissões (.xlsx)
-// @Description  Gera uma planilha .xlsx das emissões filtradas, a partir do modelo padrão, na mesma ordem da listagem (da mais antiga para a mais recente). Aceita os mesmos filtros da listagem (data, programa de fidelidade, cia aérea, conta, agência e emissor).
+// @Description  Gera uma planilha .xlsx das emissões filtradas, a partir do modelo padrão, na mesma ordem da listagem (da mais antiga para a mais recente). Aceita os mesmos filtros da listagem (data, programa de fidelidade, cia aérea, conta, agência e emissor). Emissões canceladas entram com sinal: os pontos e as taxas são somados quando a emissão foi criada no período e subtraídos pelo reembolso quando o cancelamento caiu no período. A coluna TAXA RESGATE traz a taxa de resgate que a conta isenta (Azul Diamante Unique) deixou de pagar, em branco nas contas comuns.
 // @Tags         Emissões
 // @Produce      application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
 // @Security     BearerAuth
@@ -509,7 +509,10 @@ func (h *IssuanceHandler) GetIssuancesExport(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	content, err := export.BuildIssuancesXLSX(issuances)
+	// The same period the list was filtered by: it is what decides whether a cancelled
+	// issuance enters the sheet as its booking, as its refund, or as both netting out.
+	exportFrom, exportTo := parseDateRange(r)
+	content, err := export.BuildIssuancesXLSX(issuances, exportFrom, exportTo)
 	if err != nil {
 		slog.Error("failed to build issuances export", "err", err)
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to build issuances export")
@@ -521,6 +524,11 @@ func (h *IssuanceHandler) GetIssuancesExport(w http.ResponseWriter, r *http.Requ
 	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
 	w.Header().Set("Content-Length", strconv.Itoa(len(content)))
+	// gosec follows the date filters from the query string into this write and calls the
+	// response reflected input. What actually reaches the browser is a .xlsx built by
+	// excelize from database rows, served as a binary attachment - the two dates only ever
+	// decide the sign of a number inside a cell, and never reach the bytes as text.
+	//nolint:gosec // G705: no request text is echoed; see above.
 	if _, err := w.Write(content); err != nil {
 		slog.Error("failed to write issuances export response", "err", err)
 	}
@@ -1004,7 +1012,7 @@ func (h *IssuanceHandler) DeleteIssuance(w http.ResponseWriter, r *http.Request)
 
 // CancelIssuance handles the POST /issuances/{id}/cancel route.
 // @Summary      Cancelar emissão
-// @Description  Cancela uma emissão (active=false, cancelled_at=now), registra os valores de reembolso, reseta o pagamento da venda associada (se paga) e grava um audit log. Tudo numa única transação.
+// @Description  Cancela uma emissão (active=false, cancelled_at=now), registra os valores de reembolso, reseta o pagamento da venda associada (se paga) e grava um audit log. Tudo numa única transação. Com cancellation_only=true, a emissão passa a valer apenas como estorno: o saldo do fornecedor conta o reembolso e não os pontos, para o caso da reserva ter sido feita fora do painel.
 // @Tags         Emissões
 // @Accept       json
 // @Produce      json
@@ -1050,9 +1058,10 @@ func (h *IssuanceHandler) CancelIssuance(w http.ResponseWriter, r *http.Request)
 	err := h.DB.Transaction(func(tx *gorm.DB) error {
 		var txErr error
 		issuance, txErr = issuancesvc.Cancel(tx, issuance, issuancesvc.CancelInput{
-			RefundedPoints:  req.RefundedPoints,
-			RefundedTaxes:   req.RefundedTaxes,
-			CancellationFee: req.CancellationFee,
+			RefundedPoints:   req.RefundedPoints,
+			RefundedTaxes:    req.RefundedTaxes,
+			CancellationFee:  req.CancellationFee,
+			CancellationOnly: req.CancellationOnly,
 		}, userCtx.ID)
 		return txErr
 	})
