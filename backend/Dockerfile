@@ -70,10 +70,14 @@ CMD ["./server"]
 # Fonts are not optional. The screenshots that go back to the group are the operator's
 # proof that a CPF was enrolled, and without these every accented character renders as
 # a blank box.
+#
+# curl is here for the Compose healthcheck alone: the base image carries neither it nor
+# wget, and probing the port with bash's /dev/tcp instead is unreadable inside YAML.
 FROM chromedp/headless-shell:latest AS prod-chrome
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         tzdata \
+        curl \
         ca-certificates \
         fonts-liberation \
         fonts-dejavu-core \

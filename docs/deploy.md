@@ -444,6 +444,38 @@ O `git fetch`/`checkout` acontece **fora** do script, no workflow: bash lê o ar
 pedaços, e um script que reescreve o próprio arquivo no meio da execução se comporta de formas que
 ninguém quer depurar de madrugada.
 
+### O promo é recriado, e um cadastro em andamento morre junto
+
+`mem_limit` não é aplicável a quente, então qualquer deploy que mexa nele **recria** o
+`promo-service-prod` em vez de deixá-lo de pé. Um cadastro de promoção rodando naquele instante é
+perdido. Não é grave — a idempotência por `url_key` faz o mesmo link recadastrar só quem ficou de
+fora — mas é motivo para não fazer deploy no meio de uma campanha aberta.
+
+## O teto de memória do promo
+
+O `promo-service-prod` é o **único** container com limite (`mem_limit: 1500m`, `memswap_limit` igual
+— sem swap — e `shm_size: 256mb` saindo *de dentro* desse teto). O raciocínio está no
+`backend/CLAUDE.md`; aqui fica só o que se faz quando ele aparece.
+
+Como se percebe:
+
+```bash
+docker inspect promo-service-prod --format '{{.State.OOMKilled}} {{.RestartCount}}'
+docker compose --profile prod ps          # o promo deve aparecer (healthy)
+docker stats --no-stream promo-service-prod
+```
+
+`OOMKilled: true` com `RestartCount` subindo é o teto sendo batido de verdade. O container volta
+sozinho — o serviço encerra quando o browser some e o `restart: always` faz o resto — então **nada
+some em silêncio**: o grupo recebe ⚠️ no cadastro que morreu.
+
+Se for campanha legítima batendo no teto, suba o `mem_limit` (a caixa tem folga: ~1.9 GB livres com
+o teto atual). Baixar o `PROMO_MAX_CPFS` também alivia, porque os screenshots ficam em base64 no
+heap até a resposta sair, mas é tratar sintoma.
+
+Um container `(unhealthy)` **sem** `OOMKilled` é outra coisa: o Chrome morreu por conta própria.
+`docker logs promo-service-prod` tem o motivo.
+
 ## Rollback e deploy manual
 
 ```bash
