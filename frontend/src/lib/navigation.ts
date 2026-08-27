@@ -9,6 +9,7 @@ import {
   LayoutDashboard,
   MapPin,
   Plane,
+  Sparkles,
   Ticket,
   UserRound,
   Users,
@@ -70,6 +71,12 @@ export const navSections: NavSection[] = [
       { title: "Contas", url: "/dashboard/accounts", icon: Landmark },
       { title: "Clientes", url: "/dashboard/clients", icon: UserRound },
       { title: "Usuários do M80", url: "/dashboard/users", icon: IdCard, roles: ["admin"] },
+      {
+        title: "CPFs das Promoções",
+        url: "/dashboard/loyalty-documents",
+        icon: IdCard,
+        roles: ["admin"],
+      },
       // Temporary: the bridge off the hand-kept spreadsheet. Remove this line with the
       // rest of the importer (see backend/internal/legacyimport).
       { title: "Importar planilha", url: "/dashboard/import", icon: FileUp, roles: ["admin"] },
@@ -89,6 +96,10 @@ export const navSections: NavSection[] = [
       },
       { title: "Aeroportos", url: "/dashboard/airports", icon: MapPin, roles: [] },
       { title: "Bot", url: "/dashboard/bot", icon: Bot, roles: [] },
+      // Dev-only: a recipe is CSS selectors and regular expressions, and a wrong one
+      // points the bot at the wrong form. Being in the panel is what removes the
+      // deploy from the loop; it does not have to be open to everyone on shift.
+      { title: "Automação de Promoções", url: "/dashboard/promotions", icon: Sparkles, roles: [] },
     ],
   },
 ]

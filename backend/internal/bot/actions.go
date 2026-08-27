@@ -1,8 +1,17 @@
 package bot
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"image"
+	"image/jpeg"
+
+	// Registered for their side effect: image.Decode and image.DecodeConfig only
+	// recognise a format whose decoder has been linked in. The screenshots arrive as
+	// PNG; GIF costs nothing and spares a puzzling failure if a source ever changes.
+	_ "image/gif"
+	_ "image/png"
 
 	"github.com/murandido/m-80-backend/internal/bot/humanizer"
 	"go.mau.fi/whatsmeow"
@@ -168,4 +177,107 @@ func (b *Bot) SendDocument(ctx context.Context, originalMsg *events.Message, con
 		return fmt.Errorf("sending %s to %s: %w", fileName, originalMsg.Info.Chat, err)
 	}
 	return nil
+}
+
+// SendImage posts a picture as a reply, with a caption.
+//
+// The proof screenshots of a promotion enrolment go out this way. Like a document, the
+// bytes are uploaded first and the message carries only the resulting keys - but an
+// ImageMessage needs three things a DocumentMessage does not: Width, Height and a
+// JPEGThumbnail. WhatsApp renders the thumbnail in the chat list and in the bubble
+// before the full image downloads, and a message without one shows as a grey box that
+// many clients never resolve.
+func (b *Bot) SendImage(ctx context.Context, originalMsg *events.Message, content []byte, caption string) error {
+	config, format, err := image.DecodeConfig(bytes.NewReader(content))
+	if err != nil {
+		return fmt.Errorf("reading image dimensions: %w", err)
+	}
+	// Checked rather than converted blind: image.DecodeConfig reads the dimensions out
+	// of the file's header, so a corrupt or hostile one can report something that does
+	// not fit a uint32 and would wrap into a nonsense size on the wire.
+	width, height := config.Width, config.Height
+	if width <= 0 || height <= 0 || width > maxImageDimension || height > maxImageDimension {
+		return fmt.Errorf("image reports an implausible size: %dx%d", width, height)
+	}
+
+	thumbnail, err := jpegThumbnail(content)
+	if err != nil {
+		return fmt.Errorf("building thumbnail: %w", err)
+	}
+
+	uploaded, err := b.currentSession().Client.Upload(ctx, content, whatsmeow.MediaImage)
+	if err != nil {
+		return fmt.Errorf("uploading image: %w", err)
+	}
+
+	msg := &waE2E.Message{
+		ImageMessage: &waE2E.ImageMessage{
+			URL:           proto.String(uploaded.URL),
+			DirectPath:    proto.String(uploaded.DirectPath),
+			MediaKey:      uploaded.MediaKey,
+			FileEncSHA256: uploaded.FileEncSHA256,
+			FileSHA256:    uploaded.FileSHA256,
+			FileLength:    proto.Uint64(uploaded.FileLength),
+			Mimetype:      proto.String("image/" + format),
+			Width:         proto.Uint32(uint32(width)),
+			Height:        proto.Uint32(uint32(height)),
+			JPEGThumbnail: thumbnail,
+			Caption:       proto.String(caption),
+			ContextInfo: &waE2E.ContextInfo{
+				StanzaID:      proto.String(originalMsg.Info.ID),
+				Participant:   proto.String(originalMsg.Info.Sender.String()),
+				QuotedMessage: originalMsg.Message,
+			},
+		},
+	}
+
+	if _, err := b.currentSession().Client.SendMessage(ctx, originalMsg.Info.Chat, msg); err != nil {
+		return fmt.Errorf("sending image to %s: %w", originalMsg.Info.Chat, err)
+	}
+	return nil
+}
+
+// maxImageDimension is a sanity bound, not a product limit: a screenshot of a web page
+// is a couple of thousand pixels across, and anything past this is a header that cannot
+// be trusted.
+const maxImageDimension = 20000
+
+// thumbnailWidth is what WhatsApp's own clients produce. Larger buys nothing - the
+// preview is rendered small - and the thumbnail travels inside the message itself
+// rather than through the media servers, so it is the one part with a size budget.
+const thumbnailWidth = 200
+
+// jpegThumbnail scales an image down and encodes it as JPEG.
+func jpegThumbnail(content []byte) ([]byte, error) {
+	src, _, err := image.Decode(bytes.NewReader(content))
+	if err != nil {
+		return nil, err
+	}
+
+	bounds := src.Bounds()
+	if bounds.Dx() == 0 || bounds.Dy() == 0 {
+		return nil, fmt.Errorf("image has no area")
+	}
+	height := bounds.Dy() * thumbnailWidth / bounds.Dx()
+	if height < 1 {
+		height = 1
+	}
+
+	// Nearest-neighbour, deliberately: this is a placeholder shown for a moment before
+	// the real image arrives, and pulling in an image-resizing dependency to smooth a
+	// 200px preview would not be worth the supply chain.
+	dst := image.NewRGBA(image.Rect(0, 0, thumbnailWidth, height))
+	for y := range height {
+		for x := range thumbnailWidth {
+			srcX := bounds.Min.X + x*bounds.Dx()/thumbnailWidth
+			srcY := bounds.Min.Y + y*bounds.Dy()/height
+			dst.Set(x, y, src.At(srcX, srcY))
+		}
+	}
+
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, dst, &jpeg.Options{Quality: 70}); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }

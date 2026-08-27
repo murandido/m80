@@ -1,6 +1,6 @@
 # Deploy
 
-O M-80 vai ao ar em dois lugares independentes: a **API, o bot e o pdf-service** rodam em Docker
+O M-80 vai ao ar em dois lugares independentes: a **API, o bot, o promo-service e o pdf-service** rodam em Docker
 numa VPS da Hostinger, atrás do Caddy; o **painel** roda na Vercel. Os dois são publicados por
 **label no GitHub**, nunca por push ou merge.
 
@@ -15,7 +15,7 @@ Este documento é o runbook: como publicar, como provisionar do zero, e o que fa
 
 | Label | Publica |
 | --- | --- |
-| `deploy:vps` | API + bot + pdf-service na VPS (`.github/workflows/deploy-vps.yml`) |
+| `deploy:vps` | API + bot + promo-service + pdf-service na VPS (`.github/workflows/deploy-vps.yml`) |
 | `deploy:vercel` | painel na Vercel (`.github/workflows/deploy-vercel.yml`) |
 
 As duas são independentes — uma mudança só de frontend não precisa mexer na VPS.

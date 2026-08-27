@@ -313,3 +313,45 @@ type MergeAccountPreviewSingleResponse struct {
 	Message string                      `json:"message" example:"Prévia calculada com sucesso"`
 	Data    MergeAccountPreviewResponse `json:"data"`
 }
+
+// PromoRecipeListResponse is the GET /promo-recipes route response
+type PromoRecipeListResponse struct {
+	Success bool                  `json:"success" example:"true"`
+	Message string                `json:"message" example:"Receitas listadas com sucesso"`
+	Data    []PromoRecipeResponse `json:"data"`
+}
+
+// PromoRecipeSingleResponse is the response from single-recipe routes
+type PromoRecipeSingleResponse struct {
+	Success bool                `json:"success" example:"true"`
+	Message string              `json:"message" example:"Receita criada com sucesso"`
+	Data    PromoRecipeResponse `json:"data"`
+}
+
+// PromoRecipeTestSingleResponse is the POST /promo-recipes/test route response
+type PromoRecipeTestSingleResponse struct {
+	Success bool                    `json:"success" example:"true"`
+	Message string                  `json:"message" example:"Formulário localizado"`
+	Data    PromoRecipeTestResponse `json:"data"`
+}
+
+// LoyaltyDocumentListResponse is the GET /loyalty-documents route response
+type LoyaltyDocumentListResponse struct {
+	Success bool                      `json:"success" example:"true"`
+	Message string                    `json:"message" example:"CPFs listados com sucesso"`
+	Data    []LoyaltyDocumentResponse `json:"data"`
+}
+
+// LoyaltyDocumentSingleResponse is the response from single-document routes
+type LoyaltyDocumentSingleResponse struct {
+	Success bool                    `json:"success" example:"true"`
+	Message string                  `json:"message" example:"CPF cadastrado com sucesso"`
+	Data    LoyaltyDocumentResponse `json:"data"`
+}
+
+// PromoEnrollmentListResponse is the GET /promo-enrollments route response
+type PromoEnrollmentListResponse struct {
+	Success bool                         `json:"success" example:"true"`
+	Message string                       `json:"message" example:"Histórico listado com sucesso"`
+	Data    PromoEnrollmentPaginatedData `json:"data"`
+}

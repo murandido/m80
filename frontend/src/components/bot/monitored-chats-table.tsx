@@ -36,6 +36,7 @@ import {
   deactivateListenedChatAction,
   reactivateListenedChatAction,
   setListenedChatPDFModeAction,
+  setListenedChatPromoModeAction,
   stopListenedChatAction,
 } from "@/actions/listened-chats"
 import { cn } from "@/lib/utils"
@@ -95,6 +96,7 @@ export function MonitoredChatsTable({ chats }: { chats: ListenedChat[] }) {
                 <TableHead>Chat</TableHead>
                 <TableHead>Aprovado por</TableHead>
                 <TableHead className="w-28 text-center">Modo PDF</TableHead>
+                <TableHead className="w-32 text-center">Promoções</TableHead>
                 <TableHead className="w-32 text-right">Ações</TableHead>
               </TableRow>
             </TableHeader>
@@ -135,6 +137,9 @@ export function MonitoredChatsTable({ chats }: { chats: ListenedChat[] }) {
                     </TableCell>
                     <TableCell className="text-center">
                       <PDFModeSwitch chat={chat} disabled={isSaving || isDeactivated} />
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <PromoModeSwitch chat={chat} disabled={isSaving || isDeactivated} />
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center justify-end gap-1">
@@ -292,6 +297,49 @@ function PDFModeSwitch({ chat, disabled }: { chat: ListenedChat; disabled: boole
       checked={enabled}
       disabled={disabled || isSaving}
       aria-label="Modo PDF"
+      onCheckedChange={(next) => void handleChange(next)}
+    />
+  )
+}
+
+// With this on, a bare promotion link dropped in the chat makes the bot open the page
+// and enrol the agency's CPFs. Off, a link stays a link - which is what it has to be
+// in an issuance group.
+//
+// Same optimistic-until-answered shape as the PDF switch, and for the same reason: the
+// !promo command writes this column too.
+function PromoModeSwitch({ chat, disabled }: { chat: ListenedChat; disabled: boolean }) {
+  const router = useRouter()
+  const [enabled, setEnabled] = useState(chat.promo_mode)
+  const [isSaving, setIsSaving] = useState(false)
+
+  async function handleChange(next: boolean) {
+    setEnabled(next)
+    setIsSaving(true)
+
+    const result = await setListenedChatPromoModeAction(chat.id, next)
+    setIsSaving(false)
+
+    if ("error" in result) {
+      setEnabled(!next)
+      toast.error(result.error)
+      return
+    }
+
+    setEnabled(result.chat.promo_mode)
+    toast.success(
+      result.chat.promo_mode
+        ? "Cadastro em promoções ligado."
+        : "Cadastro em promoções desligado.",
+    )
+    router.refresh()
+  }
+
+  return (
+    <Switch
+      checked={enabled}
+      disabled={disabled || isSaving}
+      aria-label="Cadastro em promoções"
       onCheckedChange={(next) => void handleChange(next)}
     />
   )

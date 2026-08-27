@@ -25,7 +25,11 @@ type ListenedChat struct {
 	// PDFMode makes the bot send the ticket as a PDF after an EMISSAO it managed
 	// to complete from Traveos. Same reasoning as Active above for the missing
 	// `default` tag: an explicit false has to survive the write.
-	PDFMode   bool      `gorm:"column:pdf_mode;not null" json:"pdf_mode"`
+	PDFMode bool `gorm:"column:pdf_mode;not null" json:"pdf_mode"`
+	// PromoMode lets a bare promotion link in this chat trigger an enrolment run. Off
+	// by default, and deliberately opt-in: in an issuance group a pasted link has to
+	// stay a pasted link. Same missing `default` tag, same reason as the two above.
+	PromoMode bool      `gorm:"column:promo_mode;not null" json:"promo_mode"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }

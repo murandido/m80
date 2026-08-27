@@ -56,3 +56,39 @@ COPY --from=builder /app/app ./server
 
 
 CMD ["./server"]
+# prod image for the promo service
+#
+# Same builder as api and bot - only the runtime differs, because this one drives a
+# browser.
+#
+# The base is chromedp's own headless-shell image rather than alpine + chromium. That
+# was the first attempt and it is a trap: alpine's chromium pulls 186 packages,
+# including gtk+3, the full ICU data and llvm-libs (SwiftShader links against system
+# LLVM), and the build sat on llvm-libs for twenty minutes without finishing. This
+# image ships the headless shell chromedp is written against and nothing else.
+#
+# Fonts are not optional. The screenshots that go back to the group are the operator's
+# proof that a CPF was enrolled, and without these every accented character renders as
+# a blank box.
+FROM chromedp/headless-shell:latest AS prod-chrome
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        tzdata \
+        ca-certificates \
+        fonts-liberation \
+        fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/*
+
+# The base image sets an ENTRYPOINT that launches the browser; this service launches it
+# itself, on its own terms, so that has to be cleared or the Go binary never runs.
+ENTRYPOINT []
+
+# chromedp would search the PATH on its own, but being explicit means a missing or
+# renamed binary fails at startup with a clear message instead of on the first campaign.
+ENV CHROME_PATH=/headless-shell/headless-shell
+
+WORKDIR /root/
+
+COPY --from=builder /app/app ./server
+
+CMD ["./server"]

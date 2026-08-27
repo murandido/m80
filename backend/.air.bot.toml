@@ -11,7 +11,7 @@ tmp_dir = "tmp"
   cmd = "go build -buildvcs=false -o ./tmp/bot ./cmd/bot"
   delay = 1000
   entrypoint = ["./tmp/bot"]
-  exclude_dir = ["assets", "tmp", "vendor", "testdata", "cmd/api"]
+  exclude_dir = ["assets", "tmp", "vendor", "testdata", "cmd/api", "cmd/promo"]
   exclude_file = []
   exclude_regex = ["_test.go"]
   exclude_unchanged = false

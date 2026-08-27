@@ -9,6 +9,7 @@ export const listenedChatSchema = z.object({
   status: listenedChatStatusSchema,
   active: z.boolean(),
   pdf_mode: z.boolean(),
+  promo_mode: z.boolean(),
   requested_by_id: z.string(),
   requested_by_name: z.string(),
   requested_by_phone: z.string(),
@@ -61,6 +62,15 @@ export const deactivateListenedChatSchema = {
 }
 
 export const reactivateListenedChatSchema = {
+  response: z.object({
+    success: z.boolean(),
+    message: z.string(),
+    data: listenedChatSchema.nullish(),
+  }),
+}
+
+export const setPromoModeSchema = {
+  request: z.object({ enabled: z.boolean() }),
   response: z.object({
     success: z.boolean(),
     message: z.string(),

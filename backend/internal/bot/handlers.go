@@ -257,6 +257,12 @@ func (b *Bot) classify(v *events.Message, text string) triggerKind {
 func classifyText(text string) triggerKind {
 	switch {
 	case utils.IsCommand(text):
+		if commandName(text) == cmdNamePromo {
+			// Its own kind rather than kindCommand: an enrolment run is minutes of
+			// browser work, and kindPromo is what lets it skip the chat queue instead
+			// of holding every EMISSAO behind it.
+			return kindPromo
+		}
 		if isKnownCommand(text) {
 			return kindCommand
 		}
@@ -269,6 +275,11 @@ func classifyText(text string) triggerKind {
 		return kindCancelamento
 	case isDeletarMessage(text):
 		return kindDeletar
+	case isPromoLinkMessage(text):
+		// Last, so a link inside an EMISSAO can never take the message over. Whether
+		// this chat may actually act on a bare link is decided by mayAct, which has
+		// the chat to check promo_mode against.
+		return kindPromo
 	default:
 		return kindNone
 	}
@@ -336,6 +347,25 @@ func (b *Bot) supersede(evt *events.Message, text string) bool {
 // nothing and writes nothing, and it already announced the bot's presence to
 // anyone who sent it long before this pipeline existed.
 func (b *Bot) mayAct(evt *events.Message, kind triggerKind, text string) bool {
+	if kind == kindPromo {
+		user, err := b.resolveSenderUser(evt)
+		if err != nil {
+			b.Logger.Errorf("promo: failed to resolve sender %s: %v", evt.Info.Sender, err)
+			return false
+		}
+		if user == nil {
+			return false
+		}
+		if utils.IsCommand(text) {
+			// "!promo" was addressed at the bot by someone it knows, so it is answered
+			// even where promotions are switched off - the handler explains why.
+			return true
+		}
+		// A bare link is only a command where the chat opted in. Everywhere else it
+		// stays what it looks like: somebody sharing a link.
+		return b.promoModeEnabled(context.Background(), evt.Info.Chat.String())
+	}
+
 	if kind == kindCommand {
 		if commandName(text) == cmdNamePing {
 			return true
@@ -364,6 +394,7 @@ var flowNames = map[triggerKind]string{
 	kindDeletar:      "deletar",
 	kindEdit:         "edicao",
 	kindRevoke:       "delecao",
+	kindPromo:        "promo",
 }
 
 // locatorOf reads the PNR off the message's first line, reusing the very header
@@ -464,6 +495,8 @@ func (b *Bot) executeJob(j *job) {
 		b.handleMessageEdit(ctx, j.evt, text, j.startedAt)
 	case kindCommand:
 		b.RouteCommand(ctx, j.evt, text, j.startedAt)
+	case kindPromo:
+		b.handlePromo(ctx, j.evt, text, j.startedAt)
 	case kindEmissao:
 		b.handleEmissao(ctx, j.evt, text, j.startedAt)
 	case kindAlteracao:

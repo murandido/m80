@@ -119,6 +119,7 @@ func main() {
 		IssuanceUpdated:   notifyIssuanceUpdatedCallback(clientLog),
 		IssuanceCancelled: notifyIssuanceCancelledCallback(clientLog),
 		IssuanceDeleted:   notifyIssuanceDeletedCallback(clientLog),
+		PromoEnrolled:     notifyPromoEnrolledCallback(clientLog),
 	})
 
 	client.AddEventHandler(botInstance.EventHandler)
@@ -213,6 +214,12 @@ func notifyIssuanceCancelledCallback(logger waLog.Logger) func() {
 func notifyIssuanceDeletedCallback(logger waLog.Logger) func() {
 	callbackURL := os.Getenv("BOT_ISSUANCE_DELETED_CALLBACK_URL")
 	return func() { postCallback(logger, callbackURL, "issuance deletion") }
+}
+
+// notifyPromoEnrolledCallback is the same bridge for a promotion enrolment run.
+func notifyPromoEnrolledCallback(logger waLog.Logger) func() {
+	callbackURL := os.Getenv("BOT_PROMO_ENROLLED_CALLBACK_URL")
+	return func() { postCallback(logger, callbackURL, "promotion enrolment") }
 }
 
 // postCallback is the shared fire-and-forget POST behind every notify hook

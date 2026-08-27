@@ -7,6 +7,7 @@ import (
 	"time"
 
 	issuancesvc "github.com/murandido/m-80-backend/internal/issuance"
+	"github.com/murandido/m-80-backend/internal/promotion"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
@@ -121,6 +122,21 @@ type Bot struct {
 	// registering issuances without them. See syncTraveos.
 	Traveos issuancesvc.TraveosClient
 
+	// Promo drives the headless browser that enrols CPFs in transfer-bonus
+	// promotions. Built once in cmd/bot: the client is stateless and holds only a
+	// base URL and an HTTP client with a long timeout, since a browser run for a
+	// list of CPFs legitimately takes minutes.
+	//
+	// nil is a supported state, the same way Traveos is: without PROMO_SERVICE_URL
+	// the bot still registers issuances, and a promotion link is answered with a
+	// refusal rather than a crash.
+	Promo *promotion.Client
+
+	// notifyPromoEnrolled is the same bridge as the issuance hooks, for a promotion
+	// enrolment run that recorded something - so the panel's history refreshes
+	// without anyone reloading it.
+	notifyPromoEnrolled func()
+
 	// notifyChatRequested is called after a !registrar-chat command actually
 	// creates or reopens a listened_chats row, so cmd/bot can push that out
 	// over HTTP the same way it already does for status changes - see
@@ -193,6 +209,7 @@ type Notifiers struct {
 	IssuanceUpdated   func()
 	IssuanceCancelled func()
 	IssuanceDeleted   func()
+	PromoEnrolled     func()
 }
 
 // withDefaults fills the hooks nobody set with no-ops. A struct makes omitting
@@ -203,7 +220,7 @@ func (n Notifiers) withDefaults() Notifiers {
 
 	for _, hook := range []*func(){
 		&n.StatusChanged, &n.ChatRequested, &n.IssuanceCreated, &n.IssuanceUpdated,
-		&n.IssuanceCancelled, &n.IssuanceDeleted,
+		&n.IssuanceCancelled, &n.IssuanceDeleted, &n.PromoEnrolled,
 	} {
 		if *hook == nil {
 			*hook = noop
@@ -227,6 +244,11 @@ func New(client *whatsmeow.Client, logger waLog.Logger, newDeviceClient func(ctx
 		notifyIssuanceUpdated:   notifiers.IssuanceUpdated,
 		notifyIssuanceCancelled: notifiers.IssuanceCancelled,
 		notifyIssuanceDeleted:   notifiers.IssuanceDeleted,
+		notifyPromoEnrolled:     notifiers.PromoEnrolled,
+		// Built here rather than passed in: the client is stateless, holds only a
+		// base URL and an HTTP client, and cannot fail to construct. Adding a
+		// parameter to New for it would churn every call site to no purpose.
+		Promo: promotion.NewClient(),
 	}
 }
 

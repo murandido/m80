@@ -28,6 +28,7 @@ func toListenedChatResponse(chat data.ListenedChat) schemas.ListenedChatResponse
 		Status:        chat.Status,
 		Active:        chat.Active,
 		PDFMode:       chat.PDFMode,
+		PromoMode:     chat.PromoMode,
 		RequestedByID: chat.RequestedByID,
 		ApprovedByID:  chat.ApprovedByID,
 		CreatedAt:     chat.CreatedAt,
@@ -350,4 +351,54 @@ func (h *ListenedChatHandler) SetListenedChatPDFMode(w http.ResponseWriter, r *h
 	}
 
 	utils.SendJSON(w, r, http.StatusOK, "Modo PDF atualizado", toListenedChatResponse(chat))
+}
+
+// SetListenedChatPromoMode handles the PATCH /bot/chats/{id}/promo-mode route
+// @Summary      Ligar ou desligar o cadastro em promoções de um chat
+// @Description  Com o modo promoção ligado, um link de promoção solto neste chat dispara o cadastro dos CPFs da agência. Desligado, um link é apenas um link. É a mesma coluna que o comando !promo escreve, então painel e WhatsApp são dois caminhos para a mesma configuração. Apenas desenvolvedores podem acessar.
+// @Tags         Bot
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id       path  string                       true  "UUID do listened_chats"
+// @Param        request  body  schemas.SetPromoModeRequest  true  "Estado desejado"
+// @Success      200  {object}  schemas.ListenedChatSingleResponse
+// @Failure      400  {object}  schemas.ErrorResponse "Corpo inválido"
+// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a desenvolvedores"
+// @Failure      404  {object}  schemas.ErrorResponse "Chat não encontrado"
+// @Failure      500  {object}  schemas.ErrorResponse "Erro ao salvar a configuração"
+// @Router       /bot/chats/{id}/promo-mode [patch]
+func (h *ListenedChatHandler) SetListenedChatPromoMode(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	var req schemas.SetPromoModeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		utils.SendError(w, r, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+	// A pointer, and checked, for the same reason the PDF mode above needs one: a
+	// missing "enabled" decodes to false and would quietly turn the mode off.
+	if req.Enabled == nil {
+		utils.SendError(w, r, http.StatusBadRequest, "O campo enabled é obrigatório")
+		return
+	}
+
+	var chat data.ListenedChat
+	if err := h.DB.First(&chat, "id = ?", id).Error; err != nil {
+		utils.SendError(w, r, http.StatusNotFound, "Chat not found")
+		return
+	}
+
+	if err := h.DB.Model(&chat).Update("promo_mode", *req.Enabled).Error; err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to update chat: "+err.Error())
+		return
+	}
+
+	if err := h.DB.Preload("RequestedBy").Preload("ApprovedBy").First(&chat, "id = ?", chat.ID).Error; err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch updated chat")
+		return
+	}
+
+	utils.SendJSON(w, r, http.StatusOK, "Modo promoção atualizado", toListenedChatResponse(chat))
 }

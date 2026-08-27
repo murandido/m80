@@ -46,6 +46,9 @@ func NewRouter(db *gorm.DB, broker *events.Broker, traveosClient *traveos.Client
 		routes.RegisterSaleRoutes(r, db, broker)
 		routes.RegisterDashboardRoutes(r, db)
 		routes.RegisterAirportRoutes(r, db)
+		routes.RegisterLoyaltyDocumentRoutes(r, db)
+		routes.RegisterPromoRecipeRoutes(r, db)
+		routes.RegisterPromoEnrollmentRoutes(r, db)
 		// SSE stream, behind the same auth as everything else in this group
 		routes.RegisterEventRoutes(r, broker)
 		// Dependency lights (bot + Traveos) for everyone, not just admins -

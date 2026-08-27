@@ -30,5 +30,8 @@ func RegisterListenedChatRoutes(r chi.Router, db *gorm.DB) {
 
 		// the other half of the bot's !pdf command - same column, two ways in
 		r.Patch("/{id}/pdf-mode", h.SetListenedChatPDFMode)
+
+		// likewise for !promo
+		r.Patch("/{id}/promo-mode", h.SetListenedChatPromoMode)
 	})
 }

@@ -3,6 +3,8 @@ module github.com/murandido/m-80-backend
 go 1.26.6
 
 require (
+	github.com/chromedp/cdproto v0.0.0-20260714215040-dc233986426f
+	github.com/chromedp/chromedp v0.16.0
 	github.com/go-chi/chi/v5 v5.3.0
 	github.com/go-chi/cors v1.2.2
 	github.com/go-chi/httprate v0.15.0
@@ -19,6 +21,7 @@ require (
 	go.mau.fi/whatsmeow v0.0.0-20260722203353-e9a033b24933
 	golang.org/x/crypto v0.54.0
 	golang.org/x/sync v0.22.0
+	golang.org/x/text v0.40.0
 	google.golang.org/protobuf v1.36.11
 	gorm.io/datatypes v1.2.7
 	gorm.io/driver/postgres v1.6.0
@@ -30,9 +33,11 @@ require (
 	github.com/KyleBanks/depth v1.2.1 // indirect
 	github.com/ajg/form v1.6.1 // indirect
 	github.com/beeper/argo-go v1.1.2 // indirect
+	github.com/chromedp/sysutil v1.1.0 // indirect
 	github.com/coder/websocket v1.8.15 // indirect
 	github.com/elliotchance/orderedmap/v3 v3.1.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.13 // indirect
+	github.com/go-json-experiment/json v0.0.0-20260623181947-01eb4420fa68 // indirect
 	github.com/go-openapi/jsonpointer v0.22.4 // indirect
 	github.com/go-openapi/jsonreference v0.21.4 // indirect
 	github.com/go-openapi/spec v0.22.3 // indirect
@@ -46,6 +51,9 @@ require (
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/go-sql-driver/mysql v1.8.1 // indirect
+	github.com/gobwas/httphead v0.1.0 // indirect
+	github.com/gobwas/pool v0.2.1 // indirect
+	github.com/gobwas/ws v1.4.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
@@ -74,7 +82,6 @@ require (
 	golang.org/x/mod v0.38.0 // indirect
 	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.40.0 // indirect
 	golang.org/x/tools v0.48.0 // indirect
 	gorm.io/driver/mysql v1.5.6 // indirect
 )

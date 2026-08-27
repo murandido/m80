@@ -37,6 +37,7 @@ const (
 	kindDeletar
 	kindEdit
 	kindRevoke
+	kindPromo
 )
 
 // queuedMessage is a message as it left EventHandler: still wrapped, still
@@ -254,11 +255,17 @@ func (q *chatQueue) runIntake() {
 	}
 }
 
-// skipsQueue reports whether this job bypasses its chat's queue. Both of them
-// are interruptions: waiting behind the work they are meant to stop would mean
-// arriving only after it finished.
+// skipsQueue reports whether this job bypasses its chat's queue.
+//
+// DELETAR and a native deletion are interruptions: waiting behind the work they
+// are meant to stop would mean arriving only after it finished.
+//
+// A promotion enrolment is here for the opposite reason - it is not urgent, it is
+// slow. A browser run costs roughly twelve seconds per CPF, so a list of ten holds
+// the queue for two minutes, and every EMISSAO typed into the group meanwhile would
+// wait behind it. It touches no PNR, so it takes no locator lock either.
 func (j *job) skipsQueue() bool {
-	return j.kind == kindDeletar || j.kind == kindRevoke
+	return j.kind == kindDeletar || j.kind == kindRevoke || j.kind == kindPromo
 }
 
 // runWorker executes one job at a time, in the order intake admitted them.

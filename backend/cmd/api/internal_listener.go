@@ -59,5 +59,12 @@ func newInternalRouter(broker *events.Broker) http.Handler {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
+	// A promotion enrolment run that recorded outcomes, so the panel's history
+	// refreshes on its own.
+	mux.HandleFunc("POST /internal/bot/promo-enrolled", func(w http.ResponseWriter, r *http.Request) {
+		broker.Broadcast(events.Event{Type: "promo_enrollment.created"})
+		w.WriteHeader(http.StatusNoContent)
+	})
+
 	return mux
 }

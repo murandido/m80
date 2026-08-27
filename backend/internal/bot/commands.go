@@ -21,6 +21,7 @@ const (
 	cmdNamePing          = "!ping"
 	cmdNameRegistrarChat = "!registrar-chat"
 	cmdNamePDF           = "!pdf"
+	cmdNamePromo         = "!promo"
 )
 
 // commandName is the leading word of a command, lowercased. "" for a message
@@ -36,7 +37,7 @@ func commandName(text string) string {
 // isKnownCommand reports whether this is a command the bot answers.
 func isKnownCommand(text string) bool {
 	switch commandName(text) {
-	case cmdNamePing, cmdNameRegistrarChat, cmdNamePDF:
+	case cmdNamePing, cmdNameRegistrarChat, cmdNamePDF, cmdNamePromo:
 		return true
 	default:
 		return false
@@ -56,6 +57,12 @@ func (b *Bot) RouteCommand(ctx context.Context, evt *events.Message, text string
 
 	case cmdNamePDF:
 		b.cmdPDF(ctx, evt, text, startedAt)
+
+	case cmdNamePromo:
+		// Reached only when a !promo somehow arrives as kindCommand. classifyText
+		// gives it its own kind so it can skip the chat queue, so the ordinary path
+		// does not come through here - but leaving it unrouted would hang the 🕐.
+		b.handlePromo(ctx, evt, text, startedAt)
 
 	default:
 		// Unreachable: intake only admits known commands. Kept so adding a

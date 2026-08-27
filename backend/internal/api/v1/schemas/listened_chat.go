@@ -12,6 +12,7 @@ type ListenedChatResponse struct {
 	Status           string    `json:"status"`
 	Active           bool      `json:"active"`
 	PDFMode          bool      `json:"pdf_mode"`
+	PromoMode        bool      `json:"promo_mode"`
 	RequestedByID    string    `json:"requested_by_id"`
 	RequestedByName  string    `json:"requested_by_name"`
 	RequestedByPhone string    `json:"requested_by_phone"`
