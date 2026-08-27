@@ -384,16 +384,47 @@ correção é o `permissions:` **no job chamador**.
 `contents` e `packages`, então `actions` fica em `none`), mas essa hipótese já pareceu boa antes e o
 lugar de testá-la não é o caminho de deploy de produção.
 
-### O SSH tenta cinco vezes antes de desistir
+### O SSH insiste por dez minutos antes de desistir
 
-Dois deploys morreram em `connect to host: Connection timed out` sem nunca chegar à VPS. O fail2ban
-foi descartado como culpado (`fail2ban-client status sshd`: zero banimentos, zero falhas totais) e a
-causa nunca apareceu.
+Alguns deploys morreram em `connect to host: Connection timed out` sem nunca chegar à VPS — os dois
+da montagem em 08/08 e um em 27/08.
 
-O que existe hoje é uma **sonda de conexão** repetida cinco vezes com 15s de intervalo; só o `true`
-remoto é repetido, nunca o deploy — repetir o deploy refaria o dump e recriaria todo container. Se as
-cinco falharem, o job imprime o **IP de saída do runner** antes de abortar: é o dado que distingue
-"um endereço bloqueado" de "uma faixa inteira" de "a rota caiu", e ele muda a cada execução.
+O de 27/08 foi investigado com a caixa na mão, e **todos os suspeitos caíram**:
+
+| Suspeito | Como foi descartado |
+|---|---|
+| `sshd` fora do ar | `active`, escutando em `0.0.0.0:22` e `[::]:22`; 119 dias de uptime, sem reboot |
+| Firewall do painel Hostinger | Regra `Accept TCP 22 · Fonte Any` acima do `Drop` |
+| UFW | Regra não muda sozinha, e o deploy de 25/08 passou pelo mesmo caminho |
+| fail2ban | Jail é a `defaults-debian.conf` pura, e o `/var/log/fail2ban.log` **não foi escrito no dia** — o `mtime` parou em 26/08 |
+| Secret `VPS_HOST` apontando para IP velho | Os `VPS_*` não são tocados desde 07/08, e uma host key de 09/06 ainda casa: mesma caixa, mesmo endereço |
+
+Sobrou a **rota** entre o runner e a VPS. Não há o que consertar do nosso lado disso, então o que o
+workflow faz é sobreviver a ela.
+
+Uma armadilha ao investigar isto: **muita rede corporativa e de universidade bloqueia a porta 22 de
+saída**. Testar `ssh` de uma dessas mede o bloqueio local, não a VPS, e o sintoma é idêntico. Antes
+de concluir qualquer coisa a partir da sua máquina, confirme com um alvo conhecido:
+
+```bash
+timeout 10 bash -c 'cat < /dev/null > /dev/tcp/github.com/22' && echo aberto || echo bloqueado
+```
+
+Se o `github.com:22` também estourar, o problema é a sua rede — use VPN e refaça o teste.
+
+O que existe no job é uma **sonda de conexão** repetida a cada 30s por até **dez minutos**; só o
+`true` remoto é repetido, nunca o deploy — repetir o deploy refaria o dump e recriaria todo
+container. A janela é generosa de propósito e não custa nada num deploy saudável: a primeira sonda
+responde e o laço sai. As cinco tentativas anteriores cobriam 2min30, curto demais para atravessar
+um soluço de rota.
+
+Se a janela inteira falhar, o job imprime duas coisas antes de abortar:
+
+- o **IP de saída do runner**, que muda a cada execução e distingue "um endereço bloqueado" de "uma
+  faixa inteira";
+- se o **443 responde** desse mesmo runner. Caddy atende no 443 sempre que a VPS está viva, então
+  443 sim e 22 não é filtragem específica de SSH (olhe firewall), e nenhum dos dois é a rota caída
+  (não há o que fazer). É a pergunta que as falhas anteriores deixaram em aberto.
 
 ---
 
@@ -421,6 +452,10 @@ git fetch origin main
 git checkout --detach <sha-anterior>
 deploy/vps-deploy.sh <sha-anterior>
 ```
+
+**O SHA é o completo, de 40 caracteres.** As imagens são publicadas com a tag que o job `resolve`
+produz, que é o `git rev-parse HEAD` inteiro; passar o SHA curto que o `git log` mostra faz o `pull`
+morrer em `manifest unknown` e o script aborta sem tocar em nada. Já custou uma tentativa de deploy.
 
 Toda tag antiga continua no GHCR, então qualquer SHA já publicado serve.
 
