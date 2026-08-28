@@ -306,8 +306,8 @@ function PDFModeSwitch({ chat, disabled }: { chat: ListenedChat; disabled: boole
 // and enrol the agency's CPFs. Off, a link stays a link - which is what it has to be
 // in an issuance group.
 //
-// Same optimistic-until-answered shape as the PDF switch, and for the same reason: the
-// !promo command writes this column too.
+// Same optimistic-until-answered shape as the PDF switch, so the row never lies about
+// a state the API has not confirmed.
 function PromoModeSwitch({ chat, disabled }: { chat: ListenedChat; disabled: boolean }) {
   const router = useRouter()
   const [enabled, setEnabled] = useState(chat.promo_mode)

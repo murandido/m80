@@ -211,7 +211,7 @@ func (h *LoyaltyDocumentHandler) UpdateLoyaltyDocument(w http.ResponseWriter, r 
 
 // DeleteLoyaltyDocument handles the DELETE /loyalty-documents/{id} route
 // @Summary      Excluir CPF das promoções
-// @Description  Remove um CPF. Falha com 422 quando ele já tem histórico de cadastro - nesse caso, desative em vez de excluir.
+// @Description  Remove um CPF e, junto com ele, todo o histórico de cadastro em promoções desse CPF. Para preservar o histórico, desative em vez de excluir.
 // @Tags         Promoções
 // @Produce      json
 // @Security     BearerAuth
@@ -220,21 +220,15 @@ func (h *LoyaltyDocumentHandler) UpdateLoyaltyDocument(w http.ResponseWriter, r 
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a administradores"
 // @Failure      404  {object}  schemas.ErrorResponse "CPF não encontrado"
-// @Failure      422  {object}  schemas.ErrorResponse "CPF com histórico de cadastro"
 // @Router       /loyalty-documents/{id} [delete]
 func (h *LoyaltyDocumentHandler) DeleteLoyaltyDocument(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
+	// Since migration 45 promo_enrollments cascades from here, so a document with
+	// history deletes cleanly and takes that history with it. There is no foreign key
+	// left to trip over on this path.
 	result := h.DB.Delete(&data.LoyaltyDocument{}, "id = ?", id)
 	if result.Error != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(result.Error, &pgErr) && pgErr.Code == postgresForeignKeyViolation {
-			// promo_enrollments references documents with ON DELETE RESTRICT so the
-			// history of what was enrolled cannot be orphaned. Retiring is the way out.
-			utils.SendError(w, r, http.StatusUnprocessableEntity,
-				"Este CPF já tem histórico de cadastro em promoções. Desative-o em vez de excluir.")
-			return
-		}
 		utils.SendError(w, r, http.StatusInternalServerError, "Erro ao excluir CPF: "+result.Error.Error())
 		return
 	}

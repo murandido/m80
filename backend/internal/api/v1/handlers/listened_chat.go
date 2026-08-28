@@ -355,7 +355,7 @@ func (h *ListenedChatHandler) SetListenedChatPDFMode(w http.ResponseWriter, r *h
 
 // SetListenedChatPromoMode handles the PATCH /bot/chats/{id}/promo-mode route
 // @Summary      Ligar ou desligar o cadastro em promoções de um chat
-// @Description  Com o modo promoção ligado, um link de promoção solto neste chat dispara o cadastro dos CPFs da agência. Desligado, um link é apenas um link. É a mesma coluna que o comando !promo escreve, então painel e WhatsApp são dois caminhos para a mesma configuração. Apenas desenvolvedores podem acessar.
+// @Description  Com o modo promoção ligado, um link de promoção solto neste chat dispara o cadastro dos CPFs da agência. Desligado, um link é apenas um link. Apenas desenvolvedores podem acessar.
 // @Tags         Bot
 // @Accept       json
 // @Produce      json

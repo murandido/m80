@@ -174,8 +174,8 @@ export async function setListenedChatPDFModeAction(
   }
 }
 
-// Same explicit on/off as the PDF mode above, and for the same reason: the bot's
-// !promo command writes this column too.
+// Same explicit on/off as the PDF mode above, though this column has a single writer:
+// the bot only reads promo_mode, it never sets it.
 export async function setListenedChatPromoModeAction(
   id: string,
   enabled: boolean,

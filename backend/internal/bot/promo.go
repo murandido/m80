@@ -16,10 +16,10 @@ import (
 
 // handlePromo enrols the agency's CPFs in the campaign a link points at.
 //
-// It is reached two ways, and both land here: "!promo <link>", which is the
-// deterministic path, and a bare link in a chat with promo_mode on, which is the
-// convenience the operators actually asked for - somebody sees a promotion, pastes it
-// in the group, and the enrolment happens.
+// One trigger: a bare link, in a chat with promo_mode on, for a domain some active
+// recipe covers. Somebody sees a promotion, pastes it in the group, and the enrolment
+// happens - which is what the operators asked for, and it replaced a "!promo <link>"
+// command that was only ceremony around the same link.
 //
 // Nothing here guesses. When no recipe covers the domain, or the page yields no form,
 // the group is told and nothing is submitted: a wrong guess still looks like success,
@@ -42,21 +42,19 @@ func (b *Bot) handlePromo(ctx context.Context, evt *events.Message, text string,
 
 	link, found := promotion.FindLink(text)
 	if !found {
-		b.refuse(ctx, evt, startedAt, "Não encontrei um link nessa mensagem. Use: !promo <link da promoção>")
+		// Unreachable through intake: a message with no link is never classified as a
+		// promotion. Silence rather than a refusal, because the handler stays callable
+		// directly and this says nothing a group needs to hear.
+		b.Logger.Warnf("promo: %q reached the handler with no link in it", text)
 		return
 	}
 
-	// Reached only for a chat the bot works for - mayAct already turned the rest away
-	// in silence. What is left to say is the useful half: promotions are off here, and
-	// the panel is where they are switched on.
+	// The handler keeps its own gate because it is still reachable directly, and
+	// because neither check writes anything. Everything it turns away here, mayAct has
+	// already turned away in silence.
 	listened, promoOn := b.promoChatState(ctx, chatJID)
-	if !listened {
-		b.Logger.Infof("promo: chat %s is not listened, ignoring", chatJID)
-		return
-	}
-	if !promoOn {
-		b.refuse(ctx, evt, startedAt,
-			"O cadastro em promoções está desligado neste chat. Ligue no painel, em Chats monitorados.")
+	if !listened || !promoOn {
+		b.Logger.Infof("promo: chat %s is not set up for enrolments, ignoring", chatJID)
 		return
 	}
 
@@ -218,6 +216,29 @@ func (b *Bot) promoChatState(ctx context.Context, chatJID string) (listened, pro
 		return false, false
 	}
 	return true, chat.PromoMode
+}
+
+// promoRecipeExistsFor reports whether any active recipe covers this link's domain.
+//
+// It runs in the gate rather than in the handler because the gate is upstream of every
+// reaction: a promotion link for a site we do not drive has to be as invisible to the
+// bot as any other message, and reaching the handler would mean a ✅ and a refusal for
+// every promotion anybody shares in the group.
+//
+// ResolveRecipe owns the matching rule - suffix match, most specific domain wins - and
+// is reused rather than reimplemented here.
+func (b *Bot) promoRecipeExistsFor(ctx context.Context, link string) bool {
+	_, err := promotion.ResolveRecipe(b.DB.WithContext(ctx), link)
+	if err == nil {
+		return true
+	}
+	if !errors.Is(err, promotion.ErrNoRecipe) {
+		// A database that is down must not look like a domain we do not cover, so it is
+		// at least loud in the log. The message still gets no answer: guessing in the
+		// permissive direction would spend enrolments.
+		b.Logger.Errorf("promo: failed to resolve a recipe for %s: %v", link, err)
+	}
+	return false
 }
 
 // isPromoLinkMessage reports whether a message is nothing but a link.

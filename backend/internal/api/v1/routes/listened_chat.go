@@ -31,7 +31,8 @@ func RegisterListenedChatRoutes(r chi.Router, db *gorm.DB) {
 		// the other half of the bot's !pdf command - same column, two ways in
 		r.Patch("/{id}/pdf-mode", h.SetListenedChatPDFMode)
 
-		// likewise for !promo
+		// the switch a chat needs before a bare promotion link enrols anybody; unlike
+		// pdf-mode, the panel is the only way in - the bot only reads this one
 		r.Patch("/{id}/promo-mode", h.SetListenedChatPromoMode)
 	})
 }

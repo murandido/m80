@@ -3,8 +3,14 @@ import { cookies } from "next/headers"
 import { Separator } from "@/components/ui/separator"
 import { requireAdmin } from "@/lib/session"
 import { env } from "@/lib/env"
-import { getLoyaltyDocumentsSchema, type LoyaltyDocument } from "@/schemas/promo"
-import { getLoyaltyProgramsSchema, type LoyaltyProgram } from "@/schemas/loyalty-program"
+import {
+  getLoyaltyDocumentsSchema,
+  type LoyaltyDocument,
+} from "@/schemas/promo"
+import {
+  getLoyaltyProgramsSchema,
+  type LoyaltyProgram,
+} from "@/schemas/loyalty-program"
 import { CreateDocumentForm } from "@/components/loyalty-documents/create-document-form"
 import { DocumentCard } from "@/components/loyalty-documents/document-card"
 import { ListFilterBar } from "@/components/shared/list-filter-bar"
@@ -23,7 +29,9 @@ const DOCUMENTS_URL_KEYS = ["q", "order", "active"] as const
 export default async function LoyaltyDocumentsPage({
   searchParams,
 }: {
-  searchParams: Promise<Partial<Record<(typeof DOCUMENTS_URL_KEYS)[number], string>>>
+  searchParams: Promise<
+    Partial<Record<(typeof DOCUMENTS_URL_KEYS)[number], string>>
+  >
 }) {
   await requireAdmin()
 
@@ -75,10 +83,13 @@ export default async function LoyaltyDocumentsPage({
     <div className="p-6 sm:p-8">
       <div className="flex flex-col gap-2 sm:gap-6">
         <div className="flex flex-col gap-1">
-          <h1 className="text-lg font-semibold text-slate-800">CPFs das Promoções</h1>
+          <h1 className="text-lg font-semibold text-slate-800">
+            CPFs das Promoções
+          </h1>
           <p className="text-sm text-slate-500">
-            Quem entra nas promoções de transferência. O número fica criptografado no
-            banco; aqui ele aparece porque a equipe precisa dele.
+            Quem entra nas promoções de transferência. O número fica
+            criptografado no banco; aqui ele aparece porque a equipe precisa
+            dele.
           </p>
         </div>
 
@@ -108,7 +119,11 @@ export default async function LoyaltyDocumentsPage({
             </p>
           ) : (
             documents.map((document) => (
-              <DocumentCard key={document.id} document={document} />
+              <DocumentCard
+                key={document.id}
+                document={document}
+                programs={programs}
+              />
             ))
           )}
         </div>

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/murandido/m-80-backend/internal/bot/humanizer"
+	"github.com/murandido/m-80-backend/internal/promotion"
 	"github.com/murandido/m-80-backend/internal/utils"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
@@ -257,12 +258,6 @@ func (b *Bot) classify(v *events.Message, text string) triggerKind {
 func classifyText(text string) triggerKind {
 	switch {
 	case utils.IsCommand(text):
-		if commandName(text) == cmdNamePromo {
-			// Its own kind rather than kindCommand: an enrolment run is minutes of
-			// browser work, and kindPromo is what lets it skip the chat queue instead
-			// of holding every EMISSAO behind it.
-			return kindPromo
-		}
 		if isKnownCommand(text) {
 			return kindCommand
 		}
@@ -277,8 +272,12 @@ func classifyText(text string) triggerKind {
 		return kindDeletar
 	case isPromoLinkMessage(text):
 		// Last, so a link inside an EMISSAO can never take the message over. Whether
-		// this chat may actually act on a bare link is decided by mayAct, which has
-		// the chat to check promo_mode against.
+		// this chat may actually act on the link is decided by mayAct, which has the
+		// chat to check promo_mode against and the database to check the domain.
+		//
+		// Its own kind rather than kindCommand: an enrolment run is minutes of browser
+		// work, and kindPromo is what lets it skip the chat queue instead of holding
+		// every EMISSAO behind it.
 		return kindPromo
 	default:
 		return kindNone
@@ -360,19 +359,19 @@ func (b *Bot) mayAct(evt *events.Message, kind triggerKind, text string) bool {
 		if !listened {
 			// Not a chat the bot works for. Silence, like every other flow: an answer
 			// here would tell whoever typed that the bot is reading. It also stops two
-			// environments sharing one paired number from both replying to the same
-			// "!promo" when only one of them knows the chat.
+			// environments sharing one paired number from both reacting to the same
+			// link when only one of them knows the chat.
 			return false
-		}
-		if utils.IsCommand(text) {
-			// "!promo" was addressed at the bot by someone it knows, in a chat it works
-			// for, so it is answered even where promotions are switched off - the
-			// handler explains why.
-			return true
 		}
 		// A bare link is only a command where the chat opted in. Everywhere else it
 		// stays what it looks like: somebody sharing a link.
-		return promoOn
+		if !promoOn {
+			return false
+		}
+		// And only for a site we actually drive. We always know the domains we handle,
+		// so anything else is somebody sharing a promotion, not asking for one.
+		link, found := promotion.FindLink(text)
+		return found && b.promoRecipeExistsFor(context.Background(), link)
 	}
 
 	if kind == kindCommand {

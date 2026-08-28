@@ -153,8 +153,8 @@ type PromoEnrollmentPaginatedData struct {
 }
 
 // SetPromoModeRequest is the body of PATCH /bot/chats/{id}/promo-mode. Explicit on/off
-// rather than a toggle, for the same reason SetPDFModeRequest is: the panel and the
-// !promo command write the same column.
+// rather than a toggle, even though the panel is the only writer of this column - a
+// toggle is a request whose meaning depends on a state the caller may not have.
 type SetPromoModeRequest struct {
 	Enabled *bool `json:"enabled" validate:"required" example:"true"`
 }
