@@ -46,10 +46,15 @@ func (b *Bot) handlePromo(ctx context.Context, evt *events.Message, text string,
 		return
 	}
 
-	// The explicit command answers even when the chat is not set up for promotions -
-	// it was addressed at the bot, so silence would read as a bug. A bare link never
-	// gets this far unless promo_mode is on (see mayAct).
-	if !b.promoModeEnabled(ctx, chatJID) {
+	// Reached only for a chat the bot works for - mayAct already turned the rest away
+	// in silence. What is left to say is the useful half: promotions are off here, and
+	// the panel is where they are switched on.
+	listened, promoOn := b.promoChatState(ctx, chatJID)
+	if !listened {
+		b.Logger.Infof("promo: chat %s is not listened, ignoring", chatJID)
+		return
+	}
+	if !promoOn {
 		b.refuse(ctx, evt, startedAt,
 			"O cadastro em promoções está desligado neste chat. Ligue no painel, em Chats monitorados.")
 		return
@@ -78,15 +83,6 @@ func (b *Bot) handlePromo(ctx context.Context, evt *events.Message, text string,
 	})
 	if err != nil {
 		b.refusePromo(ctx, evt, startedAt, link, err)
-		return
-	}
-
-	if len(result.Outcomes) == 0 {
-		humanizer.EnforceResponseFloor(startedAt)
-		b.ReplyMessage(ctx, evt, fmt.Sprintf(
-			"Todos os %d CPFs de *%s* já estavam cadastrados nessa promoção.",
-			len(result.AlreadyEnrolled), programName(result.Recipe)))
-		b.ReactMessage(ctx, evt, "🚀")
 		return
 	}
 
@@ -152,10 +148,6 @@ func (b *Bot) answerPromoSummary(ctx context.Context, evt *events.Message, start
 	lines = append(lines, fmt.Sprintf("*%s* — %d de %d cadastrados.",
 		programName(result.Recipe), succeeded, total))
 
-	if len(result.AlreadyEnrolled) > 0 {
-		lines = append(lines, fmt.Sprintf("%d já estavam cadastrados.", len(result.AlreadyEnrolled)))
-	}
-
 	var problems []string
 	for _, outcome := range result.Outcomes {
 		if outcome.Status != data.PromoEnrollmentSuccess {
@@ -204,10 +196,17 @@ func programName(recipe *data.PromoRecipe) string {
 	return recipe.Name
 }
 
-// promoModeEnabled reports whether this chat may trigger enrolments. A chat that is not
-// approved and active is not one the bot works for, so it is not one that spends real
-// enrolments either.
-func (b *Bot) promoModeEnabled(ctx context.Context, chatJID string) bool {
+// promoChatState answers the two questions the promo gate needs to keep apart.
+//
+// listened: the bot works for this chat at all - approved and active. A chat that is
+// not one of ours gets silence, the same as every other flow, and for the same reason:
+// answering tells whoever typed that the bot is reading. That matters concretely when a
+// number is paired in more than one environment, where the chat is registered in one and
+// unknown in the other and both used to reply.
+//
+// promoOn: enrolments are switched on there. A registered chat with promotions off is
+// worth an answer, because whoever asked can go turn it on.
+func (b *Bot) promoChatState(ctx context.Context, chatJID string) (listened, promoOn bool) {
 	var chat data.ListenedChat
 	err := b.DB.WithContext(ctx).
 		Select("promo_mode").
@@ -216,9 +215,9 @@ func (b *Bot) promoModeEnabled(ctx context.Context, chatJID string) bool {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			b.Logger.Errorf("promo: failed to read promo_mode for %s: %v", chatJID, err)
 		}
-		return false
+		return false, false
 	}
-	return chat.PromoMode
+	return true, chat.PromoMode
 }
 
 // isPromoLinkMessage reports whether a message is nothing but a link.

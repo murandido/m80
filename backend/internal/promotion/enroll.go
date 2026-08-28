@@ -85,41 +85,23 @@ func deref(value *string) string {
 	return *value
 }
 
-// PendingDocuments returns the active documents of a programme that have not already
-// succeeded for this campaign, plus the ones that have.
+// EnrollableDocuments returns the active documents of a programme.
 //
-// This is where idempotency lives, and it has to: the campaign this was built against
-// accepts the same CPF repeatedly and answers "Solicitação enviada" every time, so the
-// site cannot tell us who is already in.
-func PendingDocuments(db *gorm.DB, urlKey, programID string) (pending, already []data.LoyaltyDocument, err error) {
+// It used to subtract whoever already had a success recorded for the campaign, which is
+// where idempotency lived. That guard is gone (migration 44): a success can be recorded
+// for an enrolment that never happened, and there was no way to try again. The cost of
+// removing it is real and deliberate - the same link pasted in the group twice now
+// re-submits every CPF - and the site tolerates it, because it accepts the same document
+// repeatedly and answers the same thing every time.
+func EnrollableDocuments(db *gorm.DB, programID string) ([]data.LoyaltyDocument, error) {
 	var documents []data.LoyaltyDocument
 	if err := db.
 		Where("loyalty_program_id = ? AND active = ?", programID, true).
 		Order("name").
 		Find(&documents).Error; err != nil {
-		return nil, nil, fmt.Errorf("promotion: loading documents: %w", err)
+		return nil, fmt.Errorf("promotion: loading documents: %w", err)
 	}
-
-	var enrolledIDs []string
-	if err := db.Model(&data.PromoEnrollment{}).
-		Where("url_key = ? AND status = ?", urlKey, data.PromoEnrollmentSuccess).
-		Distinct().
-		Pluck("document_id", &enrolledIDs).Error; err != nil {
-		return nil, nil, fmt.Errorf("promotion: loading enrolment history: %w", err)
-	}
-	enrolled := make(map[string]bool, len(enrolledIDs))
-	for _, id := range enrolledIDs {
-		enrolled[id] = true
-	}
-
-	for _, document := range documents {
-		if enrolled[document.ID] {
-			already = append(already, document)
-		} else {
-			pending = append(pending, document)
-		}
-	}
-	return pending, already, nil
+	return documents, nil
 }
 
 // RunRequest is one campaign run.
@@ -143,8 +125,6 @@ type RunResult struct {
 	URLKey   string
 	Resolved *Resolution
 	Outcomes []Outcome
-	// AlreadyEnrolled were skipped because a success is already on record.
-	AlreadyEnrolled []data.LoyaltyDocument
 }
 
 // Succeeded counts the outcomes worth celebrating.
@@ -175,17 +155,14 @@ func Run(ctx context.Context, db *gorm.DB, client *Client, req RunRequest) (RunR
 		return RunResult{}, err
 	}
 
-	pending, already, err := PendingDocuments(db, urlKey, recipe.LoyaltyProgramID)
+	pending, err := EnrollableDocuments(db, recipe.LoyaltyProgramID)
 	if err != nil {
 		return RunResult{}, err
 	}
-	result := RunResult{Recipe: recipe, URLKey: urlKey, AlreadyEnrolled: already}
+	result := RunResult{Recipe: recipe, URLKey: urlKey}
 
 	if len(pending) == 0 {
-		if len(already) == 0 {
-			return result, ErrNoDocuments
-		}
-		return result, nil
+		return result, ErrNoDocuments
 	}
 
 	cpfs := make([]string, 0, len(pending))

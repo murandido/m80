@@ -1,0 +1,14 @@
+-- Drops the guard that stopped a document from being enrolled twice in the same
+-- campaign.
+--
+-- It was there because the site cannot tell us who is already in: the campaign this was
+-- built against accepts the same CPF repeatedly and answers "Solicitação enviada" every
+-- time. So a link pasted twice in the group used to re-enrol everybody, and the record
+-- of a success was the only thing that knew better.
+--
+-- It is going away on purpose. A success can be recorded for an enrolment that never
+-- happened - the verdict is read off the page, and a page that answers in a shell we
+-- already saw reads as "unknown" or worse - and with the guard in place there was no way
+-- to try again. Being able to retry is worth more than being protected from a duplicate
+-- submission the site accepts anyway.
+DROP INDEX IF EXISTS idx_promo_enrollments_unique_success;

@@ -356,14 +356,23 @@ func (b *Bot) mayAct(evt *events.Message, kind triggerKind, text string) bool {
 		if user == nil {
 			return false
 		}
+		listened, promoOn := b.promoChatState(context.Background(), evt.Info.Chat.String())
+		if !listened {
+			// Not a chat the bot works for. Silence, like every other flow: an answer
+			// here would tell whoever typed that the bot is reading. It also stops two
+			// environments sharing one paired number from both replying to the same
+			// "!promo" when only one of them knows the chat.
+			return false
+		}
 		if utils.IsCommand(text) {
-			// "!promo" was addressed at the bot by someone it knows, so it is answered
-			// even where promotions are switched off - the handler explains why.
+			// "!promo" was addressed at the bot by someone it knows, in a chat it works
+			// for, so it is answered even where promotions are switched off - the
+			// handler explains why.
 			return true
 		}
 		// A bare link is only a command where the chat opted in. Everywhere else it
 		// stays what it looks like: somebody sharing a link.
-		return b.promoModeEnabled(context.Background(), evt.Info.Chat.String())
+		return promoOn
 	}
 
 	if kind == kindCommand {
