@@ -1,3 +1,11 @@
+# One domain serves both halves of the product now that the panel runs on this
+# box instead of Vercel. The site is the panel; the Go API is not published at
+# all - its only client is frontend-prod, over the Compose network - with a
+# single exception for the health path the deploy script checks from outside.
+#
+# That is why CORS_ALLOWED_ORIGINS_PROD can stay empty for good: the browser is
+# no longer merely uninterested in calling the API directly, it has no address
+# to call.
 {$API_DOMAIN} {
 	encode gzip
 
@@ -10,15 +18,22 @@
 		-Server
 	}
 
-	# Caddy appends the peer address to whatever X-Forwarded-For the client
-	# sent, so the header can carry forged entries - but only to the left of the
-	# one Caddy wrote. middleware.RealIP reads the rightmost entry precisely for
-	# that reason, so nothing here has to sanitise the header.
-	reverse_proxy api-prod:8080 {
-		# The SSE stream in /api/v1/events must arrive frame by frame. Caddy
-		# already disables buffering for text/event-stream, and this makes it
-		# explicit: a proxy that buffers kills every live update in the panel
-		# with no error anywhere - just screens that quietly stop moving.
-		flush_interval -1
+	# deploy/vps-deploy.sh health-checks https://$API_DOMAIN/health from the
+	# public internet, hairpinning back in, so this one path stays wired to the
+	# API. It is also the only request the API still receives through a proxy,
+	# which is what middleware.RealIP and TRUSTED_PROXY were configured for.
+	handle /health {
+		reverse_proxy api-prod:8080
+	}
+
+	handle {
+		reverse_proxy frontend-prod:3000 {
+			# The panel proxies an SSE stream at /api/events, and it must arrive
+			# frame by frame. Caddy already disables buffering for
+			# text/event-stream, and this makes it explicit: a proxy that buffers
+			# kills every live update in the panel with no error anywhere - just
+			# screens that quietly stop moving.
+			flush_interval -1
+		}
 	}
 }

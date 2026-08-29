@@ -1,0 +1,17 @@
+# Without this file the build context carries ~1.9 GB of node_modules and .next,
+# none of which the image uses: dependencies are reinstalled from the lockfile
+# and the build output is produced inside the container.
+node_modules
+.next
+out
+build
+
+# Never bake local env into an image. .env in particular points BACKEND_URL at
+# localhost, and Next loads .env in production too.
+.env
+.env.*
+!.env.sample
+
+.vercel
+*.tsbuildinfo
+.git

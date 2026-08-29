@@ -79,29 +79,70 @@ inofensivo.
 
 ---
 
-## Provisionar a VPS do zero (Ubuntu)
+## Provisionar a máquina do zero (Oracle Cloud, Ubuntu ARM64)
 
 Passo a passo, na ordem. Cada bloco é para colar no terminal.
 
-### 1. Primeiro acesso e atualização
+> Este runbook descrevia uma VPS x86 da Hostinger até 29/08/2026. A produção passou a rodar
+> numa **Oracle Ampere A1 (aarch64)**, e as diferenças não são cosméticas: são **dois**
+> firewalls em vez de um, o IP público **não** vem por padrão, e o shape só é obtido em conta
+> paga. O que valia para qualquer Ubuntu — fuso, usuário de deploy, grupo `docker`, GHCR —
+> continua igual.
+
+### 0. Criar a instância
+
+Shape **VM.Standard.A1.Flex**, **2 OCPU / 12 GB**, imagem **Canonical Ubuntu 24.04 aarch64**,
+boot volume até 200 GB. Confira o selo **Always Free-eligible** no shape: é ele que garante que a
+máquina sobreviva ao fim do trial.
+
+Três armadilhas do assistente de criação, todas já pagas:
+
+- **"Out of capacity for shape VM.Standard.A1.Flex".** Não é erro de configuração — é falta de
+  host. São Paulo tem **um único AD**, então a sugestão do próprio erro ("tente outro
+  availability domain") não se aplica. O que destravou foi **subir a conta para Pay As You Go**:
+  na primeira tentativa seguinte a instância criou. Recurso Always Free só existe na home region,
+  e a home region não muda depois que a conta é criada.
+- **A lista de imagens é filtrada pelo shape.** Com o shape x86 padrão, nenhuma imagem aarch64
+  aparece e a busca por "aarch64" não devolve nada. **Escolha o shape primeiro**, depois a imagem.
+- **O IP público não vem.** Criando VCN e subnet pelo próprio assistente, o toggle
+  "Automatically assign public IPv4 address" fica **desabilitado**, e o Review mostra
+  `Public IPv4 address: No`. O internet gateway *é* criado; só o IP que não. Resolva depois em
+  **Instância → VNIC → IP administration → Edit → Reserved public IP → Create new**. Prefira
+  **reservado**: o efêmero some num stop/start e o DNS passa a apontar para o nada.
+
+As chaves SSH ficam no fim da etapa **Networking**, abaixo de "Advanced options" — não numa etapa
+própria. Cole sua chave pública em vez de deixar a Oracle gerar o par: a privada só pode ser
+baixada uma vez, e perdê-la significa recriar a instância.
+
+O usuário inicial é `ubuntu`, não `root`.
+
+### 1. Primeiro acesso e fuso
 
 ```bash
-ssh root@<IP-DA-VPS>
-apt update && apt full-upgrade -y
-hostnamectl set-hostname m80
-timedatectl set-timezone America/Sao_Paulo
+ssh ubuntu@<IP>
+sudo apt update && sudo apt full-upgrade -y
+sudo timedatectl set-timezone America/Sao_Paulo
 ```
 
 O fuso **não é detalhe**: o timer do backup usa `OnCalendar=*-*-* 03:30:00`, que é hora local. Uma
-VPS em UTC faria o dump às 00:30 de Brasília, no meio do expediente de emissão.
+máquina em UTC faria o dump às 00:30 de Brasília, no meio do expediente de emissão.
+
+O hostname já vem como o nome da instância e casa com o registro DNS interno da OCI — não troque.
 
 ### 2. Usuário de deploy
 
 ```bash
-adduser --gecos "" deploy
-usermod -aG sudo deploy
-rsync --archive --chown=deploy:deploy ~/.ssh /home/deploy/
+sudo adduser --disabled-password --gecos "" deploy
+sudo usermod -aG sudo deploy
+sudo rsync --archive --chown=deploy:deploy /home/ubuntu/.ssh /home/deploy/
+echo "deploy ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/90-deploy
+sudo chmod 0440 /etc/sudoers.d/90-deploy && sudo visudo -c -f /etc/sudoers.d/90-deploy
 ```
+
+O `--disabled-password` é o que se quer (acesso só por chave), mas ele deixa o `sudo` pedindo uma
+senha que não existe — o usuário fica no grupo `sudo` sem conseguir elevar. Daí o drop-in
+`NOPASSWD`, que é exatamente como a Oracle já configura o `ubuntu`. Isso não amplia poder: quem
+está no grupo `docker` já alcança root pelo socket.
 
 ### 3. Endurecer o SSH
 
@@ -114,7 +155,7 @@ PubkeyAuthentication yes
 KbdInteractiveAuthentication no
 X11Forwarding no
 MaxAuthTries 3
-AllowUsers deploy
+AllowUsers deploy ubuntu
 ```
 
 ```bash
@@ -122,30 +163,52 @@ sudo sshd -t          # valida a sintaxe. Se falhar aqui, NÃO reinicie.
 sudo systemctl restart ssh
 ```
 
-> **Não feche esta sessão.** Abra **outro** terminal e teste `ssh deploy@<IP>`. Só encerre a sessão
-> root depois que a nova funcionar. Ligar `PasswordAuthentication no` sem chave publicada é o jeito
-> clássico de perder acesso à própria máquina e ter que ir no console web da Hostinger.
+> **Não feche esta sessão.** Abra **outro** terminal e teste `ssh deploy@<host>`. Só encerre a
+> atual depois que a nova funcionar.
 
-### 4. Firewall
+`ubuntu` fica no `AllowUsers` de propósito: na OCI ele é a conta break-glass da plataforma, é
+só-chave igual ao `deploy`, e sem ela a recuperação depende do console serial. Não amplia
+superfície — mesma chave, senha desabilitada. Aperte para `deploy` sozinho quando quiser.
+
+### 4. Firewall — são dois, e o UFW não entra aqui
+
+**Não instale UFW nesta máquina.** A imagem da Oracle já vem com iptables gerenciado por
+`netfilter-persistent`, e empilhar um segundo gerenciador arrisca reescrever a cadeia e derrubar o
+SSH. As duas camadas que existem:
+
+**(a) Security List da VCN** — `Networking → VCN → Security Lists → Default → Add Ingress Rules`.
+Só a 22 vem aberta. Adicione, com Source CIDR `0.0.0.0/0`, TCP:
+
+| Porta | Por quê |
+| --- | --- |
+| `80` | desafio HTTP-01 do Let's Encrypt e o redirect do Caddy para HTTPS |
+| `443` | o painel |
+
+**(b) iptables local** — a imagem rejeita tudo que não seja SSH. A regra `REJECT` é a última da
+cadeia `INPUT`, então as novas têm que entrar **antes** dela:
 
 ```bash
-sudo ufw default deny incoming
-sudo ufw default allow outgoing
-sudo ufw allow OpenSSH        # ANTES do enable — senão você se tranca para fora
-sudo ufw allow 80/tcp
-sudo ufw allow 443/tcp
-sudo ufw enable
-sudo ufw status verbose
+sudo iptables -L INPUT -n --line-numbers      # descubra a posição do REJECT
+sudo iptables -I INPUT 5 -m state --state NEW -p tcp --dport 80  -j ACCEPT
+sudo iptables -I INPUT 5 -m state --state NEW -p tcp --dport 443 -j ACCEPT
+sudo netfilter-persistent save
 ```
 
-A 80 é obrigatória mesmo com tudo em HTTPS: é por ela que o Let's Encrypt faz o desafio HTTP-01, e é
-ela que o Caddy usa para redirecionar para HTTPS.
+Abrir só uma das duas camadas dá um sintoma idêntico ao de DNS errado — Caddy falhando em emitir
+certificado, health check do deploy expirando — e é por isso que confunde. Prove as duas de uma vez
+com um listener temporário:
 
-> **O UFW não protege porta publicada por container.** O Docker escreve as próprias regras na cadeia
-> `DOCKER` do iptables, **antes** das do UFW, então uma porta em `ports:` fica aberta para a internet
-> mesmo com o firewall negando. O controle real é **não publicar**: no perfil prod só o `caddy-prod`
-> tem `ports:`. Se um dia precisar expor algo para debug, use `127.0.0.1:8080:8080` (bind só no
-> loopback) mais túnel SSH.
+```bash
+# na máquina:
+sudo timeout 30 python3 -m http.server 80
+# de fora:
+curl -s -o /dev/null -w '%{http_code}\n' http://<host>/
+```
+
+> **O firewall não protege porta publicada por container.** O Docker escreve as próprias regras
+> antes das do host, então uma porta em `ports:` fica aberta para a internet de qualquer jeito. O
+> controle real é **não publicar**: no perfil prod só o `caddy-prod` tem `ports:`. Para debug, use
+> `127.0.0.1:8080:8080` mais túnel SSH.
 
 ### 5. fail2ban e patches automáticos
 
@@ -157,10 +220,6 @@ sudo fail2ban-client status sshd
 ```
 
 ### 6. Swap
-
-Os planos menores da Hostinger costumam vir sem swap. As imagens são **baixadas** do GHCR, não
-compiladas aqui, então a pressão de build não existe — mas 2 GB continuam sendo seguro barato para o
-Postgres:
 
 ```bash
 sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile
@@ -188,21 +247,23 @@ Sem o relogin, todo comando docker responde `permission denied while trying to c
 API at unix:///var/run/docker.sock` — o que parece problema de instalação e é só a sessão velha
 carregando os grupos antigos. Um `sudo su - deploy` de dentro da mesma sessão **não** resolve.
 
-> Estar no grupo `docker` equivale a ser root: quem alcança o socket sobe container privilegiado e
-> monta o disco do host. Aqui isso não amplia nada, porque o `deploy` já está no `sudo` — mas não
-> replique o grupo para usuários que não devam ser root.
-
 ### 8. Repositório e `.env`
 
 ```bash
 sudo mkdir -p /opt/m80 && sudo chown deploy:deploy /opt/m80
 git clone git@github.com:murandido/m80.git /opt/m80   # deploy key read-only no GitHub
-cd /opt/m80/backend
-cp .env.sample .env && chmod 600 .env
-nano .env      # preencher todo o bloco _PROD
 ```
 
-Gere os segredos na hora — **não reaproveite os de dev**:
+A deploy key é por máquina: gere o par **na própria máquina**, como `deploy`, e cadastre só a
+pública em **Settings → Deploy keys**, sem acesso de escrita.
+
+```bash
+ssh-keygen -t ed25519 -N "" -C "m80-prod-oracle-deploy-key" -f ~/.ssh/id_ed25519_m80
+```
+
+#### O `.env`: instalação nova ≠ migração
+
+Numa **instalação nova**, gere os segredos na hora — não reaproveite os de dev:
 
 ```bash
 openssl rand -hex 32     # ENCRYPTION_KEY_PROD (64 hex = 32 bytes, exigido pelo AES-256-GCM)
@@ -211,32 +272,57 @@ openssl rand -base64 48  # JWT_SECRET_PROD
 openssl rand -base64 24  # DB_PASSWORD_PROD e ADMIN_PASSWORD_PROD
 ```
 
-Os que não existiam antes deste pipeline:
+Numa **migração para outra máquina, isso está errado e destrói dado.**
+`ENCRYPTION_KEY_PROD` e `CPF_INDEX_KEY_PROD` têm que ser **idênticas** às da máquina antiga: elas
+são o que dá sentido aos documentos de passageiro já gravados e ao blind index de CPF. Chave nova
+não "quebra" nada visivelmente — o banco continua cheio, e o conteúdo vira ilegível. Não aparece no
+boot nem nos testes; aparece quando alguém abre um bilhete antigo, e a essa altura não há volta.
+
+Copie o arquivo inteiro, direto de uma máquina para a outra, sem escalar em disco:
+
+```bash
+ssh deploy@<host-antigo> 'cat /opt/m80/backend/.env' \
+  | ssh deploy@<host-novo> 'cat > /opt/m80/backend/.env && chmod 600 /opt/m80/backend/.env'
+```
+
+Depois ajuste só o que muda de endereço, e **confira que nenhuma chave `_PROD` ficou faltando** —
+uma variável ausente não é erro, é comportamento silencioso (ver o `postCallback` do bot, que vira
+no-op quando a URL está vazia):
+
+```bash
+cd /opt/m80/backend
+grep -E '^[A-Z_]+_PROD=' .env.sample | sed 's/=.*//' | sort > /tmp/req
+grep -E '^[A-Z_]+_PROD=' .env        | sed 's/=.*//' | sort > /tmp/got
+comm -23 /tmp/req /tmp/got     # o que falta no .env
+```
+
+As variáveis que não existiam antes deste pipeline:
 
 | Variável | O quê |
 | --- | --- |
-| `API_DOMAIN_PROD` | hostname que o Caddy serve, ex: `api.exemplo.com.br` |
-| `CORS_ALLOWED_ORIGINS_PROD` | origem do painel na Vercel. Vazio libera nenhuma origem cross-site — e isso basta |
+| `API_DOMAIN_PROD` | o **único** hostname que o Caddy serve. Desde a migração ele serve o painel e roteia só `/health` para a API |
+| `CORS_ALLOWED_ORIGINS_PROD` | vazio, em definitivo. Com painel e API na mesma caixa a API não é publicada, então não existe origem cross-site para liberar |
 | `ADMIN_PHONE_PROD` / `ADMIN_PASSWORD_PROD` | o primeiro admin. Sem os dois a API sobe **sem usuário nenhum** |
 
-Login no GHCR (as imagens são privadas porque o repositório é):
+Login no GHCR (as imagens são privadas porque o repositório é), **como `deploy`**, que é quem o
+`vps-deploy.sh` usa:
 
 ```bash
-read -s GHCR_PAT && echo "$GHCR_PAT" | docker login ghcr.io -u murandido --password-stdin && unset GHCR_PAT
+read -rs GHCR_PAT && echo "$GHCR_PAT" | docker login ghcr.io -u murandido --password-stdin && unset GHCR_PAT
 ```
 
-O `read -s` mantém o token fora do histórico do shell.
+O `read -rs` e o `--password-stdin` mantêm o token fora do histórico do shell e de `ps`.
 
 **Tem que ser um token classic**, não fine-grained — o registry não aceita os novos:
 
 > "GitHub Packages only supports authentication using a personal access token (classic)."
 > — [docs.github.com](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)
 
-Marque **somente `read:packages`**. A VPS só precisa baixar, e o clone do repositório é feito pela
-deploy key, então esse token não precisa de `repo` nem de escrita. O que se perde em relação ao
-fine-grained é o escopo por repositório: um classic vale para a conta inteira. A compensação
-possível é **prazo curto** — 90 dias, com lembrete no calendário, porque quando ele expira o sintoma
-é um deploy falhando no `pull` e fazendo rollback sozinho.
+Marque **somente `read:packages`**. A máquina só precisa baixar, e o clone é feito pela deploy key,
+então esse token não precisa de `repo` nem de escrita. O que se perde em relação ao fine-grained é o
+escopo por repositório: um classic vale para a conta inteira. Sobre validade, escolha consciente: um
+prazo curto obriga rotação, mas quando ele expira o sintoma é um deploy falhando no `pull` e fazendo
+rollback sozinho — se optar por prazo, coloque lembrete no calendário.
 
 Se um dia o `docker pull` devolver 403 num pacote privado, o motivo é o pacote herdar o acesso do
 repositório: resolva em **Package settings → Manage Actions access**, não ampliando o token.
@@ -254,27 +340,53 @@ morre no dump antes de puxar imagem nenhuma.
 
 ### 9. DNS — antes de subir o Caddy
 
-- `api.<domínio>` → IP da VPS
+- `<domínio>` → **IP reservado** da instância
 
 ```bash
-dig +short api.<domínio>     # tem que devolver o IP da VPS antes de qualquer start
+dig +short <domínio>     # tem que devolver o IP antes de qualquer start
 ```
 
 Subir o Caddy antes do A record resolver faz o Let's Encrypt falhar em loop e **queimar rate limit**
 (5 falhas por hora, por domínio) — aí você espera, não conserta.
 
-### 10. Primeira subida
+### 10. Secrets do deploy
+
+O workflow entra por SSH como `deploy`. Autorize a chave do CI na máquina nova e aponte os secrets
+para ela — assim `VPS_SSH_KEY` não precisa ser tocado:
+
+```bash
+# na máquina, como deploy:
+echo '<conteúdo de m80_ci.pub>' >> ~/.ssh/authorized_keys
+
+# na sua máquina:
+ssh-keyscan -H <domínio> | gh secret set VPS_KNOWN_HOSTS --repo murandido/m80
+printf '%s' '<domínio>' | gh secret set VPS_HOST --repo murandido/m80
+printf '%s' 'deploy'    | gh secret set VPS_USER --repo murandido/m80
+```
+
+Confirme simulando o que o workflow faz, com `StrictHostKeyChecking=yes`:
+
+```bash
+ssh -i ~/.ssh/m80_ci -o IdentitiesOnly=yes deploy@<domínio> 'cd /opt/m80 && git fetch origin main'
+```
+
+### 11. Primeira subida
 
 ```bash
 cd /opt/m80/backend
 IMAGE_TAG=latest docker compose --profile prod up -d
-curl https://api.<domínio>/health     # tem que responder "API On 🚀"
+curl https://<domínio>/health     # tem que responder "API On 🚀"
 ```
 
 As imagens só existem no GHCR depois do primeiro `deploy:vps`, então este passo vem **depois** de um
-deploy pelo Actions — ou de um `docker build`/`push` manual.
+deploy pelo Actions. **E elas precisam ser da arquitetura certa:** imagem amd64 não sobe em ARM.
+Confira antes de perder tempo depurando:
 
-### 11. Timer de backup
+```bash
+docker buildx imagetools inspect ghcr.io/murandido/m80-api:<sha>
+```
+
+### 12. Timer de backup
 
 ```bash
 sudo cp /opt/m80/deploy/systemd/m80-backup.{service,timer} /etc/systemd/system/
@@ -286,6 +398,16 @@ sudo ls -lh /var/backups/m-80
 ```
 
 Detalhes de retenção e recuperação estão em [`backup.md`](backup.md).
+
+### 13. Conta paga: ponha um alerta de custo
+
+Pay As You Go **não tem teto rígido de gasto** — nenhum provedor grande tem. O que protege é a
+franquia Always Free continuar sendo abatida (2 OCPU × 744 h = 1.488 das 1.500 OCPU-horas
+gratuitas; 12 GB × 744 h = 8.928 das 9.000 GB-horas) e um alerta seu.
+
+Em **Billing & Cost Management → Budgets**, crie um budget de **US$1** com regra de alerta em
+**Actual Spend, 1%** — ou seja, dispara em **US$0,01**. Com margem de 12 OCPU-horas no mês, esse
+alerta chega antes de virar dinheiro relevante.
 
 ---
 

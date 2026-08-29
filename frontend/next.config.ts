@@ -3,6 +3,9 @@ import { envSchema } from "@/lib/env"
 
 const nextConfig: NextConfig = {
   /* config options here */
+  // Vercel packaged the app for us; self-hosted, this is what keeps the image
+  // from having to ship 800 MB of node_modules just to run `next start`.
+  output: "standalone",
   reactCompiler: true,
   experimental: {
     serverActions: {
