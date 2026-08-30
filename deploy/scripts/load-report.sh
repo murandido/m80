@@ -21,8 +21,9 @@ awk -F, '
   {
     cpu[$1] += $3                        # soma o CPUPerc de todos os containers no mesmo instante
     if ($3 > peak[$2]) peak[$2] = $3
-    if ($7 != "") { p[++np] = $7 + 0 }   # cpu_some_avg60
-    if ($7 + 0 > 0) stalls++
+    if ($7 != "") {                      # cpu_some_avg60, por instante
+      if (!(($1) in seen)) { seen[$1] = 1; pr[++np] = $7 + 0 }
+    }
     samples++
   }
   END {
@@ -36,8 +37,22 @@ awk -F, '
     printf "pico por container\n"
     m = 0; for (c in peak) if (peak[c] > 0) { printf "  %-24s %.1f%%\n", c, peak[c]; m++ }
     if (m == 0) print "  (nenhum acima de zero)"
-    printf "\npressão de CPU (some avg60): %d de %d amostras acima de zero\n", stalls+0, samples
-    if (stalls+0 == 0) print "  -> nenhuma tarefa esperou CPU. Sobra capacidade."
-    else print "  -> houve espera por CPU. Avalie subir para 3 OCPU."
+    # Pressão é percentual de tempo em que ALGUMA tarefa esperou CPU. Poucos
+    # por cento são normais numa máquina trabalhando; o sinal de escassez é o
+    # valor ficar alto de forma sustentada, não ser diferente de zero. Por isso
+    # aqui saem números e faixas, não um veredito de uma linha.
+    printf "\npressão de CPU (some avg60, %% do tempo com alguma tarefa esperando)\n"
+    if (np == 0) { print "  (sem dados de PSI)"; exit }
+    asort(pr)
+    over10 = 0; over20 = 0
+    for (i = 1; i <= np; i++) { if (pr[i] > 10) over10++; if (pr[i] > 20) over20++ }
+    printf "  mediana  %.2f%%\n", pr[int(np*0.50)+1]
+    printf "  p95      %.2f%%\n", pr[int(np*0.95)+1]
+    printf "  máximo   %.2f%%\n", pr[np]
+    printf "  acima de 10%%: %.1f%% do tempo   acima de 20%%: %.1f%% do tempo\n", \
+           100*over10/np, 100*over20/np
+    print  "\ncomo ler: a decisão é o p95. Abaixo de ~10%% a máquina está trabalhando,"
+    print  "não sofrendo. Sustentado acima de 20%% é escassez real e justifica 3 OCPU."
+    print  "Janelas curtas ou que incluam um deploy não valem como veredito."
   }
 ' "${files[@]}"
