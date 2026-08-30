@@ -1,8 +1,8 @@
 # Deploy
 
-O M-80 vai ao ar em dois lugares independentes: a **API, o bot, o promo-service e o pdf-service** rodam em Docker
-numa VPS da Hostinger, atrás do Caddy; o **painel** roda na Vercel. Os dois são publicados por
-**label no GitHub**, nunca por push ou merge.
+O M-80 inteiro — **API, bot, promo-service, pdf-service, Postgres e o painel Next.js** — roda em
+Docker numa máquina Oracle Ampere A1 (ARM64), atrás do Caddy, que serve **um único domínio**. É
+publicado por **label no GitHub**, nunca por push ou merge.
 
 Este documento é o runbook: como publicar, como provisionar do zero, e o que fazer quando dá errado.
 
@@ -15,10 +15,10 @@ Este documento é o runbook: como publicar, como provisionar do zero, e o que fa
 
 | Label | Publica |
 | --- | --- |
-| `deploy:vps` | API + bot + promo-service + pdf-service na VPS (`.github/workflows/deploy-vps.yml`) |
-| `deploy:vercel` | painel na Vercel (`.github/workflows/deploy-vercel.yml`) |
+| `deploy:vps` | a stack inteira, painel incluso (`.github/workflows/deploy-vps.yml`) |
 
-As duas são independentes — uma mudança só de frontend não precisa mexer na VPS.
+É uma label só desde a migração para a Oracle: painel e API são publicados juntos, no mesmo SHA.
+Antes eram duas independentes, e o preço disso era ficarem fora de sincronia por dias.
 
 **Para republicar a mesma versão**, tire e recoloque a label: o gatilho é o evento `labeled`, então
 uma label que já está lá não dispara nada.
@@ -29,7 +29,7 @@ continua sendo um commit só, inteiro.
 
 **Na primeira vez tem uma pegadinha:** o workflow precisa já estar na `main` para uma label disparar.
 O próprio PR que introduz este pipeline **não consegue se auto-publicar** — depois de mergeado, use
-qualquer PR seguinte, ou dispare o deploy à mão pela VPS (ver *Rollback e deploy manual*).
+qualquer PR seguinte, ou dispare o deploy à mão na própria máquina (ver *Rollback e deploy manual*).
 
 ## Secrets do GitHub
 
@@ -37,7 +37,7 @@ Em **Settings → Secrets and variables → Actions**:
 
 | Secret | Para quê | Obrigatório |
 | --- | --- | --- |
-| `VPS_HOST` | IP ou hostname da VPS | sim |
+| `VPS_HOST` | IP ou hostname da máquina de produção | sim |
 | `VPS_USER` | usuário de deploy (`deploy`) | sim |
 | `VPS_SSH_KEY` | chave privada SSH desse usuário, conteúdo inteiro | sim |
 | `VPS_SSH_PORT` | porta do SSH, se não for 22 | não |
@@ -392,24 +392,6 @@ alerta chega antes de virar dinheiro relevante.
 Cada item aqui derrubou pelo menos um deploy. Estão registrados porque nenhum deles é dedutível
 lendo a documentação da ferramenta.
 
-### O CLI da Vercel roda da raiz do repositório
-
-O workflow **não** tem `working-directory: frontend`, por mais que pareça certo. O projeto na Vercel
-já tem **Root Directory: `frontend`**, e o CLI aplica esse caminho ele mesmo — rodando de dentro da
-pasta, ele procura `frontend/frontend/package.json` e falha com um `ENOENT` seco. O comentário está
-no `.github/workflows/deploy-vercel.yml`; não o remova junto com o `working-directory` na próxima vez
-que ele parecer sobrando.
-
-### O runner precisa de `pnpm` instalado
-
-`vercel build` faz a instalação de dependências sozinho e chama `pnpm`, que o runner não tem:
-`setup-node` traz só npm, e o ambiente de build da própria Vercel já vem com pnpm — então esse buraco
-só existe fora de lá. O erro é `spawn pnpm ENOENT`.
-
-A versão é **fixada em 10**, que é o que a Vercel escolhe para este projeto (ela diz isso no log de
-build: um lockfile 9.0 é ambíguo entre pnpm 9 e 10 e ela desempata pela data de criação do projeto).
-As duas têm que concordar, ou o deploy resolve dependências com um resolver diferente de todo preview.
-
 ### Não há cache de layer no build das imagens
 
 `cache-from`/`cache-to: type=gha` falhava **todo** build com `failed to reserve cache` — e falhava
@@ -442,8 +424,10 @@ lugar de testá-la não é o caminho de deploy de produção.
 
 ### O SSH insiste por dez minutos antes de desistir
 
-Alguns deploys morreram em `connect to host: Connection timed out` sem nunca chegar à VPS — os dois
-da montagem em 08/08 e um em 27/08.
+Alguns deploys morreram em `connect to host: Connection timed out` sem nunca chegar à máquina — os
+dois da montagem em 08/08 e um em 27/08. **Isso é histórico da VPS da Hostinger**, aposentada em
+29/08/2026; a investigação fica registrada porque a mitigação no workflow continua lá e porque o
+método de descarte serve para o próximo caso.
 
 O de 27/08 foi investigado com a caixa na mão, e **todos os suspeitos caíram**:
 
@@ -455,11 +439,13 @@ O de 27/08 foi investigado com a caixa na mão, e **todos os suspeitos caíram**
 | fail2ban | Jail é a `defaults-debian.conf` pura, e o `/var/log/fail2ban.log` **não foi escrito no dia** — o `mtime` parou em 26/08 |
 | Secret `VPS_HOST` apontando para IP velho | Os `VPS_*` não são tocados desde 07/08, e uma host key de 09/06 ainda casa: mesma caixa, mesmo endereço |
 
-Sobrou a **rota** entre o runner e a VPS. Não há o que consertar do nosso lado disso, então o que o
+Sobrou a **rota** entre o runner e a máquina. Não há o que consertar do nosso lado disso, então
+o que o
 workflow faz é sobreviver a ela.
 
 Uma armadilha ao investigar isto: **muita rede corporativa e de universidade bloqueia a porta 22 de
-saída**. Testar `ssh` de uma dessas mede o bloqueio local, não a VPS, e o sintoma é idêntico. Antes
+saída**. Testar `ssh` de uma dessas mede o bloqueio local, não a máquina, e o sintoma é idêntico.
+Antes
 de concluir qualquer coisa a partir da sua máquina, confirme com um alvo conhecido:
 
 ```bash
@@ -478,7 +464,7 @@ Se a janela inteira falhar, o job imprime duas coisas antes de abortar:
 
 - o **IP de saída do runner**, que muda a cada execução e distingue "um endereço bloqueado" de "uma
   faixa inteira";
-- se o **443 responde** desse mesmo runner. Caddy atende no 443 sempre que a VPS está viva, então
+- se o **443 responde** desse mesmo runner. Caddy atende no 443 sempre que a máquina está viva, então
   443 sim e 22 não é filtragem específica de SSH (olhe firewall), e nenhum dos dois é a rota caída
   (não há o que fazer). É a pergunta que as falhas anteriores deixaram em aberto.
 
@@ -525,9 +511,10 @@ docker stats --no-stream promo-service-prod
 sozinho — o serviço encerra quando o browser some e o `restart: always` faz o resto — então **nada
 some em silêncio**: o grupo recebe ⚠️ no cadastro que morreu.
 
-Se for campanha legítima batendo no teto, suba o `mem_limit` (a caixa tem folga: ~1.9 GB livres com
-o teto atual). Baixar o `PROMO_MAX_CPFS` também alivia, porque os screenshots ficam em base64 no
-heap até a resposta sair, mas é tratar sintoma.
+Se for campanha legítima batendo no teto, suba o `mem_limit` — a caixa tem folga de sobra: o teto
+foi dimensionado numa VPS de 3.8 GB e a Oracle tem 12 GB, com ~10 GB livres. Baixar o
+`PROMO_MAX_CPFS` também alivia, porque os screenshots ficam em base64 no heap até a resposta sair,
+mas é tratar sintoma.
 
 Um container `(unhealthy)` **sem** `OOMKilled` é outra coisa: o Chrome morreu por conta própria.
 `docker logs promo-service-prod` tem o motivo.

@@ -9,7 +9,8 @@ Este documento é o runbook: o que roda sozinho, como instalar, e as duas receit
 
 ## O que roda sozinho
 
-Um systemd timer dispara `backend/scripts/db-backup.sh` **todo dia às 03:30** na VPS.
+Um systemd timer dispara `backend/scripts/db-backup.sh` **todo dia às 03:30** na máquina de
+produção.
 
 | | |
 | --- | --- |
@@ -23,14 +24,14 @@ Três detalhes do desenho que valem saber:
 
 - **O `pg_dump` roda dentro do container do banco.** O client é sempre exatamente a versão do
   servidor — divergência entre os dois é a forma mais comum de um backup de Postgres apodrecer em
-  silêncio — e a VPS não precisa de nenhuma ferramenta do Postgres instalada.
+  silêncio — e a máquina não precisa de nenhuma ferramenta do Postgres instalada.
 - **Todo dump é relido antes de ser aceito.** O script passa o arquivo pelo `pg_restore --list`; se
   ele estiver truncado ou corrompido, o arquivo é descartado e o script sai com erro, o que faz o
   systemd marcar a unidade como `failed`. Um backup que ninguém nunca leu não é backup.
 - **A retenção lê a data do nome do arquivo, não o mtime.** Copiar ou tocar um dump não muda a idade
   que ele representa.
 
-## Instalar na VPS
+## Instalar na máquina
 
 As units estão em `deploy/systemd/`. Elas assumem o clone em `/opt/m80` e o usuário
 `deploy` — **ajuste `User`, `WorkingDirectory` e `ExecStart` no `.service` antes de copiar** se o seu
@@ -60,7 +61,8 @@ sudo ls -lh /var/backups/m-80          # o arquivo tem que estar lá, com tamanh
 systemctl list-timers m80-backup       # quando é o próximo disparo
 ```
 
-Se a VPS estiver desligada às 03:30, o `Persistent=true` faz o dump rodar assim que ela voltar, em
+Se a máquina estiver desligada às 03:30, o `Persistent=true` faz o dump rodar assim que ela
+voltar, em
 vez de pular o dia.
 
 ## Rodar um backup à mão
@@ -155,7 +157,7 @@ Duas consequências que não são óbvias:
   o golang-migrate reaplica as faltantes sozinho no próximo boot da API. É o comportamento desejado
   — só não se assuste ao ver migrations rodando depois de uma restauração.
 
-Se o banco a restaurar estiver num volume novo (VPS reinstalada), suba só o `db-prod` primeiro,
+Se o banco a restaurar estiver num volume novo (máquina reinstalada), suba só o `db-prod` primeiro,
 rode a restauração e depois suba o resto.
 
 ---
@@ -163,12 +165,15 @@ rode a restauração e depois suba o resto.
 ## Limitações
 
 **O dump mora no mesmo disco do banco.** Isto protege contra erro humano, deleção acidental e
-corrupção de dados — que é de longe o que mais acontece. **Não** protege contra perder a VPS: se o
-disco morrer ou a Hostinger sumir com a instância, os backups vão junto.
+corrupção de dados — que é de longe o que mais acontece. **Não** protege contra perder a
+máquina: se o boot volume morrer ou a instância sumir, os backups vão junto. Isso ficou mais
+importante depois da migração de 29/08/2026 — enquanto a VPS antiga existiu, ela era uma cópia
+acidental do estado anterior; agora não há nenhuma.
 
 Quando quiserem cópia externa, o gancho é o fim do `db-backup.sh`, depois do `mv` que promove o
 `.part` a dump válido: um `rclone copy "$target" remoto:m-80/` ou `scp "$target" outra-maquina:` de
-uma linha resolve. O arquivo já está verificado nesse ponto.
+uma linha resolve. O arquivo já está verificado nesse ponto. O destino natural são os **20 GB de
+Object Storage** que o Always Free da Oracle inclui — sobra muito para dumps de 1,3 MB.
 
 **Os dumps contêm dados sensíveis** — senhas de conta de fidelidade (criptografia reversível) e
 documentos de passageiro. O script cria o diretório `0700` e os arquivos `0600`; mantenha assim, e
