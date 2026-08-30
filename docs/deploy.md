@@ -41,41 +41,14 @@ Em **Settings → Secrets and variables → Actions**:
 | `VPS_USER` | usuário de deploy (`deploy`) | sim |
 | `VPS_SSH_KEY` | chave privada SSH desse usuário, conteúdo inteiro | sim |
 | `VPS_SSH_PORT` | porta do SSH, se não for 22 | não |
-| `VPS_KNOWN_HOSTS` | chave pública do host (`ssh-keyscan -H <ip>`) | não, mas recomendado |
-| `VERCEL_TOKEN` | token **de conta**, com escopo no time — não um token de projeto (ver abaixo) | sim |
-| `VERCEL_ORG_ID` | está em `frontend/.vercel/project.json` após um `vercel link` | sim |
-| `VERCEL_PROJECT_ID` | mesmo arquivo | sim |
+| `VPS_KNOWN_HOSTS` | chave pública do host (`ssh-keyscan -H <host>`) | não, mas recomendado |
 
 Sem `VPS_KNOWN_HOSTS` o workflow cai para `ssh-keyscan`, que confia em quem quer que responda na
 primeira conexão de cada execução. Ele emite um warning quando faz isso.
 
 Não existe secret para o domínio da API: o `vps-deploy.sh` lê `API_DOMAIN_PROD` do `.env` da própria
-VPS, que já é a fonte de verdade dele.
+máquina, que já é a fonte de verdade dele.
 
-### O `VERCEL_TOKEN` não pode ser um token de projeto
-
-A Vercel oferece dois tipos de token e só um funciona aqui. O de projeto (prefixo `vcp_`, criado
-dentro de **Project Settings → Tokens**) faz o CLI falhar, e **a mensagem de erro aponta para o lugar
-errado**:
-
-```
-Error: Could not retrieve Project Settings. To link your project, remove the .vercel
-directory and deploy again.
-```
-
-Não é o `.vercel`. Rodando o mesmo comando com `--debug`, a sequência real aparece:
-
-```
-#1  GET /v2/user            → 404
-#2  GET /v2/teams/<id>      → 403     ← este é o que mata
-#3  GET /v9/.../projects    → 200
-```
-
-O CLI resolve o **time** antes do projeto, e um token de projeto não enxerga o time. Crie o token em
-**Account Settings → Tokens**, com o escopo apontado para o time dono do projeto.
-
-Se você já colou um token de projeto em algum lugar, revogue: escopo curto não é o mesmo que escopo
-inofensivo.
 
 ---
 
@@ -411,45 +384,6 @@ alerta chega antes de virar dinheiro relevante.
 
 ---
 
-## Criar o projeto na Vercel
-
-1. **Add New → Project** → importar `murandido/m80`.
-2. **Root Directory: `frontend`**. É este campo que faz a Vercel olhar só a pasta do painel: o build
-   roda de dentro dela, e `frontend/pnpm-lock.yaml` + `frontend/pnpm-workspace.yaml` viram a raiz do
-   workspace pnpm — que é exatamente o layout deste repo.
-3. Deixe **"Include files outside the Root Directory"** *desligado*. Ligado, a Vercel manda o
-   monorepo inteiro (incluindo `backend/`) para o build: mais lento, sem motivo.
-4. Framework preset: **Next.js** (detectado sozinho). Install/build/output no padrão.
-5. **Production Branch: `main`**.
-
-### Variáveis de ambiente
-
-Settings → Environment Variables, escopo **Production** (e Preview, se quiser previews funcionando):
-
-| Variável | Valor |
-| --- | --- |
-| `BACKEND_URL` | `https://api.<domínio>` |
-
-`NODE_ENV` **não** precisa ser cadastrada — a Vercel já define `production` no build, e é isso que o
-`envSchema` lê. Se `BACKEND_URL` faltar, o build **falha** em `next.config.ts`
-(`envSchema.parse(process.env)`), que é o comportamento desejado: melhor quebrar no build do que
-subir um painel que não fala com nada.
-
-### Domínio
-
-Settings → Domains → adicionar `painel.<domínio>` e criar o registro que a Vercel indicar. **Essa
-origem exata é o valor de `CORS_ALLOWED_ORIGINS_PROD`** no `.env` da VPS.
-
-### O deploy automático já vem desligado
-
-`frontend/vercel.json` traz `{"git": {"deploymentEnabled": {"main": false}}}`. Sem isso a Vercel
-publicaria a cada push na main e a label não controlaria nada.
-
-### Um limite a conhecer (não é bug)
-
-`frontend/src/app/api/events/route.ts` declara `maxDuration = 300`. No plano **Hobby** a Vercel corta
-em 60s, então o SSE reconecta a cada minuto em vez de a cada cinco. O `useSSE` já delega reconexão ao
-`EventSource` nativo, então nada quebra — mas são ~60 invocações por hora, por aba aberta.
 
 ---
 

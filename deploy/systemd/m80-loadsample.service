@@ -1,0 +1,24 @@
+[Unit]
+# Serviço contínuo, não timer: amostragem de 2 em 2 segundos não é um job que
+# começa e termina. O m80-backup.timer ao lado é o caso oposto e por isso usa
+# timer.
+Description=M-80 container load sampler
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=simple
+User=deploy
+WorkingDirectory=/opt/m80
+Environment=INTERVAL=2
+Environment=OUT_DIR=/var/log/m80
+Environment=KEEP_DAYS=30
+ExecStart=/opt/m80/deploy/scripts/load-sample.sh
+Restart=always
+RestartSec=10
+# Amostragem é diagnóstico: não pode competir com o que está sendo medido.
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target
