@@ -45,11 +45,15 @@ ensure_header() {
 # sem PSI, e nesse caso ficam vazios em vez de derrubar a amostragem.
 read_pressure() {
   local c10="" c60="" m60=""
+  # split no '=' em vez de tr: tr -d apaga um CONJUNTO de caracteres, não um
+  # prefixo, então 'tr -d "avg60="' comia os dígitos 0, 6 e 1 de dentro do
+  # próprio valor - 0.06 virava '.'. Silencioso, e justamente na coluna que
+  # decide se faltou CPU.
   if [ -r /proc/pressure/cpu ]; then
-    read -r c10 c60 < <(awk '/^some/{print $2" "$3}' /proc/pressure/cpu | tr -d 'avg10=avg60=')
+    read -r c10 c60 < <(awk '/^some/{split($2,a,"="); split($3,b,"="); print a[2], b[2]}' /proc/pressure/cpu)
   fi
   if [ -r /proc/pressure/memory ]; then
-    m60=$(awk '/^some/{print $3}' /proc/pressure/memory | tr -d 'avg60=')
+    m60=$(awk '/^some/{split($3,b,"="); print b[2]}' /proc/pressure/memory)
   fi
   printf '%s,%s,%s' "${c10:-}" "${c60:-}" "${m60:-}"
 }
