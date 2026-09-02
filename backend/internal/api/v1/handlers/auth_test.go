@@ -21,9 +21,7 @@ type loginResponse struct {
 func callLogin(t *testing.T, tx *gorm.DB, phone, password string) *httptest.ResponseRecorder {
 	t.Helper()
 	// A successful login ends in auth.GenerateToken, which refuses to sign
-	// without a secret; the environment running the tests isn't required to
-	// carry the real one.
-	t.Setenv("JWT_SECRET", "test-secret")
+	// without a secret; TestMain supplies one when the environment does not.
 
 	handler := NewAuthHandler(tx)
 

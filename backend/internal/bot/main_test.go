@@ -3,6 +3,7 @@ package bot
 import (
 	"os"
 	"testing"
+	"time"
 
 	"github.com/murandido/m-80-backend/internal/bot/humanizer"
 )
@@ -19,7 +20,13 @@ import (
 // and therefore a separate test binary that this flag cannot reach. The one
 // test in here that needs the real timing turns them back on for itself - see
 // humanizer_flow_test.go.
+//
+// It also shortens interruptedJobGrace for the same reason. The tests that reach
+// it park a job that never finishes, so they always wait the grace out in full -
+// ten seconds each, three times, for a timeout whose expiry is the whole point.
+// The production value stays in deletar.go; only this binary sees the short one.
 func TestMain(m *testing.M) {
 	humanizer.SetDelaysEnabled(false)
+	interruptedJobGrace = 50 * time.Millisecond
 	os.Exit(m.Run())
 }

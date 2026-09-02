@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/google/uuid"
@@ -68,9 +69,18 @@ func setupTestDB(t *testing.T) *gorm.DB {
 // runInTx runs the body inside a transaction that is always rolled back, so seeded rows
 // never leak between tests. Commit opens its own transaction, which GORM turns into a
 // SAVEPOINT under this one.
+//
+// It also marks the test parallel. These tests spend almost all of their time waiting on
+// Postgres, and the rollback is what makes that safe: under READ COMMITTED a transaction
+// nobody ever commits is invisible to every other one, so concurrent tests cannot see each
+// other's rows. Seeds that touch a unique column already carry a per-call random suffix.
+//
+// The consequence to know about: a test that calls this may not also call t.Setenv, which
+// the runtime rejects after t.Parallel. Process-wide environment belongs in TestMain.
 func runInTx(t *testing.T, fn func(tx *gorm.DB)) {
 	t.Helper()
 	db := setupTestDB(t)
+	t.Parallel()
 
 	tx := db.Begin()
 	if tx.Error != nil {
@@ -146,10 +156,15 @@ func mustCreate(t *testing.T, tx *gorm.DB, value any) {
 	}
 }
 
-var phoneCounter int
+var phoneCounter int64
 
 // nextPhone hands out distinct, valid Brazilian mobile numbers - users.phone is unique.
+//
+// Atomic because runInTx marks its tests parallel, so several of them reach this at
+// once. A plain increment is both a data race and, worse, a source of duplicates:
+// two goroutines reading the same value hand out the same phone, and the second
+// insert dies on the unique index rather than on anything the test is about. The
+// other packages' seeders are atomic for the same reason.
 func nextPhone() string {
-	phoneCounter++
-	return fmt.Sprintf("119%08d", phoneCounter)
+	return fmt.Sprintf("119%08d", atomic.AddInt64(&phoneCounter, 1)%100000000)
 }

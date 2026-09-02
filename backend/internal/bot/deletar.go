@@ -16,7 +16,13 @@ import (
 // cancelled to unwind before it looks at the database. It only ever waits for a
 // rollback, so it is generous by design rather than tuned - and expiring it
 // costs nothing, because the database check below is what actually decides.
-const interruptedJobGrace = 10 * time.Second
+//
+// A var rather than a const so the tests can shorten it (see main_test.go).
+// Three of them drive a job that is deliberately never allowed to finish, which
+// is exactly the case this grace exists for - and at ten seconds each they were
+// most of this package's runtime, spent waiting for a timeout whose expiry is
+// the assertion. Nothing in production writes to it.
+var interruptedJobGrace = 10 * time.Second
 
 // handleDeletar removes the issuance a DELETAR message names, wherever it
 // happens to be. Same gates as the other three triggers - see authorizeSender.

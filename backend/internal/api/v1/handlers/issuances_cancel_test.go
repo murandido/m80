@@ -87,9 +87,20 @@ func setupTestDB(t *testing.T) *gorm.DB {
 // runInTx runs the test body inside a transaction that is always rolled back, so seeded
 // rows never leak between tests. The handler opens its own nested transaction, which GORM
 // maps to a SAVEPOINT under this outer tx.
+//
+// It also marks the test parallel, which is what that rollback buys. These tests are
+// almost entirely waiting on Postgres, and READ COMMITTED plus a transaction nobody ever
+// commits means a concurrent test cannot see another one's rows - the isolation the
+// rollback already provided is the isolation parallelism needs. Every seed that touches a
+// unique column already carries a per-call random suffix, so there is nothing to collide
+// on either.
+//
+// The consequence to know about: a test that calls this may not also call t.Setenv, which
+// the runtime rejects after t.Parallel. Process-wide environment belongs in TestMain.
 func runInTx(t *testing.T, fn func(tx *gorm.DB)) {
 	t.Helper()
 	db := setupTestDB(t)
+	t.Parallel()
 
 	tx := db.Begin()
 	if tx.Error != nil {
