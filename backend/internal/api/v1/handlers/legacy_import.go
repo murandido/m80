@@ -18,8 +18,10 @@ import (
 
 // The pre-panel spreadsheet is around 600 KB for a month of thirteen days. The ceiling is
 // generous against that and still small enough that no request can make excelize chew
-// through an arbitrary amount of memory - this route is reachable from a public domain,
-// and a spreadsheet parser is a decompressor with extra steps.
+// through an arbitrary amount of memory. The API stopped being reachable from the internet
+// in August 2026, so the upload now always comes from an authenticated operator through the
+// panel - which lowers who can do it, not what it costs: a spreadsheet parser is a
+// decompressor with extra steps, and this box runs the database too.
 const legacyImportMaxUpload = 8 << 20 // 8 MiB
 
 // legacyImportMaxRowsPerDay bounds what one commit can write. Real days run to 45 rows; a
