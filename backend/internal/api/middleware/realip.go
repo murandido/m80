@@ -10,12 +10,20 @@ import (
 // RealIP rewrites r.RemoteAddr with the client address the reverse proxy saw,
 // and only does so when TRUSTED_PROXY is "true".
 //
-// Why it exists: in production the API sits behind Caddy, so r.RemoteAddr is
-// the proxy container's address on every single request. That turns
-// LoginRateLimit's "10 attempts per minute per IP" into 10 per minute for the
-// entire internet - one attacker drains the budget and nobody can log in, and
+// Why it exists: the API has no public address, so every request it serves
+// arrives from the panel's container over the Compose network and r.RemoteAddr
+// is that one host on every single request. That turns LoginRateLimit's "10
+// attempts per minute per IP" into 10 per minute for everybody at once - one
+// operator in a wrong-password loop drains the budget for the whole company, and
 // brute force becomes indistinguishable from normal traffic. keyByTokenSubject
 // degrades the same way for every request without a valid token.
+//
+// The header therefore has to be put there by the panel: Next's server-side fetch
+// forwards nothing of the browser's request on its own. `clientIpHeader` in
+// frontend/src/lib/client-ip.ts is the other half of this, and it sends the one
+// entry the rule below is willing to read. The /health path Caddy still proxies
+// straight to the API is the only request that arrives with a header this
+// middleware did not ask the panel for.
 //
 // Why the rightmost entry and not the leftmost: a proxy *appends* the address
 // of the peer it received the request from, so a client that sends its own

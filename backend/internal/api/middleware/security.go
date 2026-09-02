@@ -70,6 +70,10 @@ func RateLimit() func(http.Handler) http.Handler {
 // LoginRateLimit guards the one route where the IP really is the right identity:
 // there is no authenticated user yet, and the traffic worth throttling is someone
 // guessing passwords.
+//
+// The IP it buckets by is whatever RealIP left in r.RemoteAddr, which for a login
+// is the browser address the panel forwarded (see middleware.RealIP). Without
+// that header every login in the company shares one bucket.
 func LoginRateLimit() func(http.Handler) http.Handler {
 	return httprate.LimitByIP(10, 1*time.Minute)
 }

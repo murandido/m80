@@ -3,6 +3,7 @@
 import { cookies } from "next/headers"
 import { loginSchema } from "@/schemas/auth"
 import { env } from "@/lib/env"
+import { clientIpHeader } from "@/lib/client-ip"
 import { redirect } from "next/navigation"
 import { z } from "zod"
 
@@ -28,7 +29,9 @@ export async function loginAction(
     const baseUrl = env.BACKEND_URL
     const res = await fetch(`${baseUrl}/api/v1/auth/login`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      // Without this the API sees this container as the caller and its per-IP
+      // login limit becomes one budget for everybody - see clientIpHeader.
+      headers: { "Content-Type": "application/json", ...(await clientIpHeader()) },
       body: JSON.stringify({ phone, password }),
     })
 
