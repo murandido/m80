@@ -2,6 +2,7 @@ import type { Metadata } from "next"
 import { cookies } from "next/headers"
 import { Separator } from "@/components/ui/separator"
 import { env } from "@/lib/env"
+import { fetchList } from "@/lib/fetch-list"
 import { getAccountsSchema, Account } from "@/schemas/account"
 import { getPeopleSchema, Person } from "@/schemas/person"
 import { getLoyaltyProgramsSchema, LoyaltyProgram } from "@/schemas/loyalty-program"
@@ -43,83 +44,53 @@ export default async function AccountsPage({
   const category = raw.category ?? ""
   const complete = raw.complete ?? ""
 
-  let accounts: Account[] = []
-  let people: Person[] = []
-  let loyaltyPrograms: LoyaltyProgram[] = []
-
   // Merging moves issuance history and then deletes a record for good, so the panel only
   // offers it to admins - the backend refuses it for anyone else regardless.
   const sessionUser = await getSessionUser()
   const canMerge = canAccess(sessionUser?.role, ["admin"])
-  let allAccounts: Account[] = []
 
-  if (canMerge) {
-    try {
+  // One wave instead of four sequential round trips: none of these lists depends
+  // on another, and the page cannot paint until the slowest of them is in.
+  const [allAccountsResult, accountsResult, peopleResult, loyaltyProgramsResult] =
+    await Promise.all([
       // Unfiltered, because the duplicate the operator is after is usually exactly the
       // one the current search does not show - the two are registered differently. And
       // archived ones included, because archiving was the only way to get a duplicate off
       // the screen before merging existed: those are the ones still holding issuances.
-      const res = await fetch(`${env.BACKEND_URL}/api/v1/accounts?include_archived=true`, {
-        headers: authHeader,
-        cache: "no-store",
-      })
-      const json = await res.json()
+      canMerge
+        ? fetchList<Account>(
+            `${env.BACKEND_URL}/api/v1/accounts?include_archived=true`,
+            getAccountsSchema.response,
+            authHeader,
+          )
+        : Promise.resolve(null),
+      fetchList<Account>(
+        `${env.BACKEND_URL}/api/v1/accounts?${listQueryString(params, {
+          loyalty_program_id: loyaltyProgramId,
+          category,
+          complete,
+        })}`,
+        getAccountsSchema.response,
+        authHeader,
+      ),
+      fetchList<Person>(
+        `${env.BACKEND_URL}/api/v1/people`,
+        getPeopleSchema.response,
+        authHeader,
+      ),
+      fetchList<LoyaltyProgram>(
+        `${env.BACKEND_URL}/api/v1/loyalty-programs`,
+        getLoyaltyProgramsSchema.response,
+        authHeader,
+      ),
+    ])
 
-      const parsed = getAccountsSchema.response.safeParse(json)
-      if (parsed.success && parsed.data.data) {
-        allAccounts = parsed.data.data
-      }
-    } catch {
-      // silently fail — the merge picker just comes up empty
-    }
-  }
-
-  try {
-    const res = await fetch(
-      `${env.BACKEND_URL}/api/v1/accounts?${listQueryString(params, {
-        loyalty_program_id: loyaltyProgramId,
-        category,
-        complete,
-      })}`,
-      { headers: authHeader, cache: "no-store" },
-    )
-    const json = await res.json()
-
-    const parsed = getAccountsSchema.response.safeParse(json)
-    if (parsed.success && parsed.data.data) {
-      accounts = parsed.data.data
-    }
-  } catch {
-    // silently fail — list stays empty
-  }
-
-  try {
-    const res = await fetch(`${env.BACKEND_URL}/api/v1/people`, {
-      headers: authHeader,
-    })
-    const json = await res.json()
-
-    const parsed = getPeopleSchema.response.safeParse(json)
-    if (parsed.success && parsed.data.data) {
-      people = parsed.data.data
-    }
-  } catch {
-    // silently fail — combobox/title lookups just come up empty
-  }
-
-  try {
-    const res = await fetch(`${env.BACKEND_URL}/api/v1/loyalty-programs`, {
-      headers: authHeader,
-    })
-    const json = await res.json()
-
-    const parsed = getLoyaltyProgramsSchema.response.safeParse(json)
-    if (parsed.success && parsed.data.data) {
-      loyaltyPrograms = parsed.data.data
-    }
-  } catch {
-    // silently fail — combobox just comes up empty
-  }
+  // A failed list renders as an empty one: every consumer below is a card grid or a
+  // combobox, and both read the same either way.
+  const allAccounts: Account[] = allAccountsResult ?? []
+  const accounts: Account[] = accountsResult ?? []
+  const people: Person[] = peopleResult ?? []
+  const loyaltyPrograms: LoyaltyProgram[] = loyaltyProgramsResult ?? []
 
   return (
     <div className="p-6 sm:p-8">

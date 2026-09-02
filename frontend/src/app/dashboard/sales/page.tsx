@@ -2,8 +2,8 @@ import type { Metadata } from "next"
 import { cookies } from "next/headers"
 import Link from "next/link"
 import { AlertTriangle, ExternalLink, FileSpreadsheet } from "lucide-react"
-import { z } from "zod"
 import { env } from "@/lib/env"
+import { fetchList } from "@/lib/fetch-list"
 import { canAccess } from "@/lib/navigation"
 import { getSessionUser } from "@/lib/session"
 import { readStickyFilters, stickySearchParams } from "@/lib/sticky-filters"
@@ -37,23 +37,6 @@ export const metadata: Metadata = {
   title: "Controle de pagamentos",
   description:
     "Quanto cada cliente comprou no período e quanto ainda deve à agência.",
-}
-
-// Returns null when the request or the parse failed - distinct from an empty list, which
-// is a legitimate result. Mirrors fetchList in app/dashboard/issuances/page.tsx.
-async function fetchList<T>(
-  url: string,
-  schema: z.ZodType<{ data?: T[] | null | undefined }>,
-  authHeader: Record<string, string>,
-): Promise<T[] | null> {
-  try {
-    const res = await fetch(url, { headers: authHeader, cache: "no-store" })
-    const parsed = schema.safeParse(await res.json())
-    if (!res.ok || !parsed.success) return null
-    return parsed.data.data ?? []
-  } catch {
-    return null
-  }
 }
 
 export default async function SalesClientsPage({

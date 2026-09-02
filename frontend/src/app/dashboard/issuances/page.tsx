@@ -2,8 +2,8 @@ import type { Metadata } from "next"
 import { Suspense } from "react"
 import { cookies } from "next/headers"
 import { AlertTriangle } from "lucide-react"
-import { z } from "zod"
 import { env } from "@/lib/env"
+import { fetchList } from "@/lib/fetch-list"
 import { readStickyFilters, stickySearchParams } from "@/lib/sticky-filters"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { getIssuancesSchema } from "@/schemas/issuance"
@@ -44,25 +44,6 @@ type FilterState = Record<(typeof FILTER_KEYS)[number], string>
 // while a search is active anyway.
 type IssuancesSearchParams = Partial<Record<(typeof FILTER_KEYS)[number], string>> & {
   q?: string
-}
-
-// Returns null when the request or the parse failed - distinct from an empty list,
-// which is a legitimate result. Each call swallows its own error so one dead endpoint
-// can't blank out the whole screen, and so the caller can tell the two apart.
-async function fetchList<T>(
-  url: string,
-  schema: z.ZodType<{ data?: T[] | null | undefined }>,
-  authHeader: Record<string, string>,
-  cache?: RequestCache,
-): Promise<T[] | null> {
-  try {
-    const res = await fetch(url, { headers: authHeader, cache })
-    const parsed = schema.safeParse(await res.json())
-    if (!res.ok || !parsed.success) return null
-    return parsed.data.data ?? []
-  } catch {
-    return null
-  }
 }
 
 async function fetchCurrentUserId(authHeader: Record<string, string>): Promise<string | null> {

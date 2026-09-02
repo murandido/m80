@@ -3,6 +3,7 @@ import { cookies } from "next/headers"
 import { Separator } from "@/components/ui/separator"
 import { requireDev } from "@/lib/session"
 import { env } from "@/lib/env"
+import { fetchList } from "@/lib/fetch-list"
 import { getLoyaltyProgramsSchema, LoyaltyProgram } from "@/schemas/loyalty-program"
 import { getAirlinesSchema, Airline } from "@/schemas/airline"
 import { LoyaltyProgramsAirlinesToggle } from "@/components/layout/loyalty-programs-airlines-toggle"
@@ -39,37 +40,25 @@ export default async function LoyaltyProgramsPage({
     ),
   )
 
-  let loyaltyPrograms: LoyaltyProgram[] = []
-  let airlines: Airline[] = []
-
-  try {
-    const res = await fetch(
+  // One round trip's worth of latency instead of two: the airlines combobox does
+  // not depend on the programs list, so there is nothing to wait for.
+  const [loyaltyPrograms, airlines] = await Promise.all([
+    fetchList<LoyaltyProgram>(
       `${env.BACKEND_URL}/api/v1/loyalty-programs?${listQueryString(params)}`,
-      { headers: authHeader, cache: "no-store" },
-    )
-    const json = await res.json()
+      getLoyaltyProgramsSchema.response,
+      authHeader,
+    ),
+    fetchList<Airline>(
+      `${env.BACKEND_URL}/api/v1/airlines`,
+      getAirlinesSchema.response,
+      authHeader,
+    ),
+  ])
 
-    const parsed = getLoyaltyProgramsSchema.response.safeParse(json)
-    if (parsed.success && parsed.data.data) {
-      loyaltyPrograms = parsed.data.data
-    }
-  } catch {
-    // silently fail — list stays empty
-  }
-
-  try {
-    const res = await fetch(`${env.BACKEND_URL}/api/v1/airlines`, {
-      headers: authHeader,
-    })
-    const json = await res.json()
-
-    const parsed = getAirlinesSchema.response.safeParse(json)
-    if (parsed.success && parsed.data.data) {
-      airlines = parsed.data.data
-    }
-  } catch {
-    // silently fail — combobox just comes up empty
-  }
+  // fetchList returns null on a failed request; an empty screen is the same
+  // thing to render here, and the pages that distinguish them do it explicitly.
+  const programs = loyaltyPrograms ?? []
+  const airlineOptions = airlines ?? []
 
   return (
     <div className="p-6 sm:p-8">
@@ -80,25 +69,25 @@ export default async function LoyaltyProgramsPage({
 
         <LoyaltyProgramsAirlinesToggle active="loyalty-programs" />
 
-        <CreateLoyaltyProgramForm airlines={airlines} />
+        <CreateLoyaltyProgramForm airlines={airlineOptions} />
         <ListFilterBar
           searchPlaceholder="Buscar por nome ou código"
           order={params.order}
         />
         <Separator className="my-2" />
         <div className="flex flex-col gap-2">
-          {loyaltyPrograms.length === 0 ? (
+          {programs.length === 0 ? (
             <p className="text-sm text-slate-500">
               {params.q
                 ? `Nenhum programa encontrado para "${params.q}".`
                 : "Nenhum programa cadastrado."}
             </p>
           ) : (
-            loyaltyPrograms.map((loyaltyProgram) => (
+            programs.map((loyaltyProgram) => (
               <LoyaltyProgramCard
                 key={loyaltyProgram.id}
                 loyaltyProgram={loyaltyProgram}
-                airlines={airlines}
+                airlines={airlineOptions}
               />
             ))
           )}
