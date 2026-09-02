@@ -82,6 +82,25 @@ export const getAccountsSchema = {
   }),
 }
 
+// GET /accounts/manage. The plain /accounts stays an array because the pickers on the
+// issuances grid, the sales screens and the importer read it whole.
+export const listAccountsSchema = {
+  response: z.object({
+    success: z.boolean(),
+    message: z.string(),
+    data: z
+      .object({
+        accounts: z.array(accountSchema).nullish(),
+        total: z.number(),
+        page: z.number(),
+        limit: z.number(),
+      })
+      .nullish(),
+  }),
+}
+
+export type AccountPage = NonNullable<z.infer<typeof listAccountsSchema.response>["data"]>
+
 const optionalTextField = z.string().optional().or(z.literal(""))
 const optionalUuidField = z.union([z.literal(""), z.string().uuid("UUID inválido")])
 

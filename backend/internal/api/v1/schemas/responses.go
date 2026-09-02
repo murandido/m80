@@ -104,6 +104,21 @@ type AccountListResponse struct {
 	Data    []AccountResponse `json:"data"`
 }
 
+// AccountPaginatedData is the data payload for the paginated account listing.
+type AccountPaginatedData struct {
+	Accounts []AccountResponse `json:"accounts"`
+	Total    int64             `json:"total"`
+	Page     int               `json:"page"`
+	Limit    int               `json:"limit"`
+}
+
+// AccountPaginatedResponse is the GET /accounts/manage route response
+type AccountPaginatedResponse struct {
+	Success bool                 `json:"success" example:"true"`
+	Message string               `json:"message" example:"Contas listadas com sucesso"`
+	Data    AccountPaginatedData `json:"data"`
+}
+
 // AccountSingleResponse is the response from single-account routes
 type AccountSingleResponse struct {
 	Success bool            `json:"success" example:"true"`
@@ -207,6 +222,21 @@ type ClientListResponse struct {
 	Success bool             `json:"success" example:"true"`
 	Message string           `json:"message" example:"Clientes listados com sucesso"`
 	Data    []ClientResponse `json:"data"`
+}
+
+// ClientPaginatedData is the data payload for the paginated client listing.
+type ClientPaginatedData struct {
+	Clients []ClientResponse `json:"clients"`
+	Total   int64            `json:"total"`
+	Page    int              `json:"page"`
+	Limit   int              `json:"limit"`
+}
+
+// ClientPaginatedResponse is the GET /clients/manage route response
+type ClientPaginatedResponse struct {
+	Success bool                `json:"success" example:"true"`
+	Message string              `json:"message" example:"Clientes listados com sucesso"`
+	Data    ClientPaginatedData `json:"data"`
 }
 
 // ClientSingleResponse is the response from single-client routes
@@ -340,6 +370,21 @@ type LoyaltyDocumentListResponse struct {
 	Success bool                      `json:"success" example:"true"`
 	Message string                    `json:"message" example:"CPFs listados com sucesso"`
 	Data    []LoyaltyDocumentResponse `json:"data"`
+}
+
+// LoyaltyDocumentPaginatedData is the data payload for the paginated document listing.
+type LoyaltyDocumentPaginatedData struct {
+	Documents []LoyaltyDocumentResponse `json:"documents"`
+	Total     int64                     `json:"total"`
+	Page      int                       `json:"page"`
+	Limit     int                       `json:"limit"`
+}
+
+// LoyaltyDocumentPaginatedResponse is the GET /loyalty-documents/manage route response
+type LoyaltyDocumentPaginatedResponse struct {
+	Success bool                         `json:"success" example:"true"`
+	Message string                       `json:"message" example:"CPFs listados com sucesso"`
+	Data    LoyaltyDocumentPaginatedData `json:"data"`
 }
 
 // LoyaltyDocumentSingleResponse is the response from single-document routes

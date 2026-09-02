@@ -16,8 +16,13 @@ func RegisterAccountRoutes(r chi.Router, db *gorm.DB) {
 		// create account
 		r.Post("/", accountHandler.CreateAccount)
 
-		// get accounts
+		// get accounts — the whole list, for the pickers on the issuances grid,
+		// the sales screens and the importer
 		r.Get("/", accountHandler.GetAccounts)
+
+		// paginated listing for the management screen. Chi resolves a static
+		// segment ahead of a param, so this never gets read as /accounts/{id}.
+		r.Get("/manage", accountHandler.ListAccounts)
 
 		// get account
 		r.Get("/{id}", accountHandler.GetAccount)

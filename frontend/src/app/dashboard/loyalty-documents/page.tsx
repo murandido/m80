@@ -4,8 +4,9 @@ import { Separator } from "@/components/ui/separator"
 import { requireAdmin } from "@/lib/session"
 import { env } from "@/lib/env"
 import {
-  getLoyaltyDocumentsSchema,
+  listLoyaltyDocumentsSchema,
   type LoyaltyDocument,
+  type LoyaltyDocumentPage,
 } from "@/schemas/promo"
 import {
   getLoyaltyProgramsSchema,
@@ -16,6 +17,8 @@ import { DocumentCard } from "@/components/loyalty-documents/document-card"
 import { ListFilterBar } from "@/components/shared/list-filter-bar"
 import { ListFilterSelect } from "@/components/shared/list-filter-select"
 import { listQueryString, resolveListParams } from "@/lib/list-params"
+import { fetchList, fetchPage } from "@/lib/fetch-list"
+import { ListPagination } from "@/components/shared/list-pagination"
 import { readStickyFilters, stickySearchParams } from "@/lib/sticky-filters"
 
 export const metadata: Metadata = {
@@ -24,7 +27,9 @@ export const metadata: Metadata = {
     "Os CPFs da agência que o bot inscreve nas promoções de transferência de pontos.",
 }
 
-const DOCUMENTS_URL_KEYS = ["q", "order", "active"] as const
+const DOCUMENTS_URL_KEYS = ["q", "order", "page", "active"] as const
+
+const PAGE_LIMIT = 20
 
 export default async function LoyaltyDocumentsPage({
   searchParams,
@@ -47,37 +52,28 @@ export default async function LoyaltyDocumentsPage({
   const params = resolveListParams(raw)
   const active = raw.active ?? ""
 
-  let documents: LoyaltyDocument[] = []
-  let programs: LoyaltyProgram[] = []
+  const query = new URLSearchParams(listQueryString(params, { active }))
+  query.set("page", String(params.page))
+  query.set("limit", String(PAGE_LIMIT))
 
-  try {
-    const [documentsRes, programsRes] = await Promise.all([
-      fetch(
-        `${env.BACKEND_URL}/api/v1/loyalty-documents?${listQueryString(params, { active })}`,
-        { headers: authHeader, cache: "no-store" },
-      ),
-      fetch(`${env.BACKEND_URL}/api/v1/loyalty-programs`, {
-        headers: authHeader,
-        cache: "no-store",
-      }),
-    ])
+  const [page, programs] = await Promise.all([
+    // /loyalty-documents/manage rather than /loyalty-documents: the plain route stays
+    // unpaginated because the create action reads it back whole.
+    fetchPage<LoyaltyDocument, LoyaltyDocumentPage>(
+      `${env.BACKEND_URL}/api/v1/loyalty-documents/manage?${query.toString()}`,
+      listLoyaltyDocumentsSchema.response,
+      (data) => data.documents,
+      authHeader,
+    ),
+    fetchList<LoyaltyProgram>(
+      `${env.BACKEND_URL}/api/v1/loyalty-programs`,
+      getLoyaltyProgramsSchema.response,
+      authHeader,
+    ),
+  ])
 
-    const parsedDocuments = getLoyaltyDocumentsSchema.response.safeParse(
-      await documentsRes.json(),
-    )
-    if (parsedDocuments.success && parsedDocuments.data.data) {
-      documents = parsedDocuments.data.data
-    }
-
-    const parsedPrograms = getLoyaltyProgramsSchema.response.safeParse(
-      await programsRes.json(),
-    )
-    if (parsedPrograms.success && parsedPrograms.data.data) {
-      programs = parsedPrograms.data.data
-    }
-  } catch {
-    // silently fail — list stays empty
-  }
+  const documents = page.items
+  const programOptions = programs ?? []
 
   return (
     <div className="p-6 sm:p-8">
@@ -93,7 +89,7 @@ export default async function LoyaltyDocumentsPage({
           </p>
         </div>
 
-        <CreateDocumentForm programs={programs} />
+        <CreateDocumentForm programs={programOptions} />
 
         <ListFilterBar searchPlaceholder="Buscar por nome" order={params.order}>
           <ListFilterSelect
@@ -122,11 +118,18 @@ export default async function LoyaltyDocumentsPage({
               <DocumentCard
                 key={document.id}
                 document={document}
-                programs={programs}
+                programs={programOptions}
               />
             ))
           )}
         </div>
+
+        <ListPagination
+          total={page.total}
+          page={params.page}
+          limit={PAGE_LIMIT}
+          noun={["CPF", "CPFs"]}
+        />
       </div>
     </div>
   )

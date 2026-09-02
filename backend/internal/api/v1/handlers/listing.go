@@ -3,6 +3,8 @@ package handlers
 import (
 	"net/http"
 	"strings"
+
+	"gorm.io/gorm"
 )
 
 // Shared plumbing for the management listings behind the panel's cadastro screens.
@@ -35,6 +37,16 @@ func parseListQuery(r *http.Request) listQuery {
 		Page:  parsePositiveInt(r.URL.Query().Get("page"), 1),
 		Limit: limit,
 	}
+}
+
+// paginate applies the window the request asked for.
+//
+// The arithmetic is one line, but it is the line an off-by-one hides in, and there
+// are now five listings doing it. Callers run their Count on the same query first
+// and then open a fresh Session, so the Offset/Limit applied here does not leak
+// back into the count - see ListPeople for the shape.
+func paginate(query *gorm.DB, params listQuery) *gorm.DB {
+	return query.Offset((params.Page - 1) * params.Limit).Limit(params.Limit)
 }
 
 // textOrder renders an ORDER BY over a text column the way a Portuguese reader

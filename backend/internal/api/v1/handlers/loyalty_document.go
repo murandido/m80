@@ -101,8 +101,30 @@ var loyaltyDocumentOrder = map[string]string{
 	"created_asc":  "loyalty_documents.created_at ASC",
 }
 
+// loyaltyDocumentListQuery applies the optional search, the filters and the ordering.
+//
+// Searching by name only. The CPF column holds ciphertext with a random nonce, so a
+// LIKE over it would match nothing - looking one up means searching by the name it
+// was registered under.
+func loyaltyDocumentListQuery(db *gorm.DB, params listQuery, active *bool, programID string) *gorm.DB {
+	query := db.Model(&data.LoyaltyDocument{})
+
+	if params.Q != "" {
+		query = query.Where(unaccentedLike("loyalty_documents.name"), likePattern(params.Q))
+	}
+	if active != nil {
+		query = query.Where("loyalty_documents.active = ?", *active)
+	}
+	if programID != "" {
+		query = query.Where("loyalty_documents.loyalty_program_id = ?", programID)
+	}
+
+	return query.Order(orderClause(params.Order, loyaltyDocumentOrder, loyaltyDocumentOrder["name_asc"]))
+}
+
 // GetLoyaltyDocuments handles the GET /loyalty-documents route
 // @Summary      Listar CPFs das promoções
+// @Description  Retorna todos os CPFs cadastrados. Sem paginação — é a rota que a ação de cadastro relê para conferir o resultado. Para a tela de gestão, use /loyalty-documents/manage.
 // @Tags         Promoções
 // @Produce      json
 // @Security     BearerAuth
@@ -115,26 +137,15 @@ var loyaltyDocumentOrder = map[string]string{
 // @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a administradores"
 // @Router       /loyalty-documents [get]
 func (h *LoyaltyDocumentHandler) GetLoyaltyDocuments(w http.ResponseWriter, r *http.Request) {
-	params := parseListQuery(r)
-	query := h.DB.Model(&data.LoyaltyDocument{}).Preload("LoyaltyProgram")
-
-	// Searching by name only. The CPF column holds ciphertext with a random nonce, so
-	// a LIKE over it would match nothing - looking one up means searching by the name
-	// it was registered under.
-	if params.Q != "" {
-		query = query.Where(unaccentedLike("loyalty_documents.name"), likePattern(params.Q))
-	}
-	if active := parseOptionalBool(r.URL.Query().Get("active")); active != nil {
-		query = query.Where("loyalty_documents.active = ?", *active)
-	}
-	if programID := r.URL.Query().Get("loyalty_program_id"); programID != "" {
-		query = query.Where("loyalty_documents.loyalty_program_id = ?", programID)
-	}
+	query := loyaltyDocumentListQuery(
+		h.DB,
+		parseListQuery(r),
+		parseOptionalBool(r.URL.Query().Get("active")),
+		r.URL.Query().Get("loyalty_program_id"),
+	)
 
 	var documents []data.LoyaltyDocument
-	if err := query.
-		Order(orderClause(params.Order, loyaltyDocumentOrder, loyaltyDocumentOrder["name_asc"])).
-		Find(&documents).Error; err != nil {
+	if err := query.Preload("LoyaltyProgram").Find(&documents).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Erro ao listar CPFs: "+err.Error())
 		return
 	}
@@ -144,6 +155,60 @@ func (h *LoyaltyDocumentHandler) GetLoyaltyDocuments(w http.ResponseWriter, r *h
 		response = append(response, toLoyaltyDocumentResponse(document))
 	}
 	utils.SendJSON(w, r, http.StatusOK, "CPFs listados com sucesso", response)
+}
+
+// ListLoyaltyDocuments handles the GET /loyalty-documents/manage route
+// @Summary      Listar CPFs das promoções (paginado)
+// @Description  Listagem paginada para a tela de gestão. Esta tabela cresce um registro por CPF por programa, que é a taxa de crescimento de uma agenda de clientes.
+// @Tags         Promoções
+// @Produce      json
+// @Security     BearerAuth
+// @Param        q query string false "Busca por nome"
+// @Param        order query string false "Ordenação" Enums(name_asc, name_desc, created_desc, created_asc)
+// @Param        active query bool false "Filtra por ativos ou inativos"
+// @Param        loyalty_program_id query string false "Filtra por programa de fidelidade"
+// @Param        page query int false "Página (padrão 1)"
+// @Param        limit query int false "Itens por página (padrão 20, máximo 100)"
+// @Success      200  {object}  schemas.LoyaltyDocumentPaginatedResponse
+// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a administradores"
+// @Router       /loyalty-documents/manage [get]
+func (h *LoyaltyDocumentHandler) ListLoyaltyDocuments(w http.ResponseWriter, r *http.Request) {
+	params := parseListQuery(r)
+	query := loyaltyDocumentListQuery(
+		h.DB,
+		params,
+		parseOptionalBool(r.URL.Query().Get("active")),
+		r.URL.Query().Get("loyalty_program_id"),
+	)
+
+	// The count runs on the same filtered query as the page, so the total the
+	// pagination control shows can never disagree with what it is paginating.
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Erro ao contar CPFs")
+		return
+	}
+
+	var documents []data.LoyaltyDocument
+	if err := paginate(query.Session(&gorm.Session{}), params).
+		Preload("LoyaltyProgram").
+		Find(&documents).Error; err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Erro ao listar CPFs: "+err.Error())
+		return
+	}
+
+	items := make([]schemas.LoyaltyDocumentResponse, 0, len(documents))
+	for _, document := range documents {
+		items = append(items, toLoyaltyDocumentResponse(document))
+	}
+
+	utils.SendJSON(w, r, http.StatusOK, "CPFs listados com sucesso", schemas.LoyaltyDocumentPaginatedData{
+		Documents: items,
+		Total:     total,
+		Page:      params.Page,
+		Limit:     params.Limit,
+	})
 }
 
 // UpdateLoyaltyDocument handles the PUT /loyalty-documents/{id} route

@@ -176,6 +176,26 @@ export const getLoyaltyDocumentsSchema = {
   }),
 }
 
+// GET /loyalty-documents/manage, for the screen. The plain route stays an array.
+export const listLoyaltyDocumentsSchema = {
+  response: z.object({
+    success: z.boolean(),
+    message: z.string(),
+    data: z
+      .object({
+        documents: z.array(loyaltyDocumentSchema).nullish(),
+        total: z.number(),
+        page: z.number(),
+        limit: z.number(),
+      })
+      .nullish(),
+  }),
+}
+
+export type LoyaltyDocumentPage = NonNullable<
+  z.infer<typeof listLoyaltyDocumentsSchema.response>["data"]
+>
+
 const documentSingleResponse = z.object({
   success: z.boolean(),
   message: z.string(),

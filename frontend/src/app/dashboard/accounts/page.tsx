@@ -2,8 +2,14 @@ import type { Metadata } from "next"
 import { cookies } from "next/headers"
 import { Separator } from "@/components/ui/separator"
 import { env } from "@/lib/env"
-import { fetchList } from "@/lib/fetch-list"
-import { getAccountsSchema, Account } from "@/schemas/account"
+import { fetchList, fetchPage } from "@/lib/fetch-list"
+import { ListPagination } from "@/components/shared/list-pagination"
+import {
+  getAccountsSchema,
+  listAccountsSchema,
+  type Account,
+  type AccountPage,
+} from "@/schemas/account"
 import { getPeopleSchema, Person } from "@/schemas/person"
 import { getLoyaltyProgramsSchema, LoyaltyProgram } from "@/schemas/loyalty-program"
 import { ContasPessoasToggle } from "@/components/layout/contas-pessoas-toggle"
@@ -23,7 +29,9 @@ export const metadata: Metadata = {
     "As contas de programa de fidelidade de onde saem os pontos, com as credenciais de acesso.",
 }
 
-const ACCOUNTS_URL_KEYS = ["q", "order", "loyalty_program_id", "category", "complete"] as const
+const ACCOUNTS_URL_KEYS = ["q", "order", "page", "loyalty_program_id", "category", "complete"] as const
+
+const PAGE_LIMIT = 20
 
 export default async function AccountsPage({
   searchParams,
@@ -49,9 +57,19 @@ export default async function AccountsPage({
   const sessionUser = await getSessionUser()
   const canMerge = canAccess(sessionUser?.role, ["admin"])
 
+  const accountsQuery = new URLSearchParams(
+    listQueryString(params, {
+      loyalty_program_id: loyaltyProgramId,
+      category,
+      complete,
+    }),
+  )
+  accountsQuery.set("page", String(params.page))
+  accountsQuery.set("limit", String(PAGE_LIMIT))
+
   // One wave instead of four sequential round trips: none of these lists depends
   // on another, and the page cannot paint until the slowest of them is in.
-  const [allAccountsResult, accountsResult, peopleResult, loyaltyProgramsResult] =
+  const [allAccountsResult, accountsPage, peopleResult, loyaltyProgramsResult] =
     await Promise.all([
       // Unfiltered, because the duplicate the operator is after is usually exactly the
       // one the current search does not show - the two are registered differently. And
@@ -64,13 +82,13 @@ export default async function AccountsPage({
             authHeader,
           )
         : Promise.resolve(null),
-      fetchList<Account>(
-        `${env.BACKEND_URL}/api/v1/accounts?${listQueryString(params, {
-          loyalty_program_id: loyaltyProgramId,
-          category,
-          complete,
-        })}`,
-        getAccountsSchema.response,
+      // /accounts/manage rather than /accounts: the plain route stays unpaginated
+      // because the issuances grid, the sales screens and the importer all read it
+      // whole for their pickers.
+      fetchPage<Account, AccountPage>(
+        `${env.BACKEND_URL}/api/v1/accounts/manage?${accountsQuery.toString()}`,
+        listAccountsSchema.response,
+        (data) => data.accounts,
         authHeader,
       ),
       fetchList<Person>(
@@ -88,7 +106,7 @@ export default async function AccountsPage({
   // A failed list renders as an empty one: every consumer below is a card grid or a
   // combobox, and both read the same either way.
   const allAccounts: Account[] = allAccountsResult ?? []
-  const accounts: Account[] = accountsResult ?? []
+  const accounts: Account[] = accountsPage.items
   const people: Person[] = peopleResult ?? []
   const loyaltyPrograms: LoyaltyProgram[] = loyaltyProgramsResult ?? []
 
@@ -157,6 +175,13 @@ export default async function AccountsPage({
             ))
           )}
         </div>
+
+        <ListPagination
+          total={accountsPage.total}
+          page={params.page}
+          limit={PAGE_LIMIT}
+          noun={["conta", "contas"]}
+        />
       </div>
     </div>
   )

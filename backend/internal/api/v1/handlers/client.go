@@ -82,26 +82,50 @@ func (h *ClientHandler) CreateClient(w http.ResponseWriter, r *http.Request) {
 	utils.SendJSON(w, r, http.StatusCreated, "Client created successfully", toClientResponse(client))
 }
 
+var clientOrder = map[string]string{
+	"name_asc":     textOrder("clients.name", "ASC"),
+	"name_desc":    textOrder("clients.name", "DESC"),
+	"created_desc": "clients.created_at DESC",
+	"created_asc":  "clients.created_at ASC",
+}
+
+// clientListQuery applies the optional search and the ordering.
+//
+// This listing was the one cadastro that never got an ORDER BY, so Postgres returned
+// it in heap order and the screen reshuffled itself after any edit. That matters more
+// now than it did: a page window over an unordered query is not just untidy, it can
+// show the same client twice and skip another entirely.
+//
+// The phone is searched alongside the name because those are the only two fields a
+// client has, and "who is this number" is half of why anyone opens this screen.
+func clientListQuery(db *gorm.DB, params listQuery) *gorm.DB {
+	query := db.Model(&data.Client{})
+
+	if params.Q != "" {
+		like := likePattern(params.Q)
+		query = query.Where(
+			db.Where(unaccentedLike("clients.name"), like).Or("clients.phone LIKE ?", like),
+		)
+	}
+
+	return query.Order(orderClause(params.Order, clientOrder, clientOrder["name_asc"]))
+}
+
 // ListClients handles the GET /clients route.
 // @Summary      Listar clientes
-// @Description  Retorna todos os clientes cadastrados no sistema. Aceita filtro opcional por nome.
+// @Description  Retorna todos os clientes cadastrados no sistema. Sem paginação — é a rota que alimenta o seletor de cliente da tela de vendas. Para a tela de gestão, use /clients/manage.
 // @Tags         Clientes
 // @Produce      json
 // @Security     BearerAuth
-// @Param        search  query  string  false  "Filtra clientes cujo nome contém o texto informado"
+// @Param        q      query  string  false  "Busca por nome ou telefone"
+// @Param        order  query  string  false  "Ordenação"  Enums(name_asc, name_desc, created_desc, created_asc)
 // @Success      200  {object}  schemas.ClientListResponse
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao buscar clientes"
 // @Router       /clients [get]
 func (h *ClientHandler) ListClients(w http.ResponseWriter, r *http.Request) {
-	query := h.DB
-
-	if search := r.URL.Query().Get("search"); search != "" {
-		query = query.Where(unaccentedLike("name"), likePattern(search))
-	}
-
 	var clients []data.Client
-	if err := query.Find(&clients).Error; err != nil {
+	if err := clientListQuery(h.DB, parseListQuery(r)).Find(&clients).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch clients")
 		return
 	}
@@ -112,6 +136,51 @@ func (h *ClientHandler) ListClients(w http.ResponseWriter, r *http.Request) {
 	}
 
 	utils.SendJSON(w, r, http.StatusOK, "Clients fetched successfully", resp)
+}
+
+// ManageClients handles the GET /clients/manage route.
+// @Summary      Listar clientes (paginado)
+// @Description  Listagem paginada para a tela de gestão. A rota /clients continua devolvendo tudo, porque é ela que alimenta o seletor de cliente da tela de vendas.
+// @Tags         Clientes
+// @Produce      json
+// @Security     BearerAuth
+// @Param        q      query  string  false  "Busca por nome ou telefone"
+// @Param        order  query  string  false  "Ordenação"  Enums(name_asc, name_desc, created_desc, created_asc)
+// @Param        page   query  int     false  "Página (padrão 1)"
+// @Param        limit  query  int     false  "Itens por página (padrão 20, máximo 100)"
+// @Success      200  {object}  schemas.ClientPaginatedResponse
+// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      500  {object}  schemas.ErrorResponse "Erro ao buscar clientes"
+// @Router       /clients/manage [get]
+func (h *ClientHandler) ManageClients(w http.ResponseWriter, r *http.Request) {
+	params := parseListQuery(r)
+	query := clientListQuery(h.DB, params)
+
+	// The count runs on the same filtered query as the page, so the total the
+	// pagination control shows can never disagree with what it is paginating.
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to count clients")
+		return
+	}
+
+	var clients []data.Client
+	if err := paginate(query.Session(&gorm.Session{}), params).Find(&clients).Error; err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch clients")
+		return
+	}
+
+	items := make([]schemas.ClientResponse, 0, len(clients))
+	for _, client := range clients {
+		items = append(items, toClientResponse(client))
+	}
+
+	utils.SendJSON(w, r, http.StatusOK, "Clients fetched successfully", schemas.ClientPaginatedData{
+		Clients: items,
+		Total:   total,
+		Page:    params.Page,
+		Limit:   params.Limit,
+	})
 }
 
 // GetClient handles the GET /clients/{id} route

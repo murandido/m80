@@ -45,6 +45,10 @@ func RegisterLoyaltyDocumentRoutes(r chi.Router, db *gorm.DB) {
 
 		r.Post("/", handler.CreateLoyaltyDocument)
 		r.Get("/", handler.GetLoyaltyDocuments)
+
+		// paginated listing for the management screen. Chi resolves a static
+		// segment ahead of a param, so this never gets read as /loyalty-documents/{id}.
+		r.Get("/manage", handler.ListLoyaltyDocuments)
 		r.Put("/{id}", handler.UpdateLoyaltyDocument)
 		r.Delete("/{id}", handler.DeleteLoyaltyDocument)
 	})

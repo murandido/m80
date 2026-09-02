@@ -28,3 +28,34 @@ export async function fetchList<T>(
     return null
   }
 }
+
+/**
+ * Reads one of the API's paginated envelopes: `{ <noun>: [...], total, page, limit }`.
+ *
+ * `pick` names the array, which is the only thing that differs between them - the
+ * backend spells it `accounts`, `clients`, `documents`, `people`. Four screens read
+ * one of these, so the alternative to the callback is four copies of this function.
+ *
+ * A failed request comes back as an empty page rather than null. The distinction
+ * fetchList draws does not pay for itself here: every caller renders "nada aqui" and
+ * a pagination control reading zero, which is what an empty page already produces.
+ */
+export async function fetchPage<T, D extends { total: number }>(
+  url: string,
+  schema: z.ZodType<{ data?: D | null | undefined }>,
+  pick: (data: D) => T[] | null | undefined,
+  authHeader: Record<string, string>,
+): Promise<{ items: T[]; total: number }> {
+  const empty = { items: [] as T[], total: 0 }
+  try {
+    const res = await fetch(url, { headers: authHeader, cache: "no-store" })
+    const parsed = schema.safeParse(await res.json())
+    if (!res.ok || !parsed.success || !parsed.data.data) return empty
+    return {
+      items: pick(parsed.data.data) ?? [],
+      total: parsed.data.data.total,
+    }
+  } catch {
+    return empty
+  }
+}
