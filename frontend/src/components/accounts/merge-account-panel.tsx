@@ -4,15 +4,21 @@ import { useEffect, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { MergePanel, PreviewLines } from "@/components/shared/merge-panel"
 import { mergeAccountAction, previewMergeAccountAction } from "@/actions/account"
-import { Account, MergeAccountPreview } from "@/schemas/account"
-import { Person } from "@/schemas/person"
+import {
+  Account,
+  AccountOption,
+  LoyaltyProgramSummary,
+  MergeAccountPreview,
+} from "@/schemas/account"
+import { PersonOption } from "@/schemas/person"
 import { AccountCombobox } from "./account-combobox"
 
 interface MergeAccountPanelProps {
   account: Account
   // Every account, unfiltered - the duplicate is usually the one the current search hid.
-  accounts: Account[]
-  people: Person[]
+  accounts: AccountOption[]
+  people: PersonOption[]
+  loyaltyPrograms: LoyaltyProgramSummary[]
   title: string
   isOpen: boolean
   onMerged: () => void
@@ -47,6 +53,7 @@ export function MergeAccountPanel({
   account,
   accounts,
   people,
+  loyaltyPrograms,
   title,
   isOpen,
   onMerged,
@@ -114,6 +121,7 @@ export function MergeAccountPanel({
             candidate.loyalty_program_id === account.loyalty_program_id,
         )}
         people={people}
+        loyaltyPrograms={loyaltyPrograms}
         value={sourceId}
         onChange={setSourceId}
         placeholder="Buscar a conta duplicada..."

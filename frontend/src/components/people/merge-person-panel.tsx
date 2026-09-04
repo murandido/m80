@@ -4,14 +4,14 @@ import { useEffect, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { MergePanel, PreviewLines } from "@/components/shared/merge-panel"
 import { mergePersonAction, previewMergePersonAction } from "@/actions/person"
-import { MergePersonPreview, Person } from "@/schemas/person"
+import { MergePersonPreview, Person, PersonOption } from "@/schemas/person"
 import { PersonCombobox } from "./person-combobox"
 
 interface MergePersonPanelProps {
   person: Person
   // Every owner, unfiltered: the duplicate the operator is after is often exactly the one
   // the current search hid, since the two are registered under different names.
-  people: Person[]
+  people: PersonOption[]
   isOpen: boolean
   onMerged: () => void
 }

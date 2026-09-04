@@ -95,6 +95,16 @@ export const AirportAutocompleteCell = memo(function AirportAutocompleteCell({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isThisCellEditing])
 
+  // The airport table now arrives from a browser fetch instead of with the page, so a
+  // cell opened in the moment before it lands would seed an empty dropdown and stay that
+  // way until the operator typed. Re-seed when the list arrives; the length guard keeps
+  // this from overwriting a list the operator has already narrowed.
+  useEffect(() => {
+    if (!isThisCellEditing || filtered.length > 0) return
+    setFiltered(filterAirports(airports, text))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [airports])
+
   // Keeps the highlighted option visible while arrowing through a list taller than the box.
   useEffect(() => {
     if (!acOpen) return

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation"
 import { Menu, Merge, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
-import { Person } from "@/schemas/person"
+import { Person, PersonOption } from "@/schemas/person"
 import { DeleteOverlay } from "./delete-overlay"
 import { EditPersonPanel } from "./edit-person-panel"
 import { MergePersonPanel } from "./merge-person-panel"
@@ -14,7 +14,7 @@ interface PersonCardProps {
   person: Person
   // Every owner, for the merge picker. Empty for anyone who cannot merge, so the list
   // is not shipped to browsers that have no use for it.
-  people: Person[]
+  people: PersonOption[]
   canMerge: boolean
 }
 

@@ -5,12 +5,13 @@ import { env } from "@/lib/env"
 import { fetchList, fetchPage } from "@/lib/fetch-list"
 import { ListPagination } from "@/components/shared/list-pagination"
 import {
-  getAccountsSchema,
+  getAccountOptionsSchema,
   listAccountsSchema,
   type Account,
+  type AccountOption,
   type AccountPage,
 } from "@/schemas/account"
-import { getPeopleSchema, Person } from "@/schemas/person"
+import { getPeopleOptionsSchema, PersonOption } from "@/schemas/person"
 import { getLoyaltyProgramsSchema, LoyaltyProgram } from "@/schemas/loyalty-program"
 import { ContasPessoasToggle } from "@/components/layout/contas-pessoas-toggle"
 import { AccountCard } from "@/components/accounts/account-card"
@@ -76,9 +77,9 @@ export default async function AccountsPage({
       // archived ones included, because archiving was the only way to get a duplicate off
       // the screen before merging existed: those are the ones still holding issuances.
       canMerge
-        ? fetchList<Account>(
-            `${env.BACKEND_URL}/api/v1/accounts?include_archived=true`,
-            getAccountsSchema.response,
+        ? fetchList<AccountOption>(
+            `${env.BACKEND_URL}/api/v1/accounts?include_archived=true&view=picker`,
+            getAccountOptionsSchema.response,
             authHeader,
           )
         : Promise.resolve(null),
@@ -91,9 +92,11 @@ export default async function AccountsPage({
         (data) => data.accounts,
         authHeader,
       ),
-      fetchList<Person>(
-        `${env.BACKEND_URL}/api/v1/people`,
-        getPeopleSchema.response,
+      // view=picker: esta lista só alimenta comboboxes, e sem ela a página
+      // carregava as catorze colunas de cada pessoa cadastrada.
+      fetchList<PersonOption>(
+        `${env.BACKEND_URL}/api/v1/people?view=picker`,
+        getPeopleOptionsSchema.response,
         authHeader,
       ),
       fetchList<LoyaltyProgram>(
@@ -105,9 +108,9 @@ export default async function AccountsPage({
 
   // A failed list renders as an empty one: every consumer below is a card grid or a
   // combobox, and both read the same either way.
-  const allAccounts: Account[] = allAccountsResult ?? []
+  const allAccounts: AccountOption[] = allAccountsResult ?? []
   const accounts: Account[] = accountsPage.items
-  const people: Person[] = peopleResult ?? []
+  const people: PersonOption[] = peopleResult ?? []
   const loyaltyPrograms: LoyaltyProgram[] = loyaltyProgramsResult ?? []
 
   return (

@@ -3,7 +3,7 @@ import { cookies } from "next/headers"
 import { Separator } from "@/components/ui/separator"
 import { env } from "@/lib/env"
 import { fetchList } from "@/lib/fetch-list"
-import { getPeopleSchema, listPeopleSchema, Person } from "@/schemas/person"
+import { getPeopleOptionsSchema, listPeopleSchema, Person, PersonOption } from "@/schemas/person"
 import { getSessionUser } from "@/lib/session"
 import { canAccess } from "@/lib/navigation"
 import { ContasPessoasToggle } from "@/components/layout/contas-pessoas-toggle"
@@ -79,9 +79,9 @@ export default async function PeoplePage({
     // The unpaginated list, because the duplicate the operator is after is usually
     // exactly the one the current page or search does not show.
     canMerge
-      ? fetchList<Person>(
-          `${env.BACKEND_URL}/api/v1/people`,
-          getPeopleSchema.response,
+      ? fetchList<PersonOption>(
+          `${env.BACKEND_URL}/api/v1/people?view=picker`,
+          getPeopleOptionsSchema.response,
           authHeader,
         )
       : Promise.resolve(null),
@@ -91,7 +91,7 @@ export default async function PeoplePage({
     ),
   ])
 
-  const allPeople: Person[] = allPeopleResult ?? []
+  const allPeople: PersonOption[] = allPeopleResult ?? []
   const people = page.people
   const total = page.total
 

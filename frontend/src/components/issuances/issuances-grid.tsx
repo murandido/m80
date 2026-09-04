@@ -37,6 +37,7 @@ import {
   isAutocompleteCandidate,
 } from "@/components/issuances/autocomplete"
 import { useAutocompletePreference } from "@/hooks/use-autocomplete-preference"
+import { useAirports } from "@/hooks/use-airports"
 import { clearPatchForColumn } from "@/components/issuances/column-fields"
 import { useSSE } from "@/hooks/use-sse"
 import {
@@ -51,7 +52,7 @@ import {
   Direction,
 } from "@/lib/grid-navigation"
 import { Issuance, getIssuancesSchema, updateIssuanceSchema } from "@/schemas/issuance"
-import { Account } from "@/schemas/account"
+import { AccountOption } from "@/schemas/account"
 import { Agency } from "@/schemas/agency"
 import { LoyaltyProgram } from "@/schemas/loyalty-program"
 import {
@@ -186,6 +187,10 @@ export function IssuancesGrid({
   filterQuery,
   ...referenceData
 }: IssuancesGridProps) {
+  // Fetched from the browser rather than handed down with the page: 1.3 MB of reference
+  // data does not belong in the payload of every navigation. Empty for the first moment
+  // after mount, which the airport cell handles - it commits typed IATA codes regardless.
+  const airports = useAirports()
   // Start from exactly what the server returned - no seeded draft row. An empty
   // result is a legitimate filtered outcome and gets an explicit empty-state below
   // (a lone editable draft row here reads as a stray/phantom line). "Nova emissão"
@@ -224,7 +229,7 @@ export function IssuancesGrid({
   // adoptReferences). Kept alongside the props rather than replacing them, so a later
   // refresh of the server-fetched lists doesn't get shadowed by a stale copy - the merges
   // below dedupe when the same record arrives from both.
-  const [extraAccounts, setExtraAccounts] = useState<Account[]>([])
+  const [extraAccounts, setExtraAccounts] = useState<AccountOption[]>([])
   const [extraAgencies, setExtraAgencies] = useState<Agency[]>([])
   const [extraPrograms, setExtraPrograms] = useState<LoyaltyProgram[]>([])
   const [pendingAccountLabels, setPendingAccountLabels] = useState<Record<string, string>>({})
@@ -257,7 +262,7 @@ export function IssuancesGrid({
   const syncingRowKeysRef = useRef(syncingRowKeys)
   // Mirrors the merged account list, same reason again: onCellClick needs to know whether
   // the row's account is exempt before it lets the redemption fee cell into edit mode.
-  const accountsRef = useRef<Account[]>([])
+  const accountsRef = useRef<AccountOption[]>([])
   // Undo/redo history. Each entry is the inverse patch (the field values as they were
   // before a change) plus the row it targets. Every value mutation funnels through
   // applyPatch, which records the inverse here; Ctrl+Z/Ctrl+Y replay entries between the
@@ -1143,7 +1148,7 @@ export function IssuancesGrid({
       agencies,
       users: referenceData.users,
       people: referenceData.people,
-      airports: referenceData.airports,
+      airports,
       onCellClick,
       onSaveAndMove,
       onExitEdit,
@@ -1164,7 +1169,7 @@ export function IssuancesGrid({
       agencies,
       referenceData.users,
       referenceData.people,
-      referenceData.airports,
+      airports,
       onCellClick,
       onSaveAndMove,
       onExitEdit,

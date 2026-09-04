@@ -27,7 +27,7 @@ import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 import { ACCOUNT_CATEGORY_OPTIONS } from "@/lib/account-category"
 import { Account, updateAccountSchema } from "@/schemas/account"
-import { Person } from "@/schemas/person"
+import { PersonOption } from "@/schemas/person"
 import { LoyaltyProgram } from "@/schemas/loyalty-program"
 import { updateAccountAction } from "@/actions/account"
 import { PersonCombobox } from "@/components/people/person-combobox"
@@ -38,7 +38,7 @@ type FormData = z.infer<typeof updateAccountSchema.request>
 
 interface EditAccountPanelProps {
   account: Account
-  people: Person[]
+  people: PersonOption[]
   loyaltyPrograms: LoyaltyProgram[]
   isOpen: boolean
   onSaved: () => void

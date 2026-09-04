@@ -5,8 +5,8 @@ import { useRouter } from "next/navigation"
 import { Menu, Merge, Trash2, Users } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
-import { Account } from "@/schemas/account"
-import { Person } from "@/schemas/person"
+import { Account, AccountOption } from "@/schemas/account"
+import { PersonOption } from "@/schemas/person"
 import { LoyaltyProgram } from "@/schemas/loyalty-program"
 import { LoyaltyProgramBadge } from "./loyalty-program-badge"
 import { AccountCategoryBadge } from "./account-category-badge"
@@ -20,11 +20,11 @@ import { MergeAccountPanel } from "./merge-account-panel"
 
 interface AccountCardProps {
   account: Account
-  people: Person[]
+  people: PersonOption[]
   loyaltyPrograms: LoyaltyProgram[]
   // Every account, for the merge picker. Empty for anyone who cannot merge, so the
   // list is not shipped to browsers that have no use for it.
-  allAccounts: Account[]
+  allAccounts: AccountOption[]
   canMerge: boolean
 }
 
@@ -180,6 +180,7 @@ export function AccountCard({
           account={account}
           accounts={allAccounts}
           people={people}
+          loyaltyPrograms={loyaltyPrograms}
           title={title}
           isOpen={isMergeOpen}
           onMerged={() => setOpenPanel("none")}

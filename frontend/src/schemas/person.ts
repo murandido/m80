@@ -31,6 +31,25 @@ export const personSchema = z.object({
 
 export type Person = z.infer<typeof personSchema>
 
+// The person as a combobox needs her, and nothing else. GET /people?view=picker
+// returns this shape: three fields instead of fourteen, which is what keeps the
+// pickers from putting 1.36 MB of addresses and CPFs into every page that has one.
+export const personOptionSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  nicknames: z.array(personNicknameSchema),
+})
+
+export type PersonOption = z.infer<typeof personOptionSchema>
+
+export const getPeopleOptionsSchema = {
+  response: z.object({
+    success: z.boolean(),
+    message: z.string(),
+    data: z.array(personOptionSchema).nullish(),
+  }),
+}
+
 export const getPeopleSchema = {
   response: z.object({
     success: z.boolean(),

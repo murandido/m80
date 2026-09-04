@@ -5,21 +5,20 @@ import { IssuanceRow } from "@/components/issuances/types"
 import { CancelIssuanceInput } from "@/schemas/issuance"
 import { LoyaltyProgram } from "@/schemas/loyalty-program"
 import { Airline } from "@/schemas/airline"
-import { Account } from "@/schemas/account"
+import { AccountOption } from "@/schemas/account"
 import { Agency } from "@/schemas/agency"
 import { User } from "@/schemas/user"
-import { Person } from "@/schemas/person"
+import { PersonOption } from "@/schemas/person"
 import { Airport } from "@/schemas/airport"
 import { Direction } from "@/lib/grid-navigation"
 
 export interface GridReferenceData {
   loyaltyPrograms: LoyaltyProgram[]
   airlines: Airline[]
-  accounts: Account[]
+  accounts: AccountOption[]
   agencies: Agency[]
   users: User[]
-  people: Person[]
-  airports: Airport[]
+  people: PersonOption[]
 }
 
 // Volatile per-cell state passed down as props (not through the context) so that moving
@@ -35,6 +34,10 @@ export interface CellStateProps {
 }
 
 export interface GridContextValue extends GridReferenceData {
+  // Not part of GridReferenceData because it does not arrive with the page: the grid
+  // loads the airport table from the browser (see hooks/use-airports) and puts it here,
+  // so the cells still read it the same way every other reference list is read.
+  airports: Airport[]
   onCellClick: (r: number, c: number) => void
   // patch: the changed fields for row r, in backend field-name shape (e.g.
   // {program_locator}, {loyalty_program_id, airline_id}, {status}, {flight_date}).
@@ -66,7 +69,7 @@ export interface GridContextValue extends GridReferenceData {
   // locked and marked while it runs rather than left looking idle.
   syncingRowKeys: Record<string, true>
 
-  // Creates a Person, an Account on the row's loyalty program and a nickname, all from
+  // Creates a Person, an AccountOption on the row's loyalty program and a nickname, all from
   // a name typed into the account cell that matched nothing, then points the row at the
   // new account. Rows are addressed by key, not index: the creation is async and a row
   // can move (or be deleted) while it is in flight.

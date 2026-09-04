@@ -74,6 +74,45 @@ export const accountSchema = z.object({
 
 export type Account = z.infer<typeof accountSchema>
 
+// What a picker reads off an account, and nothing else. Accounts have no name of their
+// own, so identifying one takes the holder, the login and the aliases; the program comes
+// as an id the caller resolves against the program list it already has, rather than as a
+// copy of the program embedded once per account.
+//
+// The management screen still reads the full record - see accountSchema. This exists so
+// that reaching for a field a picker does not carry is a compile error rather than a
+// silent 300 KB.
+export const accountNicknameOptionSchema = z.object({
+  id: z.string(),
+  nickname: z.string(),
+})
+
+export const accountOptionSchema = z.object({
+  id: z.string(),
+  loyalty_program_id: z.string(),
+  login: z.string().nullable(),
+  holder_id: z.string().nullable(),
+  nicknames: z.array(accountNicknameOptionSchema),
+  // Both are omitted by the API whenever they carry no information - false and null -
+  // which on an unpaginated feed is most rows. Defaulted here for the same reason
+  // accountSchema defaults them: absent and false have always meant the same thing.
+  waives_redemption_fee: z
+    .boolean()
+    .nullish()
+    .transform((value) => value ?? false),
+  deleted_at: z.string().nullish(),
+})
+
+export type AccountOption = z.infer<typeof accountOptionSchema>
+
+export const getAccountOptionsSchema = {
+  response: z.object({
+    success: z.boolean(),
+    message: z.string(),
+    data: z.array(accountOptionSchema).nullish(),
+  }),
+}
+
 export const getAccountsSchema = {
   response: z.object({
     success: z.boolean(),

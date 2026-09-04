@@ -74,6 +74,39 @@ type AccountResponse struct {
 	DeletedAt *time.Time `json:"deleted_at"`
 }
 
+// AccountNicknameOption is an alias as a picker uses it: something to type, and an id to
+// send back with the choice. The full AccountNicknameResponse also repeats the account
+// and program ids the caller already has, plus a timestamp nobody reads here.
+type AccountNicknameOption struct {
+	ID       string `json:"id"`
+	Nickname string `json:"nickname"`
+}
+
+// AccountPickerResponse is everything a combobox needs to identify an account, and
+// nothing else.
+//
+// Accounts have no name of their own, so a picker builds a label from the holder, the
+// login and the aliases, colours it by program, and marks the archived ones. That is
+// seven fields. The full AccountResponse carries sixteen, including a copy of the
+// loyalty program embedded once per account - and on this unpaginated feed of eight
+// hundred, that copy alone was half the bytes.
+//
+// The program arrives as an id. Every screen with an account picker already fetches the
+// program list, which is 3 KB for all of them, so embedding one per account was paying
+// hundreds of times for something already on the page.
+type AccountPickerResponse struct {
+	ID               string                  `json:"id"`
+	LoyaltyProgramID string                  `json:"loyalty_program_id"`
+	Login            *string                 `json:"login"`
+	HolderID         *string                 `json:"holder_id"`
+	Nicknames        []AccountNicknameOption `json:"nicknames"`
+	// Both are omitted when they carry no information, which on a feed this size is most
+	// rows: an account that waives no fee and was never archived says nothing by saying
+	// false and null. The panel defaults them back, as it already did for absent fields.
+	WaivesRedemptionFee bool       `json:"waives_redemption_fee,omitempty"`
+	DeletedAt           *time.Time `json:"deleted_at,omitempty"`
+}
+
 // MergeAccountRequest names the account to absorb into the one in the URL.
 type MergeAccountRequest struct {
 	SourceID string `json:"source_id" validate:"required,uuid"`

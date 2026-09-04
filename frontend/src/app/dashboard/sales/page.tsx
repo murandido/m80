@@ -16,8 +16,8 @@ import {
   getLoyaltyProgramsSchema,
   type LoyaltyProgram,
 } from "@/schemas/loyalty-program"
-import { getAccountsSchema, type Account } from "@/schemas/account"
-import { getPeopleSchema, type Person } from "@/schemas/person"
+import { getAccountOptionsSchema, type AccountOption } from "@/schemas/account"
+import { PersonOption, getPeopleOptionsSchema } from "@/schemas/person"
 import { getUsersSchema, type User } from "@/schemas/user"
 import { SalesViewToggle } from "@/components/sales/sales-view-toggle"
 import { PeriodFilter } from "@/components/filters/period-filter"
@@ -87,12 +87,12 @@ export default async function SalesClientsPage({
       getLoyaltyProgramsSchema.response,
       authHeader,
     ),
-    fetchList<Account>(
-      `${api}/accounts`,
-      getAccountsSchema.response,
+    fetchList<AccountOption>(
+      `${api}/accounts?view=picker`,
+      getAccountOptionsSchema.response,
       authHeader,
     ),
-    fetchList<Person>(`${api}/people`, getPeopleSchema.response, authHeader),
+    fetchList<PersonOption>(`${api}/people?view=picker`, getPeopleOptionsSchema.response, authHeader),
     fetchList<User>(`${api}/users`, getUsersSchema.response, authHeader),
   ])
 

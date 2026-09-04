@@ -27,10 +27,10 @@ import {
   rowKey,
 } from "@/components/legacy-import/legacy-import-preview-table"
 import { cn } from "@/lib/utils"
-import type { Account } from "@/schemas/account"
+import type { AccountOption } from "@/schemas/account"
 import type { Agency } from "@/schemas/agency"
 import type { LoyaltyProgram } from "@/schemas/loyalty-program"
-import type { Person } from "@/schemas/person"
+import type { PersonOption } from "@/schemas/person"
 import type { User } from "@/schemas/user"
 import type {
   LegacyImportBlock,
@@ -52,8 +52,8 @@ function formatDayLabel(date: string): string {
 }
 
 interface LegacyImportScreenProps {
-  accounts: Account[]
-  people: Person[]
+  accounts: AccountOption[]
+  people: PersonOption[]
   users: User[]
   agencies: Agency[]
   loyaltyPrograms: LoyaltyProgram[]
@@ -87,7 +87,7 @@ export function LegacyImportScreen({
   const [rowAgencies, setRowAgencies] = useState<Record<string, string>>({})
   // Accounts created from inside the mapping combobox, folded into the list the page
   // was rendered with so the new one is selectable without a reload.
-  const [createdAccounts, setCreatedAccounts] = useState<Account[]>([])
+  const [createdAccounts, setCreatedAccounts] = useState<AccountOption[]>([])
 
   // The exception, not the selection: every row the server calls "ok" is in unless the
   // operator took it out, so re-resolving after a mapping never undoes their choices.

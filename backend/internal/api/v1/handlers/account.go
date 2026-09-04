@@ -84,6 +84,29 @@ func toAccountResponseWithUsage(account data.Account, usage *acct.Usage) schemas
 	}
 }
 
+// toAccountPickerResponse projects an account down to what a combobox draws. It builds
+// the response directly rather than trimming a full AccountResponse, so adding a field
+// to the wide shape does not silently widen the picker feed as well.
+func toAccountPickerResponse(account data.Account) schemas.AccountPickerResponse {
+	nicknames := make([]schemas.AccountNicknameOption, 0, len(account.Nicknames))
+	for _, nickname := range account.Nicknames {
+		nicknames = append(nicknames, schemas.AccountNicknameOption{
+			ID:       nickname.ID,
+			Nickname: nickname.Nickname,
+		})
+	}
+
+	return schemas.AccountPickerResponse{
+		ID:                  account.ID,
+		LoyaltyProgramID:    account.LoyaltyProgramID,
+		Login:               account.Login,
+		HolderID:            account.HolderID,
+		Nicknames:           nicknames,
+		WaivesRedemptionFee: account.WaivesRedemptionFee,
+		DeletedAt:           archivedAt(account.DeletedAt),
+	}
+}
+
 // CreateAccount handles the POST /accounts route
 // @Summary      Criar conta
 // @Description  Cria uma nova conta de programa de fidelidade no sistema.
@@ -241,27 +264,62 @@ func (h *AccountHandler) GetAccounts(w http.ResponseWriter, r *http.Request) {
 		db = db.Unscoped()
 	}
 
+	picker := r.URL.Query().Get("view") == "picker"
+
 	query := accountListQuery(
 		db,
 		parseListQuery(r),
 		r.URL.Query().Get("loyalty_program_id"),
 		r.URL.Query().Get("category"),
 		parseOptionalBool(r.URL.Query().Get("complete")),
-	)
-	if err := query.Preload("Nicknames").Preload("LoyaltyProgram").Find(&accounts).Error; err != nil {
+	).Preload("Nicknames")
+
+	// The picker identifies a program by id and looks the rest up on the panel, so the
+	// join that hydrates one program per account buys nothing here.
+	if !picker {
+		query = query.Preload("LoyaltyProgram")
+	}
+
+	if err := query.Find(&accounts).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch accounts")
 		return
 	}
 
-	usage, err := h.cpfUsage(accounts)
-	if err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Failed to compute the CPF usage")
+	// view=picker answers with a projection rather than the whole account. The route is
+	// unpaginated - it feeds the pickers on the issuances grid, the sales screens, the
+	// importer and the merge panel - so every one of those screens used to carry every
+	// column of every account in the system to render a list of names.
+	//
+	// The password is the one that mattered beyond bytes. Account.Password comes back
+	// decrypted on purpose, because staff have to read it to sign into the airline's
+	// program, and the account cards on the management screen are where that happens.
+	// It was also going into the HTML of every screen that merely has a picker: a copy
+	// of every account credential sitting in pages with no use for it.
+	//
+	// See schemas.AccountPickerResponse for what survives and why.
+	var usage map[string]*acct.Usage
+	if !picker {
+		computed, err := h.cpfUsage(accounts)
+		if err != nil {
+			utils.SendError(w, r, http.StatusInternalServerError, "Failed to compute the CPF usage")
+			return
+		}
+		usage = computed
+	}
+
+	if picker {
+		resp := make([]schemas.AccountPickerResponse, 0, len(accounts))
+		for _, acc := range accounts {
+			resp = append(resp, toAccountPickerResponse(acc))
+		}
+
+		utils.SendJSON(w, r, http.StatusOK, "Accounts fetched successfully", resp)
 		return
 	}
 
 	resp := make([]schemas.AccountResponse, 0, len(accounts))
-	for _, account := range accounts {
-		resp = append(resp, toAccountResponseWithUsage(account, usage[account.ID]))
+	for _, acc := range accounts {
+		resp = append(resp, toAccountResponseWithUsage(acc, usage[acc.ID]))
 	}
 
 	utils.SendJSON(w, r, http.StatusOK, "Accounts fetched successfully", resp)

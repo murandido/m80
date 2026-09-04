@@ -9,11 +9,10 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { getIssuancesSchema } from "@/schemas/issuance"
 import { getLoyaltyProgramsSchema } from "@/schemas/loyalty-program"
 import { getAirlinesSchema } from "@/schemas/airline"
-import { getAccountsSchema } from "@/schemas/account"
+import { getAccountOptionsSchema } from "@/schemas/account"
 import { getAgenciesSchema } from "@/schemas/agency"
 import { getUsersSchema, getMeSchema } from "@/schemas/user"
-import { getPeopleSchema } from "@/schemas/person"
-import { getAirportsSchema } from "@/schemas/airport"
+import { getPeopleOptionsSchema } from "@/schemas/person"
 import { IssuancesGrid } from "@/components/issuances/issuances-grid"
 import { IssuancesFilterBar } from "@/components/issuances/issuances-filter-bar"
 import { ListSearchBar } from "@/components/shared/list-search-bar"
@@ -113,16 +112,15 @@ export default async function IssuancesPage({
 
   // First wave: everything that does not depend on the resolved filters. Each
   // promise resolves (never rejects), so a single failure degrades only its own list.
-  const [currentUserId, loyaltyPrograms, airlines, accounts, agencies, users, people, airports] =
+  const [currentUserId, loyaltyPrograms, airlines, accounts, agencies, users, people] =
     await Promise.all([
       fetchCurrentUserId(authHeader),
       fetchList(`${api}/loyalty-programs`, getLoyaltyProgramsSchema.response, authHeader),
       fetchList(`${api}/airlines`, getAirlinesSchema.response, authHeader),
-      fetchList(`${api}/accounts`, getAccountsSchema.response, authHeader),
+      fetchList(`${api}/accounts?view=picker`, getAccountOptionsSchema.response, authHeader),
       fetchList(`${api}/agencies`, getAgenciesSchema.response, authHeader),
       fetchList(`${api}/users`, getUsersSchema.response, authHeader),
-      fetchList(`${api}/people`, getPeopleSchema.response, authHeader),
-      fetchList(`${api}/airports/all`, getAirportsSchema.response, authHeader),
+      fetchList(`${api}/people?view=picker`, getPeopleOptionsSchema.response, authHeader),
     ])
 
   // Second wave: the filtered issuance list, which needs currentUserId to build the defaults.
@@ -167,7 +165,6 @@ export default async function IssuancesPage({
     agencies,
     users,
     people,
-    airports,
   ].some((list) => list === null)
 
   return (
@@ -236,7 +233,6 @@ export default async function IssuancesPage({
               agencies={agencies ?? []}
               users={users ?? []}
               people={people ?? []}
-              airports={airports ?? []}
               currentUserId={currentUserId}
             />
           </>

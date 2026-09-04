@@ -1,9 +1,9 @@
 import { IssuanceRow } from "@/components/issuances/types"
-import { Account } from "@/schemas/account"
+import { AccountOption } from "@/schemas/account"
 import { Agency } from "@/schemas/agency"
 import { Airline } from "@/schemas/airline"
 import { LoyaltyProgram } from "@/schemas/loyalty-program"
-import { Person } from "@/schemas/person"
+import { PersonOption } from "@/schemas/person"
 
 // Rebuilds the WhatsApp EMISSAO message from a row of the grid - the inverse of the bot's
 // parser (backend/internal/bot/emissao_parse.go) and of resolveEmissao, which is what turns
@@ -22,9 +22,9 @@ import { Person } from "@/schemas/person"
 export interface EmissaoReferenceData {
   loyaltyPrograms: LoyaltyProgram[]
   airlines: Airline[]
-  accounts: Account[]
+  accounts: AccountOption[]
   agencies: Agency[]
-  people: Person[]
+  people: PersonOption[]
 }
 
 // `missing` carries column labels straight from the grid header, so the caller can say
@@ -71,7 +71,7 @@ export function issuanceTotalCents(
  * How to name an account that has no registered alias - used both by the account combobox
  * and by line 4 of the message, which is why it lives here rather than in either of them.
  */
-export function accountFallbackLabel(account: Account, people: Person[]): string {
+export function accountFallbackLabel(account: AccountOption, people: PersonOption[]): string {
   const holder = people.find((p) => p.id === account.holder_id)
   return holder?.name ?? account.login ?? account.id
 }

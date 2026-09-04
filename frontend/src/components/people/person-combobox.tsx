@@ -8,17 +8,17 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { useComboboxNavigation } from "@/hooks/use-combobox-navigation"
 import { normalizeSearch } from "@/lib/search"
 import { cn } from "@/lib/utils"
-import { Person } from "@/schemas/person"
+import { PersonOption } from "@/schemas/person"
 
 interface PersonComboboxProps {
-  people: Person[]
+  people: PersonOption[]
   value: string
   onChange: (id: string) => void
   placeholder?: string
   disabled?: boolean
 }
 
-function matches(person: Person, query: string): boolean {
+function matches(person: PersonOption, query: string): boolean {
   const needle = normalizeSearch(query)
   if (!needle) return true
 

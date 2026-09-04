@@ -28,9 +28,9 @@ import { AgencyCombobox } from "@/components/agencies/agency-combobox"
 import { UserCombobox } from "@/components/users/user-combobox"
 import type { LoyaltyProgram } from "@/schemas/loyalty-program"
 import type { Airline } from "@/schemas/airline"
-import type { Account } from "@/schemas/account"
+import type { AccountOption } from "@/schemas/account"
 import type { Agency } from "@/schemas/agency"
-import type { Person } from "@/schemas/person"
+import type { PersonOption } from "@/schemas/person"
 import type { User } from "@/schemas/user"
 
 // The seven filter dimensions carried in the URL. Empty string means "not filtered"
@@ -51,9 +51,9 @@ type FilterState = Record<(typeof FILTER_KEYS)[number], string>
 interface IssuancesFilterBarProps {
   loyaltyPrograms: LoyaltyProgram[]
   airlines: Airline[]
-  accounts: Account[]
+  accounts: AccountOption[]
   agencies: Agency[]
-  people: Person[]
+  people: PersonOption[]
   users: User[]
   // Effective filters resolved by the server (defaults on a clean load, or the
   // exact URL values otherwise). Seed the controls from these.
@@ -278,6 +278,7 @@ export function IssuancesFilterBar({
         <AccountCombobox
           accounts={accounts}
           people={people}
+          loyaltyPrograms={loyaltyPrograms}
           value={filters.account_id}
           onChange={(id) => update({ account_id: id })}
           placeholder="Todas as contas"

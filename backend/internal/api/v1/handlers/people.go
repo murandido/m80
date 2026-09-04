@@ -31,6 +31,20 @@ func NewPeopleHandler(db *gorm.DB) *PeopleHandler {
 	}
 }
 
+// toPersonPickerResponse is the slim projection GET /people?view=picker returns.
+func toPersonPickerResponse(person data.Person) schemas.PersonPickerResponse {
+	nicknames := make([]schemas.PersonNicknameResponse, 0, len(person.Nicknames))
+	for _, nickname := range person.Nicknames {
+		nicknames = append(nicknames, toPersonNicknameResponse(nickname))
+	}
+
+	return schemas.PersonPickerResponse{
+		ID:        person.ID,
+		Name:      person.Name,
+		Nicknames: nicknames,
+	}
+}
+
 func toPersonResponse(person data.Person) schemas.PersonResponse {
 	nicknames := make([]schemas.PersonNicknameResponse, 0, len(person.Nicknames))
 	for _, nickname := range person.Nicknames {
@@ -205,6 +219,7 @@ func searchFingerprint(term string) (string, bool) {
 // @Param        q      query  string  false  "Busca por nome, e-mail, telefone, cidade ou apelido. O CPF é buscado por igualdade e exige os 11 dígitos, porque a coluna é cifrada."
 // @Param        order  query  string  false  "Ordenação"  Enums(name_asc, name_desc, created_desc, created_asc)
 // @Param        complete  query  bool  false  "Somente pessoas completas (true) ou incompletas (false)"
+// @Param        view  query  string  false  "view=picker devolve só id, nome e apelidos — o que um combobox usa. Reduz a resposta em cerca de 4x."  Enums(picker)
 // @Success      200  {object}  schemas.PersonListResponse
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao buscar pessoas"
@@ -213,8 +228,26 @@ func (h *PeopleHandler) GetPeople(w http.ResponseWriter, r *http.Request) {
 	var people []data.Person
 
 	query := peopleListQuery(h.DB, parseListQuery(r), parseOptionalBool(r.URL.Query().Get("complete")))
+	picker := r.URL.Query().Get("view") == "picker"
+
+	// The picker only ever shows a name and its nicknames, so it selects three columns
+	// instead of fourteen. Leaving cpf out of the SELECT also skips Person.AfterFind's
+	// decryption for every row - work whose result the combobox would throw away.
+	if picker {
+		query = query.Select("people.id", "people.name")
+	}
+
 	if err := query.Preload("Nicknames").Find(&people).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch people")
+		return
+	}
+
+	if picker {
+		resp := make([]schemas.PersonPickerResponse, 0, len(people))
+		for _, person := range people {
+			resp = append(resp, toPersonPickerResponse(person))
+		}
+		utils.SendJSON(w, r, http.StatusOK, "People fetched successfully", resp)
 		return
 	}
 

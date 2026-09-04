@@ -6,7 +6,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/murandido/m-80-backend/internal/utils"
-	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
 
@@ -50,17 +49,16 @@ func (u *User) BeforeCreate(tx *gorm.DB) (err error) {
 	}
 
 	// hash the password
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(u.Password), bcrypt.DefaultCost)
+	hashedPassword, err := utils.HashPassword(u.Password)
 	if err != nil {
 		return err
 	}
-	u.Password = string(hashedPassword)
+	u.Password = hashedPassword
 	return nil
 }
 
 func (u *User) CheckPassword(password string) bool {
-	err := bcrypt.CompareHashAndPassword([]byte(u.Password), []byte(password))
-	return err == nil
+	return utils.CheckPassword(u.Password, password)
 }
 
 func (u *User) BeforeUpdate(tx *gorm.DB) (err error) {
@@ -74,11 +72,11 @@ func (u *User) BeforeUpdate(tx *gorm.DB) (err error) {
 	// bcrypt hashes are exactly 60 characters long
 	// if the length is less than 60, it means it's a new plaintext password
 	if u.Password != "" && len(u.Password) < 60 {
-		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(u.Password), bcrypt.DefaultCost)
+		hashedPassword, err := utils.HashPassword(u.Password)
 		if err != nil {
 			return err
 		}
-		u.Password = string(hashedPassword)
+		u.Password = hashedPassword
 	}
 
 	return nil

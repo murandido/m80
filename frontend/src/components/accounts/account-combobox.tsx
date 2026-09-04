@@ -12,13 +12,17 @@ import {
 import { useComboboxNavigation } from "@/hooks/use-combobox-navigation"
 import { normalizeSearch } from "@/lib/search"
 import { cn } from "@/lib/utils"
-import { Account } from "@/schemas/account"
-import { Person } from "@/schemas/person"
+import { AccountOption, LoyaltyProgramSummary } from "@/schemas/account"
+import { PersonOption } from "@/schemas/person"
 
 interface AccountComboboxProps {
-  accounts: Account[]
+  accounts: AccountOption[]
   // Used to resolve an account's holder into a readable name, mirroring the grid.
-  people: Person[]
+  people: PersonOption[]
+  // The programs the accounts belong to. An account carries only loyalty_program_id, so
+  // the colour and the name are looked up here - which is why the picker feed does not
+  // embed a copy of the program in every account it returns.
+  loyaltyPrograms: LoyaltyProgramSummary[]
   value: string
   onChange: (id: string) => void
   placeholder?: string
@@ -37,7 +41,7 @@ interface AccountComboboxProps {
 // Accounts have no name of their own; identify one by its holder, falling back to
 // login, then a registered alias, then a short id. Mirrors the grid's labelling so
 // the same account reads the same way in the filter and in the spreadsheet.
-function accountLabel(account: Account, people: Person[]): string {
+function accountLabel(account: AccountOption, people: PersonOption[]): string {
   const holder = people.find((p) => p.id === account.holder_id)
   return (
     holder?.name ??
@@ -47,14 +51,20 @@ function accountLabel(account: Account, people: Person[]): string {
   )
 }
 
-function matches(account: Account, people: Person[], query: string): boolean {
+function matches(
+  account: AccountOption,
+  people: PersonOption[],
+  program: LoyaltyProgramSummary | undefined,
+  query: string,
+): boolean {
   const needle = normalizeSearch(query)
   if (!needle) return true
 
   return (
     normalizeSearch(accountLabel(account, people)).includes(needle) ||
-    normalizeSearch(account.loyalty_program.name).includes(needle) ||
-    normalizeSearch(account.loyalty_program.code).includes(needle) ||
+    (program !== undefined &&
+      (normalizeSearch(program.name).includes(needle) ||
+        normalizeSearch(program.code).includes(needle))) ||
     account.nicknames.some((n) => normalizeSearch(n.nickname).includes(needle))
   )
 }
@@ -62,6 +72,7 @@ function matches(account: Account, people: Person[], query: string): boolean {
 export function AccountCombobox({
   accounts,
   people,
+  loyaltyPrograms,
   value,
   onChange,
   placeholder = "Buscar por titular, login ou programa...",
@@ -72,10 +83,20 @@ export function AccountCombobox({
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState(initialQuery)
 
+  // Built once per program list rather than scanned per account: the filter runs over
+  // every account on every keystroke, and the feed is unpaginated.
+  const programById = useMemo(
+    () => new Map(loyaltyPrograms.map((program) => [program.id, program])),
+    [loyaltyPrograms],
+  )
+
   const selected = accounts.find((a) => a.id === value)
   const filtered = useMemo(
-    () => accounts.filter((a) => matches(a, people, query)),
-    [accounts, people, query],
+    () =>
+      accounts.filter((a) =>
+        matches(a, people, programById.get(a.loyalty_program_id), query),
+      ),
+    [accounts, people, programById, query],
   )
 
   // Offered only when nothing already answers to that name, compared without accents:
@@ -145,7 +166,7 @@ export function AccountCombobox({
             {selected && (
               <span
                 className="h-2.5 w-2.5 shrink-0 rounded-full border border-slate-300"
-                style={{ backgroundColor: selected.loyalty_program.color }}
+                style={{ backgroundColor: programById.get(selected.loyalty_program_id)?.color }}
               />
             )}
             <span className="truncate">
@@ -204,14 +225,14 @@ export function AccountCombobox({
             >
               <span
                 className="h-2.5 w-2.5 shrink-0 rounded-full border border-slate-300"
-                style={{ backgroundColor: account.loyalty_program.color }}
+                style={{ backgroundColor: programById.get(account.loyalty_program_id)?.color }}
               />
               <span className="flex min-w-0 flex-1 flex-col">
                 <span className="truncate">
                   {accountLabel(account, people)}
                 </span>
                 <span className="text-muted-foreground truncate text-xs">
-                  {account.loyalty_program.name}
+                  {programById.get(account.loyalty_program_id)?.name}
                   {/* Only the merge picker ever asks for archived accounts, and there
                       they are the common case - saying so stops one reading as live. */}
                   {account.deleted_at && " · arquivada"}

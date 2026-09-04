@@ -17,8 +17,8 @@ import { UserCombobox } from "@/components/users/user-combobox"
 import { ClientCombobox } from "@/components/clients/client-combobox"
 import type { Agency } from "@/schemas/agency"
 import type { LoyaltyProgram } from "@/schemas/loyalty-program"
-import type { Account } from "@/schemas/account"
-import type { Person } from "@/schemas/person"
+import type { AccountOption } from "@/schemas/account"
+import type { PersonOption } from "@/schemas/person"
 import type { User } from "@/schemas/user"
 import type { Client } from "@/schemas/client"
 import {
@@ -31,8 +31,8 @@ import {
 interface SalesFilterBarProps {
   agencies: Agency[]
   loyaltyPrograms: LoyaltyProgram[]
-  accounts: Account[]
-  people: Person[]
+  accounts: AccountOption[]
+  people: PersonOption[]
   users: User[]
   clients: Client[]
   // Filters resolved by the server: the exact URL values, or the defaults on a clean load.
@@ -124,6 +124,7 @@ export function SalesFilterBar({
           <AccountCombobox
             accounts={accounts}
             people={people}
+            loyaltyPrograms={loyaltyPrograms}
             value={filters.account_id}
             onChange={(account_id) => update({ account_id })}
             placeholder="Todas"

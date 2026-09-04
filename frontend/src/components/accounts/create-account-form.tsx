@@ -26,7 +26,7 @@ import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 import { ACCOUNT_CATEGORY_OPTIONS } from "@/lib/account-category"
 import { createAccountSchema } from "@/schemas/account"
-import { Person } from "@/schemas/person"
+import { PersonOption } from "@/schemas/person"
 import { LoyaltyProgram } from "@/schemas/loyalty-program"
 import { createAccountAction } from "@/actions/account"
 import { PersonCombobox } from "@/components/people/person-combobox"
@@ -36,7 +36,7 @@ import { AccountNicknamesField } from "./account-nicknames-field"
 type FormData = z.infer<typeof createAccountSchema.request>
 
 interface CreateAccountFormProps {
-  people: Person[]
+  people: PersonOption[]
   loyaltyPrograms: LoyaltyProgram[]
 }
 

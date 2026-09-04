@@ -4,10 +4,10 @@ import { AccountCombobox } from "@/components/accounts/account-combobox"
 import { AgencyCombobox } from "@/components/agencies/agency-combobox"
 import { LoyaltyProgramCombobox } from "@/components/loyalty-programs/loyalty-program-combobox"
 import { UserCombobox } from "@/components/users/user-combobox"
-import type { Account } from "@/schemas/account"
+import type { AccountOption } from "@/schemas/account"
 import type { Agency } from "@/schemas/agency"
 import type { LoyaltyProgram } from "@/schemas/loyalty-program"
-import type { Person } from "@/schemas/person"
+import type { PersonOption } from "@/schemas/person"
 import type { User } from "@/schemas/user"
 import type {
   LegacyImportPendingAccount,
@@ -17,8 +17,8 @@ import type {
 interface LegacyImportMappingsProps {
   pendingAccounts: LegacyImportPendingAccount[]
   pendingIssuers: LegacyImportPendingIssuer[]
-  accounts: Account[]
-  people: Person[]
+  accounts: AccountOption[]
+  people: PersonOption[]
   users: User[]
   agencies: Agency[]
   loyaltyPrograms: LoyaltyProgram[]
@@ -201,6 +201,7 @@ export function LegacyImportMappings({
                           pending.loyalty_program_id,
                       )}
                       people={people}
+                      loyaltyPrograms={loyaltyPrograms}
                       value={accountChoices[key] ?? ""}
                       onChange={(accountId) =>
                         onAccountChoice(

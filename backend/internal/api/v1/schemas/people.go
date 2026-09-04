@@ -60,6 +60,21 @@ type PersonResponse struct {
 	UpdatedAt     time.Time                `json:"updated_at"`
 }
 
+// PersonPickerResponse is the person as a combobox needs her: the id to select by, the
+// name to show, and the nicknames the operator may type instead of the name.
+//
+// It exists because the pickers were the heaviest thing on the panel. GET /people is
+// unpaginated by design - a combobox that only holds a page of names is useless - so
+// every screen with a holder, administrator or passenger picker was shipping all
+// fourteen columns of every person. At three thousand people that is 1.36 MB per page
+// load, serialised by the API, again by Next into the HTML, and gzipped by Caddy on the
+// way out. The three fields below are the ones person-combobox.tsx actually reads.
+type PersonPickerResponse struct {
+	ID        string                   `json:"id"`
+	Name      string                   `json:"name"`
+	Nicknames []PersonNicknameResponse `json:"nicknames"`
+}
+
 // MergePersonRequest names the person to absorb into the one in the URL.
 type MergePersonRequest struct {
 	SourceID string `json:"source_id" validate:"required,uuid"`

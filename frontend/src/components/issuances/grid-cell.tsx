@@ -5,8 +5,8 @@ import { CellStateProps, useGridContext } from "@/components/issuances/grid-cont
 // Shared with the copied EMISSAO message: an account with no alias has to be named the
 // same way on line 4 as it is in this combobox.
 import { accountFallbackLabel } from "@/components/issuances/emissao-message"
-import { Account } from "@/schemas/account"
-import { Person } from "@/schemas/person"
+import { AccountOption } from "@/schemas/account"
+import { PersonOption } from "@/schemas/person"
 import { TextCell } from "@/components/issuances/cells/text-cell"
 import { LocatorCell } from "@/components/issuances/cells/locator-cell"
 import { DateMaskCell } from "@/components/issuances/cells/date-mask-cell"
@@ -40,8 +40,8 @@ function ReadOnlyCurrencyCell({ r, c, value }: { r: number; c: number; value: nu
 // list is narrowed to the program the row is issuing on; before a program is chosen there
 // is nothing to narrow by and the full list stays available.
 function buildAccountOptions(
-  accounts: Account[],
-  people: Person[],
+  accounts: AccountOption[],
+  people: PersonOption[],
   loyaltyProgramId: string | null,
 ): ComboOption[] {
   // Archived accounts are in this list only because they came embedded in a past

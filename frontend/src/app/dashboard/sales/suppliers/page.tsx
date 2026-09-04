@@ -12,8 +12,8 @@ import { Button } from "@/components/ui/button"
 import { getSupplierBalancesSchema, type SupplierBalance } from "@/schemas/sale"
 import { getAgenciesSchema, type Agency } from "@/schemas/agency"
 import { getLoyaltyProgramsSchema, type LoyaltyProgram } from "@/schemas/loyalty-program"
-import { getAccountsSchema, type Account } from "@/schemas/account"
-import { getPeopleSchema, type Person } from "@/schemas/person"
+import { getAccountOptionsSchema, type AccountOption } from "@/schemas/account"
+import { getPeopleOptionsSchema, type PersonOption } from "@/schemas/person"
 import { SalesViewToggle } from "@/components/sales/sales-view-toggle"
 import { PeriodFilter } from "@/components/filters/period-filter"
 import { SalesFilterBar } from "@/components/sales/sales-filter-bar"
@@ -87,8 +87,8 @@ export default async function SalesSuppliersPage({
       getLoyaltyProgramsSchema.response,
       authHeader,
     ),
-    fetchList<Account>(`${api}/accounts`, getAccountsSchema.response, authHeader),
-    fetchList<Person>(`${api}/people`, getPeopleSchema.response, authHeader),
+    fetchList<AccountOption>(`${api}/accounts?view=picker`, getAccountOptionsSchema.response, authHeader),
+    fetchList<PersonOption>(`${api}/people?view=picker`, getPeopleOptionsSchema.response, authHeader),
   ])
 
   // The multi-picker owns the agency choice here, so it has to be told what the server
