@@ -30,8 +30,10 @@ interface ComboboxCellProps extends Pick<CellStateProps, "isEditing" | "pendingC
   create?: {
     // What the entry says it will do, e.g. `Criar conta "João Silva"`.
     label: (typed: string) => string
-    // The side effects spelled out, so picking it is never a surprise.
-    hint: string
+    // The side effects spelled out, so picking it is never a surprise. Takes the typed text
+    // because what will happen depends on it - the account column reads a "conta - administrador"
+    // pairing out of it, and creating an account is not what that does.
+    hint: (typed: string) => string
     // Non-null renders the entry as an inert explanation instead of an action.
     disabledReason: string | null
     onCreate: (typed: string) => void
@@ -316,7 +318,7 @@ export const ComboboxCell = memo(function ComboboxCell({
                   <Plus className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                   <span className="min-w-0">
                     <span className="block truncate text-sm">{create.label(text.trim())}</span>
-                    <span className="block text-xs text-muted-foreground">{create.hint}</span>
+                    <span className="block text-xs text-muted-foreground">{create.hint(text.trim())}</span>
                   </span>
                 </button>
               ))}

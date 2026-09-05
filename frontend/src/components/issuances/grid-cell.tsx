@@ -5,6 +5,8 @@ import { CellStateProps, useGridContext } from "@/components/issuances/grid-cont
 // Shared with the copied EMISSAO message: an account with no alias has to be named the
 // same way on line 4 as it is in this combobox.
 import { accountFallbackLabel } from "@/components/issuances/emissao-message"
+import { parseAccountEntry } from "@/components/issuances/account-entry"
+import { normalizeSearch } from "@/lib/search"
 import { AccountOption } from "@/schemas/account"
 import { PersonOption } from "@/schemas/person"
 import { TextCell } from "@/components/issuances/cells/text-cell"
@@ -71,6 +73,58 @@ function buildAccountOptions(
   )
 }
 
+// The account the typed alias already resolves to, under the same narrowing buildAccountOptions
+// applies. Null means the alias is new and the entry will register it.
+function findAccountByNickname(
+  accounts: AccountOption[],
+  nickname: string,
+  loyaltyProgramId: string | null,
+): AccountOption | null {
+  const wanted = normalizeSearch(nickname)
+  return (
+    accounts.find(
+      (account) =>
+        !account.deleted_at &&
+        account.loyalty_program_id === loyaltyProgramId &&
+        account.nicknames.some((entry) => normalizeSearch(entry.nickname) === wanted),
+    ) ?? null
+  )
+}
+
+// What the create entry promises. "Heraldo - Wilmara" reads as two things at once, and which of
+// them happens depends on whether "Heraldo" is already registered - so the entry says which,
+// rather than offering to create an account that will turn out to already exist.
+function accountCreateLabel(
+  typed: string,
+  accounts: AccountOption[],
+  loyaltyProgramId: string | null,
+): string {
+  const { nickname } = parseAccountEntry(typed)
+  return findAccountByNickname(accounts, nickname, loyaltyProgramId)
+    ? `Usar a conta "${nickname}"`
+    : `Criar conta "${nickname}"`
+}
+
+function accountCreateHint(
+  typed: string,
+  accounts: AccountOption[],
+  loyaltyProgramId: string | null,
+): string {
+  const { nickname, administratorName } = parseAccountEntry(typed)
+  const exists = findAccountByNickname(accounts, nickname, loyaltyProgramId) !== null
+
+  if (!administratorName) {
+    // Reached when a dangling dash was trimmed off ("Heraldo - ") and what is left already
+    // exists: the entry says "Usar a conta", so the hint must not promise a creation.
+    return exists
+      ? "usa a conta já cadastrada com esse apelido"
+      : "cria a pessoa, a conta no programa e o apelido"
+  }
+  return exists
+    ? `vincula ${administratorName} como administrador`
+    : `cria a conta e vincula ${administratorName} como administrador`
+}
+
 // Volatile per-cell state (row/isEditing/pendingChar) arrives as props from the grid's
 // render loop rather than through the context, so moving the selection re-renders only the
 // cells whose props actually change. Memoized: with a stable context, an unchanged row and
@@ -82,7 +136,7 @@ export const GridCell = memo(function GridCell({
   isEditing,
   pendingChar,
 }: { r: number; c: number } & CellStateProps) {
-  const { accounts, users, agencies, people, createAccountForRow, pendingAccountLabels } =
+  const { accounts, users, agencies, people, resolveAccountEntryForRow, pendingAccountLabels } =
     useGridContext()
 
   switch (c) {
@@ -174,14 +228,14 @@ export const GridCell = memo(function GridCell({
           // Accounts without an alias are keyed by their own id, so this covers both cases.
           selectedKey={row.account_nickname_id ?? row.account_id}
           create={{
-            label: (typed) => `Criar conta "${typed}"`,
-            hint: "cria a pessoa, a conta no programa e o apelido",
+            label: (typed) => accountCreateLabel(typed, accounts, row.loyalty_program_id),
+            hint: (typed) => accountCreateHint(typed, accounts, row.loyalty_program_id),
             // An account cannot exist without a loyalty program, and the program comes
             // from the row - so the airline column has to be filled in first.
             disabledReason: row.loyalty_program_id
               ? null
               : "Escolha a Cia aérea antes de criar uma conta",
-            onCreate: (typed) => createAccountForRow(row.key, typed),
+            onCreate: (typed) => resolveAccountEntryForRow(row.key, typed),
           }}
           pendingLabel={pendingAccountLabels[row.key]}
         />

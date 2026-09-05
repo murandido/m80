@@ -66,7 +66,12 @@ import {
 import { CancelIssuanceInput } from "@/schemas/issuance"
 import { RedemptionFeeSummary } from "@/components/issuances/redemption-fee-summary"
 import { acceptsRedemptionFee } from "@/components/issuances/redemption-fee"
-import { createAccountForIssuanceAction } from "@/actions/account"
+import {
+  attachAdministratorToAccountAction,
+  createAccountForIssuanceAction,
+} from "@/actions/account"
+import { parseAccountEntry } from "@/components/issuances/account-entry"
+import { normalizeSearch } from "@/lib/search"
 import { z } from "zod"
 
 const COLUMN_LABELS = [
@@ -679,20 +684,74 @@ export function IssuancesGrid({
     [applyPatch, currentUserId, defaultAgencyId],
   )
 
-  const createAccountForRow = useCallback(
-    async (rowKey: string, name: string) => {
+  const resolveAccountEntryForRow = useCallback(
+    async (rowKey: string, typed: string) => {
       const row = rowsRef.current.find((r) => r.key === rowKey)
       if (!row?.loyalty_program_id) return
 
-      setPendingAccountLabels((prev) => ({ ...prev, [rowKey]: name }))
+      const programId = row.loyalty_program_id
+      const { nickname, administratorName } = parseAccountEntry(typed)
+
+      // The same narrowing buildAccountOptions applies: an archived account or one on another
+      // program is not a choice, so matching either would point the row at an account the
+      // dropdown never offered.
+      const wanted = normalizeSearch(nickname)
+      let existing: { accountId: string; nicknameId: string } | null = null
+      for (const account of accountsRef.current) {
+        if (account.deleted_at || account.loyalty_program_id !== programId) continue
+        const match = account.nicknames.find((entry) => normalizeSearch(entry.nickname) === wanted)
+        if (match) {
+          existing = { accountId: account.id, nicknameId: match.id }
+          break
+        }
+      }
+
+      setPendingAccountLabels((prev) => ({ ...prev, [rowKey]: typed }))
       updateRow(rowKey, { saveStatus: "saving" })
 
-      const result = await createAccountForIssuanceAction(name, row.loyalty_program_id)
+      const clearPending = () =>
+        setPendingAccountLabels((prev) => {
+          const { [rowKey]: _removed, ...rest } = prev
+          return rest
+        })
 
-      setPendingAccountLabels((prev) => {
-        const { [rowKey]: _removed, ...rest } = prev
-        return rest
-      })
+      // Re-reads the row rather than closing over it: the awaits gave the operator time to keep
+      // editing, and applyPatch hands the row it is given to persist() as the pre-patch base.
+      const pointRowAt = (accountId: string, nicknameId: string | null) => {
+        const current = rowsRef.current.find((r) => r.key === rowKey)
+        if (!current) return
+        applyPatch(current, { account_id: accountId, account_nickname_id: nicknameId })
+      }
+
+      // The alias is already registered, so this is a request to use that account - and, when a
+      // name follows the dash, to give it an administrator. The row points at the account either
+      // way: the alias matched, so it is the account the operator meant.
+      if (existing) {
+        if (administratorName) {
+          const linked = await attachAdministratorToAccountAction(
+            existing.accountId,
+            administratorName,
+          )
+          if ("error" in linked) {
+            toast.error(linked.error)
+          } else if ("conflict" in linked) {
+            const current = referenceData.people.find(
+              (person) => person.id === linked.currentAdministratorId,
+            )
+            toast.warning(
+              `A conta "${nickname}" já tem ${current?.name ?? "outra pessoa"} como administrador. ` +
+                `O vínculo não foi alterado.`,
+            )
+          }
+        }
+        clearPending()
+        pointRowAt(existing.accountId, existing.nicknameId)
+        return
+      }
+
+      const result = await createAccountForIssuanceAction(nickname, programId, administratorName)
+
+      clearPending()
 
       if ("error" in result) {
         toast.error(result.error)
@@ -701,14 +760,9 @@ export function IssuancesGrid({
       }
 
       setExtraAccounts((prev) => [...prev, result.account])
-
-      // Re-read the row: the await gave the operator time to keep editing, and applyPatch
-      // hands the row it is given to persist() as the pre-patch base.
-      const current = rowsRef.current.find((r) => r.key === rowKey)
-      if (!current) return
-      applyPatch(current, { account_id: result.account.id, account_nickname_id: result.nicknameId })
+      pointRowAt(result.account.id, result.nicknameId)
     },
-    [applyPatch, updateRow, flashSaveStatus],
+    [applyPatch, updateRow, flashSaveStatus, referenceData.people],
   )
 
   const onExitEdit = useCallback(() => {
@@ -1158,7 +1212,7 @@ export function IssuancesGrid({
       onCancelRow,
       onUncancelRow,
       onSyncRowWithTraveos,
-      createAccountForRow,
+      resolveAccountEntryForRow,
       pendingAccountLabels,
       syncingRowKeys,
     }),
@@ -1179,7 +1233,7 @@ export function IssuancesGrid({
       onCancelRow,
       onUncancelRow,
       onSyncRowWithTraveos,
-      createAccountForRow,
+      resolveAccountEntryForRow,
       pendingAccountLabels,
       syncingRowKeys,
     ],

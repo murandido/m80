@@ -3,12 +3,14 @@
 import { cookies } from "next/headers"
 import { env } from "@/lib/env"
 import { stripEmptyFields } from "@/lib/strip-empty-fields"
+import { normalizeSearch } from "@/lib/search"
 import {
   checkNicknameAvailabilitySchema,
   createPersonNicknameSchema,
   createPersonSchema,
   deletePersonNicknameSchema,
   deletePersonSchema,
+  getPeopleOptionsSchema,
   mergePersonPreviewSchema,
   mergePersonSchema,
   updatePersonSchema,
@@ -66,6 +68,72 @@ export async function createPersonAction(
   } catch {
     return { error: "Erro de conexão com o servidor." }
   }
+}
+
+// Finds the person an operator meant by typing a bare name - the administrator half of
+// "conta - administrador" in the issuances grid. The search runs on the server rather than
+// against the people already loaded in the browser so that somebody registered a minute ago by
+// another operator is found instead of duplicated.
+//
+// `q` already searches names and nicknames, but it matches fragments: it is a shortlist, not an
+// answer. The exact comparison happens here, accent- and case-insensitively, the same way the
+// grid's combobox compares what was typed against the options it lists.
+export async function findPersonByNameOrNicknameAction(name: string) {
+  const cookieStore = await cookies()
+  const token = cookieStore.get("auth_token")?.value
+
+  try {
+    const res = await fetch(
+      `${env.BACKEND_URL}/api/v1/people?view=picker&q=${encodeURIComponent(name)}`,
+      { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" },
+    )
+
+    const json = await res.json()
+    const parsed = getPeopleOptionsSchema.response.safeParse(json)
+
+    if (!res.ok || !parsed.success) {
+      return { error: "Erro ao buscar pessoa." }
+    }
+
+    const wanted = normalizeSearch(name)
+    const people = parsed.data.data ?? []
+
+    // Nicknames first: they are unique across the whole registry, so a hit there is an identity,
+    // while several people can honestly share a name. Among equals the first wins, which mirrors
+    // the bot picking the oldest match instead of refusing the message.
+    const byNickname = people.find((person) =>
+      person.nicknames.some((entry) => normalizeSearch(entry.nickname) === wanted),
+    )
+    const match = byNickname ?? people.find((person) => normalizeSearch(person.name) === wanted)
+
+    return { personId: match?.id ?? null }
+  } catch {
+    return { error: "Erro de conexão com o servidor." }
+  }
+}
+
+// The name typed for an administrator turned into a person id, registering her if this is the
+// first time anybody mentions her. Same stance as the bot: a missing registration never blocks
+// an issuance, it just leaves a person for somebody to complete later.
+//
+// No nickname is created for her. Person nicknames are unique across the whole registry, so
+// minting one from a name typed in a hurry would be a collision waiting to happen - and the name
+// itself is what findPersonByNameOrNicknameAction will match on next time.
+export async function resolveOrCreatePersonAction(name: string) {
+  const found = await findPersonByNameOrNicknameAction(name)
+  if ("error" in found) {
+    return { error: found.error }
+  }
+  if (found.personId) {
+    return { personId: found.personId }
+  }
+
+  const created = await createPersonAction({ name, email: "" })
+  if ("error" in created) {
+    return { error: created.error }
+  }
+
+  return { personId: created.personId }
 }
 
 export async function updatePersonAction(

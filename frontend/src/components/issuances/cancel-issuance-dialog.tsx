@@ -28,14 +28,25 @@ import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
 import { useGridContext } from "@/components/issuances/grid-context"
 import { parseCurrencyBRLInput } from "@/lib/currency"
+import {
+  applyPaddedThousandsMask,
+  parsePointsFromThousands,
+  sanitizeThousandsInput,
+} from "@/lib/points"
 import type { CancelIssuanceInput } from "@/schemas/issuance"
 
 // The form carries display strings (money uses a comma decimal), converted to the numeric
 // cents/points payload on submit. All fields are optional - a bare cancel is valid.
 const cancelFormSchema = z.object({
+  // Points are typed in milheiros here for the same reason they are in the grid's Pontos cell:
+  // it is the unit operators quote, and a refund is usually read straight off the issuance
+  // they are cancelling. Anything else would make the two screens disagree about what "10" means.
   refunded_points: z
     .string()
-    .refine((v) => v.trim() === "" || /^\d+$/.test(v.trim()), "Informe um número inteiro de pontos"),
+    .refine(
+      (v) => v.trim() === "" || parsePointsFromThousands(v) !== null,
+      "Informe os pontos em milheiros — 10 = 10.000",
+    ),
   refunded_taxes: z
     .string()
     .refine((v) => v.trim() === "" || parseCurrencyBRLInput(v) !== null, "Valor inválido"),
@@ -68,11 +79,15 @@ export function CancelIssuanceButton({ r }: { r: number }) {
     defaultValues: emptyForm,
   })
 
+  // Watched rather than read off the Controller's field: the confirmation line has to update on
+  // every keystroke, and this is the only place in the form that reads a value it does not own.
+  const refundedPoints = parsePointsFromThousands(form.watch("refunded_points"))
+
   function onSubmit(values: CancelFormData) {
     startTransition(async () => {
       const data: CancelIssuanceInput = {}
-      const points = values.refunded_points.trim()
-      if (points !== "") data.refunded_points = parseInt(points, 10)
+      const points = parsePointsFromThousands(values.refunded_points)
+      if (points !== null) data.refunded_points = points
       const taxes = parseCurrencyBRLInput(values.refunded_taxes)
       if (taxes !== null) data.refunded_taxes = taxes
       const fee = parseCurrencyBRLInput(values.cancellation_fee)
@@ -140,13 +155,29 @@ export function CancelIssuanceButton({ r }: { r: number }) {
                     <InputGroupInput
                       {...field}
                       id="refunded_points"
-                      inputMode="numeric"
-                      placeholder="0"
+                      // Same mask as the grid's cell: digits and a single comma, no thousands
+                      // grouping. A pasted "10.000" therefore loses its dot - which is why the
+                      // line below spells out the count this will actually refund.
+                      onChange={(e) => field.onChange(sanitizeThousandsInput(e.target.value))}
+                      inputMode="decimal"
+                      title="Em milheiros: 10 = 10.000, 10,5 = 10.500"
+                      placeholder="10,5"
                       aria-invalid={fieldState.invalid}
                       disabled={isPending}
                     />
+                    <InputGroupAddon align="inline-end">
+                      <InputGroupText>mil</InputGroupText>
+                    </InputGroupAddon>
                   </InputGroup>
-                  {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
+                  {fieldState.invalid ? (
+                    <FieldError errors={[fieldState.error]} />
+                  ) : (
+                    refundedPoints !== null && (
+                      <p className="text-xs text-slate-500">
+                        = {applyPaddedThousandsMask(String(refundedPoints))} pontos
+                      </p>
+                    )
+                  )}
                 </Field>
               )}
             />

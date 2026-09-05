@@ -3,10 +3,15 @@
 import { cookies } from "next/headers"
 import { env } from "@/lib/env"
 import { stripEmptyFields } from "@/lib/strip-empty-fields"
-import { createPersonAction } from "@/actions/person"
+import {
+  createPersonAction,
+  findPersonByNameOrNicknameAction,
+  resolveOrCreatePersonAction,
+} from "@/actions/person"
 import {
   accountBeneficiaryMutationSchema,
   checkAccountNicknameAvailabilitySchema,
+  getAccountAdministratorSchema,
   getAccountBeneficiariesSchema,
   createAccountNicknameSchema,
   createAccountSchema,
@@ -247,11 +252,28 @@ export async function deleteAccountAction(accountId: string) {
 // holds it, and the nickname is what the grid's dropdown lists - so one typed string
 // has to become three records.
 //
+// `administratorName` is the half after the dash in "conta - administrador", the shape the bot
+// already accepts on WhatsApp. It is resolved first, before anything is written: an administrator
+// that cannot be resolved should leave the registry untouched rather than half-built.
+//
 // Orchestrated server-side so the grid spends a single round trip on it, and so the
-// three calls fail in one place. There is no transaction across them: a Person whose
+// calls fail in one place. There is no transaction across them: a Person whose
 // account then fails to create is left behind, and the caller is told so it can say
 // as much. That is the cost of doing this without a dedicated backend endpoint.
-export async function createAccountForIssuanceAction(name: string, loyaltyProgramId: string) {
+export async function createAccountForIssuanceAction(
+  name: string,
+  loyaltyProgramId: string,
+  administratorName?: string | null,
+) {
+  let administratorId = ""
+  if (administratorName) {
+    const administrator = await resolveOrCreatePersonAction(administratorName)
+    if ("error" in administrator) {
+      return { error: administrator.error }
+    }
+    administratorId = administrator.personId
+  }
+
   // The empty strings are how these schemas spell "not provided" - the union accepts
   // "" and stripEmptyFields drops the key before it reaches the backend.
   const person = await createPersonAction({ name, email: "" })
@@ -262,7 +284,7 @@ export async function createAccountForIssuanceAction(name: string, loyaltyProgra
   const account = await createAccountAction({
     loyalty_program_id: loyaltyProgramId,
     holder_id: person.personId,
-    administrator_id: "",
+    administrator_id: administratorId,
   })
   if ("error" in account) {
     return { error: `${account.error} A pessoa "${name}" foi criada e ficou sem conta.` }
@@ -282,6 +304,77 @@ export async function createAccountForIssuanceAction(name: string, loyaltyProgra
     account: { ...account.account, nicknames: [nickname.nickname] },
     nicknameId: nickname.nickname.id,
   }
+}
+
+// Attaches an administrator to an account that already exists, which is what
+// "conta - administrador" means when the alias before the dash is already registered. The bot
+// does the same on line 4 of an EMISSAO (attachAdministrator, backend/internal/bot/emissao_resolve.go).
+//
+// Never overwrites: an account that already answers to somebody else keeps that somebody, and the
+// caller is handed the conflict to explain. The one silent case is the account whose administrator
+// is the very person that was typed, reached through a different alias - there is nothing to do
+// and nothing worth saying.
+//
+// The administrator is read from GET /accounts/{id} because view=picker does not carry it, and
+// widening that feed for one flow would put a field on every account of every picker in the panel.
+export async function attachAdministratorToAccountAction(
+  accountId: string,
+  administratorName: string,
+) {
+  const cookieStore = await cookies()
+  const token = cookieStore.get("auth_token")?.value
+
+  let currentAdministratorId: string | null
+  try {
+    const res = await fetch(`${env.BACKEND_URL}/api/v1/accounts/${accountId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    })
+
+    const json = await res.json()
+    const parsed = getAccountAdministratorSchema.response.safeParse(json)
+
+    if (!res.ok || !parsed.success || !parsed.data.data) {
+      return { error: "Erro ao ler a conta para vincular o administrador." }
+    }
+
+    currentAdministratorId = parsed.data.data.administrator_id ?? null
+  } catch {
+    return { error: "Erro de conexão com o servidor." }
+  }
+
+  if (currentAdministratorId) {
+    // Resolved without creating anybody: the account is already spoken for, so a name nobody
+    // answers to is a conflict to report, not a person to register.
+    const typed = await findPersonByNameOrNicknameAction(administratorName)
+    if ("error" in typed) {
+      return { error: typed.error }
+    }
+    if (typed.personId === currentAdministratorId) {
+      return { attached: false as const }
+    }
+    return { conflict: true as const, currentAdministratorId }
+  }
+
+  const administrator = await resolveOrCreatePersonAction(administratorName)
+  if ("error" in administrator) {
+    return { error: administrator.error }
+  }
+
+  // The empty strings are this schema's "leave it alone": stripEmptyFields drops them inside
+  // updateAccountAction, so the PUT carries the administrator and nothing else.
+  const updated = await updateAccountAction(accountId, {
+    loyalty_program_id: "",
+    login: "",
+    password: "",
+    holder_id: "",
+    administrator_id: administrator.personId,
+  })
+  if ("error" in updated) {
+    return { error: updated.error }
+  }
+
+  return { attached: true as const }
 }
 
 export async function previewMergeAccountAction(keepId: string, sourceId: string) {

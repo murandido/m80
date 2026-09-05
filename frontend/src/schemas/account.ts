@@ -113,6 +113,23 @@ export const getAccountOptionsSchema = {
   }),
 }
 
+// GET /accounts/{id}, read for one field: administrator_id, which the pickers do not carry.
+// Deliberately narrow instead of reusing accountSchema - this parses a record the caller only
+// wants to ask a question about, so requiring all sixteen fields to line up would turn an
+// unrelated API change into a failed link.
+export const getAccountAdministratorSchema = {
+  response: z.object({
+    success: z.boolean(),
+    message: z.string(),
+    data: z
+      .object({
+        id: z.string(),
+        administrator_id: z.string().nullish(),
+      })
+      .nullish(),
+  }),
+}
+
 export const getAccountsSchema = {
   response: z.object({
     success: z.boolean(),

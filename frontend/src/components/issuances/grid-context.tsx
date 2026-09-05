@@ -69,14 +69,14 @@ export interface GridContextValue extends GridReferenceData {
   // locked and marked while it runs rather than left looking idle.
   syncingRowKeys: Record<string, true>
 
-  // Creates a Person, an AccountOption on the row's loyalty program and a nickname, all from
-  // a name typed into the account cell that matched nothing, then points the row at the
-  // new account. Rows are addressed by key, not index: the creation is async and a row
-  // can move (or be deleted) while it is in flight.
-  createAccountForRow: (rowKey: string, name: string) => void
-  // Names typed into the account cell whose account is still being created, by row key.
+  // Turns what was typed into the account cell into an account the row can point at. Plain text
+  // creates the Person/Account/nickname trio on the row's loyalty program; "conta - administrador"
+  // also links the administrator, reusing the account when that alias already exists. Rows are
+  // addressed by key, not index: this is async and a row can move (or be deleted) meanwhile.
+  resolveAccountEntryForRow: (rowKey: string, typed: string) => void
+  // Text typed into the account cell whose account is still being resolved, by row key.
   // The cell renders it greyed so the value the operator just typed doesn't blink back
-  // to an em dash while the three requests run.
+  // to an em dash while the requests run.
   pendingAccountLabels: Record<string, string>
 }
 
