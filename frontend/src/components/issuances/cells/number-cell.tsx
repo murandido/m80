@@ -1,14 +1,17 @@
 "use client"
 
-import { memo, useEffect, useRef, useState } from "react"
+import { memo, useEffect, useMemo, useRef, useState } from "react"
 import { CellStateProps, useGridContext } from "@/components/issuances/grid-context"
+import { DropdownPortal } from "@/components/issuances/cells/dropdown-portal"
 import { IssuanceRow } from "@/components/issuances/types"
 import { Direction } from "@/lib/grid-navigation"
-import { formatCurrencyBRL, parseCurrencyBRLInput } from "@/lib/currency"
+import { centsFromReais, formatCurrencyBRL, parseCurrencyBRLInput } from "@/lib/currency"
+import { evaluateExpression, looksLikeExpression } from "@/lib/expression"
 import {
   applyPaddedThousandsMask,
   formatPointsInThousands,
   parsePointsFromThousands,
+  pointsFromThousands,
   sanitizeThousandsInput,
 } from "@/lib/points"
 
@@ -33,6 +36,19 @@ function formatEditBuffer(value: number | null, mode: "integer" | "currency"): s
   return (value / 100).toFixed(2).replace(".", ",")
 }
 
+// A cell whose text carries an operator is a sum to resolve, not a number to read, so the
+// operator can add two taxes or split points across legs without reaching for a calculator.
+// The result comes back in the unit the cell is typed in - milheiros for points, reais for
+// money - so it takes the same conversion the plain parsers apply.
+function parseInput(text: string, mode: "integer" | "currency"): number | null {
+  if (looksLikeExpression(text)) {
+    const result = evaluateExpression(text)
+    if (result === null) return null
+    return mode === "integer" ? pointsFromThousands(result) : centsFromReais(result)
+  }
+  return mode === "integer" ? parsePointsFromThousands(text) : parseCurrencyBRLInput(text)
+}
+
 export const NumberCell = memo(function NumberCell({ r, c, field, mode, row, isEditing, pendingChar }: NumberCellProps) {
   const { onCellClick, onSaveAndMove, onExitEdit, registerActiveCellSave } = useGridContext()
   const isThisCellEditing = isEditing
@@ -42,10 +58,22 @@ export const NumberCell = memo(function NumberCell({ r, c, field, mode, row, isE
   const inputRef = useRef<HTMLInputElement>(null)
   const savedRef = useRef(false)
 
+  // What the sum currently resolves to, shown under the input while it is being typed. Null
+  // for a plain number (nothing to preview) and for a half-typed or malformed one, so the
+  // hint appears exactly when the cell is about to save something other than what was typed
+  // - which is also where the operator most wants to see it before committing.
+  const preview = useMemo(
+    () => (looksLikeExpression(text) ? parseInput(text, mode) : null),
+    [text, mode],
+  )
+
   useEffect(() => {
     if (isThisCellEditing) {
+      // pendingChar carries a typed character or a whole pasted string. The points mask
+      // steps aside for a sum, the same way it does on every later keystroke - otherwise
+      // pasting "31+2,5" here would arrive as "312,5".
       const startValue = pendingChar
-        ? mode === "integer"
+        ? mode === "integer" && !looksLikeExpression(pendingChar)
           ? sanitizeThousandsInput(pendingChar)
           : pendingChar
         : formatEditBuffer(rawValue, mode)
@@ -72,7 +100,7 @@ export const NumberCell = memo(function NumberCell({ r, c, field, mode, row, isE
       return
     }
 
-    const parsed = mode === "integer" ? parsePointsFromThousands(text) : parseCurrencyBRLInput(text)
+    const parsed = parseInput(text, mode)
     if (parsed === null) {
       onSaveAndMove(r, {}, direction)
       return
@@ -101,35 +129,54 @@ export const NumberCell = memo(function NumberCell({ r, c, field, mode, row, isE
   }
 
   return (
-    <input
-      ref={inputRef}
-      value={text}
-      inputMode="decimal"
-      title={mode === "integer" ? "Em milheiros: 10 = 10.000, 10,5 = 10.500" : undefined}
-      onChange={(e) => {
-        const raw = e.target.value
-        setText(mode === "integer" ? sanitizeThousandsInput(raw) : raw)
-      }}
-      onKeyDown={(e) => {
-        if (e.key === "Escape") {
-          e.preventDefault()
-          onExitEdit()
-        } else if (e.key === "Enter") {
-          e.preventDefault()
-          commit(e.shiftKey ? "up" : "down")
-        } else if (e.key === "Tab") {
-          e.preventDefault()
-          commit(e.shiftKey ? "tab-left" : "tab-right")
-        } else if (e.key === "ArrowDown") {
-          e.preventDefault()
-          commit("down")
-        } else if (e.key === "ArrowUp") {
-          e.preventDefault()
-          commit("up")
+    <>
+      <input
+        ref={inputRef}
+        value={text}
+        inputMode="decimal"
+        title={
+          mode === "integer"
+            ? "Em milheiros: 10 = 10.000, 10,5 = 10.500. Aceita conta: 10+2,5"
+            : "Aceita conta: 189,22+56,50"
         }
-      }}
-      onBlur={() => commit(null)}
-      className="w-full bg-transparent px-2 py-1.5 text-right outline-none ring-2 ring-primary"
-    />
+        onChange={(e) => {
+          const raw = e.target.value
+          // The points mask only allows digits and a comma, which would eat the operator the
+          // moment it is typed. It steps aside once the text reads as a sum - tested on the
+          // raw value, before the mask would have stripped what makes it one.
+          const masked = mode === "integer" && !looksLikeExpression(raw) ? sanitizeThousandsInput(raw) : raw
+          setText(masked)
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.preventDefault()
+            onExitEdit()
+          } else if (e.key === "Enter") {
+            e.preventDefault()
+            commit(e.shiftKey ? "up" : "down")
+          } else if (e.key === "Tab") {
+            e.preventDefault()
+            commit(e.shiftKey ? "tab-left" : "tab-right")
+          } else if (e.key === "ArrowDown") {
+            e.preventDefault()
+            commit("down")
+          } else if (e.key === "ArrowUp") {
+            e.preventDefault()
+            commit("up")
+          }
+        }}
+        onBlur={() => commit(null)}
+        className="w-full bg-transparent px-2 py-1.5 text-right outline-none ring-2 ring-primary"
+      />
+      {preview !== null && (
+        // Rendered through the portal for the same reason the autocomplete list is: an
+        // absolutely positioned box inside a <td> can paint behind the neighbouring rows.
+        <DropdownPortal anchorRef={inputRef}>
+          <div className="px-2 py-1.5 text-right text-sm tabular-nums">
+            = {formatDisplay(preview, mode)}
+          </div>
+        </DropdownPortal>
+      )}
+    </>
   )
 })

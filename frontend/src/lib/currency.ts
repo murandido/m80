@@ -21,5 +21,12 @@ export function parseCurrencyBRLInput(text: string): number | null {
   const value = Number(normalized)
   if (Number.isNaN(value)) return null
 
+  return centsFromReais(value)
+}
+
+// An amount already read as reais to the integer centavos the API stores. Split out of
+// parseCurrencyBRLInput so a value that arrived some other way - the result of an expression
+// typed into a cell, say - lands on the same rounding instead of its own.
+export function centsFromReais(value: number): number {
   return Math.round(value * 100)
 }

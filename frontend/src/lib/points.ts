@@ -27,6 +27,13 @@ export function sanitizeThousandsInput(raw: string): string {
   return rest.length > 0 ? `${whole},${rest.join("")}` : whole
 }
 
+// A number already read as milheiros to the absolute point count the API stores. Split out of
+// parsePointsFromThousands so a value that arrived some other way - the result of an
+// expression typed into the cell, say - lands on the same rounding instead of its own.
+export function pointsFromThousands(value: number): number {
+  return Math.round(value * 1000)
+}
+
 // Text typed in milheiros to the absolute point count the API stores: "10" is ten thousand
 // points and the comma is the fraction of a thousand, so "10,5" is 10.500 and "0,5" is 500.
 // Null for anything that is not a number - blank, "abc", a stray comma.
@@ -35,7 +42,7 @@ export function parsePointsFromThousands(text: string): number | null {
   if (trimmed === "") return null
   const value = Number(trimmed.replace(",", "."))
   if (Number.isNaN(value)) return null
-  return Math.round(value * 1000)
+  return pointsFromThousands(value)
 }
 
 // The inverse, for seeding an input the operator is about to edit: a stored 10.500 has to come
