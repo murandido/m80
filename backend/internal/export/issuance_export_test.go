@@ -347,6 +347,49 @@ func TestRenderIssuancesXLSXSplitsBoxesPerProgram(t *testing.T) {
 	})
 }
 
+// The TOTAL DAS CONTAS block carries 14pt to 26pt type. A row left without an explicit
+// height is auto-fitted by Excel to whatever font is tallest in it, which turns the block
+// into a staircase - and a vertically merged cell is never auto-fitted at all, so it ends up
+// cramped against its own text. Every row of the block has to name its height.
+func TestRenderIssuancesXLSXSetsTotalsBlockHeights(t *testing.T) {
+	f := renderForTest(t, []data.Issuance{
+		sampleIssuance("Smiles", "AAA111", "Heraldo", "Marcus"),
+		sampleIssuance("Azul", "BBB222", "Isaias", "Marcus"),
+	})
+
+	// Two airline blocks of one row each (3 and 5), the sums on 6 and TOTAL FATURAMENTO on
+	// 7, so the block header lands on 10: header, issuer, one row per account, then GERAL.
+	heights := map[int]float64{
+		10: 18.75, // TOTAL DAS CONTAS / GERAL / TOTAL PTS. DO DIA
+		11: 34.5,  // the issuer's name, beside the 26pt billing figure
+		12: 21,    // Smiles / Heraldo
+		13: 21,    // Azul / Isaias
+		14: 31.5,  // GERAL
+	}
+	for row, want := range heights {
+		got, err := f.GetRowHeight("Marcus", row)
+		if err != nil {
+			t.Fatalf("get height of row %d: %v", row, err)
+		}
+		if got != want {
+			t.Errorf("row %d height = %v, want %v", row, got, want)
+		}
+	}
+
+	// The GERAL row is closed on the left by the billing band rather than left blank.
+	id, err := f.GetCellStyle("Marcus", "B14")
+	if err != nil {
+		t.Fatalf("get style of B14: %v", err)
+	}
+	style, err := f.GetStyle(id)
+	if err != nil {
+		t.Fatalf("read style of B14: %v", err)
+	}
+	if len(style.Fill.Color) == 0 || !strings.EqualFold(style.Fill.Color[0], "0D0D0D") {
+		t.Errorf("B14 fill = %v, want 0D0D0D", style.Fill.Color)
+	}
+}
+
 // An empty result still has to be a file Excel will open.
 func TestRenderIssuancesXLSXWithNoIssuances(t *testing.T) {
 	f := renderForTest(t, nil)

@@ -889,6 +889,18 @@ func writeDailyTotals(
 	// Two blank rows below the billing line, so the block reads as its own thing.
 	headerRow := billingRow + 3
 
+	// The row heights the manual sheet fixes for this block. They are not decoration: the
+	// cells here carry 14pt to 26pt type, and a row left without an explicit height is
+	// auto-fitted by Excel to whatever font happens to be tallest in it - which turns the
+	// block into a staircase of mismatched rows, and leaves the vertically merged cells
+	// (which Excel never auto-fits at all) cramped against their own text.
+	const (
+		totalsHeaderHeight  = 18.75
+		totalsIssuerHeight  = 34.5
+		totalsAccountHeight = 21.0
+		totalsGeneralHeight = 31.5
+	)
+
 	banner := func(fill string) cellStyle {
 		return cellStyle{
 			fill: fill, fontColor: issuanceExportWhite, bold: true, size: 14,
@@ -910,6 +922,9 @@ func writeDailyTotals(
 			return err
 		}
 	}
+	if err := f.SetRowHeight(sheet, headerRow, totalsHeaderHeight); err != nil {
+		return fmt.Errorf("writeDailyTotals: header height: %w", err)
+	}
 
 	// The issuer's name, and beside it the billing figure already computed above.
 	issuerRow := headerRow + 1
@@ -930,6 +945,10 @@ func writeDailyTotals(
 	}
 	if err := f.SetCellFormula(sheet, fmt.Sprintf("J%d", issuerRow), fmt.Sprintf("K%d", billingRow)); err != nil {
 		return fmt.Errorf("writeDailyTotals: billing formula: %w", err)
+	}
+	// Tall enough for the 26pt billing figure sitting beside the name.
+	if err := f.SetRowHeight(sheet, issuerRow, totalsIssuerHeight); err != nil {
+		return fmt.Errorf("writeDailyTotals: issuer height: %w", err)
 	}
 
 	// Left column: one strip per airline, one line per account inside it.
@@ -969,6 +988,9 @@ func writeDailyTotals(
 			if err := f.SetCellFormula(sheet, fmt.Sprintf("D%d", accountRow), formula); err != nil {
 				return fmt.Errorf("writeDailyTotals: account formula: %w", err)
 			}
+			if err := f.SetRowHeight(sheet, accountRow, totalsAccountHeight); err != nil {
+				return fmt.Errorf("writeDailyTotals: account height: %w", err)
+			}
 		}
 
 		if err := writeMergedRows(f, sheet, "E", first, last, nil, cellStyle{
@@ -986,8 +1008,16 @@ func writeDailyTotals(
 		row = last + 1
 	}
 
-	// GERAL: every airline's subtotal added up.
+	// GERAL: every airline's subtotal added up, closed on the left by the same dark band the
+	// billing line uses. Without the band the total floats loose beside three blank cells,
+	// which is not how the sheet it is pasted next to ends.
 	generalRow := row
+	if err := writeMerged(f, sheet, "B", "D", generalRow, nil, cellStyle{
+		fill: issuanceExportBandBG, fontColor: issuanceExportWhite,
+		left: borderThin, right: borderThin, top: borderThin, bottom: borderThin,
+	}, styles); err != nil {
+		return err
+	}
 	if err := writeCell(f, sheet, "E", generalRow, nil, cellStyle{
 		fill: issuanceTotalsGeneralBG, fontColor: issuanceTotalsAccentFG, bold: true, size: 24,
 		numFmt: issuancePointsFormat,
@@ -997,6 +1027,9 @@ func writeDailyTotals(
 	}
 	if err := f.SetCellFormula(sheet, fmt.Sprintf("E%d", generalRow), sumOf(subtotalCells)); err != nil {
 		return fmt.Errorf("writeDailyTotals: general formula: %w", err)
+	}
+	if err := f.SetRowHeight(sheet, generalRow, totalsGeneralHeight); err != nil {
+		return fmt.Errorf("writeDailyTotals: general height: %w", err)
 	}
 
 	// Right column: the day's points per airline, then their total.
@@ -1031,6 +1064,11 @@ func writeDailyTotals(
 	}
 	if err := f.SetCellFormula(sheet, fmt.Sprintf("H%d", daySumRow), sumOf(dayCells)); err != nil {
 		return fmt.Errorf("writeDailyTotals: day total formula: %w", err)
+	}
+	// The right-hand column runs one row per airline, so with more airlines than accounts it
+	// ends below the block on the left and would otherwise be the one row left auto-fitted.
+	if err := f.SetRowHeight(sheet, daySumRow, totalsAccountHeight); err != nil {
+		return fmt.Errorf("writeDailyTotals: day total height: %w", err)
 	}
 
 	return nil
