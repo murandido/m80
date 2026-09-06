@@ -476,7 +476,7 @@ func (h *IssuanceHandler) GetIssuances(w http.ResponseWriter, r *http.Request) {
 
 // GetIssuancesExport handles the GET /issuances/export route.
 // @Summary      Exportar emissões (.xlsx)
-// @Description  Gera uma planilha .xlsx das emissões filtradas, a partir do modelo padrão, na mesma ordem da listagem (da mais antiga para a mais recente). Aceita os mesmos filtros da listagem (data, programa de fidelidade, cia aérea, conta, agência e emissor). Emissões canceladas entram com sinal: os pontos e as taxas são somados quando a emissão foi criada no período e subtraídos pelo reembolso quando o cancelamento caiu no período. A coluna TAXA RESGATE traz a taxa de resgate que a conta isenta (Azul Diamante Unique) deixou de pagar, em branco nas contas comuns.
+// @Description  Gera uma planilha .xlsx das emissões filtradas, no layout da planilha manual de controle: uma aba por emissor, colunas A:M (Nº, Companhia, Localizador, Data do Voo, Passageiro Principal, Origem, Destino, Pontos, Milheiro, Taxa, Total, Conta, Observação), as linhas agrupadas em blocos por companhia, o bloco TOTAL DAS CONTAS ao final e, ao lado da tabela, um quadro por conta e companhia com os localizadores e o total de pontos. Dentro de cada bloco a ordem é a da listagem (da mais antiga para a mais recente). Aceita os mesmos filtros da listagem (data, programa de fidelidade, cia aérea, conta, agência e emissor). Emissão cancelada no mesmo dia em que foi criada entra pelo líquido (pontos e taxas menos o reembolso); cancelada em outro dia entra só pelo reembolso, negativo. A linha cancelada é destacada em vermelho claro.
 // @Tags         Emissões
 // @Produce      application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
 // @Security     BearerAuth
@@ -509,10 +509,9 @@ func (h *IssuanceHandler) GetIssuancesExport(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// The same period the list was filtered by: it is what decides whether a cancelled
-	// issuance enters the sheet as its booking, as its refund, or as both netting out.
-	exportFrom, exportTo := parseDateRange(r)
-	content, err := export.BuildIssuancesXLSX(issuances, exportFrom, exportTo)
+	// No period is passed: whether a cancelled issuance enters the sheet as its booking, as
+	// its refund, or as both netting out is decided by its own two dates, not by the filter.
+	content, err := export.BuildIssuancesXLSX(issuances)
 	if err != nil {
 		slog.Error("failed to build issuances export", "err", err)
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to build issuances export")

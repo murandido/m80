@@ -47,6 +47,7 @@ import {
   LOCATOR_COLUMN_INDEX,
   OBSERVATION_COLUMN_INDEX,
   REDEMPTION_FEE_COLUMN_INDEX,
+  TAXES_COLUMN_INDEX,
   clampMove,
   resolveNextCell,
   Direction,
@@ -171,6 +172,15 @@ const SHORTCUTS: { keys: string; label: string }[] = [
   { keys: "Ctrl+Shift+⌫", label: "Excluir a linha" },
   { keys: "/", label: 'Separar "programa/cia" (Cia aérea, Localizador)' },
 ]
+
+// A cancelled issuance is terminal with one exception: the boarding taxes are still
+// corrected after the fact (the airline refunds a different amount than was charged), so
+// that one column stays writable while the rest of the row does not. Module scope, not a
+// closure over render state: it reads only its arguments, and onCellClick - a []-deps
+// callback - needs to call it without capturing a stale render.
+function isLockedByCancellation(c: number, row: IssuanceRow | undefined): boolean {
+  return row?.status === "cancelled" && c !== TAXES_COLUMN_INDEX
+}
 
 // A draft row nobody has touched yet - clicking "Nova emissão" repeatedly
 // should focus this one instead of piling up empty rows.
@@ -579,7 +589,8 @@ export function IssuancesGrid({
     activeCellSaveRef.current?.()
     activeCellSaveRef.current = null
     // A cancelled issuance is terminal: its cells select (so they can be read/copied) but
-    // never enter edit mode. The calculated column is likewise never editable.
+    // never enter edit mode - except the taxes column, see isLockedByCancellation. The
+    // calculated column is likewise never editable.
     // A row with a Traveos fetch in flight is locked too: the fetch overwrites the
     // route and the passenger, so anything typed into it now would be replaced
     // seconds later without the operator seeing why.
@@ -587,7 +598,7 @@ export function IssuancesGrid({
     const row = rowsRef.current[r]
     const editable =
       c !== CALCULATED_COLUMN_INDEX &&
-      row?.status !== "cancelled" &&
+      !isLockedByCancellation(c, row) &&
       !(row && isRowSyncing(row, syncingRowKeysRef.current)) &&
       !(c === REDEMPTION_FEE_COLUMN_INDEX && row && !acceptsRedemptionFee(row, accountsRef.current))
     dispatch({ type: "CLICK_CELL", r, c, editable })
@@ -1093,13 +1104,16 @@ export function IssuancesGrid({
     const isCalculated = interaction.sel.c === CALCULATED_COLUMN_INDEX
     if (isCalculated) return
 
-    // A cancelled row is read-only: block every path that starts an edit or mutates a cell
-    // (F2, Delete, replace-on-type below). Navigation and Ctrl+C stay allowed - hence these
-    // guards are per-branch rather than a single early return.
-    const rowIsCancelled = rows[interaction.sel.r]?.status === "cancelled"
+    // A cancelled row is read-only apart from its taxes: block every path that starts an
+    // edit or mutates a cell (F2, Delete, replace-on-type below). Navigation and Ctrl+C stay
+    // allowed - hence these guards are per-branch rather than a single early return.
+    const cellIsLockedByCancellation = isLockedByCancellation(
+      interaction.sel.c,
+      rows[interaction.sel.r],
+    )
 
     if (e.key === "F2") {
-      if (rowIsCancelled) return
+      if (cellIsLockedByCancellation) return
       if (isLockedRedemptionFee(interaction.sel.c, rows[interaction.sel.r])) return
       e.preventDefault()
       dispatch({ type: "ENTER_EDIT" })
@@ -1107,7 +1121,7 @@ export function IssuancesGrid({
     }
 
     if (e.key === "Delete") {
-      if (rowIsCancelled) return
+      if (cellIsLockedByCancellation) return
       const patch = clearPatchForColumn(interaction.sel.c)
       const row = rows[interaction.sel.r]
       if (isLockedRedemptionFee(interaction.sel.c, row)) return
@@ -1129,7 +1143,7 @@ export function IssuancesGrid({
     // synchronously without a permission prompt.
 
     if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
-      if (rowIsCancelled) return
+      if (cellIsLockedByCancellation) return
       if (isLockedRedemptionFee(interaction.sel.c, rows[interaction.sel.r])) return
       dispatch({ type: "TYPE_REPLACE", char: e.key })
     }
@@ -1162,8 +1176,9 @@ export function IssuancesGrid({
     // focus and handles its native paste directly.
     if (interaction.editing) return
     if (interaction.sel.c === CALCULATED_COLUMN_INDEX) return
-    // A cancelled row is read-only - a paste must not seed an edit into it.
-    if (rows[interaction.sel.r]?.status === "cancelled") return
+    // A cancelled row is read-only apart from its taxes - a paste must not seed an edit
+    // into any other cell of it.
+    if (isLockedByCancellation(interaction.sel.c, rows[interaction.sel.r])) return
     if (isLockedRedemptionFee(interaction.sel.c, rows[interaction.sel.r])) return
     e.preventDefault()
     const text = e.clipboardData.getData("text/plain")
