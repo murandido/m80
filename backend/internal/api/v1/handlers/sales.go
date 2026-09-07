@@ -393,7 +393,7 @@ func (h *SaleHandler) GetSalesExport(w http.ResponseWriter, r *http.Request) {
 
 	// Binary response: the standard JSON envelope does not apply, mirroring the issuances
 	// export and the PDF path.
-	filename := fmt.Sprintf("vendas-%s.xlsx", time.Now().Format("2006-01-02"))
+	filename := fmt.Sprintf("vendas-%s.xlsx", exportFilenameDate(time.Now()))
 	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
 	w.Header().Set("Content-Length", strconv.Itoa(len(content)))

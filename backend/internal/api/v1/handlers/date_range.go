@@ -10,6 +10,17 @@ import (
 // calendar days, so "today" must be resolved against this zone, not UTC.
 const listTimezone = "America/Sao_Paulo"
 
+// exportFilenameDate resolves "today" for a download name in the operator's calendar day.
+// time.Now() alone is UTC inside the container, so a file exported at 22h in São Paulo came
+// down named with tomorrow's date - the sheet's own contents were already local.
+func exportFilenameDate(now time.Time) string {
+	loc, err := time.LoadLocation(listTimezone)
+	if err != nil {
+		loc = time.UTC
+	}
+	return now.In(loc).Format("2006-01-02")
+}
+
 // parseDateRange reads the date_from/date_to query params (both optional, YYYY-MM-DD) and
 // resolves them into UTC bounds for a half-open [from, to) interval: date_from is the
 // start of that local day, date_to the start of the day *after* it, so filtering with

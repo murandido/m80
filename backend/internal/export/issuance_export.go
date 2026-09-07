@@ -40,25 +40,25 @@ const (
 // dates written to the sheet are the operator's local calendar days, not UTC.
 const exportTimezone = "America/Sao_Paulo"
 
-// The thirteen columns of the manual sheet, with the widths it uses.
+// The thirteen columns of the manual sheet, in its order. The widths are not fixed here any
+// more: autoFitColumns sizes each one to what the export actually wrote.
 var issuanceExportColumns = []struct {
 	column string
 	label  string
-	width  float64
 }{
-	{"A", "Nº", 5},
-	{"B", "Companhia", 11.6},
-	{"C", "Localizador", 41.1},
-	{"D", "Data do Voo", 13.7},
-	{"E", "Passageiro Principal", 41},
-	{"F", "Origem", 9.6},
-	{"G", "Destino", 10},
-	{"H", "Pontos", 21.3},
-	{"I", "Milheiro", 13.6},
-	{"J", "Taxa", 11.6},
-	{"K", "Total", 21.1},
-	{"L", "Conta", 34},
-	{"M", "Observação", 55.9},
+	{"A", "Nº"},
+	{"B", "Companhia"},
+	{"C", "Localizador"},
+	{"D", "Data do Voo"},
+	{"E", "Passageiro Principal"},
+	{"F", "Origem"},
+	{"G", "Destino"},
+	{"H", "Pontos"},
+	{"I", "Milheiro"},
+	{"J", "Taxa"},
+	{"K", "Total"},
+	{"L", "Conta"},
+	{"M", "Observação"},
 }
 
 // exportRow is one issuance reduced to what the sheet writes. Resolved once, up front, so
@@ -91,15 +91,19 @@ type issuerSheet struct {
 	rows   []exportRow
 }
 
-// BuildIssuancesXLSX renders the given issuances as one tab per issuer and returns the
-// resulting .xlsx bytes.
-func BuildIssuancesXLSX(issuances []data.Issuance) ([]byte, error) {
-	return renderIssuancesXLSX(issuances, time.Now())
+// BuildIssuancesXLSX renders the given issuances and returns the resulting .xlsx bytes.
+//
+// singleSheetIssuer, when not empty, collapses the workbook into one tab with that name
+// holding every row. The caller passes it when the export was filtered down to one issuer:
+// the operator asked for their own issuances, so the file is their block of the manual sheet
+// and splitting it by who created each row would hide the ones they only cancelled.
+func BuildIssuancesXLSX(issuances []data.Issuance, singleSheetIssuer string) ([]byte, error) {
+	return renderIssuancesXLSX(issuances, time.Now(), singleSheetIssuer)
 }
 
 // renderIssuancesXLSX holds the pure rendering logic: it takes the reference time explicitly
 // so it can be exercised without depending on the clock.
-func renderIssuancesXLSX(issuances []data.Issuance, now time.Time) ([]byte, error) {
+func renderIssuancesXLSX(issuances []data.Issuance, now time.Time, singleSheetIssuer string) ([]byte, error) {
 	loc, err := time.LoadLocation(exportTimezone)
 	if err != nil {
 		loc = time.UTC
@@ -111,6 +115,9 @@ func renderIssuancesXLSX(issuances []data.Issuance, now time.Time) ([]byte, erro
 	styles := newStyleCache(f)
 
 	sheets := groupIssuancesByIssuer(issuances, loc)
+	if singleSheetIssuer != "" {
+		sheets = []issuerSheet{{issuer: singleSheetIssuer, rows: exportRowsFor(issuances, loc)}}
+	}
 	// An empty result still gets one tab: a workbook with no sheet at all is a file Excel
 	// refuses to open, and a titled empty sheet says "nothing matched" rather than nothing.
 	if len(sheets) == 0 {
@@ -141,16 +148,43 @@ func renderIssuancesXLSX(issuances []data.Issuance, now time.Time) ([]byte, erro
 	return buffer.Bytes(), nil
 }
 
+// issuanceSheetOwner names the tab an issuance belongs on: whoever cancelled it when it is
+// cancelled, and whoever issued it otherwise.
+//
+// The cancellation branch is what makes the sheet agree with the screen. The listing surfaces
+// a cancelled issuance in the flow of the person who cancelled it (applyIssuanceListFilters
+// matches cancelled_by_id too), so filtering by an operator brings in issuances somebody else
+// created and they cancelled. Keying the tab off the creator sent exactly those rows to a tab
+// with the other person's name, and the operator - reading their own tab - saw them as missing.
+func issuanceSheetOwner(issuance data.Issuance) string {
+	// Keyed off CancelledAt rather than Active for the same reason toExportRow tints the row
+	// off it: the cancellation timestamp is what says the estorno happened.
+	if issuance.CancelledAt != nil && issuance.CancelledBy != nil && issuance.CancelledBy.Name != "" {
+		return issuance.CancelledBy.Name
+	}
+	if issuance.Issuer != nil && issuance.Issuer.Name != "" {
+		return issuance.Issuer.Name
+	}
+	return issuanceExportNoIssuerSheet
+}
+
+// exportRowsFor flattens the issuances in the order they came (created_at asc), which the
+// airline blocks then preserve - the same order groupIssuancesByIssuer keeps inside a tab.
+func exportRowsFor(issuances []data.Issuance, loc *time.Location) []exportRow {
+	rows := make([]exportRow, 0, len(issuances))
+	for _, issuance := range issuances {
+		rows = append(rows, toExportRow(issuance, loc))
+	}
+	return rows
+}
+
 // groupIssuancesByIssuer splits the issuances into one bundle per issuer, sorted by name so
 // two exports of the same period produce the same tabs in the same order. The order inside
 // each bundle is the caller's (created_at asc), which the airline blocks then preserve.
 func groupIssuancesByIssuer(issuances []data.Issuance, loc *time.Location) []issuerSheet {
 	byIssuer := make(map[string][]exportRow)
 	for _, issuance := range issuances {
-		issuer := issuanceExportNoIssuerSheet
-		if issuance.Issuer != nil && issuance.Issuer.Name != "" {
-			issuer = issuance.Issuer.Name
-		}
+		issuer := issuanceSheetOwner(issuance)
 		byIssuer[issuer] = append(byIssuer[issuer], toExportRow(issuance, loc))
 	}
 
@@ -262,6 +296,10 @@ const (
 	// without any explaining.
 	issuanceExportVoidBG = "FFC7CE"
 	issuanceExportVoidFG = "9C0006"
+
+	// The spacer row between two airline blocks. Filled rather than left white so the break
+	// reads as a deliberate separator instead of a hole in the table.
+	issuanceExportSpacerBG = "8EA9DB"
 
 	issuanceSummaryTitleBG = "385623"
 	issuanceSummaryHeadBG  = "548135"
@@ -455,9 +493,6 @@ func writeIssuerSheet(
 	now time.Time,
 	loc *time.Location,
 ) error {
-	if err := writeColumnWidths(f, sheet); err != nil {
-		return err
-	}
 	if err := writeIssuerTitle(f, sheet, content.issuer, styles, now, loc); err != nil {
 		return err
 	}
@@ -477,16 +512,101 @@ func writeIssuerSheet(
 		return err
 	}
 
-	return writeAccountSummary(f, sheet, content.rows, styles, now, loc)
+	if err := writeAccountSummary(f, sheet, content.rows, styles, now, loc); err != nil {
+		return err
+	}
+
+	// Widths last, once every cell is written: excelize measures the text that is actually
+	// there. Rows are left without an explicit height for the same reason - Excel then fits
+	// them to their content on its own.
+	return autoFitColumns(f, sheet)
 }
 
-func writeColumnWidths(f *excelize.File, sheet string) error {
+// autoFitColumns sizes every column the sheet uses to its widest cell. The manual sheet's
+// own fixed widths were dropped here: they were measured for its data, and a longer
+// passenger name or observation ran under the next column.
+//
+// The title is skipped on purpose. It is merged across A:M, and excelize does not measure
+// merged cells - it would size column A to the whole heading and push the table off screen.
+func autoFitColumns(f *excelize.File, sheet string) error {
+	// The merged cells are emptied first and put back afterwards. excelize does not handle
+	// merges when measuring: it reads the anchor's text for every column the merge spans, so
+	// the 26pt title alone would size all thirteen columns to its own length. Blanking them
+	// leaves the measurement to the cells that actually sit in one column.
+	restore, err := blankMergedCells(f, sheet)
+	if err != nil {
+		return err
+	}
+
+	columns := make([]string, 0, len(issuanceExportColumns)+4)
 	for _, column := range issuanceExportColumns {
-		if err := f.SetColWidth(sheet, column.column, column.column, column.width); err != nil {
-			return fmt.Errorf("writeColumnWidths: %s: %w", column.column, err)
+		columns = append(columns, column.column)
+	}
+	columns = append(columns,
+		issuanceSummaryProgramColumn,
+		issuanceSummaryLocatorColumn,
+		issuanceSummaryPointsColumn,
+		issuanceSummaryTotalColumn,
+	)
+
+	for _, column := range columns {
+		if err := f.AutoFitColWidth(sheet, column); err != nil {
+			return fmt.Errorf("autoFitColumns: %s: %w", column, err)
 		}
 	}
-	return nil
+
+	return restore()
+}
+
+// blankMergedCells clears what every merged range on the sheet holds and returns the function
+// that writes it back, formulas included. Styles are untouched: only the values go away, and
+// only for as long as the widths are being measured.
+func blankMergedCells(f *excelize.File, sheet string) (func() error, error) {
+	merges, err := f.GetMergeCells(sheet)
+	if err != nil {
+		return nil, fmt.Errorf("blankMergedCells: read merges: %w", err)
+	}
+
+	type stashed struct {
+		axis    string
+		value   string
+		formula string
+	}
+
+	held := make([]stashed, 0, len(merges))
+	for _, merge := range merges {
+		axis := merge.GetStartAxis()
+		formula, err := f.GetCellFormula(sheet, axis)
+		if err != nil {
+			return nil, fmt.Errorf("blankMergedCells: read formula %s: %w", axis, err)
+		}
+		value, err := f.GetCellValue(sheet, axis)
+		if err != nil {
+			return nil, fmt.Errorf("blankMergedCells: read value %s: %w", axis, err)
+		}
+		if formula == "" && value == "" {
+			continue
+		}
+		held = append(held, stashed{axis: axis, value: value, formula: formula})
+		if err := f.SetCellValue(sheet, axis, ""); err != nil {
+			return nil, fmt.Errorf("blankMergedCells: blank %s: %w", axis, err)
+		}
+	}
+
+	return func() error {
+		for _, cell := range held {
+			if cell.formula != "" {
+				if err := f.SetCellFormula(sheet, cell.axis, cell.formula); err != nil {
+					return fmt.Errorf("blankMergedCells: restore formula %s: %w", cell.axis, err)
+				}
+				continue
+			}
+			if err := f.SetCellValue(sheet, cell.axis, cell.value); err != nil {
+				return fmt.Errorf("blankMergedCells: restore %s: %w", cell.axis, err)
+			}
+		}
+		return nil
+	}, nil
 }
 
 func writeIssuerTitle(
@@ -525,9 +645,6 @@ func writeIssuerTitle(
 	if err := f.SetCellStyle(sheet, first, last, style); err != nil {
 		return fmt.Errorf("writeIssuerTitle: style: %w", err)
 	}
-	if err := f.SetRowHeight(sheet, issuanceExportTitleRow, 34.5); err != nil {
-		return fmt.Errorf("writeIssuerTitle: row height: %w", err)
-	}
 	return nil
 }
 
@@ -553,9 +670,6 @@ func writeIssuanceHeader(f *excelize.File, sheet string, styles *styleCache) err
 		if err := f.SetCellStyle(sheet, cell, cell, style); err != nil {
 			return fmt.Errorf("writeIssuanceHeader: style %s: %w", cell, err)
 		}
-	}
-	if err := f.SetRowHeight(sheet, issuanceExportHeaderRow, 15.75); err != nil {
-		return fmt.Errorf("writeIssuanceHeader: row height: %w", err)
 	}
 
 	// Keep the header in view while scrolling; a busy day runs well past one screen.
@@ -596,6 +710,9 @@ func writeProgramBlocks(
 	for index, program := range order {
 		// One blank spacer row between blocks, never before the first one.
 		if index > 0 {
+			if err := writeBlockSpacer(f, sheet, sheetRow, styles); err != nil {
+				return nil, 0, err
+			}
 			sheetRow++
 		}
 		block := byProgram[program]
@@ -626,6 +743,29 @@ func writeProgramBlocks(
 		return blocks, issuanceExportFirstDataRow, nil
 	}
 	return blocks, sheetRow - 1, nil
+}
+
+// writeBlockSpacer paints the row that separates two airline blocks across A:M. It carries no
+// value and no number: it is the gap the manual sheet leaves between AZUL and SMILES, made
+// visible so nobody reads it as a missing issuance.
+func writeBlockSpacer(f *excelize.File, sheet string, sheetRow int, styles *styleCache) error {
+	style, err := styles.id(cellStyle{
+		fill:   issuanceExportSpacerBG,
+		left:   borderMedium,
+		right:  borderMedium,
+		top:    borderMedium,
+		bottom: borderMedium,
+	})
+	if err != nil {
+		return err
+	}
+
+	first := fmt.Sprintf("A%d", sheetRow)
+	last := fmt.Sprintf("%s%d", issuanceExportLastColumn, sheetRow)
+	if err := f.SetCellStyle(sheet, first, last, style); err != nil {
+		return fmt.Errorf("writeBlockSpacer: style %s:%s: %w", first, last, err)
+	}
+	return nil
 }
 
 // programBlock records where one airline's rows landed, so the TOTAL DAS CONTAS block below
@@ -675,12 +815,23 @@ func writeIssuanceRow(
 		if spec.right == borderNone {
 			spec.right = borderThin
 		}
-		// A cancelled line drops its own colours for the void tint across the whole row -
-		// including the airline cell, which is what makes it impossible to skim past.
+		// A cancelled line drops its own colours for the void tint, so it reads as an
+		// exception at a glance.
 		if row.cancelled {
 			spec.fill = issuanceExportVoidBG
 			spec.fontColor = issuanceExportVoidFG
 		}
+		return spec
+	}
+
+	// The airline cell is the exception: it keeps its airline colour even on a cancelled
+	// line, because that colour is how a block is read down the page - tinting it too broke
+	// the column into stripes. The strikethrough locator and the negative points already say
+	// the line is cancelled.
+	airlineBody := func(spec cellStyle) cellStyle {
+		fill, fontColor := spec.fill, spec.fontColor
+		spec = body(spec)
+		spec.fill, spec.fontColor = fill, fontColor
 		return spec
 	}
 
@@ -696,7 +847,7 @@ func writeIssuanceRow(
 		})},
 		// B Companhia - repeated on every row of the block and coloured by airline, which is
 		// what makes the blocks readable at a glance on the sheet being pasted into.
-		{"B", strings.ToUpper(row.program), body(cellStyle{
+		{"B", strings.ToUpper(row.program), airlineBody(cellStyle{
 			fill: colors.tableFill, fontColor: colors.tableFont, bold: true,
 			left: borderMedium, right: borderMedium,
 		})},
@@ -761,7 +912,9 @@ func writeIssuanceRow(
 		return fmt.Errorf("writeIssuanceRow: set K%d formula: %w", sheetRow, err)
 	}
 
-	return f.SetRowHeight(sheet, sheetRow, 18)
+	// No explicit row height anywhere on the sheet: every row is left for Excel to fit to
+	// its own content.
+	return nil
 }
 
 // writeIssuanceTotals closes the table the way the manual sheet does: a dark band carrying
@@ -853,9 +1006,6 @@ func writeIssuanceTotals(
 	if err := f.SetCellStyle(sheet, fmt.Sprintf("L%d", billingRow), fmt.Sprintf("%s%d", issuanceExportLastColumn, billingRow), labelStyle); err != nil {
 		return 0, fmt.Errorf("writeIssuanceTotals: style footer tail: %w", err)
 	}
-	if err := f.SetRowHeight(sheet, billingRow, 21); err != nil {
-		return 0, fmt.Errorf("writeIssuanceTotals: row height: %w", err)
-	}
 	return billingRow, nil
 }
 
@@ -889,18 +1039,6 @@ func writeDailyTotals(
 	// Two blank rows below the billing line, so the block reads as its own thing.
 	headerRow := billingRow + 3
 
-	// The row heights the manual sheet fixes for this block. They are not decoration: the
-	// cells here carry 14pt to 26pt type, and a row left without an explicit height is
-	// auto-fitted by Excel to whatever font happens to be tallest in it - which turns the
-	// block into a staircase of mismatched rows, and leaves the vertically merged cells
-	// (which Excel never auto-fits at all) cramped against their own text.
-	const (
-		totalsHeaderHeight  = 18.75
-		totalsIssuerHeight  = 34.5
-		totalsAccountHeight = 21.0
-		totalsGeneralHeight = 31.5
-	)
-
 	banner := func(fill string) cellStyle {
 		return cellStyle{
 			fill: fill, fontColor: issuanceExportWhite, bold: true, size: 14,
@@ -922,9 +1060,6 @@ func writeDailyTotals(
 			return err
 		}
 	}
-	if err := f.SetRowHeight(sheet, headerRow, totalsHeaderHeight); err != nil {
-		return fmt.Errorf("writeDailyTotals: header height: %w", err)
-	}
 
 	// The issuer's name, and beside it the billing figure already computed above.
 	issuerRow := headerRow + 1
@@ -945,10 +1080,6 @@ func writeDailyTotals(
 	}
 	if err := f.SetCellFormula(sheet, fmt.Sprintf("J%d", issuerRow), fmt.Sprintf("K%d", billingRow)); err != nil {
 		return fmt.Errorf("writeDailyTotals: billing formula: %w", err)
-	}
-	// Tall enough for the 26pt billing figure sitting beside the name.
-	if err := f.SetRowHeight(sheet, issuerRow, totalsIssuerHeight); err != nil {
-		return fmt.Errorf("writeDailyTotals: issuer height: %w", err)
 	}
 
 	// Left column: one strip per airline, one line per account inside it.
@@ -988,9 +1119,6 @@ func writeDailyTotals(
 			if err := f.SetCellFormula(sheet, fmt.Sprintf("D%d", accountRow), formula); err != nil {
 				return fmt.Errorf("writeDailyTotals: account formula: %w", err)
 			}
-			if err := f.SetRowHeight(sheet, accountRow, totalsAccountHeight); err != nil {
-				return fmt.Errorf("writeDailyTotals: account height: %w", err)
-			}
 		}
 
 		if err := writeMergedRows(f, sheet, "E", first, last, nil, cellStyle{
@@ -1028,9 +1156,6 @@ func writeDailyTotals(
 	if err := f.SetCellFormula(sheet, fmt.Sprintf("E%d", generalRow), sumOf(subtotalCells)); err != nil {
 		return fmt.Errorf("writeDailyTotals: general formula: %w", err)
 	}
-	if err := f.SetRowHeight(sheet, generalRow, totalsGeneralHeight); err != nil {
-		return fmt.Errorf("writeDailyTotals: general height: %w", err)
-	}
 
 	// Right column: the day's points per airline, then their total.
 	dayCells := make([]string, 0, len(blocks))
@@ -1064,11 +1189,6 @@ func writeDailyTotals(
 	}
 	if err := f.SetCellFormula(sheet, fmt.Sprintf("H%d", daySumRow), sumOf(dayCells)); err != nil {
 		return fmt.Errorf("writeDailyTotals: day total formula: %w", err)
-	}
-	// The right-hand column runs one row per airline, so with more airlines than accounts it
-	// ends below the block on the left and would otherwise be the one row left auto-fitted.
-	if err := f.SetRowHeight(sheet, daySumRow, totalsAccountHeight); err != nil {
-		return fmt.Errorf("writeDailyTotals: day total height: %w", err)
 	}
 
 	return nil
@@ -1209,21 +1329,6 @@ func writeAccountSummary(
 	summaries := summariseAccounts(rows)
 	if len(summaries) == 0 {
 		return nil
-	}
-
-	widths := []struct {
-		column string
-		width  float64
-	}{
-		{issuanceSummaryProgramColumn, 18},
-		{issuanceSummaryLocatorColumn, 18},
-		{issuanceSummaryPointsColumn, 14},
-		{issuanceSummaryTotalColumn, 14},
-	}
-	for _, width := range widths {
-		if err := f.SetColWidth(sheet, width.column, width.column, width.width); err != nil {
-			return fmt.Errorf("writeAccountSummary: width %s: %w", width.column, err)
-		}
 	}
 
 	date := now.In(loc).Format("02/01/2006")

@@ -474,9 +474,38 @@ func (h *IssuanceHandler) GetIssuances(w http.ResponseWriter, r *http.Request) {
 	utils.SendJSON(w, r, http.StatusOK, "Issuances fetched successfully", resp)
 }
 
+// filteredIssuerSheetName resolves the single tab name the export should collapse into, or ""
+// to keep the one-tab-per-person grouping.
+//
+// It returns a name only when the listing was actually narrowed to one issuer: the operator
+// asked for their own issuances, so the whole file is their block of the manual sheet -
+// including the ones somebody else created and they cancelled, which the cancellation branch
+// of applyIssuanceListFilters brings in. A search suspends that branch (see the filter's
+// comment), so while q is present the export goes back to grouping.
+//
+// The user is read Unscoped so a soft-deleted operator still names their own tab instead of
+// silently falling back to the grouping, and an id that matches nothing degrades to the
+// grouping rather than to an error - the rows are right either way.
+func filteredIssuerSheetName(db *gorm.DB, r *http.Request) string {
+	if strings.TrimSpace(r.URL.Query().Get("q")) != "" {
+		return ""
+	}
+
+	issuer := r.URL.Query().Get("issuer_id")
+	if issuer == "" {
+		return ""
+	}
+
+	var user data.User
+	if err := db.Unscoped().Select("name").First(&user, "id = ?", issuer).Error; err != nil {
+		return ""
+	}
+	return user.Name
+}
+
 // GetIssuancesExport handles the GET /issuances/export route.
 // @Summary      Exportar emissões (.xlsx)
-// @Description  Gera uma planilha .xlsx das emissões filtradas, no layout da planilha manual de controle: uma aba por emissor, colunas A:M (Nº, Companhia, Localizador, Data do Voo, Passageiro Principal, Origem, Destino, Pontos, Milheiro, Taxa, Total, Conta, Observação), as linhas agrupadas em blocos por companhia, o bloco TOTAL DAS CONTAS ao final e, ao lado da tabela, um quadro por conta e companhia com os localizadores e o total de pontos. Dentro de cada bloco a ordem é a da listagem (da mais antiga para a mais recente). Aceita os mesmos filtros da listagem (data, programa de fidelidade, cia aérea, conta, agência e emissor). Emissão cancelada no mesmo dia em que foi criada entra pelo líquido (pontos e taxas menos o reembolso); cancelada em outro dia entra só pelo reembolso, negativo. A linha cancelada é destacada em vermelho claro.
+// @Description  Gera uma planilha .xlsx das emissões filtradas, no layout da planilha manual de controle: uma aba por pessoa (a emissão cancelada vai para a aba de quem cancelou, que é onde a listagem também a mostra; com issuer_id informado a planilha vira uma aba só, a dele), colunas A:M (Nº, Companhia, Localizador, Data do Voo, Passageiro Principal, Origem, Destino, Pontos, Milheiro, Taxa, Total, Conta, Observação), as linhas agrupadas em blocos por companhia, o bloco TOTAL DAS CONTAS ao final e, ao lado da tabela, um quadro por conta e companhia com os localizadores e o total de pontos. Dentro de cada bloco a ordem é a da listagem (da mais antiga para a mais recente). Aceita os mesmos filtros da listagem (data, programa de fidelidade, cia aérea, conta, agência e emissor). Emissão cancelada no mesmo dia em que foi criada entra pelo líquido (pontos e taxas menos o reembolso); cancelada em outro dia entra só pelo reembolso, negativo. A linha cancelada é destacada em vermelho claro.
 // @Tags         Emissões
 // @Produce      application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
 // @Security     BearerAuth
@@ -496,9 +525,12 @@ func (h *IssuanceHandler) GetIssuancesExport(w http.ResponseWriter, r *http.Requ
 	var issuances []data.Issuance
 
 	// Same query as GetIssuances, plus the account holder needed to resolve the CONTA label
-	// (aliasless accounts fall back to the holder's name).
+	// (aliasless accounts fall back to the holder's name) and the canceller, whose name decides
+	// which tab a cancelled issuance lands on. Neither is preloaded for the listing, which shows
+	// no such column.
 	query := preloadIssuanceAssociations(h.DB).
 		Preload("Account.Holder").
+		Preload("CancelledBy").
 		Preload("Flights", func(db *gorm.DB) *gorm.DB {
 			return db.Where("direction = ?", "outbound").Order("leg_order asc")
 		})
@@ -511,7 +543,7 @@ func (h *IssuanceHandler) GetIssuancesExport(w http.ResponseWriter, r *http.Requ
 
 	// No period is passed: whether a cancelled issuance enters the sheet as its booking, as
 	// its refund, or as both netting out is decided by its own two dates, not by the filter.
-	content, err := export.BuildIssuancesXLSX(issuances)
+	content, err := export.BuildIssuancesXLSX(issuances, filteredIssuerSheetName(h.DB, r))
 	if err != nil {
 		slog.Error("failed to build issuances export", "err", err)
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to build issuances export")
@@ -519,7 +551,7 @@ func (h *IssuanceHandler) GetIssuancesExport(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Binary response: the standard JSON envelope does not apply, mirroring the PDF path.
-	filename := fmt.Sprintf("emissoes-%s.xlsx", time.Now().Format("2006-01-02"))
+	filename := fmt.Sprintf("emissoes-%s.xlsx", exportFilenameDate(time.Now()))
 	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
 	w.Header().Set("Content-Length", strconv.Itoa(len(content)))

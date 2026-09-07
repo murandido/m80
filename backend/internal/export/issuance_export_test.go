@@ -79,8 +79,15 @@ func sampleIssuance(program, locator, account, issuer string) data.Issuance {
 // renderForTest runs the export at a fixed instant and hands back the reopened workbook.
 func renderForTest(t *testing.T, issuances []data.Issuance) *excelize.File {
 	t.Helper()
+	return renderForTestOnSheet(t, issuances, "")
+}
 
-	out, err := renderIssuancesXLSX(issuances, time.Date(2026, 7, 22, 15, 0, 0, 0, time.UTC))
+// renderForTestOnSheet is renderForTest with the single-tab name the handler passes when the
+// listing was filtered down to one issuer.
+func renderForTestOnSheet(t *testing.T, issuances []data.Issuance, singleSheetIssuer string) *excelize.File {
+	t.Helper()
+
+	out, err := renderIssuancesXLSX(issuances, time.Date(2026, 7, 22, 15, 0, 0, 0, time.UTC), singleSheetIssuer)
 	if err != nil {
 		t.Fatalf("renderIssuancesXLSX: %v", err)
 	}
@@ -181,8 +188,8 @@ func TestRenderIssuancesXLSXRefundOnlyOnLaterCancellation(t *testing.T) {
 	})
 }
 
-// A cancelled line is tinted across the whole row, airline cell included, so a block being
-// reconciled shows at a glance which lines give miles back.
+// A cancelled line is tinted across the row - except the airline cell, which keeps its own
+// colour so the block still reads as one airline down the page.
 func TestRenderIssuancesXLSXTintsCancelledRow(t *testing.T) {
 	cancelledAt := time.Date(2026, 7, 22, 18, 0, 0, 0, time.UTC)
 
@@ -191,7 +198,7 @@ func TestRenderIssuancesXLSXTintsCancelledRow(t *testing.T) {
 
 	f := renderForTest(t, []data.Issuance{issuance})
 
-	for _, cell := range []string{"A3", "B3", "C3", "M3"} {
+	for _, cell := range []string{"A3", "C3", "M3"} {
 		id, err := f.GetCellStyle("Marcus", cell)
 		if err != nil {
 			t.Fatalf("get style of %s: %v", cell, err)
@@ -203,6 +210,19 @@ func TestRenderIssuancesXLSXTintsCancelledRow(t *testing.T) {
 		if len(style.Fill.Color) == 0 || !strings.EqualFold(style.Fill.Color[0], "FFC7CE") {
 			t.Errorf("cell %s fill = %v, want FFC7CE", cell, style.Fill.Color)
 		}
+	}
+
+	id, err := f.GetCellStyle("Marcus", "B3")
+	if err != nil {
+		t.Fatalf("get style of B3: %v", err)
+	}
+	style, err := f.GetStyle(id)
+	if err != nil {
+		t.Fatalf("read style of B3: %v", err)
+	}
+	want := colorsForProgram("Smiles").tableFill
+	if len(style.Fill.Color) == 0 || !strings.EqualFold(style.Fill.Color[0], want) {
+		t.Errorf("airline cell fill = %v, want the airline colour %s", style.Fill.Color, want)
 	}
 }
 
@@ -236,6 +256,19 @@ func TestRenderIssuancesXLSXGroupsByProgram(t *testing.T) {
 		// Numbering is continuous across the blocks, as on the manual sheet.
 		"A6": "3",
 	})
+
+	// The spacer is painted, so the break reads as a separator and not as a hole.
+	id, err := f.GetCellStyle("João Emissor", "C5")
+	if err != nil {
+		t.Fatalf("get style of C5: %v", err)
+	}
+	style, err := f.GetStyle(id)
+	if err != nil {
+		t.Fatalf("read style of C5: %v", err)
+	}
+	if len(style.Fill.Color) == 0 || !strings.EqualFold(style.Fill.Color[0], "8EA9DB") {
+		t.Errorf("spacer fill = %v, want 8EA9DB", style.Fill.Color)
+	}
 }
 
 // The sheet is "for one person": two issuers come back as two tabs, each titled with its
@@ -252,6 +285,50 @@ func TestRenderIssuancesXLSXOneTabPerIssuer(t *testing.T) {
 	}
 	assertCells(t, f, "Marcus", map[string]string{"C3": "AAA111"})
 	assertCells(t, f, "Wilmara", map[string]string{"C3": "BBB222"})
+}
+
+// A cancelled issuance belongs to whoever cancelled it: that is the flow the listing puts it
+// in, and reading the creator's tab was how those rows looked missing to the operator.
+func TestRenderIssuancesXLSXPutsCancelledRowOnCancellerTab(t *testing.T) {
+	cancelledAt := time.Date(2026, 7, 25, 18, 0, 0, 0, time.UTC)
+
+	cancelled := sampleIssuance("Smiles", "AAA111", "Conta VIP", "Wilmara")
+	cancelled.CancelledAt = &cancelledAt
+	cancelled.CancelledBy = &data.User{Name: "Marcus"}
+	cancelled.RefundedPoints = intptr(10000)
+
+	f := renderForTest(t, []data.Issuance{
+		cancelled,
+		sampleIssuance("Smiles", "BBB222", "Conta VIP", "Wilmara"),
+	})
+
+	want := []string{"Marcus", "Wilmara"}
+	if got := f.GetSheetList(); len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("sheets = %v, want %v", got, want)
+	}
+	assertCells(t, f, "Marcus", map[string]string{"C3": "AAA111"})
+	assertCells(t, f, "Wilmara", map[string]string{"C3": "BBB222"})
+}
+
+// Filtering by an issuer makes the file that person's own block: one tab, holding both what
+// they issued and what they only cancelled, in the order the listing showed them.
+func TestRenderIssuancesXLSXCollapsesToTheFilteredIssuerTab(t *testing.T) {
+	cancelledAt := time.Date(2026, 7, 25, 18, 0, 0, 0, time.UTC)
+
+	cancelled := sampleIssuance("Smiles", "AAA111", "Conta VIP", "Wilmara")
+	cancelled.CancelledAt = &cancelledAt
+	cancelled.CancelledBy = &data.User{Name: "Marcus"}
+	cancelled.RefundedPoints = intptr(10000)
+
+	f := renderForTestOnSheet(t, []data.Issuance{
+		cancelled,
+		sampleIssuance("Smiles", "BBB222", "Conta VIP", "Marcus"),
+	}, "Marcus")
+
+	if got := f.GetSheetList(); len(got) != 1 || got[0] != "Marcus" {
+		t.Fatalf("sheets = %v, want [Marcus]", got)
+	}
+	assertCells(t, f, "Marcus", map[string]string{"C3": "AAA111", "C4": "BBB222"})
 }
 
 // The summary beside the table: one box per account used, listing that account's locators.
@@ -347,11 +424,9 @@ func TestRenderIssuancesXLSXSplitsBoxesPerProgram(t *testing.T) {
 	})
 }
 
-// The TOTAL DAS CONTAS block carries 14pt to 26pt type. A row left without an explicit
-// height is auto-fitted by Excel to whatever font is tallest in it, which turns the block
-// into a staircase - and a vertically merged cell is never auto-fitted at all, so it ends up
-// cramped against its own text. Every row of the block has to name its height.
-func TestRenderIssuancesXLSXSetsTotalsBlockHeights(t *testing.T) {
+// No row names its own height any more: every row on the sheet, the TOTAL DAS CONTAS block
+// included, is left for Excel to fit to its content.
+func TestRenderIssuancesXLSXLeavesEveryRowAutoFitted(t *testing.T) {
 	f := renderForTest(t, []data.Issuance{
 		sampleIssuance("Smiles", "AAA111", "Heraldo", "Marcus"),
 		sampleIssuance("Azul", "BBB222", "Isaias", "Marcus"),
@@ -359,20 +434,17 @@ func TestRenderIssuancesXLSXSetsTotalsBlockHeights(t *testing.T) {
 
 	// Two airline blocks of one row each (3 and 5), the sums on 6 and TOTAL FATURAMENTO on
 	// 7, so the block header lands on 10: header, issuer, one row per account, then GERAL.
-	heights := map[int]float64{
-		10: 18.75, // TOTAL DAS CONTAS / GERAL / TOTAL PTS. DO DIA
-		11: 34.5,  // the issuer's name, beside the 26pt billing figure
-		12: 21,    // Smiles / Heraldo
-		13: 21,    // Azul / Isaias
-		14: 31.5,  // GERAL
+	def, err := f.GetRowHeight("Marcus", 1)
+	if err != nil {
+		t.Fatalf("get default height: %v", err)
 	}
-	for row, want := range heights {
+	for row := 1; row <= 14; row++ {
 		got, err := f.GetRowHeight("Marcus", row)
 		if err != nil {
 			t.Fatalf("get height of row %d: %v", row, err)
 		}
-		if got != want {
-			t.Errorf("row %d height = %v, want %v", row, got, want)
+		if got != def {
+			t.Errorf("row %d height = %v, want the sheet default %v", row, got, def)
 		}
 	}
 
@@ -387,6 +459,33 @@ func TestRenderIssuancesXLSXSetsTotalsBlockHeights(t *testing.T) {
 	}
 	if len(style.Fill.Color) == 0 || !strings.EqualFold(style.Fill.Color[0], "0D0D0D") {
 		t.Errorf("B14 fill = %v, want 0D0D0D", style.Fill.Color)
+	}
+}
+
+// Every column is sized to its own content. The check that matters is column A: it is the
+// narrow Nº strip, and it sits under the merged 26pt title - measuring the title would blow
+// it (and every other column) up to the width of the whole heading.
+func TestRenderIssuancesXLSXAutoFitsColumns(t *testing.T) {
+	long := "Acordo comercial com o cliente firmado na renegociação de dezembro"
+	wide := sampleIssuance("Smiles", "AAA111", "Conta VIP", "Marcus")
+	wide.Observation = &long
+
+	f := renderForTest(t, []data.Issuance{wide})
+
+	width := func(column string) float64 {
+		t.Helper()
+		got, err := f.GetColWidth("Marcus", column)
+		if err != nil {
+			t.Fatalf("get width of %s: %v", column, err)
+		}
+		return got
+	}
+
+	if got := width("A"); got > 8 {
+		t.Errorf("column A width = %v, want the Nº strip to stay narrow", got)
+	}
+	if got, observation := width("E"), width("M"); observation <= got {
+		t.Errorf("Observação (%v) should outgrow Passageiro (%v) on this data", observation, got)
 	}
 }
 
