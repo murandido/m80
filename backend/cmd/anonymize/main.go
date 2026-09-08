@@ -191,6 +191,17 @@ func (a *anonymiser) cpfFor(oldFingerprint sql.NullString, id string) string {
 	return cpf
 }
 
+// nameSeed picks what a row's fake name is derived from. Rows that shared a blind index were
+// the same human being, so they have to end up sharing a name too - a person and their own
+// beneficiary row carrying the same CPF under two different names is exactly the kind of
+// thing that sends someone hunting for a bug in the panel.
+func nameSeed(oldFingerprint sql.NullString, id string) string {
+	if oldFingerprint.Valid && oldFingerprint.String != "" {
+		return oldFingerprint.String
+	}
+	return id
+}
+
 func (a *anonymiser) people() error {
 	people, err := collect(a.tx, `SELECT id, cpf_fingerprint FROM people ORDER BY id`, scanKeyed)
 	if err != nil {
@@ -215,7 +226,7 @@ func (a *anonymiser) people() error {
 			encrypted, fingerprint = enc, fp
 		}
 
-		first, last := fakeName(person.id)
+		first, last := fakeName(nameSeed(person.ref, person.id))
 		_, err := a.tx.Exec(`
 			UPDATE people
 			   SET name = $2, cpf = $3, cpf_fingerprint = $4,
@@ -252,7 +263,7 @@ func (a *anonymiser) loyaltyDocuments() error {
 		if err != nil {
 			return err
 		}
-		first, last := fakeName(doc.id)
+		first, last := fakeName(nameSeed(doc.ref, doc.id))
 		if _, err := a.tx.Exec(
 			`UPDATE loyalty_documents SET name = $2, cpf = $3, cpf_fingerprint = $4 WHERE id = $1`,
 			doc.id, first+" "+last, encrypted, fingerprint,
@@ -272,7 +283,7 @@ func (a *anonymiser) accountBeneficiaries() error {
 	}
 
 	for _, beneficiary := range beneficiaries {
-		first, last := fakeName(beneficiary.id)
+		first, last := fakeName(nameSeed(beneficiary.ref, beneficiary.id))
 		name := first + " " + last
 
 		// A beneficiary known by name only keeps being known by name only - the null

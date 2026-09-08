@@ -1,4 +1,4 @@
-.PHONY: dev front back-up back-down back-logs clean db-backup db-backup-list db-restore
+.PHONY: dev front back-up back-down back-logs clean db-backup db-backup-list db-restore db-anonymize
 
 # LOCAL DEVELOPMENT (DOCKER-FIRST)
 
@@ -44,6 +44,18 @@ db-backup-list:
 db-restore:
 	@test -n "$(FILE)" || { echo "Uso: make db-restore FILE=<caminho do dump> [MODE=overwrite]"; exit 1; }
 	@PROFILE=$(PROFILE) backend/scripts/db-restore.sh $(if $(filter overwrite,$(MODE)),--overwrite,) $(FILE)
+
+# Turns a production dump into one that can be loaded outside production.
+#
+# Its own profile variable, defaulting to dev: PROFILE above defaults to prod
+# because that is where backups matter, and this is the one script that must
+# never be aimed there - it creates a scratch copy of the database it runs
+# against. See the script header for the two keys it requires.
+ANON_PROFILE ?= dev
+
+db-anonymize:
+	@test -n "$(FILE)" || { echo "Uso: ENCRYPTION_KEY=... CPF_INDEX_KEY=... make db-anonymize FILE=<caminho do dump> [OUT=<destino>]"; exit 1; }
+	@PROFILE=$(ANON_PROFILE) backend/scripts/db-anonymize.sh $(if $(OUT),--out $(OUT),) $(FILE)
 
 # UTILS
 # Clears caches and builds (does not delete Docker volumes to avoid data loss)
