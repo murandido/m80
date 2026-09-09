@@ -2,9 +2,8 @@
 
 import { useState, useTransition } from "react"
 import { toast } from "sonner"
-import { Trash2 } from "lucide-react"
+import { Layers, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
@@ -141,11 +140,15 @@ export function InventoryBatchesPanel({ accountId, batches, origins, agencies }:
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Lotes</CardTitle>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-6">
+    <section className="overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700">
+      <header className="flex flex-wrap items-center gap-3 bg-[#2F5496] px-4 py-2.5 text-white">
+        <Layers className="size-4" />
+        <h2 className="font-semibold">Lotes</h2>
+        <span className="text-xs text-white/70">
+          Cada compra de pontos, com o custo que ela teve.
+        </span>
+      </header>
+      <div className="flex flex-col gap-6 p-4">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-6">
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="batch-origin">Origem</Label>
@@ -174,7 +177,10 @@ export function InventoryBatchesPanel({ accountId, batches, origins, agencies }:
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="batch-points">Qnt. de Pontos</Label>
+            <Label htmlFor="batch-points">
+              Qnt. de Pontos
+              <span className="ml-1 font-normal text-slate-400">em milheiros</span>
+            </Label>
             <Input
               id="batch-points"
               inputMode="decimal"
@@ -242,7 +248,7 @@ export function InventoryBatchesPanel({ accountId, batches, origins, agencies }:
                 <TableHead>Data</TableHead>
                 <TableHead className="text-right">Qnt. de Pontos</TableHead>
                 <TableHead className="text-right">Custo</TableHead>
-                <TableHead className="text-right">Milheiro</TableHead>
+                <TableHead className="text-right">Custo do milheiro</TableHead>
                 <TableHead>Bancado por</TableHead>
                 <TableHead>Rateio</TableHead>
                 <TableHead>Acertado</TableHead>
@@ -253,7 +259,8 @@ export function InventoryBatchesPanel({ accountId, batches, origins, agencies }:
               {batches.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={9} className="text-muted-foreground text-center">
-                    Nenhum lote lançado nesta conta.
+                    Nenhum lote lançado nesta conta. Lance a primeira compra acima, ou concilie
+                    o extrato da companhia mais abaixo.
                   </TableCell>
                 </TableRow>
               ) : (
@@ -279,14 +286,21 @@ export function InventoryBatchesPanel({ accountId, batches, origins, agencies }:
                     <TableCell>{batch.funding_agency?.name ?? "—"}</TableCell>
                     <TableCell className="tabular-nums">{batch.profit_share_percent}%</TableCell>
                     <TableCell>
-                      <Button
-                        variant={batch.settled_at ? "secondary" : "outline"}
-                        size="sm"
+                      {/* State first, action second: the label says what it is, and
+                          clicking flips it. A filled button read as "press me". */}
+                      <button
+                        type="button"
                         disabled={pending}
                         onClick={() => toggleSettled(batch)}
+                        title={batch.settled_at ? "Desfazer o acerto" : "Marcar como acertado"}
+                        className={
+                          batch.settled_at
+                            ? "rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-800 hover:bg-emerald-200 dark:bg-emerald-950 dark:text-emerald-300"
+                            : "rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300"
+                        }
                       >
-                        {batch.settled_at ? "Sim" : "Não"}
-                      </Button>
+                        {batch.settled_at ? "Acertado" : "Em aberto"}
+                      </button>
                     </TableCell>
                     <TableCell className="text-right">
                       <Button
@@ -305,7 +319,7 @@ export function InventoryBatchesPanel({ accountId, batches, origins, agencies }:
             </TableBody>
           </Table>
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </section>
   )
 }

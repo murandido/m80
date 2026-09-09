@@ -67,6 +67,18 @@ func TestPointsInventoryRoutesAreAdminOnlyIncludingReads(t *testing.T) {
 			path:     "/inventory-periods",
 		},
 		{
+			name:     "the statement preview refuses a plain user",
+			register: RegisterStatementRoutes,
+			method:   http.MethodPost,
+			path:     "/point-batches/statement/preview",
+		},
+		{
+			name:     "the statement commit refuses a plain user",
+			register: RegisterStatementRoutes,
+			method:   http.MethodPost,
+			path:     "/point-batches/statement/commit",
+		},
+		{
 			name:     "the closing report refuses a plain user",
 			register: RegisterInventoryPeriodRoutes,
 			method:   http.MethodGet,

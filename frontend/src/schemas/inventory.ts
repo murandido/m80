@@ -155,3 +155,82 @@ export const getInventoryPeriodsSchema = {
     data: z.array(inventoryPeriodSchema).nullish(),
   }),
 }
+
+// --- Conciliação de extrato ---
+
+const statementVerdictSchema = z.enum([
+  "matched",
+  "missing_in_panel",
+  "missing_in_statement",
+  "amount_differs",
+])
+
+export type StatementVerdict = z.infer<typeof statementVerdictSchema>
+
+const statementBookingLineSchema = z.object({
+  locator: z.string(),
+  verdict: statementVerdictSchema,
+  statement_points: z.number(),
+  panel_points: z.number(),
+  issuance_id: z.string(),
+  occurred_on: z.string(),
+})
+
+export type StatementBookingLine = z.infer<typeof statementBookingLineSchema>
+
+const statementRefundLineSchema = z.object({
+  locator: z.string(),
+  verdict: statementVerdictSchema,
+  statement_points: z.number(),
+  panel_points: z.number(),
+  issuance_id: z.string(),
+})
+
+export type StatementRefundLine = z.infer<typeof statementRefundLineSchema>
+
+const statementCreditLineSchema = z.object({
+  // Position in this reconciliation, and what the commit takes back. The contents never
+  // travel back: the file is read and reconciled again from scratch on commit.
+  index: z.number(),
+  occurred_on: z.string(),
+  points: z.number(),
+  description: z.string(),
+  verdict: statementVerdictSchema,
+  batch_id: z.string(),
+})
+
+export type StatementCreditLine = z.infer<typeof statementCreditLineSchema>
+
+export const statementReconciliationSchema = z.object({
+  account_number: z.string(),
+  from: z.string(),
+  to: z.string(),
+  bookings: z.array(statementBookingLineSchema),
+  refunds: z.array(statementRefundLineSchema),
+  credits: z.array(statementCreditLineSchema),
+  statement_net_points: z.number(),
+  panel_net_points: z.number(),
+})
+
+export type StatementReconciliation = z.infer<typeof statementReconciliationSchema>
+
+export const statementReconciliationResponseSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
+  data: statementReconciliationSchema.nullish(),
+})
+
+export const statementCommitResponseSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
+  data: z
+    .object({
+      created: z.number(),
+      skipped: z.number(),
+    })
+    .nullish(),
+})
+
+export type StatementCommitResult = z.infer<
+  typeof statementCommitResponseSchema
+>["data"]

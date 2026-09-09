@@ -36,6 +36,8 @@ export function InventoryToolbar({ accounts, selected, from, to }: Props) {
     .filter((account) => account.owns_point_inventory)
     .sort((a, b) => labelOf(a).localeCompare(labelOf(b), "pt-BR"))
 
+  const chosen = eligible.find((account) => account.id === selected[0])
+
   function push(changes: Record<string, string>) {
     const params = new URLSearchParams(searchParams.toString())
     for (const [key, value] of Object.entries(changes)) {
@@ -61,7 +63,13 @@ export function InventoryToolbar({ accounts, selected, from, to }: Props) {
         </Label>
         <Select value={selected[0] ?? ""} onValueChange={(id) => push({ account_ids: id })}>
           <SelectTrigger id="inventory-account" className="w-56">
-            <SelectValue placeholder="Escolha uma conta" />
+            {/* The label is rendered here rather than left to the Select to resolve from
+                its items: the options live in a portal that is only mounted while the
+                dropdown is open, so a closed trigger had nothing to read and showed an
+                empty box even with an account chosen. */}
+            <SelectValue placeholder="Escolha uma conta">
+              {chosen ? labelOf(chosen) : undefined}
+            </SelectValue>
           </SelectTrigger>
           <SelectContent>
             {eligible.map((account) => (

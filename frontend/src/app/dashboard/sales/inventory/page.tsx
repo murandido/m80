@@ -22,6 +22,7 @@ import {
 import { InventoryToolbar } from "@/components/inventory/inventory-toolbar"
 import { InventoryBatchesPanel } from "@/components/inventory/inventory-batches-panel"
 import { InventoryClosingPanel } from "@/components/inventory/inventory-closing-panel"
+import { StatementPanel } from "@/components/inventory/statement-panel"
 
 export const metadata: Metadata = {
   title: "Estoque de pontos",
@@ -147,6 +148,11 @@ export default async function InventoryPage({ searchParams }: PageProps) {
           <InventoryBatchesPanel
             accountId={accountIds[0]}
             batches={batches ?? []}
+            origins={origins ?? []}
+            agencies={agencies ?? []}
+          />
+          <StatementPanel
+            accountId={accountIds[0]}
             origins={origins ?? []}
             agencies={agencies ?? []}
           />
