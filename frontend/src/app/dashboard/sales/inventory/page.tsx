@@ -100,8 +100,11 @@ export default async function InventoryPage({ searchParams }: PageProps) {
 
   const [batches, closing] = accountIds.length
     ? await Promise.all([
+        // The same window as the closing above it: a screen showing August's closing over
+        // September's batches would be two answers to different questions side by side.
         fetchList<PointBatch>(
-          `${api}/point-batches?account_id=${encodeURIComponent(accountIds[0])}`,
+          `${api}/point-batches?account_id=${encodeURIComponent(accountIds[0])}` +
+            `&from=${period.date_from}&to=${period.date_to}`,
           getPointBatchesSchema.response,
           authHeader,
         ),
@@ -160,6 +163,8 @@ export default async function InventoryPage({ searchParams }: PageProps) {
           <InventoryBatchesPanel
             accountId={accountIds[0]}
             batches={batches ?? []}
+            startsOn={period.date_from}
+            endsOn={period.date_to}
             origins={origins ?? []}
             agencies={agencies ?? []}
           />

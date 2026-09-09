@@ -35,6 +35,11 @@ import type { PointBatch, PointBatchOrigin } from "@/schemas/inventory"
 interface Props {
   accountId: string
   batches: PointBatch[]
+  // The window the toolbar is showing. The list is already filtered by it on the server;
+  // what the panel does with it is date a new batch inside what is on screen and say so
+  // when the account has batches that the filter is hiding.
+  startsOn: string
+  endsOn: string
   origins: PointBatchOrigin[]
   agencies: Agency[]
 }
@@ -62,12 +67,30 @@ function formatRate(centsPerThousand: number): string {
   })
 }
 
-const today = () => new Date().toISOString().slice(0, 10)
+function formatDate(value: string): string {
+  return value ? value.split("-").reverse().join("/") : ""
+}
 
-export function InventoryBatchesPanel({ accountId, batches, origins, agencies }: Props) {
+// A new batch defaults to today, unless today is outside the window on screen - recording
+// one that vanishes the moment it is saved is how somebody records it twice.
+function defaultDate(startsOn: string, endsOn: string): string {
+  const today = new Date().toISOString().slice(0, 10)
+  if (startsOn && today < startsOn) return startsOn
+  if (endsOn && today > endsOn) return endsOn
+  return today
+}
+
+export function InventoryBatchesPanel({
+  accountId,
+  batches,
+  startsOn,
+  endsOn,
+  origins,
+  agencies,
+}: Props) {
   const [pending, startTransition] = useTransition()
   const [originId, setOriginId] = useState("")
-  const [acquiredOn, setAcquiredOn] = useState(today)
+  const [acquiredOn, setAcquiredOn] = useState(() => defaultDate(startsOn, endsOn))
   const [milheiros, setMilheiros] = useState("")
   const [cost, setCost] = useState("")
   const [fundingAgencyId, setFundingAgencyId] = useState("")
@@ -145,7 +168,8 @@ export function InventoryBatchesPanel({ accountId, batches, origins, agencies }:
         <Layers className="size-4" />
         <h2 className="font-semibold">Lotes</h2>
         <span className="text-xs text-white/70">
-          Cada compra de pontos, com o custo que ela teve.
+          Cada compra de pontos, com o custo que ela teve — {formatDate(startsOn)} a{" "}
+          {formatDate(endsOn)}, do mais novo para o mais antigo.
         </span>
       </header>
       <div className="flex flex-col gap-6 p-4">
@@ -259,8 +283,9 @@ export function InventoryBatchesPanel({ accountId, batches, origins, agencies }:
               {batches.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={9} className="text-muted-foreground text-center">
-                    Nenhum lote lançado nesta conta. Lance a primeira compra acima, ou concilie
-                    o extrato da companhia mais abaixo.
+                    Nenhum lote entre {formatDate(startsOn)} e {formatDate(endsOn)}. Amplie o
+                    período acima, lance a primeira compra, ou concilie o extrato da companhia
+                    mais abaixo.
                   </TableCell>
                 </TableRow>
               ) : (

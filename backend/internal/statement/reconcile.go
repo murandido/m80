@@ -19,6 +19,10 @@ type PanelBatch struct {
 	BatchID    string
 	AcquiredOn time.Time
 	Points     int
+	// Lines are the statement credits this batch was built from, when it was built from a
+	// statement at all. Empty on a batch entered by hand, which is then matched by date
+	// and amount the way it always was.
+	Lines []BatchLine
 }
 
 // Verdict says what a comparison found. The wording is the operator's: each one names what
@@ -235,24 +239,56 @@ func reconcileCredits(credits []Movement, batches []PanelBatch) []CreditLine {
 
 	used := make([]bool, len(batches))
 	lines := make([]CreditLine, 0, len(sorted))
-
 	for _, credit := range sorted {
-		line := CreditLine{
+		lines = append(lines, CreditLine{
 			OccurredOn:  credit.OccurredOn,
 			Points:      credit.Points,
 			Description: credit.Description,
 			Verdict:     VerdictMissingInPanel,
+		})
+	}
+
+	// Batches that say which credits they came from are claimed first. A batch that summed
+	// four credits matches none of them by date and amount - that is what summing did - so
+	// without this pass the same file reconciled twice would offer to record all four
+	// again.
+	for i, batch := range batches {
+		if len(batch.Lines) == 0 {
+			continue
+		}
+		for _, recorded := range batch.Lines {
+			for index := range lines {
+				if lines[index].Verdict != VerdictMissingInPanel {
+					continue
+				}
+				if lines[index].Points != recorded.Points || !lines[index].OccurredOn.Equal(recorded.OccurredOn) {
+					continue
+				}
+				lines[index].Verdict = VerdictMatched
+				lines[index].BatchID = batch.BatchID
+				used[i] = true
+				break
+			}
+		}
+	}
+
+	// Then the batches entered by hand, one credit to one batch by date and amount.
+	for index := range lines {
+		if lines[index].Verdict != VerdictMissingInPanel {
+			continue
 		}
 		for i, batch := range batches {
-			if used[i] || batch.Points != credit.Points || !batch.AcquiredOn.Equal(credit.OccurredOn) {
+			if used[i] || len(batch.Lines) > 0 {
+				continue
+			}
+			if batch.Points != lines[index].Points || !batch.AcquiredOn.Equal(lines[index].OccurredOn) {
 				continue
 			}
 			used[i] = true
-			line.Verdict = VerdictMatched
-			line.BatchID = batch.BatchID
+			lines[index].Verdict = VerdictMatched
+			lines[index].BatchID = batch.BatchID
 			break
 		}
-		lines = append(lines, line)
 	}
 
 	// Batches nobody claimed: recorded in the panel and absent from the statement. Either

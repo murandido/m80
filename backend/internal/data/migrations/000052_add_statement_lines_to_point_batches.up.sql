@@ -1,0 +1,22 @@
+-- Which statement lines a batch was built from.
+--
+-- The reconciliation stores nothing of the file it reads, on purpose: an export is always
+-- obtainable again, and comparing it needs a diff, not a history. That held while a batch
+-- was one credit - the same credit found the same batch again by date and amount, so a
+-- file sent twice offered nothing the second time.
+--
+-- Summing several credits into one batch broke that: a batch of 675.000 dated 04/09 no
+-- longer looks like the four credits of 168.750 that made it, so every one of them came
+-- back as "missing in panel" and could be recorded a second time. Deriving the answer
+-- instead - hunting for a subset of the credits that adds up to the batch - is guesswork
+-- the moment two subsets add up the same, and a wrong guess here reads as a confident
+-- verdict.
+--
+-- So what is written down is not the statement: it is where our own batch came from. The
+-- shape is an array of {"d": "AAAA-MM-DD", "p": 168750} - the two fields the comparison
+-- matches on, nothing that describes the customer or the flight.
+--
+-- NULL on every batch entered by hand, and on all 20 that predate this column: the
+-- comparison keeps its old exact-match path for them, so nothing changes for a batch that
+-- never came from a statement.
+ALTER TABLE point_batches ADD COLUMN statement_lines JSONB NULL;

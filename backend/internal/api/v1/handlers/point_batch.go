@@ -182,11 +182,13 @@ func (h *PointBatchHandler) preloadBatch(batch *data.PointBatch) {
 
 // GetPointBatches handles the GET /point-batches route.
 // @Summary      Listar lotes de pontos
-// @Description  Lotes de uma conta, do mais antigo para o mais novo — a mesma ordem em que o FIFO os consome.
+// @Description  Lotes de uma conta, do mais novo para o mais antigo. Aceita o mesmo recorte de datas do fechamento: informados from e to, só aparecem os lotes adquiridos no período.
 // @Tags         Estoque de pontos
 // @Produce      json
 // @Security     BearerAuth
 // @Param        account_id query string true "ID da conta"
+// @Param        from       query string false "Início do período (AAAA-MM-DD)"
+// @Param        to         query string false "Fim do período (AAAA-MM-DD)"
 // @Success      200  {object}  schemas.PointBatchListResponse
 // @Failure      400  {object}  schemas.ErrorResponse "account_id ausente"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
@@ -200,13 +202,24 @@ func (h *PointBatchHandler) GetPointBatches(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// The same window the closing report reads, and optional for the same reason: a client
+	// that wants the whole history of an account still gets it by leaving both out. A date
+	// that does not parse is ignored rather than refused - the panel always sends a valid
+	// pair, and a half-typed one is not worth an error screen.
+	query := h.DB.Preload("Origin").Preload("FundingAgency").Where("account_id = ?", accountID)
+	if from, err := time.Parse(batchDateLayout, r.URL.Query().Get("from")); err == nil {
+		query = query.Where("acquired_on >= ?", from)
+	}
+	if to, err := time.Parse(batchDateLayout, r.URL.Query().Get("to")); err == nil {
+		query = query.Where("acquired_on <= ?", to)
+	}
+
 	var batches []data.PointBatch
-	// Oldest first, which is consumption order. created_at breaks the tie so two batches
-	// acquired on the same day always queue the same way.
-	err := h.DB.Preload("Origin").Preload("FundingAgency").
-		Where("account_id = ?", accountID).
-		Order("acquired_on ASC").Order("created_at ASC").
-		Find(&batches).Error
+	// Newest first: the screen is a ledger being read, and what somebody just recorded is
+	// what they came to check. Consumption order is FIFO's business, and internal/inventory
+	// builds its own queue - this list feeds no calculation. created_at breaks the tie so
+	// two batches of the same day always come back in the same order.
+	err := query.Order("acquired_on DESC").Order("created_at DESC").Find(&batches).Error
 	if err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch point batches: "+err.Error())
 		return

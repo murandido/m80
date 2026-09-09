@@ -225,7 +225,10 @@ export const statementCommitResponseSchema = z.object({
   message: z.string(),
   data: z
     .object({
+      // created counts batches, not credits: the commit sums credits of the same origin
+      // and payer into one batch, so four instalments come back as one.
       created: z.number(),
+      credits: z.number(),
       skipped: z.number(),
     })
     .nullish(),

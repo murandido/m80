@@ -48,14 +48,18 @@ const VERDICTS: Record<StatementVerdict, { label: string; className: string }> =
   amount_differs: { label: "Valor diferente", className: "text-red-700 dark:text-red-400" },
 }
 
-// What the operator supplies for a credit: the two things a statement cannot know.
+// What the operator supplies for a credit: the things a statement cannot know.
 interface CreditDraft {
   originId: string
   cost: string
   fundingAgencyId: string
+  // note is both the batch's label and the way to keep two acquisitions apart. Credits are
+  // grouped by origin, payer and this: a statement carrying two Inter purchases a week
+  // apart would otherwise be summed into one batch at a blended rate that is neither.
+  note: string
 }
 
-const BLANK: CreditDraft = { originId: "", cost: "", fundingAgencyId: "" }
+const BLANK: CreditDraft = { originId: "", cost: "", fundingAgencyId: "", note: "" }
 
 export function StatementPanel({ accountId, origins, agencies }: Props) {
   const [pending, startTransition] = useTransition()
@@ -88,6 +92,20 @@ export function StatementPanel({ accountId, origins, agencies }: Props) {
       }),
     [selected, drafts],
   )
+
+  // What will actually be written: credits of the same origin and payer are summed into a
+  // single batch, because a purchase that arrived in four instalments is one acquisition.
+  // Saying so before the button is pressed is what keeps "lancei 24 e apareceram 2" from
+  // reading as a bug.
+  const plannedBatches = useMemo(() => {
+    const keys = new Set(
+      ready.map(
+        (index) =>
+          `${drafts[index].originId}|${drafts[index].fundingAgencyId}|${drafts[index].note}`,
+      ),
+    )
+    return keys.size
+  }, [ready, drafts])
 
   function buildForm(): FormData | null {
     if (!file) {
@@ -132,7 +150,7 @@ export function StatementPanel({ accountId, origins, agencies }: Props) {
             // Blank reads as zero rather than as an error: plenty of credits are free.
             cost_cents: draft.cost.trim() === "" ? 0 : (parseCurrencyBRLInput(draft.cost) ?? 0),
             funding_agency_id: draft.fundingAgencyId,
-            note: "",
+            note: draft.note.trim(),
           }
         }),
       ),
@@ -144,10 +162,12 @@ export function StatementPanel({ accountId, origins, agencies }: Props) {
         toast.error(response.error)
         return
       }
+      const lots = `${response.created} ${response.created === 1 ? "lote lançado" : "lotes lançados"}`
+      const from = `a partir de ${response.credits} ${response.credits === 1 ? "crédito" : "créditos"}`
       toast.success(
         response.skipped > 0
-          ? `${response.created} lotes lançados, ${response.skipped} já existiam.`
-          : `${response.created} lotes lançados.`,
+          ? `${lots} ${from}. ${response.skipped} já existiam.`
+          : `${lots} ${from}.`,
       )
       // Reconcile again so what was just recorded shows as settled, rather than leaving the
       // screen offering to create it a second time.
@@ -198,6 +218,7 @@ export function StatementPanel({ accountId, origins, agencies }: Props) {
           ...(bulk.originId ? { originId: bulk.originId } : {}),
           ...(bulk.cost.trim() !== "" ? { cost: bulk.cost } : {}),
           ...(bulk.fundingAgencyId ? { fundingAgencyId: bulk.fundingAgencyId } : {}),
+          ...(bulk.note.trim() !== "" ? { note: bulk.note } : {}),
         }
       }
       return next
@@ -305,7 +326,10 @@ export function StatementPanel({ accountId, origins, agencies }: Props) {
                 </h3>
                 <p className="mt-1 text-xs text-slate-500">
                   Pontos que entraram na conta e nunca foram precificados. Marque, informe o custo e
-                  a origem, e lance — o custeio recalcula sozinho depois.
+                  a origem, e lance — o custeio recalcula sozinho depois. Créditos com a mesma origem
+                  e a mesma agência viram um lote só, somados e datados no mais antigo deles. Se o
+                  extrato trouxer duas compras do mesmo parceiro que não são a mesma aquisição, dê
+                  rótulos diferentes a elas — rótulo diferente, lote separado.
                 </p>
               </div>
 
@@ -356,6 +380,12 @@ export function StatementPanel({ accountId, origins, agencies }: Props) {
                     ))}
                   </SelectContent>
                 </Select>
+                <Input
+                  placeholder="Rótulo (opcional)"
+                  value={bulk.note}
+                  onChange={(event) => setBulk((current) => ({ ...current, note: event.target.value }))}
+                  className="w-40"
+                />
                 <Button variant="secondary" onClick={applyBulk} disabled={pending}>
                   Aplicar aos {selected.size} marcados
                 </Button>
@@ -380,6 +410,7 @@ export function StatementPanel({ accountId, origins, agencies }: Props) {
                       <th className="px-3 py-2 text-left font-medium">Origem</th>
                       <th className="px-3 py-2 text-left font-medium">Custo (R$)</th>
                       <th className="px-3 py-2 text-left font-medium">Bancado por</th>
+                      <th className="px-3 py-2 text-left font-medium">Rótulo</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -404,8 +435,14 @@ export function StatementPanel({ accountId, origins, agencies }: Props) {
                   {pending && <Loader2 className="size-4 animate-spin" />}
                   {ready.length === 0
                     ? "Lançar créditos"
-                    : `Lançar ${ready.length} ${ready.length === 1 ? "crédito" : "créditos"}`}
+                    : `Lançar ${plannedBatches} ${plannedBatches === 1 ? "lote" : "lotes"}`}
                 </Button>
+                {ready.length > plannedBatches && (
+                  <span className="text-xs text-slate-500">
+                    {ready.length} créditos somados em {plannedBatches}{" "}
+                    {plannedBatches === 1 ? "lote" : "lotes"}.
+                  </span>
+                )}
                 {selected.size > ready.length && (
                   <span className="text-xs text-amber-800 dark:text-amber-300">
                     {selected.size - ready.length} marcados ainda sem origem ou agência.
@@ -533,6 +570,14 @@ function CreditRow({
             ))}
           </SelectContent>
         </Select>
+      </td>
+      <td className="px-3 py-2">
+        <Input
+          placeholder="Opcional"
+          value={draft?.note ?? ""}
+          onChange={(event) => onChange({ note: event.target.value })}
+          className="w-36"
+        />
       </td>
     </tr>
   )

@@ -83,7 +83,7 @@ func (h *StatementHandler) PreviewStatement(w http.ResponseWriter, r *http.Reque
 // scratch, exactly as the legacy importer does: the preview is advice, not contract, so the
 // client sends which credits it wants and what they cost - never their contents.
 // @Summary      Lançar lotes a partir do extrato
-// @Description  Cria um lote para cada crédito marcado, com o custo e a origem informados. O arquivo é lido e conciliado de novo do zero, então uma seleção que já deixou de ser um crédito sem lote é pulada em vez de duplicar o lançamento. Ao fim, recalcula o custeio da conta.
+// @Description  Soma os créditos marcados que compartilham origem e agência num único lote, datado no crédito mais antigo do grupo — uma compra parcelada em quatro entra como um lote só. O custo informado em cada crédito é somado. O arquivo é lido e conciliado de novo do zero, então uma seleção que já deixou de ser um crédito sem lote é pulada em vez de duplicar o lançamento. Ao fim, recalcula o custeio da conta.
 // @Tags         Estoque de pontos
 // @Accept       multipart/form-data
 // @Produce      json
@@ -234,7 +234,15 @@ func (h *StatementHandler) reconcile(
 	return statement.Reconcile(parsed.Movements, bookings, batches), from, to, nil
 }
 
-// recordBatches writes one batch per chosen credit.
+// recordBatches writes the chosen credits as batches, one per origin and funding agency
+// rather than one per credit.
+//
+// A purchase reaches the statement in instalments - the Inter batch arrives as four credits
+// of the same day, flight accruals as one credit per flight across the week - and recording
+// each of them separately fills the screen with rows that are one acquisition to everybody
+// who reads them. So credits that share the origin and the payer are summed into a single
+// batch, dated at the earliest of them: the points are then in the FIFO queue from the day
+// the first of them landed, and no issuance made in between goes uncovered.
 //
 // A selection whose credit is no longer missing is skipped rather than written: the same
 // file submitted twice would otherwise duplicate every batch it created the first time.
@@ -245,7 +253,25 @@ func (h *StatementHandler) recordBatches(
 ) (schemas.StatementCommitResponse, error) {
 	result := schemas.StatementCommitResponse{}
 
-	rows := make([]data.PointBatch, 0, len(selections))
+	// Insertion order is kept on purpose: the batches come out in the order the operator
+	// saw the credits, not in whatever order a map iterates.
+	type group struct {
+		batch data.PointBatch
+		// lines is where the batch came from: the credits summed into it. Written onto the
+		// batch so the same file reconciled again finds them already recorded - a summed
+		// batch resembles none of its credits, so date and amount alone cannot.
+		lines []statement.BatchLine
+		// note is what the operator typed for these credits, if anything.
+		note string
+		// description is the credits' own wording while they all say the same thing, and
+		// empty once two of them disagree - a label that describes half of a batch is
+		// worse than none.
+		description string
+		sameWording bool
+	}
+	groups := make(map[string]*group)
+	order := make([]string, 0, len(selections))
+
 	for _, selection := range selections {
 		if selection.Index < 0 || selection.Index >= len(credits) {
 			result.Skipped++
@@ -256,24 +282,61 @@ func (h *StatementHandler) recordBatches(
 			result.Skipped++
 			continue
 		}
+		result.Credits++
 
-		batch := data.PointBatch{
-			AccountID:          account.ID,
-			OriginID:           &selection.OriginID,
-			AcquiredOn:         credit.OccurredOn,
-			Points:             credit.Points,
-			CostCents:          selection.CostCents,
-			FundingAgencyID:    selection.FundingAgencyID,
-			ProfitSharePercent: account.DefaultProfitSharePercent,
+		key := selection.OriginID + "|" + selection.FundingAgencyID + "|" + selection.Note
+		existing, found := groups[key]
+		if !found {
+			originID := selection.OriginID
+			groups[key] = &group{
+				batch: data.PointBatch{
+					AccountID:          account.ID,
+					OriginID:           &originID,
+					AcquiredOn:         credit.OccurredOn,
+					Points:             credit.Points,
+					CostCents:          selection.CostCents,
+					FundingAgencyID:    selection.FundingAgencyID,
+					ProfitSharePercent: account.DefaultProfitSharePercent,
+				},
+				lines:       []statement.BatchLine{{OccurredOn: credit.OccurredOn, Points: credit.Points}},
+				note:        selection.Note,
+				description: credit.Description,
+				sameWording: true,
+			}
+			order = append(order, key)
+			continue
 		}
-		if note := selection.Note; note != "" {
+
+		existing.lines = append(existing.lines,
+			statement.BatchLine{OccurredOn: credit.OccurredOn, Points: credit.Points})
+		existing.batch.Points += credit.Points
+		existing.batch.CostCents += selection.CostCents
+		if credit.OccurredOn.Before(existing.batch.AcquiredOn) {
+			existing.batch.AcquiredOn = credit.OccurredOn
+		}
+		if credit.Description != existing.description {
+			existing.sameWording = false
+		}
+	}
+
+	rows := make([]data.PointBatch, 0, len(order))
+	for _, key := range order {
+		entry := groups[key]
+		batch := entry.batch
+		// The operator's own note wins; failing that, the airline's wording, which is what
+		// tells two batches of the same origin apart.
+		note := entry.note
+		if note == "" && entry.sameWording {
+			note = entry.description
+		}
+		if note != "" {
 			batch.Note = &note
-		} else if credit.Description != "" {
-			// The airline's own wording is a better default label than nothing: it is what
-			// tells two identical credits of the same day apart.
-			description := credit.Description
-			batch.Note = &description
 		}
+		encoded, err := statement.EncodeBatchLines(entry.lines)
+		if err != nil {
+			return result, err
+		}
+		batch.StatementLines = encoded
 		rows = append(rows, batch)
 	}
 

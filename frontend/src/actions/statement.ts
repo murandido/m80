@@ -36,7 +36,7 @@ type PreviewResult =
 
 type CommitResult =
   | { error: string }
-  | { success: true; created: number; skipped: number }
+  | { success: true; created: number; credits: number; skipped: number }
 
 export async function previewStatementAction(formData: FormData): Promise<PreviewResult> {
   const file = formData.get("file")
@@ -83,6 +83,7 @@ export async function commitStatementAction(formData: FormData): Promise<CommitR
     return {
       success: true,
       created: parsed.data.data.created,
+      credits: parsed.data.data.credits,
       skipped: parsed.data.data.skipped,
     }
   } catch {

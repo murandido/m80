@@ -249,3 +249,112 @@ func TestReconcileComparesTheChangeInBalance(t *testing.T) {
 		t.Errorf("net = %d, want 552700", result.StatementNetPoints)
 	}
 }
+
+// The file that was already committed, sent again. The four Inter credits were summed into
+// one batch of 675.000, which resembles none of them - only the provenance recorded on the
+// batch can say they are already in the panel.
+func TestReconcileClaimsTheCreditsASummedBatchCameFrom(t *testing.T) {
+	t.Parallel()
+
+	var movements []Movement
+	var lines []BatchLine
+	for i := 0; i < 4; i++ {
+		movements = append(movements, Movement{
+			OccurredOn: day("2026-09-04"), Kind: KindAccrual, Points: 168750, Description: "Resgate pontos Inter",
+		})
+		lines = append(lines, BatchLine{OccurredOn: day("2026-09-04"), Points: 168750})
+	}
+	// The accruals of three different days, summed into a batch dated at the earliest.
+	accruals := []struct {
+		day    string
+		points int
+	}{{"2026-09-03", 1340}, {"2026-09-04", 2584}, {"2026-09-05", 7320}}
+	var accrualLines []BatchLine
+	for _, accrual := range accruals {
+		movements = append(movements, Movement{
+			OccurredOn: day(accrual.day), Kind: KindAccrual, Points: accrual.points,
+		})
+		accrualLines = append(accrualLines, BatchLine{OccurredOn: day(accrual.day), Points: accrual.points})
+	}
+
+	batches := []PanelBatch{
+		{BatchID: "inter", AcquiredOn: day("2026-09-04"), Points: 675000, Lines: lines},
+		{BatchID: "accrual", AcquiredOn: day("2026-09-03"), Points: 11244, Lines: accrualLines},
+	}
+
+	result := Reconcile(movements, nil, batches)
+
+	for _, credit := range result.Credits {
+		if credit.Verdict != VerdictMatched {
+			t.Errorf("credit of %d on %s is %s, want matched",
+				credit.Points, credit.OccurredOn.Format("2006-01-02"), credit.Verdict)
+		}
+	}
+	if len(result.Credits) != len(movements) {
+		t.Errorf("got %d credit lines, want %d - a summed batch must not add a line of its own",
+			len(result.Credits), len(movements))
+	}
+}
+
+// Provenance covers only what it names. A credit that arrived after the batch was recorded
+// still has to surface, or the second import silently swallows it.
+func TestReconcileStillFindsACreditTheSummedBatchDoesNotCover(t *testing.T) {
+	t.Parallel()
+
+	movements := []Movement{
+		{OccurredOn: day("2026-09-04"), Kind: KindAccrual, Points: 168750},
+		{OccurredOn: day("2026-09-04"), Kind: KindAccrual, Points: 168750},
+		{OccurredOn: day("2026-09-06"), Kind: KindAccrual, Points: 8500},
+	}
+	batches := []PanelBatch{{
+		BatchID: "inter", AcquiredOn: day("2026-09-04"), Points: 337500,
+		Lines: []BatchLine{
+			{OccurredOn: day("2026-09-04"), Points: 168750},
+			{OccurredOn: day("2026-09-04"), Points: 168750},
+		},
+	}}
+
+	result := Reconcile(movements, nil, batches)
+
+	missing := 0
+	for _, credit := range result.Credits {
+		if credit.Verdict == VerdictMissingInPanel {
+			missing++
+			if credit.Points != 8500 {
+				t.Errorf("the unrecorded credit is %d, want the 8.500 one", credit.Points)
+			}
+		}
+	}
+	if missing != 1 {
+		t.Errorf("got %d unrecorded credits, want exactly 1", missing)
+	}
+}
+
+// The column survives a round trip, and a value that does not parse reads as no provenance
+// rather than as an error - the batch then compares the way a hand-entered one does.
+func TestBatchLinesRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	lines := []BatchLine{
+		{OccurredOn: day("2026-09-03"), Points: 1340},
+		{OccurredOn: day("2026-09-04"), Points: 168750},
+	}
+	encoded, err := EncodeBatchLines(lines)
+	if err != nil {
+		t.Fatalf("encoding failed: %v", err)
+	}
+	if string(encoded) != `[{"d":"2026-09-03","p":1340},{"d":"2026-09-04","p":168750}]` {
+		t.Errorf("stored shape changed: %s", encoded)
+	}
+
+	decoded := DecodeBatchLines(encoded)
+	if len(decoded) != 2 || !decoded[1].OccurredOn.Equal(day("2026-09-04")) || decoded[1].Points != 168750 {
+		t.Errorf("round trip lost the lines: %+v", decoded)
+	}
+	if empty, err := EncodeBatchLines(nil); err != nil || empty != nil {
+		t.Errorf("no lines must store no value, got %q (%v)", empty, err)
+	}
+	if broken := DecodeBatchLines([]byte(`{"nope":1}`)); broken != nil {
+		t.Errorf("a value that does not parse must read as no provenance, got %+v", broken)
+	}
+}

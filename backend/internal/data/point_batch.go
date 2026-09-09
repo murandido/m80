@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
@@ -35,6 +36,12 @@ type PointBatch struct {
 	// settled ones included.
 	ProfitSharePercent int  `gorm:"column:profit_share_percent;not null" json:"profit_share_percent"`
 	Opening            bool `gorm:"not null;default:false" json:"opening"`
+	// StatementLines is where this batch came from, when it came from a statement: the
+	// credits that were summed into it. It is what lets the same file be reconciled twice
+	// without offering to record everything again - a summed batch no longer looks like
+	// any single credit, so date and amount alone cannot find it. NULL on a batch entered
+	// by hand. See migration 52.
+	StatementLines datatypes.JSON `gorm:"column:statement_lines;type:jsonb" json:"statement_lines,omitempty"`
 	// SettledAt is the spreadsheet's "ACERTADO", dated instead of yes/no.
 	SettledAt *time.Time `gorm:"column:settled_at" json:"settled_at"`
 	Note      *string    `json:"note"`

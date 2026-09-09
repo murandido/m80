@@ -82,7 +82,12 @@ type StatementBatchSelection struct {
 
 // StatementCommitResponse says what the commit wrote.
 type StatementCommitResponse struct {
-	Created int `json:"created" example:"4"`
+	// Created counts batches, not credits: credits of the same origin and payer are summed
+	// into one batch, so four instalments of the same purchase come back as one.
+	Created int `json:"created" example:"1"`
+	// Credits counts how many statement lines went into them, which is what makes a commit
+	// of twenty accruals into one batch readable instead of alarming.
+	Credits int `json:"credits" example:"4"`
 	// Skipped counts selections the reconciliation no longer reports as missing - a batch
 	// entered between the preview and the commit, or the same file submitted twice.
 	Skipped int `json:"skipped" example:"0"`

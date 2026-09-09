@@ -66,6 +66,7 @@ func LoadPanel(db *gorm.DB, accountID string, from, to time.Time) ([]PanelBookin
 			BatchID:    row.ID,
 			AcquiredOn: row.AcquiredOn,
 			Points:     row.Points,
+			Lines:      DecodeBatchLines(row.StatementLines),
 		})
 	}
 
