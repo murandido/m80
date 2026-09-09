@@ -10,6 +10,8 @@ import { Button } from "@/components/ui/button"
 import { LiveRefresh } from "@/components/layout/live-refresh"
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty"
 import { getAgenciesSchema, type Agency } from "@/schemas/agency"
+import { getLoyaltyProgramsSchema, type LoyaltyProgram } from "@/schemas/loyalty-program"
+import { getPeopleOptionsSchema, type PersonOption } from "@/schemas/person"
 import { getAccountOptionsSchema, type AccountOption } from "@/schemas/account"
 import {
   getInventoryClosingSchema,
@@ -71,7 +73,7 @@ export default async function InventoryPage({ searchParams }: PageProps) {
   const authHeader = { Authorization: `Bearer ${token}` }
   const api = `${env.BACKEND_URL}/api/v1`
 
-  const [accounts, agencies, origins] = await Promise.all([
+  const [accounts, agencies, origins, loyaltyPrograms, people] = await Promise.all([
     fetchList<AccountOption>(`${api}/accounts?view=picker`, getAccountOptionsSchema.response, authHeader),
     fetchList<Agency>(`${api}/agencies`, getAgenciesSchema.response, authHeader),
     fetchList<PointBatchOrigin>(
@@ -79,6 +81,14 @@ export default async function InventoryPage({ searchParams }: PageProps) {
       getPointBatchOriginsSchema.response,
       authHeader,
     ),
+    // Both feed the account picker: the programme is what separates two accounts of the
+    // same holder, and the holder's name is what the account is called.
+    fetchList<LoyaltyProgram>(
+      `${api}/loyalty-programs`,
+      getLoyaltyProgramsSchema.response,
+      authHeader,
+    ),
+    fetchList<PersonOption>(`${api}/people?view=picker`, getPeopleOptionsSchema.response, authHeader),
   ])
 
   // No account chosen yet means nothing to compute: the report is per account, and asking
@@ -122,6 +132,8 @@ export default async function InventoryPage({ searchParams }: PageProps) {
       <Suspense>
         <InventoryToolbar
           accounts={accounts ?? []}
+          loyaltyPrograms={loyaltyPrograms ?? []}
+          people={people ?? []}
           selected={accountIds}
           from={period.date_from}
           to={period.date_to}

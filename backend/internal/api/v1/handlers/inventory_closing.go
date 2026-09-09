@@ -67,6 +67,11 @@ func (h *InventoryClosingHandler) GetInventoryClosing(w http.ResponseWriter, r *
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch agencies: "+err.Error())
 		return
 	}
+	accountLabels, err := h.accountLabels(accountIDs)
+	if err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch accounts: "+err.Error())
+		return
+	}
 	batchLabels, err := h.batchLabels(accountIDs)
 	if err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch batches: "+err.Error())
@@ -98,7 +103,8 @@ func (h *InventoryClosingHandler) GetInventoryClosing(w http.ResponseWriter, r *
 			return
 		}
 
-		data.Accounts = append(data.Accounts, toClosingResponse(closing, closedPeriodID, names, batchLabels))
+		data.Accounts = append(data.Accounts,
+			toClosingResponse(closing, closedPeriodID, names, batchLabels, accountLabels))
 
 		data.Totals.CostCents += closing.CostCents
 		data.Totals.RevenueCents += closing.RevenueCents
@@ -183,6 +189,7 @@ func toClosingResponse(
 	closedPeriodID *string,
 	names map[string]string,
 	labels map[string]batchLabel,
+	accountLabels map[string]string,
 ) schemas.InventoryClosingResponse {
 	response := schemas.InventoryClosingResponse{
 		AccountID:        closing.AccountID,
@@ -246,7 +253,55 @@ func toClosingResponse(
 		response.Settlements = append(response.Settlements, settlementResponse(settlement, names))
 	}
 
+	if label, ok := accountLabels[closing.AccountID]; ok && label != "" {
+		response.AccountLabel = &label
+	}
+
 	return response
+}
+
+// accountLabels names each account the way the panel's own pickers do: the holder, plus the
+// programme.
+//
+// The programme is not decoration here. Two accounts of one holder differ by nothing else -
+// "Marlon" on Azul and "Marlon" on Smiles are two separate stocks with two separate
+// closings - and an account alias is free text that need not mention it. A heading saying
+// only "Marlon" leaves the operator guessing which of the two they are settling.
+func (h *InventoryClosingHandler) accountLabels(accountIDs []string) (map[string]string, error) {
+	type row struct {
+		ID          string
+		HolderName  *string
+		Login       *string
+		ProgramName string
+	}
+	var rows []row
+	err := h.DB.Table("accounts").
+		Select(`accounts.id,
+		        holders.name AS holder_name,
+		        accounts.login,
+		        loyalty_programs.name AS program_name`).
+		Joins("JOIN loyalty_programs ON loyalty_programs.id = accounts.loyalty_program_id").
+		Joins("LEFT JOIN people AS holders ON holders.id = accounts.holder_id").
+		Where("accounts.id IN ?", accountIDs).
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+
+	labels := make(map[string]string, len(rows))
+	for _, r := range rows {
+		var who string
+		switch {
+		case r.HolderName != nil && *r.HolderName != "":
+			who = *r.HolderName
+		case r.Login != nil && *r.Login != "":
+			who = *r.Login
+		default:
+			who = r.ID[:8]
+		}
+		labels[r.ID] = who + " · " + r.ProgramName
+	}
+	return labels, nil
 }
 
 func settlementResponse(settlement inventory.Settlement, names map[string]string) schemas.InventorySettlementResponse {

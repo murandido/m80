@@ -2,41 +2,40 @@
 
 import { useRouter, useSearchParams } from "next/navigation"
 import { Label } from "@/components/ui/label"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
+import { AccountCombobox } from "@/components/accounts/account-combobox"
 import { DateRangeFilter } from "@/components/filters/date-range-filter"
-import type { AccountOption } from "@/schemas/account"
+import type { AccountOption, LoyaltyProgramSummary } from "@/schemas/account"
+import type { PersonOption } from "@/schemas/person"
 
 interface Props {
   accounts: AccountOption[]
+  // An account carries only loyalty_program_id, and the holder's name lives on the person.
+  // Both are needed to say which account this is: two accounts of the same holder differ
+  // only by programme, and an alias is free text that need not mention it.
+  loyaltyPrograms: LoyaltyProgramSummary[]
+  people: PersonOption[]
   selected: string[]
   from: string
   to: string
 }
 
-// The label an account goes by here: its first nickname, then its login, then the head of
-// the id. Same order the suppliers screen uses, so an account does not answer to two
-// different names in two places.
-function labelOf(account: AccountOption): string {
-  return account.nicknames?.[0]?.nickname ?? account.login ?? account.id.slice(0, 8)
-}
-
-export function InventoryToolbar({ accounts, selected, from, to }: Props) {
+export function InventoryToolbar({
+  accounts,
+  loyaltyPrograms,
+  people,
+  selected,
+  from,
+  to,
+}: Props) {
   const router = useRouter()
   const searchParams = useSearchParams()
 
   // Only accounts on the inventory regime. An ordinary account has no batches and never
   // will, so offering it would produce an empty screen with no way to tell why.
-  const eligible = accounts
-    .filter((account) => account.owns_point_inventory)
-    .sort((a, b) => labelOf(a).localeCompare(labelOf(b), "pt-BR"))
+  const eligible = accounts.filter((account) => account.owns_point_inventory)
 
   const chosen = eligible.find((account) => account.id === selected[0])
+  const programOf = loyaltyPrograms.find((program) => program.id === chosen?.loyalty_program_id)
 
   function push(changes: Record<string, string>) {
     const params = new URLSearchParams(searchParams.toString())
@@ -57,28 +56,34 @@ export function InventoryToolbar({ accounts, selected, from, to }: Props) {
 
   return (
     <div className="flex flex-wrap items-end gap-3">
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="inventory-account" className="text-xs text-slate-500">
+      <div className="flex w-72 flex-col gap-1.5">
+        <Label className="flex items-center gap-2 text-xs text-slate-500">
           Conta
+          {/* The programme spelled out, not only the colour dot the combobox shows when
+              closed. Two accounts of one holder differ by nothing else - "Marlon" on Azul
+              and "Marlon" on Smiles read identically otherwise, and an alias is free text
+              that need not mention the programme. */}
+          {programOf && (
+            <span
+              className="rounded-full px-1.5 py-0.5 text-[11px] font-medium text-white"
+              style={{ backgroundColor: programOf.color }}
+            >
+              {programOf.name}
+            </span>
+          )}
         </Label>
-        <Select value={selected[0] ?? ""} onValueChange={(id) => push({ account_ids: id })}>
-          <SelectTrigger id="inventory-account" className="w-56">
-            {/* The label is rendered here rather than left to the Select to resolve from
-                its items: the options live in a portal that is only mounted while the
-                dropdown is open, so a closed trigger had nothing to read and showed an
-                empty box even with an account chosen. */}
-            <SelectValue placeholder="Escolha uma conta">
-              {chosen ? labelOf(chosen) : undefined}
-            </SelectValue>
-          </SelectTrigger>
-          <SelectContent>
-            {eligible.map((account) => (
-              <SelectItem key={account.id} value={account.id}>
-                {labelOf(account)}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        {/* The grid's own account picker rather than a plain select: it names the account
+            by its holder and shows the programme beside it, which is the only thing telling
+            two accounts of the same person apart - one Azul, one Smiles, both called
+            "Marlon". A select showing the alias alone cannot say which is which. */}
+        <AccountCombobox
+          accounts={eligible}
+          people={people}
+          loyaltyPrograms={loyaltyPrograms}
+          value={selected[0] ?? ""}
+          onChange={(id) => push({ account_ids: id })}
+          placeholder="Escolha uma conta"
+        />
       </div>
 
       <div className="flex flex-col gap-1.5">
