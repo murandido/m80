@@ -21,17 +21,17 @@ type CancelInput struct {
 	RefundedTaxes   *int
 	CancellationFee *int
 
-	// CancelledAt backdates the cancellation, mirroring CreateInput.CreatedAt and
-	// used by the same single caller: the spreadsheet importer
-	// (internal/legacyimport), which sets it to the day of the sheet tab the estorno
-	// was written on. That is the only cancellation date the sheet carries - there is
-	// no such column, the tab's own day is the date - and cancelled_at is what the
-	// supplier balance and the dashboard read as "the day the miles came back". An
-	// estorno from a March tab stamped with now() lands its refund in whatever month
-	// somebody happened to click Importar.
+	// CancelledAt backdates the cancellation, mirroring CreateInput.CreatedAt.
 	//
-	// Nil everywhere else. The panel's Cancelar button and the bot's CANCELAMENTO are
-	// cancelling something as it happens, so for them now() is the truth.
+	// cancelled_at is what the costing, the supplier balance and the dashboard read as
+	// "the day the miles came back", so a refund stamped with now() lands in whatever
+	// month somebody happened to record it in. Two callers set it: the spreadsheet
+	// importer (internal/legacyimport), which uses the day of the sheet tab the estorno
+	// was written on, and the panel's Cancelar dialog, where the operator says the day
+	// when the cancellation is being recorded after the fact.
+	//
+	// Nil is now(), which is the truth for a cancellation happening as it is recorded -
+	// the bot's CANCELAMENTO, and the dialog left on today.
 	CancelledAt *time.Time
 
 	// CancellationOnly says this cancellation is an estorno for a booking the panel

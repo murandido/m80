@@ -10,6 +10,11 @@ export type Direction = "down" | "up" | "tab-right" | "tab-left"
 // "Destino", "Pontos", "Valor milheiro", "Taxas", "Valor total" (calculated),
 // "Conta", "Emissor", "Agência", "Status", "Observação", "Taxa de resgate".
 export const COLUMN_COUNT = 16
+// "Data da emissão" sits after all of them, and is the one column the operator can hide.
+// Hiding it is passing COLUMN_COUNT where the resolvers below take a count - which only
+// works because it is last: no other index moves.
+export const ISSUED_ON_COLUMN_INDEX = 16
+export const COLUMN_COUNT_WITH_ISSUED_ON = 17
 export const LOCATOR_COLUMN_INDEX = 1
 export const PASSENGER_COLUMN_INDEX = 3
 export const ORIGIN_COLUMN_INDEX = 4
@@ -42,9 +47,10 @@ export function resolveNextCell<T extends NavigableRow>(
   sel: { r: number; c: number },
   direction: Direction,
   depth = 0,
+  columnCount: number = COLUMN_COUNT,
 ): ResolvedCell {
   // Guards against infinite recursion if every row happens to be cancelled.
-  if (depth > rows.length + COLUMN_COUNT + 5) {
+  if (depth > rows.length + columnCount + 5) {
     return { r: sel.r, c: sel.c, appendRow: false }
   }
 
@@ -58,7 +64,7 @@ export function resolveNextCell<T extends NavigableRow>(
       return { r: rows.length - 1, c: sel.c, appendRow: false }
     }
     if (isSkippableRow(rows[r])) {
-      return resolveNextCell(rows, { r, c: sel.c }, direction, depth + 1)
+      return resolveNextCell(rows, { r, c: sel.c }, direction, depth + 1, columnCount)
     }
     return { r, c: sel.c, appendRow: false }
   }
@@ -73,10 +79,10 @@ export function resolveNextCell<T extends NavigableRow>(
 
   if (c < 0) {
     r -= 1
-    c = COLUMN_COUNT - 1
+    c = columnCount - 1
     if (c === CALCULATED_COLUMN_INDEX) c -= 1
     crossedIntoNewRow = true
-  } else if (c >= COLUMN_COUNT) {
+  } else if (c >= columnCount) {
     r += 1
     c = 0
     if (c === CALCULATED_COLUMN_INDEX) c += 1
@@ -86,7 +92,7 @@ export function resolveNextCell<T extends NavigableRow>(
   if (r < 0) return { r: 0, c: 0, appendRow: false }
   if (r >= rows.length) {
     if (direction === "tab-right") return { r: rows.length, c: 0, appendRow: true }
-    return { r: rows.length - 1, c: COLUMN_COUNT - 1, appendRow: false }
+    return { r: rows.length - 1, c: columnCount - 1, appendRow: false }
   }
   // Only treat landing on a cancelled row as "skippable" when this step
   // actually crossed a row boundary - Tab/Shift+Tab moving column-to-column
@@ -96,8 +102,8 @@ export function resolveNextCell<T extends NavigableRow>(
     // Skip the whole cancelled row in one jump - recurse from its far edge
     // so the next step crosses into another row again, instead of stepping
     // column-by-column through cells that must never be landed on.
-    const jumpSel = direction === "tab-right" ? { r, c: COLUMN_COUNT - 1 } : { r, c: 0 }
-    return resolveNextCell(rows, jumpSel, direction, depth + 1)
+    const jumpSel = direction === "tab-right" ? { r, c: columnCount - 1 } : { r, c: 0 }
+    return resolveNextCell(rows, jumpSel, direction, depth + 1, columnCount)
   }
   return { r, c, appendRow: false }
 }
@@ -111,8 +117,9 @@ export function clampMove(
   sel: { r: number; c: number },
   dr: number,
   dc: number,
+  columnCount: number = COLUMN_COUNT,
 ): { r: number; c: number } {
   const r = Math.min(Math.max(sel.r + dr, 0), Math.max(rowCount - 1, 0))
-  const c = Math.min(Math.max(sel.c + dc, 0), COLUMN_COUNT - 1)
+  const c = Math.min(Math.max(sel.c + dc, 0), columnCount - 1)
   return { r, c }
 }

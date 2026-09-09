@@ -49,7 +49,9 @@ export function clearPatchForColumn(c: number): Partial<IssuanceRow> | null {
       // Null is not "empty" here, it is "recompute": the backend reads an explicit null as
       // dropping the manual correction and hands the row back to the rule.
       return { redemption_fee_saved_cents: null }
-    // 9 (calculated total) and 13 (status) intentionally fall through to null.
+    // 9 (calculated total), 13 (status) and 16 (the day of the issuance) intentionally
+    // fall through to null. An issuance always happened on some day, so there is no empty
+    // value to clear it to - the same reason Status has none.
     default:
       return null
   }

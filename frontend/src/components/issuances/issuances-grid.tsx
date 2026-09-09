@@ -1,7 +1,7 @@
 "use client"
 
 import { type ReactNode, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react"
-import { Plus, Keyboard, FileSpreadsheet, AlertTriangle } from "lucide-react"
+import { Plus, Keyboard, FileSpreadsheet, AlertTriangle, CalendarDays } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -44,6 +44,7 @@ import {
   ACCOUNT_COLUMN_INDEX,
   CALCULATED_COLUMN_INDEX,
   COLUMN_COUNT,
+  COLUMN_COUNT_WITH_ISSUED_ON,
   LOCATOR_COLUMN_INDEX,
   OBSERVATION_COLUMN_INDEX,
   REDEMPTION_FEE_COLUMN_INDEX,
@@ -96,6 +97,10 @@ const COLUMN_LABELS = [
   // Appended for the same reason, even though it reads as money and would sit more
   // naturally next to Taxas.
   "Taxa de resgate",
+  // The day the issuance happened - normally today, and corrected when a booking is
+  // recorded after the fact. Last of all, which is also what lets it be hidden without
+  // moving any other column: see COLUMN_COUNT_WITH_ISSUED_ON.
+  "Data da emissão",
 ]
 
 // Overlays the records this session learned about on top of the server-rendered list. The
@@ -152,6 +157,16 @@ interface HistoryEntry {
 
 // Caps each history stack so a long editing session can't grow them without bound.
 const HISTORY_LIMIT = 100
+
+// Where this browser remembers whether the "Data da emissão" column is on screen.
+const ISSUED_ON_COLUMN_STORAGE_KEY = "m80.issuances.showIssuedOn"
+
+// Today as the operator's calendar day. The browser's own zone, which is the one they are
+// reading the screen in - the server resolves the stored timestamp the same way.
+function todayISO(): string {
+  const now = new Date()
+  return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10)
+}
 
 // Shown in the "Atalhos" popover so the keyboard-first workflow is discoverable.
 const SHORTCUTS: { keys: string; label: string }[] = [
@@ -214,6 +229,49 @@ export function IssuancesGrid({
     initialIssuances.map(issuanceToRow),
   )
   const [interaction, dispatch] = useReducer(interactionReducer, initialInteractionState)
+  // The day new rows are recorded on. Normally today; set to another day to enter a
+  // batch of bookings that happened then - the ones a statement reconciliation turned up.
+  const [recordingOn, setRecordingOn] = useState(todayISO)
+  // Whether the "Data da emissão" column is on screen. A preference, not state the server
+  // knows about, so it lives in this browser. Read in an effect rather than in the
+  // initializer because localStorage does not exist while the page is server-rendered.
+  const [showIssuedOn, setShowIssuedOn] = useState(false)
+
+  useEffect(() => {
+    try {
+      setShowIssuedOn(window.localStorage.getItem(ISSUED_ON_COLUMN_STORAGE_KEY) === "1")
+    } catch {
+      // A browser with site data blocked still gets a working grid, just not a
+      // remembered preference.
+    }
+  }, [])
+
+  // Backdating deliberately is the one moment the column must not be hidden: the dates
+  // being written are no longer the obvious ones.
+  const backdating = recordingOn !== todayISO()
+  const issuedOnVisible = showIssuedOn || backdating
+  const columnCount = issuedOnVisible ? COLUMN_COUNT_WITH_ISSUED_ON : COLUMN_COUNT
+
+  // The two callbacks below are memoized with dependency lists that must not include a
+  // value changing this often, so they read the current one from a ref instead.
+  const columnCountRef = useRef(columnCount)
+  columnCountRef.current = columnCount
+  const recordingOnRef = useRef(recordingOn)
+  recordingOnRef.current = recordingOn
+
+  function toggleIssuedOnColumn() {
+    const next = !showIssuedOn
+    setShowIssuedOn(next)
+    try {
+      window.localStorage.setItem(ISSUED_ON_COLUMN_STORAGE_KEY, next ? "1" : "0")
+    } catch {
+      // Same as above: the preference simply does not persist.
+    }
+    // The selection cannot be left on a column that is no longer rendered.
+    if (!next && !backdating && interaction.sel.c >= COLUMN_COUNT) {
+      dispatch({ type: "SELECT_ONLY", r: interaction.sel.r, c: COLUMN_COUNT - 1 })
+    }
+  }
   const activeCellSaveRef = useRef<(() => void) | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   // A hidden but focusable textarea that holds focus while a cell is selected
@@ -361,7 +419,7 @@ export function IssuancesGrid({
     (key: string) => {
       setRows((prev) => {
         const next = prev.filter((row) => row.key !== key)
-        return next.length > 0 ? next : [makeDraftRow(currentUserId, defaultAgencyId)]
+        return next.length > 0 ? next : [makeDraftRow(currentUserId, defaultAgencyId, recordingOnRef.current)]
       })
       setAccountClearedKeys((prev) => {
         if (!prev.has(key)) return prev
@@ -436,6 +494,9 @@ export function IssuancesGrid({
           // observation is often already there when the fifth required field lands.
           observation: merged.observation ?? undefined,
           flight_date: merged.flight_date ?? undefined,
+          // Sent on the create so a row typed for another day is born on it, rather than
+          // being created today and moved a moment later.
+          issued_on: merged.issued_on,
         }).finally(() => creatingKeysRef.current.delete(row.key))
 
         const queued = queuedPatchesRef.current.get(row.key)
@@ -686,9 +747,9 @@ export function IssuancesGrid({
       }
 
       const { sel, sticky } = interactionRef.current
-      const resolved = resolveNextCell(currentRows, sel, direction)
+      const resolved = resolveNextCell(currentRows, sel, direction, 0, columnCountRef.current)
       if (resolved.appendRow) {
-        setRows((prev) => [...prev, makeDraftRow(currentUserId, defaultAgencyId)])
+        setRows((prev) => [...prev, makeDraftRow(currentUserId, defaultAgencyId, recordingOnRef.current)])
       }
       dispatch({ type: "MOVE", r: resolved.r, c: resolved.c, alsoEdit: sticky })
     },
@@ -976,7 +1037,7 @@ export function IssuancesGrid({
     }
 
     const newIndex = rows.length
-    setRows((prev) => [...prev, makeDraftRow(currentUserId, defaultAgencyId)])
+    setRows((prev) => [...prev, makeDraftRow(currentUserId, defaultAgencyId, recordingOnRef.current)])
     dispatch({ type: "CLICK_CELL", r: newIndex, c: 0, editable: true })
   }
 
@@ -1006,7 +1067,7 @@ export function IssuancesGrid({
     ) {
       e.preventDefault()
       const lastRow = Math.max(rows.length - 1, 0)
-      const lastCol = COLUMN_COUNT - 1
+      const lastCol = columnCount - 1
       const toCorner = e.ctrlKey || e.metaKey // Ctrl+Home/End jump to the grid corner
       let r = interaction.sel.r
       let c = interaction.sel.c
@@ -1042,7 +1103,7 @@ export function IssuancesGrid({
             ? -1
             : 0
       const dc = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0
-      const next = clampMove(rows.length, interaction.sel, dr, dc)
+      const next = clampMove(rows.length, interaction.sel, dr, dc, columnCount)
       dispatch({ type: "SELECT_ONLY", r: next.r, c: next.c })
       return
     }
@@ -1050,8 +1111,8 @@ export function IssuancesGrid({
     if (e.key === "Tab") {
       e.preventDefault()
       const direction: Direction = e.shiftKey ? "tab-left" : "tab-right"
-      const resolved = resolveNextCell(rows, interaction.sel, direction)
-      if (resolved.appendRow) setRows((prev) => [...prev, makeDraftRow(currentUserId, defaultAgencyId)])
+      const resolved = resolveNextCell(rows, interaction.sel, direction, 0, columnCount)
+      if (resolved.appendRow) setRows((prev) => [...prev, makeDraftRow(currentUserId, defaultAgencyId, recordingOnRef.current)])
       dispatch({ type: "MOVE", r: resolved.r, c: resolved.c, alsoEdit: interaction.sticky })
       return
     }
@@ -1307,6 +1368,49 @@ export function IssuancesGrid({
               Exportar
             </a>
           </Button>
+          {/* Which day the next rows belong to. Sits beside "Nova emissão" because it is
+              part of the same act - the rows this button creates are recorded on it. */}
+          <label
+            className={cn(
+              "flex items-center gap-2 rounded-md border px-2 py-1 text-sm",
+              backdating && "border-amber-400 bg-amber-50 text-amber-900",
+            )}
+            title="O dia em que as próximas emissões aconteceram"
+          >
+            <CalendarDays className="h-4 w-4 shrink-0" />
+            <span className="text-xs text-muted-foreground">Lançando em</span>
+            <input
+              type="date"
+              value={recordingOn}
+              onChange={(event) => setRecordingOn(event.target.value || todayISO())}
+              className="bg-transparent text-sm outline-none"
+            />
+            {backdating && (
+              <button
+                type="button"
+                onClick={() => setRecordingOn(todayISO())}
+                className="text-xs underline underline-offset-2"
+              >
+                hoje
+              </button>
+            )}
+          </label>
+          {/* Hidden by default: the date is normally today, and the control above says so.
+              It cannot be hidden while backdating - see issuedOnVisible. */}
+          <Button
+            type="button"
+            variant={issuedOnVisible ? "secondary" : "outline"}
+            onClick={toggleIssuedOnColumn}
+            disabled={backdating}
+            title={
+              backdating
+                ? "Enquanto estiver lançando em outra data, a coluna fica visível"
+                : "Mostrar ou esconder a coluna Data da emissão"
+            }
+          >
+            <CalendarDays className="h-4 w-4" />
+            Data da emissão
+          </Button>
           <Button type="button" onClick={handleAddRow}>
             <Plus className="h-4 w-4" />
             Nova emissão
@@ -1337,7 +1441,9 @@ export function IssuancesGrid({
           <TableHeader>
             <TableRow className="hover:bg-transparent">
               <TableHead className="sticky top-0 z-10 w-8 bg-background p-1 text-center">#</TableHead>
-              {COLUMN_LABELS.map((label, c) => {
+              {/* Sliced rather than mapped whole: the last label is the issuance date,
+                  which is only on screen when the column is. */}
+              {COLUMN_LABELS.slice(0, columnCount).map((label, c) => {
                 // Red means "the autocomplete is still waiting on this one", and it clears
                 // as each is filled - so the header row doubles as a live checklist for
                 // the row being typed.
@@ -1363,7 +1469,7 @@ export function IssuancesGrid({
             {rows.length === 0 && (
               <TableRow className="hover:bg-transparent">
                 <TableCell
-                  colSpan={COLUMN_COUNT + 2}
+                  colSpan={columnCount + 2}
                   className="h-32 text-center text-sm text-muted-foreground"
                 >
                   Nenhuma emissão encontrada para o período e filtros selecionados.
@@ -1397,7 +1503,7 @@ export function IssuancesGrid({
                     <AutosaveDot status={row.saveStatus} />
                   </span>
                 </TableCell>
-                {Array.from({ length: COLUMN_COUNT }, (_, c) => {
+                {Array.from({ length: columnCount }, (_, c) => {
                   const accountNeedsPicking =
                     c === ACCOUNT_COLUMN_INDEX && accountClearedKeys.has(row.key)
                   const isSelected = interaction.sel.r === r && interaction.sel.c === c

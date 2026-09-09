@@ -96,6 +96,10 @@ export const issuanceSchema = z.object({
   // so the supplier balance counts its refund and not its points.
   cancellation_only: z.boolean().default(false),
   created_at: z.string(),
+  // The day of the issuance, as the operator's calendar day. created_at is the same
+  // instant, but resolving it to a day belongs on the server: the panel would otherwise
+  // do timezone arithmetic that the closing and the filters already do elsewhere.
+  issued_on: z.string(),
   updated_at: z.string(),
 })
 
@@ -134,6 +138,8 @@ export const createIssuanceSchema = {
     observation: z.string().optional(),
     // ISO YYYY-MM-DD - converted from the grid's DD/MM/AAAA mask before sending.
     flight_date: z.string().optional(),
+    // The day the issuance happened, when it is not today. Omitted means now.
+    issued_on: z.string().optional(),
   }),
   response: z.object({
     success: z.boolean(),
@@ -171,6 +177,9 @@ export const updateIssuanceSchema = {
     status: issuanceStatusSchema.optional(),
     // ISO YYYY-MM-DD - converted from the grid's DD/MM/AAAA mask before sending.
     flight_date: z.string().optional(),
+    // Moves the issuance to another day, keeping its time. Refused with 422 when the
+    // account's inventory period covering that day is closed.
+    issued_on: z.string().optional(),
   }),
   response: z.object({
     success: z.boolean(),
@@ -196,6 +205,9 @@ export const cancelIssuanceSchema = {
     // True when the booking was never in the panel and the issuance was registered
     // just to hang this estorno off it. Omitted (false) on an ordinary cancellation.
     cancellation_only: z.boolean().optional(),
+    // The day the airline gave the points back, when the cancellation is being recorded
+    // after the fact. Omitted means today.
+    cancelled_on: z.string().optional(),
   }),
   response: z.object({
     success: z.boolean(),

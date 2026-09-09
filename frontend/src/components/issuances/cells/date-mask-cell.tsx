@@ -5,16 +5,21 @@ import { CellStateProps, useGridContext } from "@/components/issuances/grid-cont
 import { Direction } from "@/lib/grid-navigation"
 import { applyDateMask, isCompleteDateMask, isoDateToMasked, maskedDateToISO } from "@/lib/date-mask"
 
+// field is which date this cell edits - the flight's departure or the day the issuance
+// itself happened. Both are typed the same way, so they share the mask, the keyboard
+// handling and the commit path rather than each growing their own copy.
 export const DateMaskCell = memo(function DateMaskCell({
   r,
   c,
   row,
   isEditing,
   pendingChar,
-}: { r: number; c: number } & CellStateProps) {
+  field = "flight_date",
+}: { r: number; c: number; field?: "flight_date" | "issued_on" } & CellStateProps) {
   const { onCellClick, onSaveAndMove, onExitEdit, registerActiveCellSave } = useGridContext()
   const isThisCellEditing = isEditing
-  const displayValue = row.flight_date ? isoDateToMasked(row.flight_date) : ""
+  const value = row[field]
+  const displayValue = value ? isoDateToMasked(value) : ""
 
   const [text, setText] = useState(displayValue)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -41,7 +46,7 @@ export const DateMaskCell = memo(function DateMaskCell({
       onSaveAndMove(r, {}, direction)
       return
     }
-    onSaveAndMove(r, { flight_date: maskedDateToISO(text) }, direction)
+    onSaveAndMove(r, { [field]: maskedDateToISO(text) }, direction)
   }
 
   useEffect(() => {

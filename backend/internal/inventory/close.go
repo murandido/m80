@@ -44,7 +44,7 @@ func Close(db *gorm.DB, accountID string, startsOn, endsOn time.Time, closedByID
 		return period, ErrPeriodInverted
 	}
 
-	frozenUntil, err := closedThrough(db, accountID)
+	frozenUntil, err := ClosedThrough(db, accountID)
 	if err != nil {
 		return period, err
 	}

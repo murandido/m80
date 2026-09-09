@@ -34,6 +34,10 @@ type CreateIssuanceRequest struct {
 	AdditionalServices  datatypes.JSON `json:"additional_services" validate:"omitempty" swaggertype:"object"`
 	// FlightDate (YYYY-MM-DD) creates the primary outbound flight leg.
 	FlightDate *string `json:"flight_date" validate:"omitempty,datetime=2006-01-02"`
+	// IssuedOn (YYYY-MM-DD) is the day the issuance happened, when that is not today -
+	// a booking found missing on a statement and recorded afterwards. Absent means now,
+	// which is the truth for everything recorded as it happens.
+	IssuedOn *string `json:"issued_on" validate:"omitempty,datetime=2006-01-02" example:"2026-09-03"`
 }
 
 // UpdateIssuanceRequest defines the payload for a partial (autosave) update of an
@@ -66,6 +70,9 @@ type UpdateIssuanceRequest struct {
 	Status *string `json:"status" validate:"omitempty,oneof=incomplete complete cancelled"`
 	// FlightDate (YYYY-MM-DD) upserts the primary outbound flight leg's departure date.
 	FlightDate *string `json:"flight_date" validate:"omitempty,datetime=2006-01-02"`
+	// IssuedOn (YYYY-MM-DD) moves the issuance to another day. The time of day is kept,
+	// so two rows recorded in the same session keep their order in the FIFO queue.
+	IssuedOn *string `json:"issued_on" validate:"omitempty,datetime=2006-01-02" example:"2026-09-03"`
 	// The redemption fee this issuance avoided, in centavos, corrected by hand. A value pins
 	// the correction against the automatic recalculation; an explicit null releases the
 	// issuance back to the rule and recomputes it on the spot.
@@ -87,6 +94,10 @@ type CancelIssuanceRequest struct {
 	// issued here and the supplier balance must count the refund alone. Registering the
 	// booking and then cancelling it with twice the points is what this replaces.
 	CancellationOnly bool `json:"cancellation_only" validate:"omitempty"`
+	// CancelledOn (YYYY-MM-DD) is the day the airline gave the points back, when that is
+	// not today. It is what dates the refund in the costing and in the supplier balance,
+	// so a cancellation recorded a week late still lands in the week it happened.
+	CancelledOn *string `json:"cancelled_on" validate:"omitempty,datetime=2006-01-02" example:"2026-09-05"`
 }
 
 // IssuanceFlightResponse defines how a flight leg should be returned nested in an issuance response.
@@ -183,7 +194,11 @@ type IssuanceResponse struct {
 	RefundedTaxes      *int                        `json:"refunded_taxes"`
 	CancellationFee    *int                        `json:"cancellation_fee"`
 	CreatedAt          time.Time                   `json:"created_at"`
-	UpdatedAt          time.Time                   `json:"updated_at"`
+	// IssuedOn is created_at as the operator's calendar day, which is what every screen
+	// means by "the day of the issuance". Resolved here rather than in the browser so the
+	// grid and the closing can never disagree about which day a row is on.
+	IssuedOn  string    `json:"issued_on" example:"2026-09-03"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // IssuanceSummaryResponse defines a lightweight issuance representation for listing

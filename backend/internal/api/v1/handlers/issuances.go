@@ -135,6 +135,7 @@ func toIssuanceResponse(issuance data.Issuance) schemas.IssuanceResponse {
 		RefundedTaxes:      issuance.RefundedTaxes,
 		CancellationFee:    issuance.CancellationFee,
 		CreatedAt:          issuance.CreatedAt,
+		IssuedOn:           localDayOf(issuance.CreatedAt),
 		UpdatedAt:          issuance.UpdatedAt,
 	}
 
@@ -627,7 +628,7 @@ func (h *IssuanceHandler) GetIssuance(w http.ResponseWriter, r *http.Request) {
 
 // CreateIssuance handles the POST /issuances route
 // @Summary      Criar emissão
-// @Description  Cria uma nova emissão. issuer_id usa o usuário autenticado (JWT) se omitido, agency_id usa a agência padrão se omitido, e a emissão sempre nasce com complete=false. Uma venda em aberto (client_id=null, paid=false) é criada na mesma transação. flight_date (YYYY-MM-DD) cria a data de partida da perna de ida principal. account_nickname_id é opcional e, quando informado, precisa pertencer à conta em account_id.
+// @Description  Cria uma nova emissão. issuer_id usa o usuário autenticado (JWT) se omitido, agency_id usa a agência padrão se omitido, e a emissão sempre nasce com complete=false. Uma venda em aberto (client_id=null, paid=false) é criada na mesma transação. flight_date (YYYY-MM-DD) cria a data de partida da perna de ida principal. account_nickname_id é opcional e, quando informado, precisa pertencer à conta em account_id. issued_on (YYYY-MM-DD) registra a emissão em outro dia — uma que faltava e foi lançada depois; omitido, vale agora.
 // @Tags         Emissões
 // @Accept       json
 // @Produce      json
@@ -667,6 +668,29 @@ func (h *IssuanceHandler) CreateIssuance(w http.ResponseWriter, r *http.Request)
 		flightDate = &parsed
 	}
 
+	// The day the issuance happened, when the operator says it was not today. The clock
+	// stays now()'s, so several rows backdated to the same day keep the order they were
+	// typed in - which is the order the FIFO queue reads them in.
+	var issuedAt *time.Time
+	if req.IssuedOn != nil {
+		day, err := parseIssuanceDay(*req.IssuedOn)
+		if err != nil {
+			utils.SendError(w, r, http.StatusBadRequest, "Invalid issued_on")
+			return
+		}
+		frozenUntil, err := refuseClosedPeriod(h.DB, req.AccountID, day)
+		if err != nil {
+			utils.SendError(w, r, http.StatusInternalServerError, "Failed to check the inventory period: "+err.Error())
+			return
+		}
+		if !frozenUntil.IsZero() {
+			utils.SendError(w, r, http.StatusUnprocessableEntity, closedPeriodMessage(frozenUntil))
+			return
+		}
+		moment := rebaseToDay(time.Now(), day)
+		issuedAt = &moment
+	}
+
 	// Complete is deliberately not part of the input: an issuance created from
 	// the panel always starts incomplete and is finished later from the grid.
 	created, err := issuancesvc.Create(h.DB, issuancesvc.CreateInput{
@@ -689,6 +713,7 @@ func (h *IssuanceHandler) CreateIssuance(w http.ResponseWriter, r *http.Request)
 		AgencyID:            req.AgencyID,
 		IssuerID:            req.IssuerID,
 		FlightDate:          flightDate,
+		CreatedAt:           issuedAt,
 	}, userCtx.ID)
 
 	if err != nil {
@@ -717,7 +742,7 @@ func (h *IssuanceHandler) CreateIssuance(w http.ResponseWriter, r *http.Request)
 
 // UpdateIssuance handles the PATCH /issuances/{id} route
 // @Summary      Atualizar emissão (autosave)
-// @Description  Atualiza um subconjunto de campos de uma emissão existente. complete não é aceito diretamente - use status, que é traduzido para complete/cancelled_at. flight_date (YYYY-MM-DD) cria ou atualiza a data de partida da perna de ida principal.
+// @Description  Atualiza um subconjunto de campos de uma emissão existente. complete não é aceito diretamente - use status, que é traduzido para complete/cancelled_at. flight_date (YYYY-MM-DD) cria ou atualiza a data de partida da perna de ida principal. issued_on (YYYY-MM-DD) move a emissão para outro dia, mantendo a hora; numa conta com estoque próprio, uma data dentro de período fechado é recusada com 422.
 // @Tags         Emissões
 // @Accept       json
 // @Produce      json
@@ -744,6 +769,7 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 	// end of the transaction can tell whether the passenger moved at all.
 	previousPassengerName := issuance.MainPassengerName
 	previousAccountID := issuance.AccountID
+	previousCreatedAt := issuance.CreatedAt
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -885,6 +911,27 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 		flightDate = &parsed
 	}
 
+	// Moving the issuance to another day. Both days are checked, not just the new one: a
+	// booking already costed inside a closed period cannot leave it either, or the period
+	// keeps a slice of a row that is no longer in it.
+	if req.IssuedOn != nil {
+		day, err := parseIssuanceDay(*req.IssuedOn)
+		if err != nil {
+			utils.SendError(w, r, http.StatusBadRequest, "Invalid issued_on")
+			return
+		}
+		frozenUntil, err := refuseClosedPeriod(h.DB, issuance.AccountID, day, previousCreatedAt)
+		if err != nil {
+			utils.SendError(w, r, http.StatusInternalServerError, "Failed to check the inventory period: "+err.Error())
+			return
+		}
+		if !frozenUntil.IsZero() {
+			utils.SendError(w, r, http.StatusUnprocessableEntity, closedPeriodMessage(frozenUntil))
+			return
+		}
+		issuance.CreatedAt = rebaseToDay(previousCreatedAt, day)
+	}
+
 	err = h.DB.Transaction(func(tx *gorm.DB) error {
 		// The airline's requires_last_name/requires_purchase_number flags are
 		// enforced here rather than on create so the grid's autosave keeps
@@ -909,6 +956,18 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 
 		if err := tx.Save(&issuance).Error; err != nil {
 			return err
+		}
+
+		// Written as a column of its own because created_at is the one field GORM manages
+		// rather than carries: leaving it to Save would make the correction depend on a
+		// convention that exists to stop exactly this from being overwritten by accident.
+		if !issuance.CreatedAt.Equal(previousCreatedAt) {
+			if err := tx.Model(&issuance).UpdateColumn("created_at", issuance.CreatedAt).Error; err != nil {
+				return err
+			}
+			if err := recordIssuanceDateChange(tx, r, issuance.ID, previousCreatedAt, issuance.CreatedAt); err != nil {
+				return err
+			}
 		}
 
 		if err := syncIssuanceBeneficiary(tx, issuance, previousPassengerName, previousAccountID); err != nil {
@@ -1043,7 +1102,7 @@ func (h *IssuanceHandler) DeleteIssuance(w http.ResponseWriter, r *http.Request)
 
 // CancelIssuance handles the POST /issuances/{id}/cancel route.
 // @Summary      Cancelar emissão
-// @Description  Cancela uma emissão (active=false, cancelled_at=now), registra os valores de reembolso, reseta o pagamento da venda associada (se paga) e grava um audit log. Tudo numa única transação. Com cancellation_only=true, a emissão passa a valer apenas como estorno: o saldo do fornecedor conta o reembolso e não os pontos, para o caso da reserva ter sido feita fora do painel.
+// @Description  Cancela uma emissão (active=false, cancelled_at=now, ou a data em cancelled_on), registra os valores de reembolso, reseta o pagamento da venda associada (se paga) e grava um audit log. Tudo numa única transação. Com cancellation_only=true, a emissão passa a valer apenas como estorno: o saldo do fornecedor conta o reembolso e não os pontos, para o caso da reserva ter sido feita fora do painel.
 // @Tags         Emissões
 // @Accept       json
 // @Produce      json
@@ -1086,6 +1145,29 @@ func (h *IssuanceHandler) CancelIssuance(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// The day the points came back, when the cancellation is being recorded after the
+	// fact. Same shape as issued_on, and the same guard: the refund is an event on the
+	// costing's timeline, and one dated inside a closed period would never be replayed.
+	var cancelledAt *time.Time
+	if req.CancelledOn != nil {
+		day, err := parseIssuanceDay(*req.CancelledOn)
+		if err != nil {
+			utils.SendError(w, r, http.StatusBadRequest, "Invalid cancelled_on")
+			return
+		}
+		frozenUntil, err := refuseClosedPeriod(h.DB, issuance.AccountID, day)
+		if err != nil {
+			utils.SendError(w, r, http.StatusInternalServerError, "Failed to check the inventory period: "+err.Error())
+			return
+		}
+		if !frozenUntil.IsZero() {
+			utils.SendError(w, r, http.StatusUnprocessableEntity, closedPeriodMessage(frozenUntil))
+			return
+		}
+		moment := rebaseToDay(time.Now(), day)
+		cancelledAt = &moment
+	}
+
 	err := h.DB.Transaction(func(tx *gorm.DB) error {
 		var txErr error
 		issuance, txErr = issuancesvc.Cancel(tx, issuance, issuancesvc.CancelInput{
@@ -1093,6 +1175,7 @@ func (h *IssuanceHandler) CancelIssuance(w http.ResponseWriter, r *http.Request)
 			RefundedTaxes:    req.RefundedTaxes,
 			CancellationFee:  req.CancellationFee,
 			CancellationOnly: req.CancellationOnly,
+			CancelledAt:      cancelledAt,
 		}, userCtx.ID)
 		return txErr
 	})

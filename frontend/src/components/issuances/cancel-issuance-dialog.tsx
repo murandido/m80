@@ -57,15 +57,27 @@ const cancelFormSchema = z.object({
   // has something to hang off. It is a property of the cancellation, not of the refund,
   // so it carries no amount.
   cancellation_only: z.boolean(),
+  // The day the airline gave the points back. It is what dates the refund on the costing's
+  // timeline and in the supplier balance, so a cancellation recorded a week late still
+  // belongs to the week it happened.
+  cancelled_on: z.string().min(1, "Informe a data do cancelamento"),
 })
 
 type CancelFormData = z.infer<typeof cancelFormSchema>
+
+// Today in the operator's own calendar day, which is what the backend resolves the
+// stored timestamp against.
+function todayISO(): string {
+  const now = new Date()
+  return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10)
+}
 
 const emptyForm: CancelFormData = {
   refunded_points: "",
   refunded_taxes: "",
   cancellation_fee: "",
   cancellation_only: false,
+  cancelled_on: todayISO(),
 }
 
 export function CancelIssuanceButton({ r }: { r: number }) {
@@ -93,6 +105,9 @@ export function CancelIssuanceButton({ r }: { r: number }) {
       const fee = parseCurrencyBRLInput(values.cancellation_fee)
       if (fee !== null) data.cancellation_fee = fee
       if (values.cancellation_only) data.cancellation_only = true
+      // Always sent, today included: the backend would default to now() anyway, and
+      // sending it makes the day the operator saw the one that gets written.
+      data.cancelled_on = values.cancelled_on
 
       const result = await onCancelRow(r, data)
       if ("error" in result) {
@@ -100,7 +115,7 @@ export function CancelIssuanceButton({ r }: { r: number }) {
         return
       }
       toast.success("Emissão cancelada.")
-      form.reset(emptyForm)
+      form.reset({ ...emptyForm, cancelled_on: todayISO() })
       setOpen(false)
     })
   }
@@ -109,7 +124,9 @@ export function CancelIssuanceButton({ r }: { r: number }) {
     <Dialog
       open={open}
       onOpenChange={(next) => {
-        if (!next) form.reset(emptyForm)
+        // Re-read today rather than reusing emptyForm's: a tab left open overnight would
+        // otherwise offer yesterday.
+        if (!next) form.reset({ ...emptyForm, cancelled_on: todayISO() })
         setOpen(next)
       }}
     >
@@ -228,6 +245,33 @@ export function CancelIssuanceButton({ r }: { r: number }) {
                     saldo do fornecedor fica só com o reembolso — sem precisar dobrar os
                     pontos reembolsados.
                   </p>
+                </Field>
+              )}
+            />
+
+            <Controller
+              name="cancelled_on"
+              control={form.control}
+              render={({ field, fieldState }) => (
+                <Field>
+                  <FieldLabel htmlFor="cancelled_on">Data do cancelamento</FieldLabel>
+                  <InputGroup>
+                    <InputGroupInput
+                      {...field}
+                      id="cancelled_on"
+                      type="date"
+                      aria-invalid={fieldState.invalid}
+                      disabled={isPending}
+                    />
+                  </InputGroup>
+                  {fieldState.invalid ? (
+                    <FieldError errors={[fieldState.error]} />
+                  ) : (
+                    <p className="text-xs text-slate-500">
+                      O dia em que a companhia devolveu os pontos. É por ele que o estorno entra
+                      no custeio e no acerto — mude se o cancelamento não foi hoje.
+                    </p>
+                  )}
                 </Field>
               )}
             />

@@ -21,6 +21,9 @@ export interface IssuanceRow {
   // of its own - see locator-cell.tsx.
   latam_purchase_number: string | null
   flight_date: string | null // ISO YYYY-MM-DD
+  // The day of the issuance, ISO YYYY-MM-DD. Never null: an issuance always happened on
+  // some day, and a draft carries the one the toolbar is recording on.
+  issued_on: string
   main_passenger_name: string | null
   origin_iata_code: string | null
   destination_iata_code: string | null
@@ -102,6 +105,7 @@ export function issuanceToRow(issuance: Issuance): IssuanceRow {
     airline_locator: issuance.airline_locator,
     latam_purchase_number: issuance.latam_purchase_number,
     flight_date: outboundFlight ? outboundFlight.departure_at.slice(0, 10) : null,
+    issued_on: issuance.issued_on,
     main_passenger_name: issuance.main_passenger_name,
     origin_iata_code: issuance.origin_iata_code,
     destination_iata_code: issuance.destination_iata_code,
@@ -137,6 +141,7 @@ export function issuanceToRow(issuance: Issuance): IssuanceRow {
 export function makeDraftRow(
   issuerId?: string | null,
   agencyId?: string | null,
+  issuedOn?: string,
 ): IssuanceRow {
   return {
     key: `draft-${Math.random().toString(36).slice(2)}`,
@@ -148,6 +153,7 @@ export function makeDraftRow(
     airline_locator: null,
     latam_purchase_number: null,
     flight_date: null,
+    issued_on: issuedOn ?? new Date().toISOString().slice(0, 10),
     main_passenger_name: null,
     origin_iata_code: null,
     destination_iata_code: null,

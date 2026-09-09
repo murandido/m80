@@ -61,12 +61,15 @@ type CreateInput struct {
 	// it once every required field arrived in the same message.
 	Complete bool
 
-	// CreatedAt backdates the issuance. Only the spreadsheet importer
-	// (internal/legacyimport) sets it, and only ever to the day of the sheet the
-	// row came from: created_at is what the grid and every date filter read as
-	// "the day of the issuance", so an August row stamped with now() would show up
-	// as today's and vanish from its own day. Nil everywhere else, which leaves the
-	// timestamp to the database.
+	// CreatedAt backdates the issuance. created_at is what the grid, every date filter,
+	// the supplier report and the FIFO costing read as "the day of the issuance", so an
+	// August row stamped with now() shows up as today's and vanishes from its own day.
+	//
+	// Two callers set it: the spreadsheet importer (internal/legacyimport), to the day of
+	// the sheet the row came from, and the panel, when the operator records a booking
+	// that happened on another day - typically one the statement reconciliation found
+	// missing. Nil leaves the timestamp to the database, which is right for everything
+	// recorded as it happens.
 	CreatedAt *time.Time
 	// Imported records that this issuance came from that spreadsheet. It is what
 	// keeps Traveos from being asked to *issue* the booking - see findOrEmit - and

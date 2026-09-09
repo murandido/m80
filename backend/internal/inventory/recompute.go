@@ -23,7 +23,7 @@ import (
 //
 // Safe to call as often as anything wants: the result is a function of the current rows.
 func Recompute(db *gorm.DB, accountID string) error {
-	frozenUntil, err := closedThrough(db, accountID)
+	frozenUntil, err := ClosedThrough(db, accountID)
 	if err != nil {
 		return err
 	}
@@ -50,9 +50,13 @@ func Recompute(db *gorm.DB, accountID string) error {
 	return persist(db, accountID, frozenUntil, allocations)
 }
 
-// closedThrough is the last day already settled on this account, or the zero time when
+// ClosedThrough is the last day already settled on this account, or the zero time when
 // nothing has been closed yet. Everything strictly after it is open and recomputable.
-func closedThrough(db *gorm.DB, accountID string) (time.Time, error) {
+//
+// Exported because the issuance routes have to refuse a date inside a frozen period: the
+// recompute skips those events entirely, so a booking backdated into a closed month would
+// simply never be costed, in silence.
+func ClosedThrough(db *gorm.DB, accountID string) (time.Time, error) {
 	var period data.InventoryPeriod
 	err := db.Where("account_id = ? AND closed_at IS NOT NULL", accountID).
 		Order("ends_on DESC").First(&period).Error
@@ -142,7 +146,7 @@ func loadIssuanceActivity(db *gorm.DB, accountID string, frozenUntil time.Time) 
 	events := make([]Event, 0, len(rows))
 
 	for i, row := range rows {
-		issuedOn := dateOf(row.CreatedAt)
+		issuedOn := DayOf(row.CreatedAt)
 
 		// A cancellation-only row never took points out of the account - it exists to
 		// carry an estorno for a booking the panel never had (see Issuance.CancellationOnly).
@@ -165,7 +169,7 @@ func loadIssuanceActivity(db *gorm.DB, accountID string, frozenUntil time.Time) 
 		// even when the booking it reverses sits in a closed one.
 		returnedOn := issuedOn
 		if row.CancelledAt != nil {
-			returnedOn = dateOf(*row.CancelledAt)
+			returnedOn = DayOf(*row.CancelledAt)
 		}
 		if returnedOn.After(frozenUntil) {
 			// len(rows) offsets the refund past every booking of the same day, so a
@@ -271,9 +275,12 @@ func persist(db *gorm.DB, accountID string, frozenUntil time.Time, allocations [
 	})
 }
 
-// dateOf drops the clock from a timestamp. The queue is ordered by day - a booking's
+// DayOf drops the clock from a timestamp. The queue is ordered by day - a booking's
 // created_at is UTC in the database, and letting the time of day into the comparison would
 // make the same booking fall on either side of a period boundary depending on the reader.
-func dateOf(moment time.Time) time.Time {
+//
+// Exported alongside ClosedThrough, and for the same reason: the guard on the issuance
+// routes has to ask the question exactly the way the costing answers it.
+func DayOf(moment time.Time) time.Time {
 	return time.Date(moment.Year(), moment.Month(), moment.Day(), 0, 0, 0, 0, time.UTC)
 }

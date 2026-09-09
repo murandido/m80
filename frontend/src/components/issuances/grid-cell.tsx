@@ -146,6 +146,7 @@ export const GridCell = memo(function GridCell({
       return <LocatorCell r={r} c={c} row={row} isEditing={isEditing} pendingChar={pendingChar} />
     case 2:
       return <DateMaskCell r={r} c={c} row={row} isEditing={isEditing} pendingChar={pendingChar} />
+
     case 3:
       return (
         <TextCell
@@ -291,6 +292,17 @@ export const GridCell = memo(function GridCell({
           pendingChar={pendingChar}
           field="redemption_fee_saved_cents"
           mode="currency"
+        />
+      )
+    case 16:
+      return (
+        <DateMaskCell
+          r={r}
+          c={c}
+          row={row}
+          isEditing={isEditing}
+          pendingChar={pendingChar}
+          field="issued_on"
         />
       )
     default:
