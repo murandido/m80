@@ -618,3 +618,71 @@ func TestBuildSupplierReport_RendersTheRecap(t *testing.T) {
 		t.Error("the recap has to close the document, after the grand total")
 	}
 }
+
+// On an account that owns its points, the amount comes from what the batches actually
+// charged - not from multiplying the displayed rate back out.
+//
+// The figures are the August 2026 spreadsheet's MJF6HC: 360 milheiros drawn from two
+// batches at 15,000000 and 13,580006 per thousand, costing R$ 5.042,45 between them. The
+// rate that reads on screen is that cost averaged and rounded to 14,01 per thousand, and
+// 360 x 14,01 is R$ 5.043,60 - the R$ 1,15 of drift that must never reach a supplier's
+// total.
+func TestSupplierLineAmount_PrefersTheInventoryCostOverTheRoundedRate(t *testing.T) {
+	const (
+		points      = 360000
+		exactCost   = 504245
+		roundedRate = 1401
+	)
+
+	line := statementLineWithTaxes("issued", points, nil, intPtr(roundedRate), false)
+	line.CostCents = intPtr(exactCost)
+	line.OwnsPointInventory = true
+
+	if got := supplierLineAmount(line); got != exactCost {
+		t.Errorf("got %d, want the batches' exact %d", got, exactCost)
+	}
+
+	// And the rate on its own would have been wrong, which is the whole point.
+	if fromRate := roundHalfUp(points, roundedRate); fromRate == exactCost {
+		t.Fatal("the test lost its meaning: the rounded rate now agrees with the exact cost")
+	}
+}
+
+// Taxes are outside the points costing entirely, so a reimbursed tax still adds on top of
+// the inventory cost exactly as it does on an ordinary account.
+func TestSupplierLineAmount_AddsReimbursedTaxesToTheInventoryCost(t *testing.T) {
+	line := statementLineWithTaxes("issued", 360000, intPtr(8400), intPtr(1401), true)
+	line.CostCents = intPtr(504245)
+	line.OwnsPointInventory = true
+
+	if got, want := supplierLineAmount(line), 504245+8400; got != want {
+		t.Errorf("got %d, want %d", got, want)
+	}
+}
+
+// A refund on an inventory account gives back what the reversal credited, which is already
+// negative - so the credit still cancels its booking exactly.
+func TestSupplierLineAmount_CreditsBackTheInventoryCost(t *testing.T) {
+	booking := statementLineWithTaxes("issued", 360000, nil, intPtr(1401), false)
+	booking.CostCents = intPtr(504245)
+	booking.OwnsPointInventory = true
+
+	credit := statementLineWithTaxes("refund", -360000, nil, intPtr(1401), false)
+	credit.CostCents = intPtr(-504245)
+	credit.OwnsPointInventory = true
+
+	if got := supplierLineAmount(booking) + supplierLineAmount(credit); got != 0 {
+		t.Errorf("booking plus its credit = %d, want 0", got)
+	}
+}
+
+// An issuance the costing has not reached yet - its batch has not been entered - falls
+// back to the typed rate rather than claiming it cost nothing.
+func TestSupplierLineAmount_FallsBackToTheRateWhenNotYetCosted(t *testing.T) {
+	line := statementLineWithTaxes("issued", 50000, nil, intPtr(1650), false)
+	line.OwnsPointInventory = true
+
+	if got := supplierLineAmount(line); got != 82500 {
+		t.Errorf("got %d, want the typed rate's 82500", got)
+	}
+}

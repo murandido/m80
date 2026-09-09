@@ -53,6 +53,8 @@ function toFormValues(account: Account): FormData {
     administrator_id: account.administrator_id ?? "",
     category: account.category,
     waives_redemption_fee: account.waives_redemption_fee,
+    owns_point_inventory: account.owns_point_inventory,
+    default_profit_share_percent: account.default_profit_share_percent,
   }
 }
 
@@ -282,6 +284,70 @@ export function EditAccountPanel({
                         feitas aqui passam a registrar quanto foi economizado; nas demais
                         contas a coluna fica vazia.
                       </p>
+                    </>
+                  )}
+                />
+              </div>
+
+
+              {/* owns_point_inventory */}
+              <div className="flex flex-col gap-1 text-sm">
+                <Controller
+                  name="owns_point_inventory"
+                  control={form.control}
+                  render={({ field }) => (
+                    <>
+                      <div className="flex items-center justify-between gap-3">
+                        <FieldLabel htmlFor="edit-account-owns-point-inventory">
+                          Estoque próprio de pontos
+                        </FieldLabel>
+                        <Switch
+                          id="edit-account-owns-point-inventory"
+                          checked={field.value ?? false}
+                          onCheckedChange={field.onChange}
+                          disabled={isPending}
+                        />
+                      </div>
+                      <p className="text-xs text-slate-500">
+                        Ligue quando os pontos desta conta foram comprados por nós. O custo passa a
+                        vir dos lotes lançados em Estoque de pontos, e deixa de ser digitado em
+                        Fornecedores.
+                      </p>
+                    </>
+                  )}
+                />
+              </div>
+
+              {/* default_profit_share_percent */}
+              <div className="flex flex-col gap-1 text-sm">
+                <Controller
+                  name="default_profit_share_percent"
+                  control={form.control}
+                  render={({ field, fieldState }) => (
+                    <>
+                      <FieldLabel htmlFor="edit-account-profit-share">
+                        Rateio padrão (%)
+                      </FieldLabel>
+                      <InputGroup>
+                        <InputGroupInput
+                          id="edit-account-profit-share"
+                          type="text"
+                          inputMode="numeric"
+                          value={String(field.value ?? 0)}
+                          onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
+                            field.onChange(Number(event.target.value.replace(/\D/g, "")) || 0)
+                          }
+                          disabled={isPending}
+                        />
+                        <InputGroupAddon align="inline-end">%</InputGroupAddon>
+                      </InputGroup>
+                      <p className="text-xs text-slate-500">
+                        Quanto do lucro fica com a agência que emitiu, quando ela não é a que
+                        bancou o lote. Cada lote congela esse valor ao ser criado, então mudar
+                        aqui não mexe em nada que já foi acertado. Zero deixa o lucro inteiro com
+                        quem bancou.
+                      </p>
+                      {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
                     </>
                   )}
                 />

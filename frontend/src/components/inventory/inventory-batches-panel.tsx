@@ -1,0 +1,311 @@
+"use client"
+
+import { useState, useTransition } from "react"
+import { toast } from "sonner"
+import { Trash2 } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import { Badge } from "@/components/ui/badge"
+import { formatCurrencyBRL, parseCurrencyBRLInput } from "@/lib/currency"
+import { applyPaddedThousandsMask, parsePointsFromThousands } from "@/lib/points"
+import {
+  createPointBatchAction,
+  deletePointBatchAction,
+  settlePointBatchAction,
+} from "@/actions/inventory"
+import type { Agency } from "@/schemas/agency"
+import type { PointBatch, PointBatchOrigin } from "@/schemas/inventory"
+
+interface Props {
+  accountId: string
+  batches: PointBatch[]
+  origins: PointBatchOrigin[]
+  agencies: Agency[]
+}
+
+// Typed in milheiros and shown in full, which is the grammar the issuances grid already
+// uses: "632,7" goes in, 632.700 comes back. One rule for point counts across the panel.
+function parsePoints(text: string): number | null {
+  const points = parsePointsFromThousands(text)
+  if (points === null || points <= 0) return null
+  return points
+}
+
+function formatPoints(points: number): string {
+  return applyPaddedThousandsMask(String(points))
+}
+
+// The rate is fractional on purpose - 1413,2638 centavos per thousand - so it is shown
+// with four decimals rather than rounded to the centavo. Rounding it is exactly the error
+// the batch costing exists to avoid, and a figure that reads 14,13 here while the totals
+// are built on 14,132638 invites somebody to "correct" the difference.
+function formatRate(centsPerThousand: number): string {
+  return (centsPerThousand / 100).toLocaleString("pt-BR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 4,
+  })
+}
+
+const today = () => new Date().toISOString().slice(0, 10)
+
+export function InventoryBatchesPanel({ accountId, batches, origins, agencies }: Props) {
+  const [pending, startTransition] = useTransition()
+  const [originId, setOriginId] = useState("")
+  const [acquiredOn, setAcquiredOn] = useState(today)
+  const [milheiros, setMilheiros] = useState("")
+  const [cost, setCost] = useState("")
+  const [fundingAgencyId, setFundingAgencyId] = useState("")
+  const [opening, setOpening] = useState(false)
+
+  function submit() {
+    const points = parsePoints(milheiros)
+    if (points === null) {
+      toast.error("Informe a quantidade de pontos.")
+      return
+    }
+    // Zero is a legitimate cost - a club subscription and flight accrual both put points in
+    // for nothing - so an empty field reads as zero rather than as an error.
+    const costCents = cost.trim() === "" ? 0 : parseCurrencyBRLInput(cost)
+    if (costCents === null) {
+      toast.error("Custo inválido.")
+      return
+    }
+    if (!fundingAgencyId) {
+      toast.error("Informe a agência que bancou o lote.")
+      return
+    }
+    if (!originId && !opening) {
+      toast.error("Informe a origem do lote.")
+      return
+    }
+
+    startTransition(async () => {
+      const result = await createPointBatchAction({
+        accountId,
+        originId: opening ? null : originId,
+        acquiredOn,
+        points,
+        costCents,
+        fundingAgencyId,
+        opening,
+      })
+      if ("error" in result) {
+        toast.error(result.error)
+        return
+      }
+      toast.success("Lote lançado.")
+      setMilheiros("")
+      setCost("")
+      setOriginId("")
+      setOpening(false)
+    })
+  }
+
+  function remove(batch: PointBatch) {
+    startTransition(async () => {
+      const result = await deletePointBatchAction(batch.id)
+      if ("error" in result) {
+        toast.error(result.error)
+        return
+      }
+      toast.success("Lote excluído. As emissões voltam para a fila no próximo cálculo.")
+    })
+  }
+
+  function toggleSettled(batch: PointBatch) {
+    startTransition(async () => {
+      const result = await settlePointBatchAction(batch.id, !batch.settled_at)
+      if ("error" in result) {
+        toast.error(result.error)
+        return
+      }
+      toast.success(batch.settled_at ? "Acerto desfeito." : "Lote marcado como acertado.")
+    })
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Lotes</CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-6">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-6">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="batch-origin">Origem</Label>
+            <Select value={originId} onValueChange={setOriginId} disabled={opening}>
+              <SelectTrigger id="batch-origin">
+                <SelectValue placeholder={opening ? "Saldo de partida" : "Escolha"} />
+              </SelectTrigger>
+              <SelectContent>
+                {origins.map((origin) => (
+                  <SelectItem key={origin.id} value={origin.id}>
+                    {origin.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="batch-date">Data</Label>
+            <Input
+              id="batch-date"
+              type="date"
+              value={acquiredOn}
+              onChange={(event) => setAcquiredOn(event.target.value)}
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="batch-points">Qnt. de Pontos</Label>
+            <Input
+              id="batch-points"
+              inputMode="decimal"
+              placeholder="632,7"
+              value={milheiros}
+              onChange={(event) => setMilheiros(event.target.value)}
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="batch-cost">Custo (R$)</Label>
+            <Input
+              id="batch-cost"
+              inputMode="decimal"
+              placeholder="8.941,72"
+              value={cost}
+              onChange={(event) => setCost(event.target.value)}
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="batch-agency">Bancado por</Label>
+            <Select value={fundingAgencyId} onValueChange={setFundingAgencyId}>
+              <SelectTrigger id="batch-agency">
+                <SelectValue placeholder="Escolha" />
+              </SelectTrigger>
+              <SelectContent>
+                {agencies.map((agency) => (
+                  <SelectItem key={agency.id} value={agency.id}>
+                    {agency.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="flex items-end gap-2">
+            <Button onClick={submit} disabled={pending} className="w-full">
+              Lançar
+            </Button>
+          </div>
+        </div>
+
+        <label className="flex w-fit items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={opening}
+            onChange={(event) => setOpening(event.target.checked)}
+            className="size-4"
+          />
+          <span>
+            Saldo de partida
+            <span className="text-muted-foreground">
+              {" "}
+              — o que a conta já tinha ao entrar no painel, sem origem
+            </span>
+          </span>
+        </label>
+
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Origem</TableHead>
+                <TableHead>Data</TableHead>
+                <TableHead className="text-right">Qnt. de Pontos</TableHead>
+                <TableHead className="text-right">Custo</TableHead>
+                <TableHead className="text-right">Milheiro</TableHead>
+                <TableHead>Bancado por</TableHead>
+                <TableHead>Rateio</TableHead>
+                <TableHead>Acertado</TableHead>
+                <TableHead />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {batches.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={9} className="text-muted-foreground text-center">
+                    Nenhum lote lançado nesta conta.
+                  </TableCell>
+                </TableRow>
+              ) : (
+                batches.map((batch) => (
+                  <TableRow key={batch.id}>
+                    <TableCell>
+                      {batch.origin?.name ?? (
+                        <Badge variant="secondary">Saldo de partida</Badge>
+                      )}
+                    </TableCell>
+                    <TableCell className="tabular-nums">
+                      {batch.acquired_on.split("-").reverse().join("/")}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {formatPoints(batch.points)}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums text-amber-800 dark:text-amber-300">
+                      {formatCurrencyBRL(batch.cost_cents)}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums text-amber-800 dark:text-amber-300">
+                      {formatRate(batch.cost_of_the_thousand)}
+                    </TableCell>
+                    <TableCell>{batch.funding_agency?.name ?? "—"}</TableCell>
+                    <TableCell className="tabular-nums">{batch.profit_share_percent}%</TableCell>
+                    <TableCell>
+                      <Button
+                        variant={batch.settled_at ? "secondary" : "outline"}
+                        size="sm"
+                        disabled={pending}
+                        onClick={() => toggleSettled(batch)}
+                      >
+                        {batch.settled_at ? "Sim" : "Não"}
+                      </Button>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        disabled={pending}
+                        onClick={() => remove(batch)}
+                        aria-label="Excluir lote"
+                      >
+                        <Trash2 className="size-4" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}

@@ -94,6 +94,11 @@ func main() {
 		log.Fatal("❌ Failed to seed loyalty programs: ", err)
 	}
 
+	// No ordering constraint: the origins catalogue has no foreign keys of its own.
+	if err := data.SeedPointBatchOrigins(); err != nil {
+		log.Fatal("❌ Failed to seed point batch origins: ", err)
+	}
+
 	// Encrypts whatever CPFs migration 38 left in plain text. Not fatal on purpose: it reports
 	// the rows it could not rewrite and lets the API come up, because a single duplicate
 	// document is not a reason to leave the panel down.

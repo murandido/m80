@@ -116,6 +116,14 @@ export default async function SalesSuppliersPage({
               <ExternalLink className="h-4 w-4" />
             </Link>
           </Button>
+          {/* Where the cost comes from on an account that owns its points: the batches,
+              not the rate typed on this screen. */}
+          <Button asChild variant="ghost" size="sm" className="text-slate-500">
+            <Link href="/dashboard/sales/inventory">
+              Estoque de pontos
+              <ExternalLink className="h-4 w-4" />
+            </Link>
+          </Button>
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-3">

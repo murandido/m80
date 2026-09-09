@@ -17,6 +17,8 @@ import { dashboardHome, findNavLocation } from "@/lib/navigation"
 // /dashboard/issuances/<uuid>/ticket would be noise in a breadcrumb.
 const nestedSegmentLabels: Record<string, string> = {
   suppliers: "Fornecedores",
+  inventory: "Estoque de pontos",
+  "point-batch-origins": "Origens de lote",
   ticket: "Bilhete",
 }
 

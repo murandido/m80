@@ -774,15 +774,30 @@ function SupplierIssuanceRow({
       </TableCell>
 
       <TableCell className="text-right">
-        <SupplierCostCell
-          value={line.cost_of_the_thousand}
-          saving={saving}
-          onCommit={(cents) =>
-            onCommit([line.issuance_id], { costOfTheThousand: cents }, () =>
-              "Milheiro de custo atualizado.",
-            )
-          }
-        />
+        {/* On an account that owns its points the rate is derived from the batches that
+            paid for the booking, so it is shown rather than offered for editing - typing
+            over it would be overwritten by the next recompute, and the backend refuses it
+            anyway. The batches are edited in Estoque de pontos. */}
+        {line.owns_point_inventory ? (
+          <span
+            className="tabular-nums text-slate-500"
+            title="Vem do estoque de pontos da conta. Edite os lotes em Estoque de pontos."
+          >
+            {line.cost_of_the_thousand === null
+              ? "—"
+              : formatCurrencyBRL(line.cost_of_the_thousand)}
+          </span>
+        ) : (
+          <SupplierCostCell
+            value={line.cost_of_the_thousand}
+            saving={saving}
+            onCommit={(cents) =>
+              onCommit([line.issuance_id], { costOfTheThousand: cents }, () =>
+                "Milheiro de custo atualizado.",
+              )
+            }
+          />
+        )}
       </TableCell>
       <TableCell
         className={cn(

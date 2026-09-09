@@ -9,13 +9,27 @@ import type { SupplierBalance, SupplierIssuance } from "@/schemas/sale"
 // issuanceTotalCents in components/issuances/emissao-message.ts. All three have to agree to
 // the centavo, because the operator reads one, the supplier reads another, and the bot
 // checksums the third.
+//
+// cost_cents overrides all of that on an account that owns its points, and has to: there
+// the cost is the sum of the batch slices that paid for the booking, and the rate beside it
+// is that sum rounded to a whole centavo per thousand for display. A booking split across
+// two batches - 360 milheiros costing R$ 5.013,53 across rates of 14,1326 and 13,58 -
+// averages out to 13,93, and multiplying that back gives R$ 5.014,80. Off by R$ 1,27 on one
+// line, in a direction no line can explain.
 export function supplierLineAmount(
-  line: Pick<SupplierIssuance, "points" | "taxes" | "cost_of_the_thousand" | "taxes_included_in_cost">,
+  line: Pick<
+    SupplierIssuance,
+    "points" | "taxes" | "cost_of_the_thousand" | "cost_cents" | "taxes_included_in_cost"
+  >,
 ): number | null {
+  const taxes = line.taxes_included_in_cost ? (line.taxes ?? 0) : 0
+
+  if (line.cost_cents !== null && line.cost_cents !== undefined) {
+    return line.cost_cents + taxes
+  }
   if (line.cost_of_the_thousand === null) return null
 
-  const amount = roundHalfUp(line.points * line.cost_of_the_thousand)
-  return amount + (line.taxes_included_in_cost ? (line.taxes ?? 0) : 0)
+  return roundHalfUp(line.points * line.cost_of_the_thousand) + taxes
 }
 
 // Rounds half away from zero, so a credit rounds the same distance as the booking it

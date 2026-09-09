@@ -50,7 +50,7 @@ func (h *SaleHandler) GetSupplierReportPDF(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	balances := aggregateSupplierBalances(rows, from, to, resolveSupplierGrouping(r))
+	balances := aggregateSupplierBalances(h.DB, rows, from, to, resolveSupplierGrouping(r))
 
 	// The brand is looked up from the same rows the balances came from, so a document can
 	// never be headed with a program the statement below it does not belong to.
@@ -373,8 +373,17 @@ func splitBalanceByAccount(
 // The rounding is the same one the panel and the bot's own checksum use - points divided by
 // a thousand, times the rate, rounded half up - so the figure on the screen, the figure in
 // this PDF and the figure the operator typed all agree to the centavo.
+//
+// On an account that owns its points the rate is not the source: CostCents already holds
+// what the batches charged, exactly, and the rate beside it is that figure rounded for
+// display. Multiplying the rounded rate back out would disagree with the batch it came
+// from by a centavo or so per booking, which over a month is a discrepancy with no line to
+// blame it on.
 func supplierLineAmount(line schemas.SupplierIssuanceResponse) int {
 	amount := roundHalfUp(line.Points, *line.CostOfTheThousand)
+	if line.CostCents != nil {
+		amount = *line.CostCents
+	}
 	if line.TaxesIncludedInCost && line.Taxes != nil {
 		amount += *line.Taxes
 	}

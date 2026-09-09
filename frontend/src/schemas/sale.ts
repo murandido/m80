@@ -108,6 +108,17 @@ export const supplierIssuanceSchema = z.object({
   points: z.number(),
   taxes: z.number().nullable(),
   cost_of_the_thousand: z.number().nullable(),
+  // What the points inventory actually charged this line, present only on an account that
+  // owns its points. It wins over the rate beside it, which is this figure rounded to a
+  // whole centavo per thousand for display - see supplierLineAmount. Nullish because an
+  // ordinary account has no batches, and because the backend may not send it yet.
+  cost_cents: z.number().nullish(),
+  // Tells the screen the rate is derived and must not be offered for editing. Absent reads
+  // as false, which is what every account meant before the inventory existed.
+  owns_point_inventory: z
+    .boolean()
+    .nullish()
+    .transform((value) => value ?? false),
   taxes_included_in_cost: z.boolean(),
   // Tolerated as absent, not required: the API and the panel are published by independent
   // labels, so this screen can be live for days against a backend that does not send the

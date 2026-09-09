@@ -43,10 +43,25 @@ type Account struct {
 	// is the Diamante Unique tier. Phrased as the effect rather than the tier because the
 	// effect is what the calculation needs, and because the fee itself is not tier-specific:
 	// every Azul level below Unique pays the same domestic amount today. See migration 40.
-	WaivesRedemptionFee bool      `gorm:"column:waives_redemption_fee;not null;default:false" json:"waives_redemption_fee"`
-	Complete            bool      `gorm:"not null;default:false" json:"complete"`
-	CreatedAt           time.Time `json:"created_at"`
-	UpdatedAt           time.Time `json:"updated_at"`
+	WaivesRedemptionFee bool `gorm:"column:waives_redemption_fee;not null;default:false" json:"waives_redemption_fee"`
+	// OwnsPointInventory says the points on this account were bought by us, so their cost
+	// is an acquisition cost tracked in batches rather than a transfer price paid to an
+	// administrator. It is what decides which of the two meanings of "cost" applies:
+	// with it off, issuances.cost_of_the_thousand is typed on /sales/suppliers as it
+	// always was; with it on, the FIFO costing derives it and the field is read-only.
+	//
+	// Not the same as Category == AccountCategoryInjunction, even though the two overlap
+	// today: the category answers whether the beneficiary cap applies, this one answers
+	// who paid for the points. See migration 48.
+	OwnsPointInventory bool `gorm:"column:owns_point_inventory;not null;default:false" json:"owns_point_inventory"`
+	// DefaultProfitSharePercent seeds the split of a new batch on this account. Only a
+	// default: each batch freezes its own copy, so changing this never rewrites a month
+	// that was already settled. Zero means the profit stays whole with whoever funded
+	// the batch, which is the right answer for an account with no arrangement at all.
+	DefaultProfitSharePercent int       `gorm:"column:default_profit_share_percent;not null;default:0" json:"default_profit_share_percent"`
+	Complete                  bool      `gorm:"not null;default:false" json:"complete"`
+	CreatedAt                 time.Time `json:"created_at"`
+	UpdatedAt                 time.Time `json:"updated_at"`
 	// Archiving, not a trash can to restore from. issuances.account_id is ON DELETE
 	// RESTRICT and issuances are themselves soft-deleted, so a real delete on an
 	// account that ever issued is refused by Postgres forever. Turning the delete

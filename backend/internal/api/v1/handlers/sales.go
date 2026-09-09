@@ -19,6 +19,7 @@ import (
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/events"
 	"github.com/murandido/m-80-backend/internal/export"
+	"github.com/murandido/m-80-backend/internal/inventory"
 	"github.com/murandido/m-80-backend/internal/sale"
 	"github.com/murandido/m-80-backend/internal/utils"
 	"gorm.io/gorm"
@@ -539,6 +540,11 @@ type supplierIssuanceRow struct {
 	CostOfTheThousand   *int
 	TaxesIncludedInCost bool
 	Reviewed            bool
+	// OwnsPointInventory says the cost of this issuance is derived from the points
+	// inventory rather than typed on this screen. On those accounts we bought the points
+	// ourselves, so there is no transfer price to agree with an administrator - see
+	// data.Account.OwnsPointInventory.
+	OwnsPointInventory bool
 
 	AccountLogin        *string
 	AccountNickname     *string
@@ -582,7 +588,7 @@ func (h *SaleHandler) GetSupplierBalances(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	balances := aggregateSupplierBalances(rows, from, to, resolveSupplierGrouping(r))
+	balances := aggregateSupplierBalances(h.DB, rows, from, to, resolveSupplierGrouping(r))
 
 	utils.SendJSON(w, r, http.StatusOK, "Supplier balances fetched successfully", balances)
 }
@@ -625,6 +631,7 @@ func (h *SaleHandler) fetchSupplierRows(r *http.Request) ([]supplierIssuanceRow,
 			issuances.taxes_included_in_cost,
 		issuances.reviewed,
 			issuances.cancellation_only,
+			accounts.owns_point_inventory,
 			accounts.login AS account_login,
 			-- Sub-select rather than a join: an account can hold several nicknames, and
 			-- joining would multiply the issuance rows this aggregation counts. Oldest
@@ -752,6 +759,7 @@ func supplierGroupOf(row supplierIssuanceRow, grouping supplierGrouping) (key, l
 // The same two branches also emit the account's statement, so the lines the panel shows can
 // never describe a different set of issuances than the totals beside them.
 func aggregateSupplierBalances(
+	db *gorm.DB,
 	rows []supplierIssuanceRow,
 	from, to *time.Time,
 	grouping supplierGrouping,
@@ -765,6 +773,10 @@ func aggregateSupplierBalances(
 		refundedPoints int
 		statement      []schemas.SupplierIssuanceResponse
 	}
+
+	// One query for the whole statement rather than one per line. Empty on a set with no
+	// inventory account in it, which is the ordinary case.
+	inventoryCosts := supplierInventoryCosts(db, rows)
 
 	byGroup := map[string]*accumulator{}
 	for _, row := range rows {
@@ -782,12 +794,15 @@ func aggregateSupplierBalances(
 		// the spreadsheet tab being reconciled reads minus the refund.
 		if !row.CancellationOnly && inRange(&row.CreatedAt, from, to) {
 			acc.issuedPoints += row.Points
-			acc.statement = append(acc.statement, supplierStatementLine(row, "issued", row.CreatedAt, row.Points, row.Taxes))
+			acc.statement = append(acc.statement, supplierStatementLine(
+				row, "issued", row.CreatedAt, row.Points, row.Taxes, chargedCents(inventoryCosts, row),
+			))
 		}
 		if inRange(row.CancelledAt, from, to) && row.RefundedPoints != nil {
 			acc.refundedPoints += *row.RefundedPoints
 			acc.statement = append(acc.statement, supplierStatementLine(
 				row, "refund", *row.CancelledAt, -*row.RefundedPoints, negateCents(row.RefundedTaxes),
+				refundedCents(inventoryCosts, row),
 			))
 		}
 	}
@@ -879,6 +894,21 @@ func (h *SaleHandler) UpdateSupplierIssuances(w http.ResponseWriter, r *http.Req
 
 	updates := map[string]any{}
 	if _, ok := present["cost_of_the_thousand"]; ok {
+		// On an account that owns its points the rate is derived from the batches that
+		// paid for the booking, and accepting a typed one here would silently overwrite
+		// the costing on the next read - two answers to the same question, with the
+		// wrong one winning. The screen already hides the field; this is the guard that
+		// does not depend on the screen.
+		owned, err := h.issuancesOnInventoryAccounts(req.IssuanceIDs)
+		if err != nil {
+			utils.SendError(w, r, http.StatusInternalServerError, "Failed to check the accounts: "+err.Error())
+			return
+		}
+		if owned > 0 {
+			utils.SendError(w, r, http.StatusUnprocessableEntity,
+				"O custo destas emissões vem do estoque de pontos da conta e não pode ser digitado")
+			return
+		}
 		updates["cost_of_the_thousand"] = req.CostOfTheThousand
 	}
 	if req.TaxesIncludedInCost != nil {
@@ -917,7 +947,18 @@ func (h *SaleHandler) UpdateSupplierIssuances(w http.ResponseWriter, r *http.Req
 // supplierStatementLine builds one line of an account's statement. Points and taxes are
 // passed in already signed rather than derived here, because only the caller knows which of
 // the two branches it is in.
-func supplierStatementLine(row supplierIssuanceRow, kind string, date time.Time, points int, taxes *int) schemas.SupplierIssuanceResponse {
+//
+// costCents is the exact figure the points inventory charged this line, and is nil on an
+// ordinary account, where the cost is the rate somebody typed. When present it wins: it is
+// the sum of the batch slices that actually paid for the booking, whereas the rate beside
+// it is that same figure rounded to a whole centavo per thousand for display.
+func supplierStatementLine(row supplierIssuanceRow, kind string, date time.Time, points int, taxes *int, costCents *int) schemas.SupplierIssuanceResponse {
+	rate := row.CostOfTheThousand
+	if costCents != nil {
+		derived := inventory.RateOfTheThousand(*costCents, points)
+		rate = &derived
+	}
+
 	return schemas.SupplierIssuanceResponse{
 		IssuanceID:          row.IssuanceID,
 		AccountID:           row.AccountID,
@@ -930,7 +971,9 @@ func supplierStatementLine(row supplierIssuanceRow, kind string, date time.Time,
 		DestinationIATACode: row.DestinationIATACode,
 		Points:              points,
 		Taxes:               taxes,
-		CostOfTheThousand:   row.CostOfTheThousand,
+		CostOfTheThousand:   rate,
+		CostCents:           costCents,
+		OwnsPointInventory:  row.OwnsPointInventory,
 		TaxesIncludedInCost: row.TaxesIncludedInCost,
 		Reviewed:            row.Reviewed,
 	}
@@ -982,4 +1025,71 @@ func strconvParseBool(value string) (bool, error) {
 		return false, nil
 	}
 	return false, errors.New("not a boolean")
+}
+
+// supplierInventoryCosts reads the FIFO cost of every inventory-account issuance in the
+// statement, in one query.
+//
+// A failure is logged and swallowed rather than propagated: without these figures the
+// statement falls back to the typed rate, which is what it did before the inventory
+// existed. Failing the whole request instead would take down a screen that ordinary
+// accounts - the overwhelming majority - do not need this for at all.
+func supplierInventoryCosts(db *gorm.DB, rows []supplierIssuanceRow) map[string]inventory.IssuanceCost {
+	issuanceIDs := make([]string, 0)
+	for _, row := range rows {
+		if row.OwnsPointInventory {
+			issuanceIDs = append(issuanceIDs, row.IssuanceID)
+		}
+	}
+	if len(issuanceIDs) == 0 {
+		return nil
+	}
+
+	costs, err := inventory.CostByIssuance(db, issuanceIDs)
+	if err != nil {
+		slog.Error("failed to read the points inventory cost for the supplier statement",
+			"issuance_count", len(issuanceIDs), "err", err)
+		return nil
+	}
+	return costs
+}
+
+// chargedCents is what the inventory charged an issuance, or nil when this row is not
+// costed by it.
+//
+// Nil on an issuance the costing has not reached yet - one whose batch has not been
+// entered - so the line falls back to the typed rate instead of claiming a cost of zero.
+func chargedCents(costs map[string]inventory.IssuanceCost, row supplierIssuanceRow) *int {
+	if !row.OwnsPointInventory {
+		return nil
+	}
+	cost, ok := costs[row.IssuanceID]
+	if !ok || cost.ChargedCents == 0 {
+		return nil
+	}
+	return &cost.ChargedCents
+}
+
+// refundedCents is what the inventory gave back on a cancellation, as a negative amount to
+// match the negative points on the refund line.
+func refundedCents(costs map[string]inventory.IssuanceCost, row supplierIssuanceRow) *int {
+	if !row.OwnsPointInventory {
+		return nil
+	}
+	cost, ok := costs[row.IssuanceID]
+	if !ok || cost.RefundedCents == 0 {
+		return nil
+	}
+	return &cost.RefundedCents
+}
+
+// issuancesOnInventoryAccounts counts how many of the given issuances belong to an account
+// whose points cost is derived from its own inventory.
+func (h *SaleHandler) issuancesOnInventoryAccounts(issuanceIDs []string) (int64, error) {
+	var count int64
+	err := h.DB.Model(&data.Issuance{}).
+		Joins("JOIN accounts ON accounts.id = issuances.account_id").
+		Where("issuances.id IN ? AND accounts.owns_point_inventory", issuanceIDs).
+		Count(&count).Error
+	return count, err
 }

@@ -66,21 +66,23 @@ func toAccountResponseWithUsage(account data.Account, usage *acct.Usage) schemas
 	}
 
 	return schemas.AccountResponse{
-		ID:                  account.ID,
-		Category:            account.Category,
-		WaivesRedemptionFee: account.WaivesRedemptionFee,
-		CPFUsage:            usage,
-		LoyaltyProgramID:    account.LoyaltyProgramID,
-		LoyaltyProgram:      loyaltyProgram,
-		Login:               account.Login,
-		Password:            account.Password,
-		HolderID:            account.HolderID,
-		AdministratorID:     account.AdministratorID,
-		Nicknames:           nicknames,
-		Complete:            account.Complete,
-		CreatedAt:           account.CreatedAt,
-		UpdatedAt:           account.UpdatedAt,
-		DeletedAt:           archivedAt(account.DeletedAt),
+		ID:                        account.ID,
+		Category:                  account.Category,
+		WaivesRedemptionFee:       account.WaivesRedemptionFee,
+		OwnsPointInventory:        account.OwnsPointInventory,
+		DefaultProfitSharePercent: account.DefaultProfitSharePercent,
+		CPFUsage:                  usage,
+		LoyaltyProgramID:          account.LoyaltyProgramID,
+		LoyaltyProgram:            loyaltyProgram,
+		Login:                     account.Login,
+		Password:                  account.Password,
+		HolderID:                  account.HolderID,
+		AdministratorID:           account.AdministratorID,
+		Nicknames:                 nicknames,
+		Complete:                  account.Complete,
+		CreatedAt:                 account.CreatedAt,
+		UpdatedAt:                 account.UpdatedAt,
+		DeletedAt:                 archivedAt(account.DeletedAt),
 	}
 }
 
@@ -103,6 +105,7 @@ func toAccountPickerResponse(account data.Account) schemas.AccountPickerResponse
 		HolderID:            account.HolderID,
 		Nicknames:           nicknames,
 		WaivesRedemptionFee: account.WaivesRedemptionFee,
+		OwnsPointInventory:  account.OwnsPointInventory,
 		DeletedAt:           archivedAt(account.DeletedAt),
 	}
 }
@@ -143,6 +146,12 @@ func (h *AccountHandler) CreateAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.WaivesRedemptionFee != nil {
 		account.WaivesRedemptionFee = *req.WaivesRedemptionFee
+	}
+	if req.OwnsPointInventory != nil {
+		account.OwnsPointInventory = *req.OwnsPointInventory
+	}
+	if req.DefaultProfitSharePercent != nil {
+		account.DefaultProfitSharePercent = *req.DefaultProfitSharePercent
 	}
 	if req.Category != nil {
 		account.Category = *req.Category
@@ -484,6 +493,12 @@ func (h *AccountHandler) UpdateAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.WaivesRedemptionFee != nil {
 		account.WaivesRedemptionFee = *req.WaivesRedemptionFee
+	}
+	if req.OwnsPointInventory != nil {
+		account.OwnsPointInventory = *req.OwnsPointInventory
+	}
+	if req.DefaultProfitSharePercent != nil {
+		account.DefaultProfitSharePercent = *req.DefaultProfitSharePercent
 	}
 	if req.Category != nil {
 		account.Category = *req.Category

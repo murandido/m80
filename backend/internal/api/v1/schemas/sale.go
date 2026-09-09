@@ -143,6 +143,14 @@ type SupplierIssuanceResponse struct {
 	// centavos. Nil means it has not been agreed yet, which is what makes the payment
 	// summary refuse to generate rather than under-report the debt.
 	CostOfTheThousand *int `json:"cost_of_the_thousand" example:"1650"`
+	// CostCents is the exact amount the points inventory charged this line, present only
+	// on an account that owns its points. It is the sum of the batch slices that paid for
+	// the booking, and the figure the total is built from - CostOfTheThousand beside it is
+	// that same amount rounded to a whole centavo per thousand, for display.
+	CostCents *int `json:"cost_cents" example:"504245"`
+	// OwnsPointInventory tells the screen this line's cost is derived and must not be
+	// offered for editing.
+	OwnsPointInventory bool `json:"owns_point_inventory" example:"false"`
 	// TaxesIncludedInCost says whether Taxes is part of what is paid for this line.
 	TaxesIncludedInCost bool `json:"taxes_included_in_cost" example:"true"`
 	// Reviewed says somebody already checked this line while reconciling. Both lines of an

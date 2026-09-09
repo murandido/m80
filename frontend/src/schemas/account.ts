@@ -62,6 +62,16 @@ export const accountSchema = z.object({
     .boolean()
     .nullish()
     .transform((value) => value ?? false),
+  // Defaulted for the same reason: an account from before the points inventory existed
+  // owns none, and a split of zero leaves the profit whole with whoever funded the batch.
+  owns_point_inventory: z
+    .boolean()
+    .nullish()
+    .transform((value) => value ?? false),
+  default_profit_share_percent: z
+    .number()
+    .nullish()
+    .transform((value) => value ?? 0),
   cpf_usage: cpfUsageSchema.nullish(),
   complete: z.boolean(),
   created_at: z.string(),
@@ -97,6 +107,12 @@ export const accountOptionSchema = z.object({
   // which on an unpaginated feed is most rows. Defaulted here for the same reason
   // accountSchema defaults them: absent and false have always meant the same thing.
   waives_redemption_fee: z
+    .boolean()
+    .nullish()
+    .transform((value) => value ?? false),
+  // Absent means false, the same contract as the flag above: the API omits it on every
+  // ordinary account, which is nearly all of them.
+  owns_point_inventory: z
     .boolean()
     .nullish()
     .transform((value) => value ?? false),
@@ -169,6 +185,8 @@ export const createAccountSchema = {
     administrator_id: optionalUuidField,
     category: accountCategorySchema.optional(),
     waives_redemption_fee: z.boolean().optional(),
+    owns_point_inventory: z.boolean().optional(),
+    default_profit_share_percent: z.number().min(0).max(100).optional(),
     nicknames: z.array(z.string().min(1)).optional(),
   }),
   response: z.object({
@@ -187,6 +205,8 @@ export const updateAccountSchema = {
     administrator_id: optionalUuidField,
     category: accountCategorySchema.optional(),
     waives_redemption_fee: z.boolean().optional(),
+    owns_point_inventory: z.boolean().optional(),
+    default_profit_share_percent: z.number().min(0).max(100).optional(),
   }),
   response: z.object({
     success: z.boolean(),

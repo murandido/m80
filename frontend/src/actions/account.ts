@@ -29,13 +29,26 @@ export async function createAccountAction(
   const cookieStore = await cookies()
   const token = cookieStore.get("auth_token")?.value
 
-  // waives_redemption_fee is pulled out of stripEmptyFields on purpose: that helper drops
-  // every falsy value, and `false` is a real answer here, not an empty field. Left inside,
-  // turning the exemption off would send nothing and the account would stay exempt.
-  const { loyalty_program_id, nicknames, waives_redemption_fee, ...rest } = data
+  // These are pulled out of stripEmptyFields on purpose: that helper drops every falsy
+  // value, and `false` and `0` are real answers here, not empty fields. Left inside,
+  // turning the exemption off would send nothing and the account would stay exempt - and a
+  // profit split of zero, which means "the profit stays whole with whoever funded the
+  // batch", would silently become no split at all.
+  const {
+    loyalty_program_id,
+    nicknames,
+    waives_redemption_fee,
+    owns_point_inventory,
+    default_profit_share_percent,
+    ...rest
+  } = data
   const body = {
     loyalty_program_id,
     waives_redemption_fee: waives_redemption_fee ?? false,
+    owns_point_inventory: owns_point_inventory ?? false,
+    ...(default_profit_share_percent === undefined
+      ? {}
+      : { default_profit_share_percent }),
     ...stripEmptyFields(rest),
   }
 
@@ -95,11 +108,14 @@ export async function updateAccountAction(
   const cookieStore = await cookies()
   const token = cookieStore.get("auth_token")?.value
 
-  // Same reason as in createAccountAction: `false` must survive the strip.
-  const { waives_redemption_fee, ...rest } = data
+  // Same reason as in createAccountAction: `false` and `0` must survive the strip.
+  const { waives_redemption_fee, owns_point_inventory, default_profit_share_percent, ...rest } =
+    data
   const body = {
     ...stripEmptyFields(rest),
     ...(waives_redemption_fee === undefined ? {} : { waives_redemption_fee }),
+    ...(owns_point_inventory === undefined ? {} : { owns_point_inventory }),
+    ...(default_profit_share_percent === undefined ? {} : { default_profit_share_percent }),
   }
 
   try {

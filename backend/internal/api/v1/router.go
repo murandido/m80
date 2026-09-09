@@ -49,6 +49,12 @@ func NewRouter(db *gorm.DB, broker *events.Broker, traveosClient *traveos.Client
 		routes.RegisterLoyaltyDocumentRoutes(r, db)
 		routes.RegisterPromoRecipeRoutes(r, db)
 		routes.RegisterPromoEnrollmentRoutes(r, db)
+		// Points inventory: admin-only end to end, gated inside the register funcs.
+		// It exposes what points cost us and how the profit is split, which is not
+		// something the issuances grid may ever surface.
+		routes.RegisterPointBatchOriginRoutes(r, db)
+		routes.RegisterPointBatchRoutes(r, db)
+		routes.RegisterInventoryPeriodRoutes(r, db)
 		// SSE stream, behind the same auth as everything else in this group
 		routes.RegisterEventRoutes(r, broker)
 		// Dependency lights (bot + Traveos) for everyone, not just admins -

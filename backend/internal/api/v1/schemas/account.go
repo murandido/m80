@@ -19,6 +19,14 @@ type CreateAccountRequest struct {
 	// WaivesRedemptionFee marks an account that pays no redemption fee - Azul's Diamante
 	// Unique. Omitted means false, which is what every account paid before this existed.
 	WaivesRedemptionFee *bool `json:"waives_redemption_fee" validate:"omitempty"`
+	// OwnsPointInventory puts the account on the batch costing: its points were bought by
+	// us, so their cost comes from the batches rather than from a rate typed on
+	// /sales/suppliers. Omitted means false, which is every account that existed before
+	// this - and what keeps the costing dormant until an account is deliberately marked.
+	OwnsPointInventory *bool `json:"owns_point_inventory" validate:"omitempty"`
+	// DefaultProfitSharePercent seeds the split on new batches of this account. Each batch
+	// freezes its own copy, so changing this never revises a month already settled.
+	DefaultProfitSharePercent *int `json:"default_profit_share_percent" validate:"omitempty,min=0,max=100"`
 	// Complete overrides the automatically computed value when provided
 	Complete *bool `json:"complete" validate:"omitempty"`
 }
@@ -37,6 +45,14 @@ type UpdateAccountRequest struct {
 	// is stored on the issuance and only moves when that issuance is written again. See
 	// data.Issuance.RedemptionFeeSavedCents.
 	WaivesRedemptionFee *bool `json:"waives_redemption_fee" validate:"omitempty"`
+	// OwnsPointInventory puts the account on the batch costing: its points were bought by
+	// us, so their cost comes from the batches rather than from a rate typed on
+	// /sales/suppliers. Omitted means false, which is every account that existed before
+	// this - and what keeps the costing dormant until an account is deliberately marked.
+	OwnsPointInventory *bool `json:"owns_point_inventory" validate:"omitempty"`
+	// DefaultProfitSharePercent seeds the split on new batches of this account. Each batch
+	// freezes its own copy, so changing this never revises a month already settled.
+	DefaultProfitSharePercent *int `json:"default_profit_share_percent" validate:"omitempty,min=0,max=100"`
 	// Complete overrides the automatically recomputed value when provided
 	Complete *bool `json:"complete" validate:"omitempty"`
 }
@@ -60,6 +76,11 @@ type AccountResponse struct {
 	// Azul's Diamante Unique. It is what turns a computed fee into "saved" instead of
 	// "owed" on the issuances made through this account.
 	WaivesRedemptionFee bool `json:"waives_redemption_fee"`
+	// OwnsPointInventory is true on an account whose points cost is derived from its own
+	// batches. The suppliers screen reads it to know the rate is not editable there.
+	OwnsPointInventory bool `json:"owns_point_inventory"`
+	// DefaultProfitSharePercent is the split a new batch of this account starts with.
+	DefaultProfitSharePercent int `json:"default_profit_share_percent"`
 	// CPFUsage is how much of the program's beneficiary cap this account has consumed,
 	// and is null whenever there is no cap to report: an injunction suspends it, an
 	// unidentified account gives no basis to claim one, and a program nobody has
@@ -103,8 +124,13 @@ type AccountPickerResponse struct {
 	// Both are omitted when they carry no information, which on a feed this size is most
 	// rows: an account that waives no fee and was never archived says nothing by saying
 	// false and null. The panel defaults them back, as it already did for absent fields.
-	WaivesRedemptionFee bool       `json:"waives_redemption_fee,omitempty"`
-	DeletedAt           *time.Time `json:"deleted_at,omitempty"`
+	WaivesRedemptionFee bool `json:"waives_redemption_fee,omitempty"`
+	// OwnsPointInventory is here so the inventory screen can offer only the accounts the
+	// costing applies to - an ordinary account has no batches and never will, and listing
+	// it would produce an empty screen with no way to tell why. Omitted when false for the
+	// same reason as the flag above: on an unpaginated feed that is nearly every row.
+	OwnsPointInventory bool       `json:"owns_point_inventory,omitempty"`
+	DeletedAt          *time.Time `json:"deleted_at,omitempty"`
 }
 
 // MergeAccountRequest names the account to absorb into the one in the URL.

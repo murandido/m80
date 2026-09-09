@@ -1,4 +1,5 @@
 import {
+  Tags,
   Award,
   Bot,
   Building2,
@@ -75,6 +76,12 @@ export const navSections: NavSection[] = [
         title: "CPFs das Promoções",
         url: "/dashboard/loyalty-documents",
         icon: IdCard,
+        roles: ["admin"],
+      },
+      {
+        title: "Origens de lote",
+        url: "/dashboard/point-batch-origins",
+        icon: Tags,
         roles: ["admin"],
       },
       // Temporary: the bridge off the hand-kept spreadsheet. Remove this line with the
