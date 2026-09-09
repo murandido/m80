@@ -1,3 +1,5 @@
+import { parseDecimalInput, sanitizeDecimalInput } from "@/lib/decimal"
+
 // How the panel reads and writes point counts.
 //
 // Operators quote points in milheiros - "dez" means ten thousand - and so does the bot, which
@@ -20,11 +22,12 @@ export function applyPaddedThousandsMask(raw: string): string {
   return padded.replace(/\B(?=(\d{3})+(?!\d))/g, ".")
 }
 
-// Digits and at most one comma. No thousands grouping while typing: in milheiros the number has
-// one or two digits before the comma, and a dot would only get in the way.
+// Digits and at most one separator, keeping whichever the operator reached for. No thousands
+// grouping while typing: in milheiros the number has one or two digits before the separator,
+// so a grouping dot would only get in the way - and a dot typed here is the decimal point,
+// the same as everywhere else in the panel.
 export function sanitizeThousandsInput(raw: string): string {
-  const [whole, ...rest] = raw.replace(/[^\d,]/g, "").split(",")
-  return rest.length > 0 ? `${whole},${rest.join("")}` : whole
+  return sanitizeDecimalInput(raw)
 }
 
 // A number already read as milheiros to the absolute point count the API stores. Split out of
@@ -35,13 +38,12 @@ export function pointsFromThousands(value: number): number {
 }
 
 // Text typed in milheiros to the absolute point count the API stores: "10" is ten thousand
-// points and the comma is the fraction of a thousand, so "10,5" is 10.500 and "0,5" is 500.
-// Null for anything that is not a number - blank, "abc", a stray comma.
+// points and the separator is the fraction of a thousand, so "10,5" and "10.5" are both
+// 10.500 and "0,5" is 500. Null for anything that is not a number - blank, "abc", a stray
+// separator.
 export function parsePointsFromThousands(text: string): number | null {
-  const trimmed = text.trim()
-  if (trimmed === "") return null
-  const value = Number(trimmed.replace(",", "."))
-  if (Number.isNaN(value)) return null
+  const value = parseDecimalInput(text)
+  if (value === null) return null
   return pointsFromThousands(value)
 }
 

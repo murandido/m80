@@ -14,7 +14,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { applyPaddedThousandsMask } from "@/lib/points"
-import { parseCurrencyBRLInput } from "@/lib/currency"
+import { formatCurrencyBRL, parseCurrencyBRLInput } from "@/lib/currency"
 import { commitStatementAction, previewStatementAction } from "@/actions/statement"
 import type { Agency } from "@/schemas/agency"
 import type {
@@ -91,6 +91,22 @@ export function StatementPanel({ accountId, origins, agencies }: Props) {
         return draft?.originId && draft?.fundingAgencyId
       }),
     [selected, drafts],
+  )
+
+  const bulkCost = useMemo(
+    () => (bulk.cost.trim() === "" ? null : parseCurrencyBRLInput(bulk.cost)),
+    [bulk.cost],
+  )
+
+  // The money the commit is about to record, added up across the marked credits - the
+  // figure to check before pressing, and the one a mistyped separator shows up in.
+  const plannedCents = useMemo(
+    () =>
+      ready.reduce((total, index) => {
+        const typed = drafts[index].cost
+        return total + (typed.trim() === "" ? 0 : (parseCurrencyBRLInput(typed) ?? 0))
+      }, 0),
+    [ready, drafts],
   )
 
   // What will actually be written: credits of the same origin and payer are summed into a
@@ -356,13 +372,20 @@ export function StatementPanel({ accountId, origins, agencies }: Props) {
                     ))}
                   </SelectContent>
                 </Select>
-                <Input
-                  inputMode="decimal"
-                  placeholder="Custo (R$)"
-                  value={bulk.cost}
-                  onChange={(event) => setBulk((current) => ({ ...current, cost: event.target.value }))}
-                  className="w-32"
-                />
+                {/* A dot and a comma both separate the decimals, so "1.500" is a real and
+                    a half rather than fifteen hundred. This bar writes the same cost onto
+                    every marked credit, so it is the one place worth spelling out. */}
+                <div className="flex w-32 flex-col gap-0.5">
+                  <Input
+                    inputMode="decimal"
+                    placeholder="Custo (R$)"
+                    value={bulk.cost}
+                    onChange={(event) => setBulk((current) => ({ ...current, cost: event.target.value }))}
+                  />
+                  {bulkCost !== null && (
+                    <span className="text-xs text-slate-500">= {formatCurrencyBRL(bulkCost)}</span>
+                  )}
+                </div>
                 <Select
                   value={bulk.fundingAgencyId}
                   onValueChange={(value) =>
@@ -437,10 +460,15 @@ export function StatementPanel({ accountId, origins, agencies }: Props) {
                     ? "Lançar créditos"
                     : `Lançar ${plannedBatches} ${plannedBatches === 1 ? "lote" : "lotes"}`}
                 </Button>
-                {ready.length > plannedBatches && (
+                {ready.length > 0 && (
                   <span className="text-xs text-slate-500">
-                    {ready.length} créditos somados em {plannedBatches}{" "}
-                    {plannedBatches === 1 ? "lote" : "lotes"}.
+                    {ready.length > plannedBatches && (
+                      <>
+                        {ready.length} créditos somados em {plannedBatches}{" "}
+                        {plannedBatches === 1 ? "lote" : "lotes"}.{" "}
+                      </>
+                    )}
+                    Custo total: {formatCurrencyBRL(plannedCents)}.
                   </span>
                 )}
                 {selected.size > ready.length && (

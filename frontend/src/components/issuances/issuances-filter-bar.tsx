@@ -6,7 +6,7 @@ import { CalendarDays, Info, RotateCcw } from "lucide-react"
 import type { DateRange } from "react-day-picker"
 import { Button } from "@/components/ui/button"
 import { Calendar } from "@/components/ui/calendar"
-import { Input } from "@/components/ui/input"
+import { DateInput } from "@/components/ui/date-input"
 import { Label } from "@/components/ui/label"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Switch } from "@/components/ui/switch"
@@ -236,20 +236,20 @@ export function IssuancesFilterBar({
             <div className="mt-3 flex items-end gap-2">
               <div className="flex min-w-0 flex-1 flex-col gap-1">
                 <Label className="text-xs text-slate-500">De</Label>
-                <Input
-                  type="date"
+                <DateInput
+                  picker={false}
                   value={filters.date_from}
-                  onChange={(e) => handleManualDate("date_from", e.target.value)}
-                  className="bg-slate-100"
+                  onChange={(value) => handleManualDate("date_from", value)}
+                  className="[&_input]:bg-slate-100"
                 />
               </div>
               <div className="flex min-w-0 flex-1 flex-col gap-1">
                 <Label className="text-xs text-slate-500">Até</Label>
-                <Input
-                  type="date"
+                <DateInput
+                  picker={false}
                   value={filters.date_to}
-                  onChange={(e) => handleManualDate("date_to", e.target.value)}
-                  className="bg-slate-100"
+                  onChange={(value) => handleManualDate("date_to", value)}
+                  className="[&_input]:bg-slate-100"
                 />
               </div>
             </div>

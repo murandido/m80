@@ -4,7 +4,7 @@ import { useState } from "react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { CalendarDays, Info } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+import { DateInput } from "@/components/ui/date-input"
 import { Label } from "@/components/ui/label"
 import {
   Tooltip,
@@ -142,26 +142,24 @@ export function PeriodFilter({
             >
               De
             </Label>
-            <Input
+            <DateInput
               id="period-date-from"
-              type="date"
               value={pending.date_from}
               max={pending.date_to || undefined}
-              onChange={(e) => applyCustomEnd("date_from", e.target.value)}
-              className="w-44 bg-slate-100"
+              onChange={(value) => applyCustomEnd("date_from", value)}
+              className="w-44 [&_input]:bg-slate-100"
             />
           </div>
           <div className="flex flex-col gap-1">
             <Label className="text-xs text-slate-500" htmlFor="period-date-to">
               Até
             </Label>
-            <Input
+            <DateInput
               id="period-date-to"
-              type="date"
               value={pending.date_to}
               min={pending.date_from || undefined}
-              onChange={(e) => applyCustomEnd("date_to", e.target.value)}
-              className="w-44 bg-slate-100"
+              onChange={(value) => applyCustomEnd("date_to", value)}
+              className="w-44 [&_input]:bg-slate-100"
             />
           </div>
         </div>
@@ -181,11 +179,10 @@ export function PeriodFilter({
               </TooltipContent>
             </Tooltip>
           </Label>
-          <Input
-            type="date"
+          <DateInput
             value={pending.reference}
-            onChange={(e) => apply(pending.preset, e.target.value)}
-            className="w-44 bg-slate-100"
+            onChange={(value) => apply(pending.preset, value)}
+            className="w-44 [&_input]:bg-slate-100"
           />
         </div>
       )}

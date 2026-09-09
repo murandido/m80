@@ -15,6 +15,7 @@ import {
 } from "@/actions/legacy-import"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
+import { DateInput } from "@/components/ui/date-input"
 import { Spinner } from "@/components/ui/spinner"
 import {
   LegacyImportMappings,
@@ -443,15 +444,12 @@ export function LegacyImportScreen({
               buttons alone would be five hundred of them. The date box goes straight
               to one; the buttons stay for stepping to the day next to it. */}
           <div className="flex flex-wrap items-center gap-3">
-            <input
-              type="date"
+            <DateInput
               value={selectedDate}
               min={days[0]?.date}
               max={days[days.length - 1]?.date}
-              disabled={busy}
-              onChange={(event) => void handleDatePick(event.target.value)}
-              className="h-9 rounded-md border px-3 text-sm"
-              aria-label="Ir para uma data"
+              onChange={handleDatePick}
+              className="w-44"
             />
             <span className="text-muted-foreground text-xs">
               {days.length} dia{days.length === 1 ? "" : "s"} na planilha

@@ -6,6 +6,7 @@ import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Button } from "@/components/ui/button"
+import { DateInput } from "@/components/ui/date-input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import {
   AlertDialog,
@@ -1379,11 +1380,10 @@ export function IssuancesGrid({
           >
             <CalendarDays className="h-4 w-4 shrink-0" />
             <span className="text-xs text-muted-foreground">Lançando em</span>
-            <input
-              type="date"
+            <DateInput
               value={recordingOn}
-              onChange={(event) => setRecordingOn(event.target.value || todayISO())}
-              className="bg-transparent text-sm outline-none"
+              onChange={(value) => setRecordingOn(value || todayISO())}
+              className="w-36 [&_input]:h-7 [&_input]:border-0 [&_input]:bg-transparent [&_input]:px-0 [&_input]:shadow-none [&_input]:focus-visible:ring-0"
             />
             {backdating && (
               <button

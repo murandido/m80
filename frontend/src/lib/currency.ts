@@ -1,3 +1,5 @@
+import { parseDecimalInput } from "@/lib/decimal"
+
 const brlFormatter = new Intl.NumberFormat("pt-BR", {
   style: "currency",
   currency: "BRL",
@@ -8,18 +10,14 @@ export function formatCurrencyBRL(cents: number): string {
   return brlFormatter.format(cents / 100)
 }
 
-// Parses free-typed text into integer centavos. Comma is treated as the
-// decimal separator (Brazilian convention, e.g. "24,50"); dots are stripped as
-// thousand separators. A bare integer with no comma ("1500") is read as whole
-// reais. Returns null for empty/unparseable input - callers should then skip
-// the save, same laxity as the rest of the grid's editable fields.
+// Parses free-typed text into integer centavos, in the panel's one decimal grammar: a dot
+// and a comma are both the decimal separator, so "24,50" and "24.50" are the same R$ 24,50
+// (see src/lib/decimal.ts for why, and for what happens when both appear). Returns null for
+// empty/unparseable input - callers should then skip the save, same laxity as the rest of
+// the grid's editable fields.
 export function parseCurrencyBRLInput(text: string): number | null {
-  const trimmed = text.trim()
-  if (trimmed === "") return null
-
-  const normalized = trimmed.replace(/\./g, "").replace(",", ".")
-  const value = Number(normalized)
-  if (Number.isNaN(value)) return null
+  const value = parseDecimalInput(text)
+  if (value === null) return null
 
   return centsFromReais(value)
 }

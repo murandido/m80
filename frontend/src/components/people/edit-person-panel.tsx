@@ -8,7 +8,6 @@ import { z } from "zod"
 import {
   User as UserIcon,
   Hash,
-  Calendar,
   Mail,
   PhoneCall,
   MapPin,
@@ -21,6 +20,7 @@ import {
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Field, FieldError, FieldLabel } from "@/components/ui/field"
+import { DateInput } from "@/components/ui/date-input"
 import {
   InputGroup,
   InputGroupAddon,
@@ -195,18 +195,14 @@ export function EditPersonPanel({ person, isOpen, onSaved }: EditPersonPanelProp
                       <FieldLabel htmlFor="edit-person-birth-date">
                         Data de nascimento
                       </FieldLabel>
-                      <InputGroup className="bg-slate-200">
-                        <InputGroupInput
-                          {...field}
-                          id="edit-person-birth-date"
-                          type="date"
-                          aria-invalid={fieldState.invalid}
-                          disabled={isPending}
-                        />
-                        <InputGroupAddon align="inline-end">
-                          <Calendar className="text-foreground h-4 w-4" />
-                        </InputGroupAddon>
-                      </InputGroup>
+                      <DateInput
+                        id="edit-person-birth-date"
+                        value={field.value ?? ""}
+                        onChange={field.onChange}
+                        aria-invalid={fieldState.invalid}
+                        disabled={isPending}
+                        className="[&_input]:bg-slate-200"
+                      />
                       {fieldState.invalid && (
                         <FieldError errors={[fieldState.error]} />
                       )}

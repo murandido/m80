@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/input-group"
 import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
+import { DateInput } from "@/components/ui/date-input"
 import { useGridContext } from "@/components/issuances/grid-context"
 import { parseCurrencyBRLInput } from "@/lib/currency"
 import {
@@ -255,15 +256,13 @@ export function CancelIssuanceButton({ r }: { r: number }) {
               render={({ field, fieldState }) => (
                 <Field>
                   <FieldLabel htmlFor="cancelled_on">Data do cancelamento</FieldLabel>
-                  <InputGroup>
-                    <InputGroupInput
-                      {...field}
-                      id="cancelled_on"
-                      type="date"
-                      aria-invalid={fieldState.invalid}
-                      disabled={isPending}
-                    />
-                  </InputGroup>
+                  <DateInput
+                    id="cancelled_on"
+                    value={field.value}
+                    onChange={field.onChange}
+                    aria-invalid={fieldState.invalid}
+                    disabled={isPending}
+                  />
                   {fieldState.invalid ? (
                     <FieldError errors={[fieldState.error]} />
                   ) : (

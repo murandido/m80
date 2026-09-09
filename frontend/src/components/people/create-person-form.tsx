@@ -10,7 +10,6 @@ import {
   X,
   User,
   Hash,
-  Calendar,
   Mail,
   PhoneCall,
   MapPin,
@@ -23,6 +22,7 @@ import {
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Field, FieldError, FieldLabel } from "@/components/ui/field"
+import { DateInput } from "@/components/ui/date-input"
 import {
   InputGroup,
   InputGroupAddon,
@@ -200,18 +200,14 @@ export function CreatePersonForm() {
                     render={({ field, fieldState }) => (
                       <>
                         <FieldLabel htmlFor="birth_date">Data de nascimento</FieldLabel>
-                        <InputGroup className="bg-slate-200">
-                          <InputGroupInput
-                            {...field}
-                            id="birth_date"
-                            type="date"
-                            aria-invalid={fieldState.invalid}
-                            disabled={isPending}
-                          />
-                          <InputGroupAddon align="inline-end">
-                            <Calendar className="text-foreground h-4 w-4" />
-                          </InputGroupAddon>
-                        </InputGroup>
+                        <DateInput
+                          id="birth_date"
+                          value={field.value ?? ""}
+                          onChange={field.onChange}
+                          aria-invalid={fieldState.invalid}
+                          disabled={isPending}
+                          className="[&_input]:bg-slate-200"
+                        />
                         {fieldState.invalid && (
                           <FieldError errors={[fieldState.error]} />
                         )}

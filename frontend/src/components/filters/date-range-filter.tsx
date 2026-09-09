@@ -5,7 +5,7 @@ import type { DateRange } from "react-day-picker"
 import { CalendarDays } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Calendar } from "@/components/ui/calendar"
-import { Input } from "@/components/ui/input"
+import { DateInput } from "@/components/ui/date-input"
 import { Label } from "@/components/ui/label"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { addDays, dateRangeLabel, formatYmd, parseYmd, startOfToday } from "@/lib/date-range"
@@ -150,20 +150,20 @@ export function DateRangeFilter({ from, to, onChange, className }: DateRangeFilt
         <div className="mt-3 flex items-end gap-2">
           <div className="flex min-w-0 flex-1 flex-col gap-1">
             <Label className="text-xs text-slate-500">De</Label>
-            <Input
-              type="date"
+            <DateInput
+              picker={false}
               value={from}
-              onChange={(e) => handleTyped("from", e.target.value)}
-              className="bg-slate-100"
+              onChange={(value) => handleTyped("from", value)}
+              className="[&_input]:bg-slate-100"
             />
           </div>
           <div className="flex min-w-0 flex-1 flex-col gap-1">
             <Label className="text-xs text-slate-500">Até</Label>
-            <Input
-              type="date"
+            <DateInput
+              picker={false}
               value={to}
-              onChange={(e) => handleTyped("to", e.target.value)}
-              className="bg-slate-100"
+              onChange={(value) => handleTyped("to", value)}
+              className="[&_input]:bg-slate-100"
             />
           </div>
         </div>

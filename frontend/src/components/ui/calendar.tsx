@@ -6,6 +6,7 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
 } from "lucide-react"
+import { ptBR } from "date-fns/locale"
 import {
   DayPicker,
   getDefaultClassNames,
@@ -15,9 +16,12 @@ import {
 import { cn } from "@/lib/utils"
 import { Button, buttonVariants } from "@/components/ui/button"
 
+// locale defaults to Portuguese rather than react-day-picker's en-US: the panel is in
+// Portuguese, and the month names were coming out in English on every machine.
 function Calendar({
   className,
   classNames,
+  locale = ptBR,
   showOutsideDays = true,
   captionLayout = "label",
   buttonVariant = "ghost",
@@ -31,6 +35,7 @@ function Calendar({
 
   return (
     <DayPicker
+      locale={locale}
       showOutsideDays={showOutsideDays}
       className={cn(
         "group/calendar bg-background p-3 [--cell-size:--spacing(8)] [[data-slot=card-content]_&]:bg-transparent [[data-slot=popover-content]_&]:bg-transparent",

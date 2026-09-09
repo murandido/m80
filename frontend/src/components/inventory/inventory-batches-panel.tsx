@@ -1,9 +1,10 @@
 "use client"
 
-import { useState, useTransition } from "react"
+import { useMemo, useState, useTransition } from "react"
 import { toast } from "sonner"
 import { Layers, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { DateInput } from "@/components/ui/date-input"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
@@ -95,6 +96,13 @@ export function InventoryBatchesPanel({
   const [cost, setCost] = useState("")
   const [fundingAgencyId, setFundingAgencyId] = useState("")
   const [opening, setOpening] = useState(false)
+
+  // What the cost field currently resolves to, in centavos. Null while it is blank or
+  // half-typed, which is also when there is nothing worth confirming.
+  const typedCost = useMemo(
+    () => (cost.trim() === "" ? null : parseCurrencyBRLInput(cost)),
+    [cost],
+  )
 
   function submit() {
     const points = parsePoints(milheiros)
@@ -192,11 +200,10 @@ export function InventoryBatchesPanel({
 
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="batch-date">Data</Label>
-            <Input
+            <DateInput
               id="batch-date"
-              type="date"
               value={acquiredOn}
-              onChange={(event) => setAcquiredOn(event.target.value)}
+              onChange={setAcquiredOn}
             />
           </div>
 
@@ -223,6 +230,12 @@ export function InventoryBatchesPanel({
               value={cost}
               onChange={(event) => setCost(event.target.value)}
             />
+            {/* A dot and a comma both separate the decimals, so "1.500" is a real and a
+                half rather than fifteen hundred. Saying what the field resolves to is what
+                keeps that from being a surprise at the end of the month. */}
+            {typedCost !== null && (
+              <p className="text-xs text-slate-500">= {formatCurrencyBRL(typedCost)}</p>
+            )}
           </div>
 
           <div className="flex flex-col gap-1.5">

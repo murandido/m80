@@ -9,6 +9,7 @@ import {
   getSalePaymentsAction,
 } from "@/actions/sale"
 import { Button } from "@/components/ui/button"
+import { DateInput } from "@/components/ui/date-input"
 import { Input } from "@/components/ui/input"
 import {
   Popover,
@@ -246,12 +247,10 @@ export function SalePaymentsPopover({
               // Negative is how a refund is recorded, so the field has to accept a minus.
               inputMode="text"
             />
-            <Input
-              type="date"
+            <DateInput
               value={paidOn}
-              onChange={(e) => setPaidOn(e.target.value)}
-              className="h-8 w-36 text-xs"
-              aria-label="Dia em que o dinheiro entrou"
+              onChange={setPaidOn}
+              className="w-36 [&_input]:h-8 [&_input]:text-xs"
             />
           </div>
           <Input
