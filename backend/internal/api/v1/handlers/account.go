@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	acct "github.com/murandido/m-80-backend/internal/account"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
+	"github.com/murandido/m-80-backend/internal/inventory"
 	"github.com/murandido/m-80-backend/internal/utils"
 	"gorm.io/gorm"
 )
@@ -41,6 +43,77 @@ func archivedAt(deletedAt gorm.DeletedAt) *time.Time {
 
 // toAccountResponse renders an account without its CPF consumption. Most callers do not
 // have it: computing it costs a query, and the create/update round-trips do not need it.
+// balanceDateLayout is the wire format of the day a balance was read: a plain date, like
+// every other date the panel types.
+const balanceDateLayout = "2006-01-02"
+
+// fillExpectedBalances writes the derived balance onto the responses that have one.
+//
+// Done here rather than inside the response builder because it is a query, and one for the
+// whole page rather than one per row. Accounts that do not own their point inventory come
+// back absent from the map and keep a null balance, which is the honest answer for them.
+//
+// Best effort on purpose: a failure to compute leaves the field null instead of failing the
+// listing, because an account screen that will not load over a derived number is worse than
+// one missing it.
+func fillExpectedBalances(db *gorm.DB, responses []schemas.AccountResponse) {
+	if len(responses) == 0 {
+		return
+	}
+
+	ids := make([]string, 0, len(responses))
+	for _, response := range responses {
+		if response.OwnsPointInventory {
+			ids = append(ids, response.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+
+	balances, err := inventory.ExpectedBalances(db, ids)
+	if err != nil {
+		slog.Error("could not compute the expected point balances", "err", err)
+		return
+	}
+	for i := range responses {
+		if points, ok := balances[responses[i].ID]; ok {
+			expected := points
+			responses[i].ExpectedBalancePoints = &expected
+		}
+	}
+}
+
+// applyBalanceReading records what somebody read off the airline's page.
+//
+// The day defaults to today when only the number arrives: a reading always happened on some
+// day, and one without a date cannot be held against a panel that keeps moving - which is
+// the whole point of storing it.
+func applyBalanceReading(account *data.Account, points *int, checkedOn *string) error {
+	if checkedOn != nil {
+		day, err := time.Parse(balanceDateLayout, *checkedOn)
+		if err != nil {
+			return fmt.Errorf("data da conferência inválida, use AAAA-MM-DD")
+		}
+		account.RealBalanceCheckedOn = &day
+	}
+	if points == nil {
+		return nil
+	}
+
+	account.RealBalancePoints = points
+	if checkedOn == nil {
+		loc, err := time.LoadLocation(listTimezone)
+		if err != nil {
+			loc = time.UTC
+		}
+		now := time.Now().In(loc)
+		today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+		account.RealBalanceCheckedOn = &today
+	}
+	return nil
+}
+
 func toAccountResponse(account data.Account) schemas.AccountResponse {
 	return toAccountResponseWithUsage(account, nil)
 }
@@ -65,9 +138,17 @@ func toAccountResponseWithUsage(account data.Account, usage *acct.Usage) schemas
 		}
 	}
 
+	var checkedOn *string
+	if account.RealBalanceCheckedOn != nil {
+		day := account.RealBalanceCheckedOn.Format(balanceDateLayout)
+		checkedOn = &day
+	}
+
 	return schemas.AccountResponse{
 		ID:                        account.ID,
 		Category:                  account.Category,
+		RealBalancePoints:         account.RealBalancePoints,
+		RealBalanceCheckedOn:      checkedOn,
 		WaivesRedemptionFee:       account.WaivesRedemptionFee,
 		OwnsPointInventory:        account.OwnsPointInventory,
 		DefaultProfitSharePercent: account.DefaultProfitSharePercent,
@@ -330,6 +411,7 @@ func (h *AccountHandler) GetAccounts(w http.ResponseWriter, r *http.Request) {
 	for _, acc := range accounts {
 		resp = append(resp, toAccountResponseWithUsage(acc, usage[acc.ID]))
 	}
+	fillExpectedBalances(h.DB, resp)
 
 	utils.SendJSON(w, r, http.StatusOK, "Accounts fetched successfully", resp)
 }
@@ -390,6 +472,7 @@ func (h *AccountHandler) ListAccounts(w http.ResponseWriter, r *http.Request) {
 	for _, account := range accounts {
 		items = append(items, toAccountResponseWithUsage(account, usage[account.ID]))
 	}
+	fillExpectedBalances(h.DB, items)
 
 	utils.SendJSON(w, r, http.StatusOK, "Accounts fetched successfully", schemas.AccountPaginatedData{
 		Accounts: items,
@@ -441,8 +524,10 @@ func (h *AccountHandler) GetAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	utils.SendJSON(w, r, http.StatusOK, "Account fetched successfully",
-		toAccountResponseWithUsage(account, usage[account.ID]))
+	fetched := []schemas.AccountResponse{toAccountResponseWithUsage(account, usage[account.ID])}
+	fillExpectedBalances(h.DB, fetched)
+
+	utils.SendJSON(w, r, http.StatusOK, "Account fetched successfully", fetched[0])
 }
 
 // UpdateAccount handles the PUT /accounts/{id} route
@@ -503,6 +588,10 @@ func (h *AccountHandler) UpdateAccount(w http.ResponseWriter, r *http.Request) {
 	if req.Category != nil {
 		account.Category = *req.Category
 	}
+	if err := applyBalanceReading(&account, req.RealBalancePoints, req.RealBalanceCheckedOn); err != nil {
+		utils.SendError(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	if req.Complete != nil {
 		account.Complete = *req.Complete
@@ -528,7 +617,10 @@ func (h *AccountHandler) UpdateAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	utils.SendJSON(w, r, http.StatusOK, "Account updated successfully", toAccountResponse(account))
+	updated := []schemas.AccountResponse{toAccountResponse(account)}
+	fillExpectedBalances(h.DB, updated)
+
+	utils.SendJSON(w, r, http.StatusOK, "Account updated successfully", updated[0])
 }
 
 // DeleteAccount handles the DELETE /accounts/{id} route.

@@ -58,10 +58,20 @@ type Account struct {
 	// default: each batch freezes its own copy, so changing this never rewrites a month
 	// that was already settled. Zero means the profit stays whole with whoever funded
 	// the batch, which is the right answer for an account with no arrangement at all.
-	DefaultProfitSharePercent int       `gorm:"column:default_profit_share_percent;not null;default:0" json:"default_profit_share_percent"`
-	Complete                  bool      `gorm:"not null;default:false" json:"complete"`
-	CreatedAt                 time.Time `json:"created_at"`
-	UpdatedAt                 time.Time `json:"updated_at"`
+	DefaultProfitSharePercent int `gorm:"column:default_profit_share_percent;not null;default:0" json:"default_profit_share_percent"`
+	// RealBalancePoints is what the airline's own page says the account has, read off it by
+	// hand. Nothing derives it: neither statement export carries a position, so the
+	// reconciliation can compare the change over a period but never the balance itself.
+	//
+	// Nil is "nobody has looked", which is every account until somebody does. See
+	// migration 53, and inventory.ExpectedBalances for the figure it gets compared to.
+	RealBalancePoints *int `gorm:"column:real_balance_points" json:"real_balance_points"`
+	// RealBalanceCheckedOn is the day of that reading. It is what makes the number worth
+	// anything - a balance with no date cannot be held against a panel that has moved.
+	RealBalanceCheckedOn *time.Time `gorm:"column:real_balance_checked_on;type:date" json:"real_balance_checked_on"`
+	Complete             bool       `gorm:"not null;default:false" json:"complete"`
+	CreatedAt            time.Time  `json:"created_at"`
+	UpdatedAt            time.Time  `json:"updated_at"`
 	// Archiving, not a trash can to restore from. issuances.account_id is ON DELETE
 	// RESTRICT and issuances are themselves soft-deleted, so a real delete on an
 	// account that ever issued is refused by Postgres forever. Turning the delete

@@ -53,6 +53,15 @@ type UpdateAccountRequest struct {
 	// DefaultProfitSharePercent seeds the split on new batches of this account. Each batch
 	// freezes its own copy, so changing this never revises a month already settled.
 	DefaultProfitSharePercent *int `json:"default_profit_share_percent" validate:"omitempty,min=0,max=100"`
+	// RealBalancePoints is the balance read off the airline's own page, which is the only
+	// place it exists - no statement export carries a position. Absent leaves the last
+	// reading alone; a wrong one is corrected by sending the right number, not by clearing
+	// it.
+	RealBalancePoints *int `json:"real_balance_points" validate:"omitempty,min=0"`
+	// RealBalanceCheckedOn (YYYY-MM-DD) is the day of that reading, and is what makes it
+	// comparable to a panel that has moved since. Omitted alongside a balance, it is taken
+	// as today - a reading always happened on some day, and a dateless one is worthless.
+	RealBalanceCheckedOn *string `json:"real_balance_checked_on" validate:"omitempty,datetime=2006-01-02" example:"2026-09-09"`
 	// Complete overrides the automatically recomputed value when provided
 	Complete *bool `json:"complete" validate:"omitempty"`
 }
@@ -81,6 +90,15 @@ type AccountResponse struct {
 	OwnsPointInventory bool `json:"owns_point_inventory"`
 	// DefaultProfitSharePercent is the split a new batch of this account starts with.
 	DefaultProfitSharePercent int `json:"default_profit_share_percent"`
+	// RealBalancePoints is the last balance read off the airline's page, and
+	// RealBalanceCheckedOn the day it was read. Null until somebody looks.
+	RealBalancePoints    *int    `json:"real_balance_points"`
+	RealBalanceCheckedOn *string `json:"real_balance_checked_on" example:"2026-09-09"`
+	// ExpectedBalancePoints is what the costing says the account still has: the batches,
+	// less what was issued. Null on an account that does not own its point inventory -
+	// there is no credit side to it in the panel, so a figure would be derived from half
+	// a history. See inventory.ExpectedBalances.
+	ExpectedBalancePoints *int `json:"expected_balance_points"`
 	// CPFUsage is how much of the program's beneficiary cap this account has consumed,
 	// and is null whenever there is no cap to report: an injunction suspends it, an
 	// unidentified account gives no basis to claim one, and a program nobody has

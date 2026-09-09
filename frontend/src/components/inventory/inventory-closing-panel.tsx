@@ -177,6 +177,48 @@ export function InventoryClosingPanel({ closing, startsOn, endsOn }: Props) {
             </div>
           </div>
 
+          {/* The panel's figure against the airline's, which is the only check there is on
+              whether the batches and the bookings add up to reality: no statement export
+              carries a balance. Points, not money, so they stay in the panel's grey rather
+              than in the colours the money columns own. */}
+          <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1 border-b bg-slate-50 px-4 py-2 text-sm dark:bg-slate-900/40">
+            <span className="text-slate-500">
+              Saldo previsto{" "}
+              <span className="font-medium tabular-nums text-slate-700 dark:text-slate-200">
+                {formatPoints(entry.expected_balance_points)}
+              </span>
+            </span>
+            {entry.real_balance_points === null || entry.real_balance_points === undefined ? (
+              <span className="text-slate-400">
+                Saldo real não conferido — informe na ficha da conta
+              </span>
+            ) : (
+              <>
+                <span className="text-slate-500">
+                  Saldo real{" "}
+                  <span className="font-medium tabular-nums text-slate-700 dark:text-slate-200">
+                    {formatPoints(entry.real_balance_points)}
+                  </span>
+                  {entry.real_balance_checked_on && (
+                    <span className="text-slate-400">
+                      {" "}
+                      em {entry.real_balance_checked_on.split("-").reverse().join("/")}
+                    </span>
+                  )}
+                </span>
+                {entry.expected_balance_points === entry.real_balance_points ? (
+                  <span className="text-emerald-700 dark:text-emerald-400">Batem.</span>
+                ) : (
+                  <span className="text-amber-800 dark:text-amber-300">
+                    Diferença de{" "}
+                    {formatPoints(Math.abs(entry.expected_balance_points - entry.real_balance_points))}{" "}
+                    pontos.
+                  </span>
+                )}
+              </>
+            )}
+          </div>
+
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>

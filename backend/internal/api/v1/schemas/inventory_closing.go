@@ -62,6 +62,14 @@ type InventoryClosingResponse struct {
 	// PendingPoints is stock that was issued before any batch covering it was entered.
 	// It resolves itself once the missing purchase is recorded.
 	PendingPoints int `json:"pending_points"`
+	// ExpectedBalancePoints is what the costing says the account still has, and
+	// RealBalancePoints what somebody last read off the airline's own page, on
+	// RealBalanceCheckedOn. The two side by side are the only way to tell whether the
+	// batches and the bookings add up to reality - no statement export carries a position.
+	// Real is null until somebody looks. See inventory.ExpectedBalances.
+	ExpectedBalancePoints int     `json:"expected_balance_points"`
+	RealBalancePoints     *int    `json:"real_balance_points"`
+	RealBalanceCheckedOn  *string `json:"real_balance_checked_on" example:"2026-09-09"`
 
 	CostCents    int                           `json:"cost_cents"`
 	RevenueCents int                           `json:"revenue_cents"`

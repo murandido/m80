@@ -72,6 +72,15 @@ export const accountSchema = z.object({
     .number()
     .nullish()
     .transform((value) => value ?? 0),
+  // The balance somebody last read off the airline's page, and the day they read it.
+  // Null until somebody looks - no statement export carries a position, so this is the
+  // only place the real number can come from.
+  real_balance_points: z.number().nullish(),
+  real_balance_checked_on: z.string().nullish(),
+  // What the costing says the account still has: batches, less what was issued. Null on
+  // an account that does not own its point inventory, where there is no credit side to
+  // derive it from.
+  expected_balance_points: z.number().nullish(),
   cpf_usage: cpfUsageSchema.nullish(),
   complete: z.boolean(),
   created_at: z.string(),
@@ -207,6 +216,10 @@ export const updateAccountSchema = {
     waives_redemption_fee: z.boolean().optional(),
     owns_point_inventory: z.boolean().optional(),
     default_profit_share_percent: z.number().min(0).max(100).optional(),
+    // The reading off the airline's page. Absent leaves the last one alone; sending it
+    // without a date is taken as read today.
+    real_balance_points: z.number().min(0).optional(),
+    real_balance_checked_on: z.string().optional(),
   }),
   response: z.object({
     success: z.boolean(),

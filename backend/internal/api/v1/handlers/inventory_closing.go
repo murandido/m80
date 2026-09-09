@@ -85,6 +85,21 @@ func (h *InventoryClosingHandler) GetInventoryClosing(w http.ResponseWriter, r *
 	owed := map[pair]int{}
 	order := make([]pair, 0)
 
+	// The panel's own figure, and what somebody last read off the airline's page. Gathered
+	// for the whole report in one go, after the recompute below has had its say on the
+	// batches - the balance formula does not depend on the allocations, but the closing
+	// the operator is looking at does.
+	balances, err := inventory.ExpectedBalances(h.DB, accountIDs)
+	if err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to compute the balances: "+err.Error())
+		return
+	}
+	readings, err := h.balanceReadings(accountIDs)
+	if err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to read the balances: "+err.Error())
+		return
+	}
+
 	for _, accountID := range accountIDs {
 		if err := inventory.Recompute(h.DB, accountID); err != nil {
 			utils.SendError(w, r, http.StatusInternalServerError, "Failed to recompute: "+err.Error())
@@ -103,8 +118,13 @@ func (h *InventoryClosingHandler) GetInventoryClosing(w http.ResponseWriter, r *
 			return
 		}
 
-		data.Accounts = append(data.Accounts,
-			toClosingResponse(closing, closedPeriodID, names, batchLabels, accountLabels))
+		account := toClosingResponse(closing, closedPeriodID, names, batchLabels, accountLabels)
+		account.ExpectedBalancePoints = balances[accountID]
+		if reading, ok := readings[accountID]; ok {
+			account.RealBalancePoints = reading.points
+			account.RealBalanceCheckedOn = reading.checkedOn
+		}
+		data.Accounts = append(data.Accounts, account)
 
 		data.Totals.CostCents += closing.CostCents
 		data.Totals.RevenueCents += closing.RevenueCents
@@ -258,6 +278,42 @@ func toClosingResponse(
 	}
 
 	return response
+}
+
+// balanceReading is what somebody last read off the airline's page for one account.
+type balanceReading struct {
+	points    *int
+	checkedOn *string
+}
+
+// balanceReadings loads those readings for the accounts in the report. One query, and an
+// account nobody has checked is simply absent - which the screen renders as "não conferido"
+// rather than as a zero.
+func (h *InventoryClosingHandler) balanceReadings(accountIDs []string) (map[string]balanceReading, error) {
+	readings := make(map[string]balanceReading, len(accountIDs))
+	if len(accountIDs) == 0 {
+		return readings, nil
+	}
+
+	var rows []data.Account
+	err := h.DB.Select("id", "real_balance_points", "real_balance_checked_on").
+		Where("id IN ?", accountIDs).Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+
+	for _, row := range rows {
+		if row.RealBalancePoints == nil {
+			continue
+		}
+		reading := balanceReading{points: row.RealBalancePoints}
+		if row.RealBalanceCheckedOn != nil {
+			day := row.RealBalanceCheckedOn.Format(batchDateLayout)
+			reading.checkedOn = &day
+		}
+		readings[row.ID] = reading
+	}
+	return readings, nil
 }
 
 // accountLabels names each account the way the panel's own pickers do: the holder, plus the

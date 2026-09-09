@@ -107,6 +107,11 @@ const accountClosingSchema = z.object({
     .transform((value) => value ?? false),
   batches: z.array(batchResultSchema),
   pending_points: z.number(),
+  // What the costing says the account still has, and what somebody last read off the
+  // airline's page - the only place a real balance exists. Real is null until checked.
+  expected_balance_points: z.number(),
+  real_balance_points: z.number().nullish(),
+  real_balance_checked_on: z.string().nullish(),
   cost_cents: z.number(),
   revenue_cents: z.number(),
   profit_cents: z.number(),
