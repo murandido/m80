@@ -155,7 +155,14 @@ func loadSlices(db *gorm.DB, accountID string, startsOn, endsOn time.Time) ([]Sl
 		        point_batch_allocations.cost_cents,
 		        -- points/1000 * the sale rate, rounded half away from zero so a reversal
 		        -- gives back exactly what its booking earned.
-		        CAST(ROUND(point_batch_allocations.points * issuances.value_of_the_thousand / 1000.0) AS INTEGER) AS revenue_cents`).
+		        --
+		        -- The cast to numeric comes first, and has to: both columns are 32-bit
+		        -- integers, and a single booking of 2.254.000 points at R$ 15,00 the
+		        -- thousand multiplies to 3.381.000.000 before the division ever runs -
+		        -- past what an integer holds, and Postgres refuses the whole query. It
+		        -- stayed hidden while every slice was bounded by the batch it drew on;
+		        -- an account left with no batches makes each booking one whole slice.
+		        CAST(ROUND(point_batch_allocations.points::numeric * issuances.value_of_the_thousand / 1000.0) AS INTEGER) AS revenue_cents`).
 		Joins("JOIN issuances ON issuances.id = point_batch_allocations.issuance_id").
 		Where("issuances.account_id = ?", accountID).
 		Where("point_batch_allocations.occurred_on >= ? AND point_batch_allocations.occurred_on <= ?", startsOn, endsOn).

@@ -167,3 +167,34 @@ func TestReadClosingSettlesBetweenTwoAgencies(t *testing.T) {
 		}
 	})
 }
+
+// A single booking big enough to overflow the revenue arithmetic.
+//
+// The revenue of a slice is points × the sale rate in centavos, and both are integers in
+// Postgres: 2.254.000 points at R$ 15,00 the thousand multiply to 3.381.000.000 before the
+// division ever happens, which is past what a 32-bit integer holds. The report died with
+// "integer out of range" and the screen said only that the closing could not be computed.
+//
+// It stayed hidden while every batch was small: a booking is charged in slices no larger
+// than the batch it draws on, and those never reached the ceiling. The day an account was
+// left with no batches at all, the whole booking became one pending row - and the account
+// with the largest bookings was exactly the one being repaired.
+func TestReadClosingSurvivesABookingLargeEnoughToOverflow(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		f := seedFixture(t, tx)
+		// No batch: the booking lands as one pending slice, undivided.
+		seedIssuance(t, tx, f, "2026-08-15", 2254000)
+
+		if err := Recompute(tx, f.account.ID); err != nil {
+			t.Fatalf("Recompute: %v", err)
+		}
+
+		closing, err := ReadClosing(tx, f.account.ID, day("2026-08-01"), day("2026-08-31"))
+		if err != nil {
+			t.Fatalf("ReadClosing: %v", err)
+		}
+		if closing.PendingPoints != 2254000 {
+			t.Errorf("pending = %d points, want 2254000", closing.PendingPoints)
+		}
+	})
+}

@@ -102,7 +102,16 @@ func callUpdate(tx *gorm.DB, id, userID, body string) *httptest.ResponseRecorder
 func TestUpdateIssuanceMovesTheDay(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		issuance, user := seedIssuance(t, tx)
-		before := issuance.CreatedAt
+
+		// Stamped rather than left at now(): the clock this test asserts on has to be one
+		// that survives the move, and a row seeded late at night would not. Past 21:00 in
+		// São Paulo the same clock falls on the next UTC day, and rebaseToDay drops to
+		// midday on purpose so the day the operator picked is the day the costing reads.
+		// Left to the wall clock, this test passed by day and failed by night.
+		before := time.Date(2026, 8, 1, 9, 0, 4, 0, saoPaulo(t))
+		if err := tx.Model(&issuance).UpdateColumn("created_at", before).Error; err != nil {
+			t.Fatalf("stamping the issuance: %v", err)
+		}
 
 		rec := callUpdate(tx, issuance.ID, user.ID, `{"issued_on": "2026-09-03"}`)
 		if rec.Code != http.StatusOK {
