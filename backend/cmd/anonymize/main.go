@@ -19,11 +19,13 @@
 package main
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/binary"
 	"fmt"
 	"log"
+	"math/big"
 	"os"
 	"strconv"
 	"strings"
@@ -120,6 +122,9 @@ func (a *anonymiser) all() error {
 		{"issuance_passengers", a.issuancePassengers},
 		{"issuances", a.issuances},
 		{"point_batches", a.pointBatches},
+		{"account_nicknames", a.accountNicknames},
+		{"agencies", a.agencies},
+		{"sale_payments", a.salePayments},
 		{"clients", a.clients},
 		{"users", a.users},
 		{"person_nicknames", a.personNicknames},
@@ -276,20 +281,56 @@ func (a *anonymiser) loyaltyDocuments() error {
 }
 
 func (a *anonymiser) accountBeneficiaries() error {
+	type beneficiaryRow struct {
+		keyed
+		accountID, oldNormalizedName string
+	}
 	beneficiaries, err := collect(a.tx,
-		`SELECT id, cpf_fingerprint FROM account_beneficiaries ORDER BY id`, scanKeyed)
+		`SELECT id, cpf_fingerprint, account_id, normalized_name FROM account_beneficiaries ORDER BY id`,
+		func(rows *sql.Rows) (beneficiaryRow, error) {
+			var row beneficiaryRow
+			err := rows.Scan(&row.id, &row.ref, &row.accountID, &row.oldNormalizedName)
+			return row, err
+		})
 	if err != nil {
 		return err
 	}
 
+	// A beneficiary without a CPF is identified by its name - (account_id, normalized_name)
+	// is unique among them - so its fake name is seeded by the old name, the same way a CPF
+	// row is seeded by its old fingerprint. Distinct real names can still land on the same
+	// fake one, and inside one account that would break the index, so a taken name is
+	// re-rolled with a counter until it is free.
+	//
+	// The index is checked row by row, not at commit, so a fake name could also collide
+	// with a real name on a row not yet rewritten. Parking every name-only row on its own
+	// id first means the only names left to collide with are fake ones already tracked.
+	if _, err := a.tx.Exec(`
+		UPDATE account_beneficiaries SET normalized_name = 'pending:' || id
+		 WHERE cpf_fingerprint IS NULL`); err != nil {
+		return err
+	}
+	nameOnlyTaken := map[string]bool{}
 	for _, beneficiary := range beneficiaries {
-		first, last := fakeName(nameSeed(beneficiary.ref, beneficiary.id))
+		hasCPF := beneficiary.ref.Valid && beneficiary.ref.String != ""
+		seed := nameSeed(beneficiary.ref, beneficiary.id)
+		if !hasCPF {
+			seed = "name:" + beneficiary.oldNormalizedName
+		}
+		first, last := fakeName(seed)
 		name := first + " " + last
+		for attempt := 1; !hasCPF && nameOnlyTaken[beneficiary.accountID+"|"+utils.NormalizeName(name)]; attempt++ {
+			first, last = fakeName(seed + "#" + strconv.Itoa(attempt))
+			name = first + " " + last
+		}
+		if !hasCPF {
+			nameOnlyTaken[beneficiary.accountID+"|"+utils.NormalizeName(name)] = true
+		}
 
 		// A beneficiary known by name only keeps being known by name only - the null
 		// fingerprint is what tells the matcher this person never arrived with a document.
 		var fingerprint, masked any
-		if beneficiary.ref.Valid && beneficiary.ref.String != "" {
+		if hasCPF {
 			cpf := a.cpfFor(beneficiary.ref, beneficiary.id)
 			fp, err := utils.Fingerprint(cpf)
 			if err != nil {
@@ -376,6 +417,29 @@ func (a *anonymiser) issuances() error {
 		return err
 	}
 
+	// Older issuances carry the header name with no passenger list behind it, so there is
+	// nothing to rebuild from and the statement above leaves them untouched.
+	orphans, err := collect(a.tx, `
+		SELECT id FROM issuances i
+		 WHERE main_passenger_name IS NOT NULL
+		   AND NOT EXISTS (SELECT 1 FROM issuance_passengers p WHERE p.issuance_id = i.id)
+		 ORDER BY id`, scanID)
+	if err != nil {
+		return err
+	}
+	for _, id := range orphans {
+		first, last := fakeName(id)
+		if _, err := a.tx.Exec(`UPDATE issuances SET main_passenger_name = $2 WHERE id = $1`,
+			id, strings.ToUpper(first+" "+last)); err != nil {
+			return err
+		}
+	}
+	log.Printf("  issuances: %d header names without a passenger list", len(orphans))
+
+	if err := a.bookingReferences(); err != nil {
+		return err
+	}
+
 	// Observations are free text an operator typed, so they can hold anything - a phone
 	// number, a passenger's real name, a payment detail. Whether an issuance *has* one is
 	// visible in the grid, so the column is replaced rather than emptied.
@@ -387,6 +451,139 @@ func (a *anonymiser) issuances() error {
 		return err
 	}
 	return logAffected("issuances", "observations replaced", result)
+}
+
+// bookingReferences replaces the codes that open a real booking on an airline's site. A
+// locator plus a surname is all "manage my booking" asks for, and the surname alone is not
+// enough protection to leave the code as it is.
+//
+// The shape is kept - letters stay letters, digits stay digits, the " - mala" an operator
+// appended stays - because the panel and the bot parse these, and a code that no longer
+// looks like one would exercise a different path than production does. The same old code
+// always maps to the same new one, so issuances that shared a booking still share it.
+func (a *anonymiser) bookingReferences() error {
+	columns := []struct {
+		name, selectQuery, updateQuery, keepPrefix string
+	}{
+		{"program_locator",
+			`SELECT id, program_locator FROM issuances WHERE program_locator <> '' ORDER BY id`,
+			`UPDATE issuances SET program_locator = $2 WHERE id = $1`, ""},
+		{"airline_locator",
+			`SELECT id, airline_locator FROM issuances WHERE airline_locator <> '' ORDER BY id`,
+			`UPDATE issuances SET airline_locator = $2 WHERE id = $1`, ""},
+		// LATAM purchase numbers start with a fixed "LA" that identifies the kind of code,
+		// not the booking.
+		{"latam_purchase_number",
+			`SELECT id, latam_purchase_number FROM issuances WHERE latam_purchase_number <> '' ORDER BY id`,
+			`UPDATE issuances SET latam_purchase_number = $2 WHERE id = $1`, "LA"},
+	}
+
+	for _, column := range columns {
+		rows, err := collect(a.tx, column.selectQuery, scanKeyed)
+		if err != nil {
+			return err
+		}
+
+		// Every old code is reserved up front. program_locator is unique among active rows
+		// and the index is checked per row, so a new code equal to an old one not yet
+		// rewritten would fail the run - and a new code equal to an old one would not be
+		// anonymous anyway.
+		taken := map[string]bool{}
+		for _, row := range rows {
+			taken[row.ref.String] = true
+		}
+		replacement := map[string]string{}
+		for _, row := range rows {
+			old := row.ref.String
+			code, seen := replacement[old]
+			for !seen {
+				code, err = scrambleCode(old, column.keepPrefix)
+				if err != nil {
+					return err
+				}
+				// A value with no letter or digit to swap - an operator typed a word into the
+				// field - comes back unchanged and is reserved, so without the second test this
+				// loop never ends. Such a value names no booking and is kept as it is.
+				seen = !taken[code] || code == old
+			}
+			replacement[old], taken[code] = code, true
+
+			if _, err := a.tx.Exec(column.updateQuery, row.id, code); err != nil {
+				return err
+			}
+		}
+		log.Printf("  issuances: %d %s replaced", len(rows), column.name)
+	}
+	return nil
+}
+
+// accountNicknames rewrites the aliases the bot and the grid use for a loyalty account,
+// which are usually the holder's real name - "MARIA (JOÃO P.)" and the like.
+func (a *anonymiser) accountNicknames() error {
+	type nicknameRow struct{ id, programID string }
+	nicknames, err := collect(a.tx, `SELECT id, loyalty_program_id FROM account_nicknames ORDER BY id`,
+		func(rows *sql.Rows) (nicknameRow, error) {
+			var row nicknameRow
+			err := rows.Scan(&row.id, &row.programID)
+			return row, err
+		})
+	if err != nil {
+		return err
+	}
+
+	// Same two moves as the name-only beneficiaries: park every row first so a fake alias
+	// cannot hit a real one still waiting its turn, then re-roll within a programme until free.
+	if _, err := a.tx.Exec(`UPDATE account_nicknames SET nickname = 'pending:' || id`); err != nil {
+		return err
+	}
+	taken := map[string]bool{}
+	for _, nickname := range nicknames {
+		seed := nickname.id
+		first, last := fakeName(seed)
+		alias := strings.ToUpper(first + " " + last)
+		for attempt := 1; taken[nickname.programID+"|"+alias]; attempt++ {
+			first, last = fakeName(seed + "#" + strconv.Itoa(attempt))
+			alias = strings.ToUpper(first + " " + last)
+		}
+		taken[nickname.programID+"|"+alias] = true
+
+		if _, err := a.tx.Exec(`UPDATE account_nicknames SET nickname = $2 WHERE id = $1`,
+			nickname.id, alias); err != nil {
+			return err
+		}
+	}
+	log.Printf("  account_nicknames: %d rows", len(nicknames))
+	return nil
+}
+
+// Agencies are partners, but in a business this size a partner is often a person trading
+// under their own name, and the alias the bot matches on is that name shortened.
+func (a *anonymiser) agencies() error {
+	if _, err := a.tx.Exec(`
+		UPDATE agencies AS g SET name = 'Agência ' || numbered.position
+		  FROM (SELECT id, row_number() OVER (ORDER BY created_at, id) AS position FROM agencies) AS numbered
+		 WHERE g.id = numbered.id`); err != nil {
+		return err
+	}
+	result, err := a.tx.Exec(`
+		UPDATE agency_nicknames AS n SET nickname = 'agencia' || numbered.position
+		  FROM (SELECT id, row_number() OVER (ORDER BY id) AS position FROM agency_nicknames) AS numbered
+		 WHERE n.id = numbered.id`)
+	if err != nil {
+		return err
+	}
+	return logAffected("agencies", "nicknames replaced", result)
+}
+
+// salePayments replaces the operator's note on a payment, free text like every other note.
+func (a *anonymiser) salePayments() error {
+	result, err := a.tx.Exec(`
+		UPDATE sale_payments SET note = 'Nota de exemplo (conteúdo original removido).'
+		 WHERE note IS NOT NULL AND note <> ''`)
+	if err != nil {
+		return err
+	}
+	return logAffected("sale_payments", "notes replaced", result)
 }
 
 // A batch's note is either what the operator typed or the airline's own wording copied from
@@ -495,7 +692,19 @@ func (a *anonymiser) promoEnrollments() error {
 	if err != nil {
 		return err
 	}
-	return logAffected("promo_enrollments", "chat addresses cleared", result)
+	if err := logAffected("promo_enrollments", "chat addresses cleared", result); err != nil {
+		return err
+	}
+
+	// message is the report the bot sent back to the group, and it quotes every CPF it
+	// enrolled in plain text.
+	result, err = a.tx.Exec(`
+		UPDATE promo_enrollments SET message = 'Relatório de exemplo (conteúdo original removido).'
+		 WHERE message IS NOT NULL AND message <> ''`)
+	if err != nil {
+		return err
+	}
+	return logAffected("promo_enrollments", "reports replaced", result)
 }
 
 func (a *anonymiser) truncateTables() error {
@@ -601,6 +810,40 @@ func fakeName(seed string) (first, last string) {
 // unique most of the time.
 func fakePhone(n int) string {
 	return fmt.Sprintf("119%08d", n)
+}
+
+// scrambleCode swaps every uppercase letter for a random uppercase letter and every digit for
+// a random digit, leaving keepPrefix and anything else in place. It draws from crypto/rand
+// rather than from a seed on purpose: a six-character locator has about two billion values,
+// so a code derived from a hash of the real one could be walked back by brute force.
+func scrambleCode(code, keepPrefix string) (string, error) {
+	const letters, digits = "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "0123456789"
+	pick := func(alphabet string) (byte, error) {
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(alphabet))))
+		if err != nil {
+			return 0, err
+		}
+		return alphabet[n.Int64()], nil
+	}
+
+	prefix := ""
+	if keepPrefix != "" && strings.HasPrefix(code, keepPrefix) {
+		prefix, code = keepPrefix, code[len(keepPrefix):]
+	}
+	out := []byte(code)
+	for i, c := range out {
+		var err error
+		switch {
+		case c >= 'A' && c <= 'Z':
+			out[i], err = pick(letters)
+		case c >= '0' && c <= '9':
+			out[i], err = pick(digits)
+		}
+		if err != nil {
+			return "", err
+		}
+	}
+	return prefix + string(out), nil
 }
 
 // fakeCPF returns 11 digits that pass the Receita Federal check-digit rule, because

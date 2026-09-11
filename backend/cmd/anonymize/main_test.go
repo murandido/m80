@@ -68,3 +68,33 @@ func TestFakePhoneIsUniquePerCounter(t *testing.T) {
 		seen[phone] = true
 	}
 }
+
+// The panel and the bot parse locators, so a scrambled one has to keep the shape the real one
+// had - otherwise the environment exercises a code path production never takes.
+func TestScrambleCodeKeepsShape(t *testing.T) {
+	cases := []struct{ code, keepPrefix, shape string }{
+		{"ABC123", "", "AAA999"},
+		{"*QWERTY*", "", "*AAAAAA*"},
+		{"XYZ87A - mala", "", "AAA99A - mala"},
+		{"LA1234567XRNH", "LA", "LA9999999AAAA"},
+	}
+	for _, c := range cases {
+		got, err := scrambleCode(c.code, c.keepPrefix)
+		if err != nil {
+			t.Fatal(err)
+		}
+		shape := []byte(got)
+		for i, ch := range shape {
+			switch {
+			case i < len(c.keepPrefix):
+			case ch >= 'A' && ch <= 'Z':
+				shape[i] = 'A'
+			case ch >= '0' && ch <= '9':
+				shape[i] = '9'
+			}
+		}
+		if string(shape) != c.shape {
+			t.Errorf("scrambleCode(%q) = %q, shape %q, want %q", c.code, got, shape, c.shape)
+		}
+	}
+}

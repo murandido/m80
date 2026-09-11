@@ -103,8 +103,15 @@ O que ele preserva de propósito: **identidade, não valores**. Duas linhas que 
 continuam com o mesmo CPF falso e o mesmo nome falso, porque tudo é derivado do blind index antigo.
 É o que mantém pessoa, documento de fidelidade e beneficiário apontando um para o outro.
 
-O que ele destrói: nomes, CPFs, documentos, telefones, e-mails, endereços, apelidos de pessoa,
-observações de emissão, notas de lote de pontos, `audit_logs`, `listened_chats` e **as tabelas `whatsmeow_*`**.
+O que ele destrói: nomes, CPFs, documentos, telefones, e-mails, endereços, apelidos de pessoa, de
+conta e de agência, nomes de agência, localizadores e números de compra (embaralhados no mesmo
+formato), observações de emissão, notas de lote e de pagamento, os relatórios do promo (que citam
+CPF em texto puro), `audit_logs`, `listened_chats` e **as tabelas `whatsmeow_*`**.
+
+**Tabela nova com texto é tabela nova para o anonimizador.** Ele trata as colunas que conhece, e uma
+coluna de nome ou de texto livre criada depois passa por ele intacta. Depois de gerar o dump, cruze
+os valores reais do dump de origem com todas as colunas de texto do anonimizado antes de enviá-lo.
+Foi assim que apelidos de conta, localizadores e relatórios do promo apareceram na primeira carga.
 
 Depois, restaure na máquina do CA's Mode:
 
