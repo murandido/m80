@@ -20,6 +20,11 @@ Este documento é o runbook: como publicar, como provisionar do zero, e o que fa
 É uma label só desde a migração para a Oracle: painel e API são publicados juntos, no mesmo SHA.
 Antes eram duas independentes, e o preço disso era ficarem fora de sincronia por dias.
 
+**`deploy:ca` não é desta máquina.** Ela publica a branch `ca-mode` no ambiente CA's Mode, uma VPS
+separada com dados anonimizados. O workflow e o runbook (`docs/ca-mode.md`) vivem naquela branch.
+Cada label só dispara com a própria branch como base — `deploy:vps` exige um PR para `main` — então
+trocar uma pela outra não publica nada no lugar errado: o run aparece como *skipped*.
+
 **Para republicar a mesma versão**, tire e recoloque a label: o gatilho é o evento `labeled`, então
 uma label que já está lá não dispara nada.
 
