@@ -6,6 +6,9 @@ export const saleSchema = z.object({
   client_id: z.string().nullable(),
   client_name: z.string().nullable(),
   paid: z.boolean(),
+  // Nullish rather than nullable: the screen may briefly be live against an API that does
+  // not send it yet, and absent reads as "nothing written", which is what it meant before.
+  note: z.string().nullish(),
   program_locator: z.string(),
   main_passenger_name: z.string().nullable(),
   issued_at: z.string(),
@@ -30,41 +33,25 @@ export const saleSchema = z.object({
 
 export type Sale = z.infer<typeof saleSchema>
 
-// One line of a sale's statement.
-export const salePaymentSchema = z.object({
-  id: z.string(),
-  sale_id: z.string(),
-  // Centavos, signed: negative is money handed back to the client.
-  amount_cents: z.number(),
-  // A calendar day (YYYY-MM-DD), not an instant - the operator knows the day the money
-  // moved, not the hour.
-  paid_on: z.string(),
-  note: z.string().nullable(),
-  created_by_id: z.string(),
-  created_by_name: z.string().default(""),
-  created_at: z.string(),
-})
-
-export type SalePayment = z.infer<typeof salePaymentSchema>
-
-export const getSalePaymentsSchema = {
-  response: z.object({
-    success: z.boolean(),
-    message: z.string(),
-    data: z.array(salePaymentSchema).nullish(),
-  }),
-}
-
-export const createSalePaymentSchema = {
+// A lump sum from a client, spread by the backend over their open sales oldest first. What
+// no open sale absorbs is kept as the client's credit for their next sales.
+export const createClientPaymentSchema = {
   request: z.object({
-    amount_cents: z.number(),
+    client_id: z.string(),
+    amount_cents: z.number().int().positive(),
     paid_on: z.string(),
-    note: z.string().optional(),
   }),
   response: z.object({
     success: z.boolean(),
     message: z.string(),
-    data: salePaymentSchema.nullish(),
+    data: z
+      .object({
+        sale_ids: z.array(z.string()),
+        applied_cents: z.number(),
+        settled_sales: z.number(),
+        credit_cents: z.number(),
+      })
+      .nullish(),
   }),
 }
 
@@ -82,6 +69,8 @@ export const updateSaleSchema = {
   request: z.object({
     client_id: z.string().nullable().optional(),
     paid: z.boolean().optional(),
+    // Same rule as client_id: null (or "") clears it, absent leaves it alone.
+    note: z.string().nullable().optional(),
   }),
   response: z.object({
     success: z.boolean(),

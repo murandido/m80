@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -154,6 +155,74 @@ func (h *SaleHandler) CreateSalePayment(w http.ResponseWriter, r *http.Request) 
 	utils.SendJSON(w, r, http.StatusCreated, "Payment recorded successfully", toSalePaymentResponse(payment))
 }
 
+// CreateClientPayment handles POST /sales/client-payments
+// @Summary      Registrar um pagamento do cliente
+// @Description  Recebe um valor do cliente e abate nas vendas dele em aberto, da emissão mais antiga para a mais nova; a última alcançada pode ficar parcial. O que sobrar vira crédito do cliente e é abatido nas próximas vendas vinculadas a ele. Crédito que já existia é usado antes do valor novo.
+// @Tags         Vendas
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        payload body  schemas.CreateClientPaymentRequest  true "Pagamento"
+// @Success      201  {object}  schemas.ClientPaymentSingleResponse
+// @Failure      400  {object}  schemas.ErrorResponse "Payload inválido, valor não positivo ou data em formato errado"
+// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      422  {object}  schemas.ErrorResponse "Cliente não encontrado"
+// @Failure      500  {object}  schemas.ErrorResponse "Erro ao registrar o pagamento"
+// @Router       /sales/client-payments [post]
+func (h *SaleHandler) CreateClientPayment(w http.ResponseWriter, r *http.Request) {
+	userCtx, ok := r.Context().Value(middleware.UserContextKey).(data.User)
+	if !ok {
+		utils.SendError(w, r, http.StatusUnauthorized, "Unauthorized or invalid context")
+		return
+	}
+
+	var req schemas.CreateClientPaymentRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		utils.SendError(w, r, http.StatusBadRequest, "Invalid JSON payload")
+		return
+	}
+	if err := h.Validator.Struct(req); err != nil {
+		utils.SendError(w, r, http.StatusBadRequest, "Validation failed: "+err.Error())
+		return
+	}
+
+	paidOn, err := time.Parse("2006-01-02", req.PaidOn)
+	if err != nil {
+		utils.SendError(w, r, http.StatusBadRequest, "Data inválida (use AAAA-MM-DD)")
+		return
+	}
+
+	var result sale.ClientPaymentResult
+	err = h.DB.Transaction(func(tx *gorm.DB) error {
+		var txErr error
+		result, txErr = sale.ReceiveClientPayment(tx, req.ClientID, req.AmountCents, paidOn, userCtx.ID)
+		return txErr
+	})
+	if errors.Is(err, sale.ErrClientNotFound) {
+		utils.SendError(w, r, http.StatusUnprocessableEntity, "Cliente não encontrado")
+		return
+	}
+	if err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to record the client payment: "+err.Error())
+		return
+	}
+
+	for _, saleID := range result.SaleIDs {
+		h.broadcastSaleUpdated(saleID)
+	}
+
+	saleIDs := result.SaleIDs
+	if saleIDs == nil {
+		saleIDs = []string{}
+	}
+	utils.SendJSON(w, r, http.StatusCreated, "Client payment recorded successfully", schemas.ClientPaymentResponse{
+		SaleIDs:      saleIDs,
+		AppliedCents: result.AppliedCents,
+		SettledSales: result.SettledSales,
+		CreditCents:  result.CreditCents,
+	})
+}
+
 // DeleteSalePayment handles DELETE /sales/{id}/payments/{paymentID}
 // @Summary      Apagar um lançamento
 // @Description  Remove um lançamento digitado errado e recalcula a situação da venda. Não é soft delete: um pagamento que nunca aconteceu não é história, é engano.
@@ -195,12 +264,10 @@ func (h *SaleHandler) DeleteSalePayment(w http.ResponseWriter, r *http.Request) 
 	utils.SendJSON(w, r, http.StatusOK, "Payment deleted successfully", nil)
 }
 
-// settleSaleFromLegacyFlag reproduces the old paid switch for a client that still speaks it -
-// the panel already deployed while this ships, since the two are published by independent
-// labels. true records a payment for whatever is missing; false clears the statement.
-//
-// It is a compatibility step, not a feature: delete it once the panel that uses the
-// statement is out. Nothing in the new UI calls it.
+// settleSaleFromLegacyFlag is the one-click paid switch: true records a payment for
+// whatever is missing; false clears the statement. It started as a compatibility step for
+// the panel that predated the statement, and the payments screen's Pago / A Pagar button is
+// built on it again - partial amounts go through CreateClientPayment instead.
 func settleSaleFromLegacyFlag(tx *gorm.DB, saleID string, paid bool, actorID string) error {
 	if !paid {
 		if err := tx.Where("sale_id = ?", saleID).Delete(&data.SalePayment{}).Error; err != nil {
@@ -236,6 +303,13 @@ func settleSaleFromLegacyFlag(tx *gorm.DB, saleID string, paid bool, actorID str
 	}
 
 	return sale.Recalculate(tx, saleID)
+}
+
+// applyCreditOnLink spends the client's credit once a sale is linked to them. It lives out
+// here because UpdateSale's own variable is called sale, which hides the package.
+func applyCreditOnLink(tx *gorm.DB, clientID, actorID string) ([]string, error) {
+	spent, err := sale.ApplyClientCredit(tx, clientID, actorID)
+	return spent.SaleIDs, err
 }
 
 func optionalText(value *string) *string {

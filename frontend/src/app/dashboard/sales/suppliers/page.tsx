@@ -139,8 +139,6 @@ export default async function SalesSuppliersPage({
           loyaltyPrograms={loyaltyPrograms ?? []}
           accounts={accounts ?? []}
           people={people ?? []}
-          users={[]}
-          clients={[]}
           initialFilters={effectiveFilters}
         >
           <PeriodFilter

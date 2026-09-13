@@ -42,5 +42,9 @@ func RegisterSaleRoutes(r chi.Router, db *gorm.DB, broker *events.Broker) {
 		r.Get("/{id}/payments", saleHandler.GetSalePayments)
 		r.Post("/{id}/payments", saleHandler.CreateSalePayment)
 		r.Delete("/{id}/payments/{paymentID}", saleHandler.DeleteSalePayment)
+
+		// A lump sum from a client, spread over their open sales oldest first; the surplus
+		// is kept as the client's credit. Same audience as the statement above.
+		r.Post("/client-payments", saleHandler.CreateClientPayment)
 	})
 }

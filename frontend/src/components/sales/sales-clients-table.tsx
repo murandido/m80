@@ -1,31 +1,23 @@
 "use client"
 
 import { useMemo, useOptimistic, useState, useTransition } from "react"
-import { useRouter } from "next/navigation"
-import { RotateCcw } from "lucide-react"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { toast } from "sonner"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import {
-  HoverCard,
-  HoverCardContent,
-  HoverCardTrigger,
-} from "@/components/ui/hover-card"
 import { ClientCombobox } from "@/components/clients/client-combobox"
+import { ClientPaymentPopover } from "@/components/sales/client-payment-popover"
+import { SaleNoteCell } from "@/components/sales/sale-note-cell"
 import {
-  needsAttention,
-  SalePaymentsPopover,
-} from "@/components/sales/sale-payments-popover"
+  SaleStatusButton,
+  saleStatus,
+  STATUS_RULE,
+} from "@/components/sales/sale-status-button"
+import {
+  ClientColumnFilter,
+  StatusColumnFilter,
+} from "@/components/sales/sales-column-filters"
 import { updateSaleAction } from "@/actions/sale"
 import { createClientAction } from "@/actions/client"
 import { formatCurrencyBRL } from "@/lib/currency"
-import { formatPoints } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import type { Client } from "@/schemas/client"
 import type { Sale } from "@/schemas/sale"
@@ -33,56 +25,43 @@ import type { Sale } from "@/schemas/sale"
 interface SalesClientsTableProps {
   sales: Sale[]
   clients: Client[]
+  // The column filters, as the server applied them.
+  clientFilter: string
+  paidFilter: string
 }
 
-const COLUMN_COUNT = 11
+// One grid for the header, every row and the footer, so the columns line up without a
+// <table>. Below the breakpoint the same cells fall into a two-column card: the table
+// needs about 900px, and the sidebar takes a good part of a laptop's width, which is why
+// this is a container query on the table's own width and not a viewport breakpoint.
+const ROW_GRID = cn(
+  "grid grid-cols-2 gap-x-4 gap-y-2 px-3 py-3",
+  "@4xl:grid-cols-[minmax(6rem,0.7fr)_minmax(6rem,0.7fr)_minmax(7rem,0.8fr)_minmax(11rem,1.4fr)_minmax(11rem,1.4fr)_minmax(11rem,1.4fr)] @4xl:items-center @4xl:py-2",
+)
+// Cells that take the card's full width below the breakpoint and one column above it.
+const WIDE_CELL = "col-span-2 @4xl:col-span-1"
 
-function formatDateTime(iso: string): string {
+function formatDay(iso: string): string {
   return new Date(iso).toLocaleDateString("pt-BR")
 }
 
-// A reopened sale is one whose issuance was cancelled after the fact: the money may
-// already have been collected and now has to go back. That is a different problem from a
-// sale that was simply never charged, so it gets its own marker. Deleted issuances have no
-// sale at all, so they never reach this table.
-function ReopenedBadge({ sale }: { sale: Sale }) {
-  if (sale.cancelled_at === null) return null
-
-  return (
-    <HoverCard>
-      <HoverCardTrigger asChild>
-        <span
-          className={cn(
-            // w-fit: the cell stacks the badge under the locator in a flex column, which
-            // would otherwise stretch the pill across the whole column width.
-            "inline-flex w-fit cursor-default items-center gap-1 rounded-full px-2 py-0.5",
-            "bg-red-100 text-xs font-medium text-red-800",
-          )}
-        >
-          <RotateCcw className="h-3 w-3" />
-          Reaberta (cancelada)
-        </span>
-      </HoverCardTrigger>
-      <HoverCardContent className="w-64 text-sm">
-        <p className="font-medium">
-          Emissão cancelada em {formatDateTime(sale.cancelled_at)}
-        </p>
-        <p className="text-muted-foreground mt-1">
-          O pagamento foi revertido automaticamente. Se o cliente já havia pago,
-          o valor precisa ser devolvido ou compensado.
-        </p>
-      </HoverCardContent>
-    </HoverCard>
-  )
-}
-
-export function SalesClientsTable({ sales, clients }: SalesClientsTableProps) {
+export function SalesClientsTable({
+  sales,
+  clients,
+  clientFilter,
+  paidFilter,
+}: SalesClientsTableProps) {
   const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
   const [, startTransition] = useTransition()
   const [savingIds, setSavingIds] = useState<Set<string>>(new Set())
   // Clients created from a row's combobox. The refresh that follows brings them in the
   // `clients` prop, but the combobox has to be able to show the new name immediately.
   const [createdClients, setCreatedClients] = useState<Client[]>([])
+  // The footer's client. Starts on the filtered client, since filtering by one client and
+  // then registering what they paid is the usual order.
+  const [payingClientId, setPayingClientId] = useState(clientFilter)
 
   const clientOptions = useMemo(() => {
     const known = new Set(clients.map((c) => c.id))
@@ -91,7 +70,7 @@ export function SalesClientsTable({ sales, clients }: SalesClientsTableProps) {
 
   // React drops each patch when the transition that made it ends - which is after the
   // refresh below landed the real rows. Hand-rolled overrides would have to be cleaned up
-  // by hand, and on a screen that now refreshes itself from the SSE stream a leftover one
+  // by hand, and on a screen that refreshes itself from the SSE stream a leftover one
   // would hide the change another operator just made to the same sale.
   const [optimisticSales, applyOptimistic] = useOptimistic(
     sales,
@@ -100,6 +79,15 @@ export function SalesClientsTable({ sales, clients }: SalesClientsTableProps) {
         sale.id === update.saleId ? { ...sale, ...update.patch } : sale,
       ),
   )
+
+  // The URL is authoritative here (useStickyFilters puts remembered filters back into it
+  // on arrival), so a column filter only has to change its own key.
+  function setFilter(key: "client_id" | "paid", value: string) {
+    const params = new URLSearchParams(searchParams.toString())
+    if (value) params.set(key, value)
+    else params.delete(key)
+    router.replace(`${pathname}?${params.toString()}`)
+  }
 
   function markSaving(saleId: string, saving: boolean) {
     setSavingIds((prev) => {
@@ -115,6 +103,7 @@ export function SalesClientsTable({ sales, clients }: SalesClientsTableProps) {
     patch: Partial<Sale>,
     payload: Parameters<typeof updateSaleAction>[1],
     errorMessage: string,
+    onSaved?: () => void,
   ) {
     markSaving(sale.id, true)
 
@@ -132,6 +121,7 @@ export function SalesClientsTable({ sales, clients }: SalesClientsTableProps) {
         return
       }
 
+      onSaved?.()
       router.refresh()
     })
   }
@@ -171,143 +161,196 @@ export function SalesClientsTable({ sales, clients }: SalesClientsTableProps) {
     })
   }
 
-  return (
-    <div className="max-h-[calc(100vh-18rem)] overflow-auto rounded-md border">
-      <Table>
-        <TableHeader className="sticky top-0 z-10 bg-slate-100">
-          <TableRow>
-            <TableHead>Emissão</TableHead>
-            <TableHead>Data</TableHead>
-            <TableHead>Passageiro</TableHead>
-            <TableHead>Conta</TableHead>
-            <TableHead className="text-right">Pontos</TableHead>
-            <TableHead className="text-right">Vlr. milheiro</TableHead>
-            <TableHead className="text-right">Taxas</TableHead>
-            <TableHead className="text-right">Valor</TableHead>
-            <TableHead className="text-right">Saldo</TableHead>
-            <TableHead className="w-56">Cliente</TableHead>
-            <TableHead className="w-44 text-center">Pagamento</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {optimisticSales.length === 0 && (
-            <TableRow>
-              <TableCell
-                colSpan={COLUMN_COUNT}
-                className="text-muted-foreground py-10 text-center text-sm"
-              >
-                Nenhuma venda no período selecionado.
-              </TableCell>
-            </TableRow>
-          )}
-          {optimisticSales.map((sale) => {
-            const isSaving = savingIds.has(sale.id)
-            const isReopened = sale.cancelled_at !== null
-            const pending = needsAttention(sale)
+  // The optimistic patch only has to look right while the request is in flight; the
+  // refresh brings the server's own arithmetic right after.
+  function handleToggle(sale: Sale, paid: boolean) {
+    const patch: Partial<Sale> = paid
+      ? { paid: true, paid_cents: sale.paid_cents + sale.balance_cents, balance_cents: 0 }
+      : { paid: false, paid_cents: 0, balance_cents: sale.amount_cents }
 
-            return (
-              <TableRow
-                key={sale.id}
-                className={cn(
-                  isReopened && "bg-muted/40",
-                  isSaving && "opacity-60",
-                )}
+    // Going back to A Pagar clears the sale's whole statement, which a stray click should
+    // not cost anybody. Undoing records the full amount again in one line - the balance
+    // comes back exactly, the individual lines it had do not.
+    const onSaved = paid
+      ? undefined
+      : () =>
+          toast(`${sale.program_locator} voltou para A Pagar`, {
+            action: {
+              label: "Desfazer",
+              onClick: () =>
+                persist(
+                  { ...sale, ...patch },
+                  { paid: true, paid_cents: sale.amount_cents, balance_cents: 0 },
+                  { paid: true },
+                  "Erro ao desfazer.",
+                ),
+            },
+          })
+
+    persist(sale, patch, { paid }, "Erro ao atualizar o pagamento.", onSaved)
+  }
+
+  function handleNote(sale: Sale, note: string | null) {
+    persist(sale, { note }, { note }, "Erro ao salvar a observação.")
+  }
+
+  const payingClient = clientOptions.find((c) => c.id === payingClientId)
+
+  return (
+    <div className="@container flex flex-col gap-3">
+      {/* The narrow layout has no header row to hang the column filters on. */}
+      <div className="flex gap-2 @4xl:hidden">
+        <ClientColumnFilter
+          label="Cliente"
+          clients={clientOptions}
+          value={clientFilter}
+          onChange={(value) => setFilter("client_id", value)}
+        />
+        <StatusColumnFilter
+          label="Situação"
+          value={paidFilter}
+          onChange={(value) => setFilter("paid", value)}
+        />
+      </div>
+
+      <div
+        role="table"
+        aria-label="Vendas por cliente"
+        className="divide-y overflow-hidden rounded-lg border bg-white @4xl:max-h-[calc(100vh-17rem)] @4xl:overflow-auto"
+      >
+        <div
+          role="row"
+          className={cn(
+            ROW_GRID,
+            "sticky top-0 z-10 hidden bg-slate-100 text-sm font-medium text-slate-900 @4xl:grid",
+          )}
+        >
+          <span role="columnheader">Data</span>
+          <span role="columnheader">Emissão</span>
+          <span role="columnheader" className="text-center">
+            Valor
+          </span>
+          <span role="columnheader" className="flex items-center justify-center gap-1.5">
+            Cliente
+            <ClientColumnFilter
+              clients={clientOptions}
+              value={clientFilter}
+              onChange={(value) => setFilter("client_id", value)}
+            />
+          </span>
+          <span role="columnheader" className="flex items-center justify-center gap-1.5">
+            Situação
+            <StatusColumnFilter
+              value={paidFilter}
+              onChange={(value) => setFilter("paid", value)}
+            />
+          </span>
+          <span role="columnheader" className="text-center">
+            Observação
+          </span>
+        </div>
+
+        {optimisticSales.length === 0 && (
+          <p className="text-muted-foreground py-10 text-center text-sm">
+            Nenhuma venda no período selecionado.
+          </p>
+        )}
+
+        {optimisticSales.map((sale) => {
+          const isSaving = savingIds.has(sale.id)
+          const status = saleStatus(sale)
+          const isCancelled = sale.cancelled_at !== null
+
+          return (
+            <div
+              key={sale.id}
+              role="row"
+              className={cn(
+                ROW_GRID,
+                // A 3px rule down the left edge carries the status, so the column can be
+                // swept vertically for the rows that still need somebody. Inset shadow
+                // rather than a border so it cannot shift the cells by a pixel.
+                "shadow-[inset_3px_0_0_0_var(--tw-shadow-color)]",
+                STATUS_RULE[status],
+                isSaving && "opacity-60",
+              )}
+            >
+              <span
+                role="cell"
+                className="col-span-2 text-xs text-slate-500 @4xl:col-span-1 @4xl:text-sm"
               >
-                {/* A 3px rule down the left edge, and nothing else: the column exists to
-                    be swept vertically for the rows that still need somebody, which a
-                    coloured background or a badge per row would drown rather than help.
-                    Amber for money still to move, emerald for nothing left to do. Inset
-                    shadow rather than a border so it cannot shift the cell by a pixel and
-                    misalign the header. */}
-                <TableCell
-                  className={cn(
-                    "shadow-[inset_3px_0_0_0_var(--tw-shadow-color)]",
-                    pending ? "shadow-amber-400" : "shadow-emerald-500",
-                  )}
-                  aria-label={pending ? "Precisa de atenção" : "Em dia"}
-                >
-                  <div className="flex flex-col gap-1">
-                    <span
-                      className={cn(
-                        "font-medium",
-                        isReopened && "text-muted-foreground line-through",
-                      )}
-                    >
-                      {sale.program_locator}
-                    </span>
-                    <ReopenedBadge sale={sale} />
-                  </div>
-                </TableCell>
-                <TableCell className="text-muted-foreground whitespace-nowrap">
-                  {formatDateTime(sale.issued_at)}
-                </TableCell>
-                <TableCell>{sale.main_passenger_name ?? "—"}</TableCell>
-                <TableCell>
-                  <span className="flex min-w-0 items-center gap-2">
-                    <span
-                      className="h-2.5 w-2.5 shrink-0 rounded-full border border-slate-300"
-                      style={{ backgroundColor: sale.loyalty_program_color }}
-                    />
-                    <span className="flex min-w-0 flex-col">
-                      <span className="truncate">{sale.account_label}</span>
-                      <span className="text-muted-foreground truncate text-xs">
-                        {sale.loyalty_program_name}
-                      </span>
-                    </span>
-                  </span>
-                </TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {formatPoints(sale.points)}
-                </TableCell>
-                <TableCell className="text-muted-foreground text-right tabular-nums">
-                  {formatCurrencyBRL(sale.value_of_the_thousand)}
-                </TableCell>
-                <TableCell className="text-muted-foreground text-right tabular-nums">
-                  {/* An em dash, not R$ 0,00: no taxes recorded is a different fact from
-                      taxes that came to zero, and the operator has to be able to tell. */}
-                  {sale.taxes === null ? "—" : formatCurrencyBRL(sale.taxes)}
-                </TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {formatCurrencyBRL(sale.amount_cents)}
-                </TableCell>
-                <TableCell
-                  className={cn(
-                    "text-right tabular-nums",
-                    // The column exists to be scanned: settled rows should recede, and the
-                    // ones still owing money should not.
-                    sale.balance_cents > 0
-                      ? "font-medium"
-                      : sale.balance_cents < 0
-                        ? "text-amber-700"
-                        : "text-muted-foreground",
-                  )}
-                >
-                  {formatCurrencyBRL(sale.balance_cents)}
-                </TableCell>
-                <TableCell>
-                  <ClientCombobox
-                    clients={clientOptions}
-                    value={sale.client_id ?? ""}
-                    onChange={(clientId) => handleClientChange(sale, clientId)}
-                    onCreate={(name) => handleClientCreate(sale, name)}
-                    disabled={isSaving}
-                  />
-                </TableCell>
-                <TableCell>
-                  <SalePaymentsPopover
-                    sale={sale}
-                    // The balance rule lives on the server, so a write refetches rather
-                    // than recomputing it here - two implementations of "is it settled"
-                    // is exactly how the screen starts disagreeing with the database.
-                    onChanged={() => router.refresh()}
-                    disabled={isSaving}
-                  />
-                </TableCell>
-              </TableRow>
-            )
-          })}
-        </TableBody>
-      </Table>
+                {formatDay(sale.issued_at)}
+              </span>
+              <span
+                role="cell"
+                className={cn(
+                  "font-medium text-slate-900",
+                  isCancelled && "text-muted-foreground line-through",
+                )}
+                title={isCancelled ? "Emissão cancelada" : undefined}
+              >
+                {sale.program_locator}
+              </span>
+              <span
+                role="cell"
+                className="text-right text-slate-900 tabular-nums @4xl:text-center"
+              >
+                {formatCurrencyBRL(sale.amount_cents)}
+              </span>
+              <div role="cell" className={WIDE_CELL}>
+                <ClientCombobox
+                  clients={clientOptions}
+                  value={sale.client_id ?? ""}
+                  onChange={(clientId) => handleClientChange(sale, clientId)}
+                  onCreate={(name) => handleClientCreate(sale, name)}
+                  disabled={isSaving}
+                  className="border-transparent"
+                />
+              </div>
+              <div role="cell" className={WIDE_CELL}>
+                <SaleStatusButton
+                  sale={sale}
+                  onToggle={(paid) => handleToggle(sale, paid)}
+                  disabled={isSaving}
+                />
+              </div>
+              <div role="cell" className={WIDE_CELL}>
+                <SaleNoteCell
+                  note={sale.note}
+                  onSave={(note) => handleNote(sale, note)}
+                  disabled={isSaving}
+                />
+              </div>
+            </div>
+          )
+        })}
+
+        {/* Sticky so the way to register what a client paid stays in reach however long
+            the period's list is. */}
+        <div role="row" className={cn(ROW_GRID, "sticky bottom-0 bg-slate-100")}>
+          <span
+            role="cell"
+            className="col-span-2 text-sm font-medium text-slate-900 @4xl:col-span-3"
+          >
+            Registrar pagamento parcial
+          </span>
+          <div role="cell" className={WIDE_CELL}>
+            <ClientCombobox
+              clients={clientOptions}
+              value={payingClientId}
+              onChange={setPayingClientId}
+              className="border-transparent"
+            />
+          </div>
+          <div role="cell" className={WIDE_CELL}>
+            <ClientPaymentPopover
+              clientId={payingClientId}
+              clientName={payingClient?.name}
+              onRecorded={() => router.refresh()}
+            />
+          </div>
+        </div>
+      </div>
     </div>
   )
 }

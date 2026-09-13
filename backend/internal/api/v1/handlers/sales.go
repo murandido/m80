@@ -77,6 +77,7 @@ type saleRow struct {
 	ClientID   *string
 	ClientName *string
 	Paid       bool
+	Note       *string
 
 	ProgramLocator    string
 	MainPassengerName *string
@@ -105,6 +106,7 @@ func saleListQuery(db *gorm.DB) *gorm.DB {
 			sales.issuance_id,
 			sales.client_id,
 			sales.paid,
+			sales.note,
 			clients.name AS client_name,
 			issuances.program_locator,
 			issuances.main_passenger_name,
@@ -171,6 +173,7 @@ func toSaleResponse(row saleRow) schemas.SaleResponse {
 		ClientID:            row.ClientID,
 		ClientName:          row.ClientName,
 		Paid:                row.Paid,
+		Note:                row.Note,
 		ProgramLocator:      row.ProgramLocator,
 		MainPassengerName:   row.MainPassengerName,
 		IssuedAt:            row.IssuedAt,
@@ -405,7 +408,7 @@ func (h *SaleHandler) GetSalesExport(w http.ResponseWriter, r *http.Request) {
 
 // UpdateSale handles the PATCH /sales/{id} route.
 // @Summary      Atualizar venda
-// @Description  Vincula ou desvincula o cliente e/ou marca a venda como paga. Campos ausentes ficam inalterados; client_id explicitamente null desvincula o cliente.
+// @Description  Vincula ou desvincula o cliente, grava a observação e/ou marca a venda como paga. Campos ausentes ficam inalterados; client_id ou note explicitamente null limpam o campo.
 // @Tags         Vendas
 // @Accept       json
 // @Produce      json
@@ -473,17 +476,37 @@ func (h *SaleHandler) UpdateSale(w http.ResponseWriter, r *http.Request) {
 		}
 		updates["client_id"] = req.ClientID
 	}
+	if _, ok := present["note"]; ok {
+		// An emptied field and an explicit null are the same fact - nothing written - so
+		// both are stored as NULL rather than leaving two spellings of "no note".
+		if req.Note != nil && strings.TrimSpace(*req.Note) != "" {
+			updates["note"] = strings.TrimSpace(*req.Note)
+		} else {
+			updates["note"] = nil
+		}
+	}
 
 	if len(updates) == 0 && req.Paid == nil {
 		utils.SendError(w, r, http.StatusBadRequest, "No fields to update")
 		return
 	}
 
+	// Sales the linked client's credit reached besides this one, so their rows refresh too.
+	var creditSaleIDs []string
 	err = h.DB.Transaction(func(tx *gorm.DB) error {
 		if len(updates) > 0 {
 			if err := tx.Model(&sale).Updates(updates).Error; err != nil {
 				return err
 			}
+		}
+		// Sales are born without a client, so linking one is the moment a surplus the
+		// client left earlier can come off it - see sale.ApplyClientCredit.
+		if req.ClientID != nil {
+			spent, err := applyCreditOnLink(tx, *req.ClientID, userCtx.ID)
+			if err != nil {
+				return err
+			}
+			creditSaleIDs = spent
 		}
 		// paid is no longer a column an operator sets: it is the sum of the sale's
 		// payments. A client still sending it gets that intent translated into the
@@ -512,6 +535,11 @@ func (h *SaleHandler) UpdateSale(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.broadcastSaleUpdated(sale.ID)
+	for _, saleID := range creditSaleIDs {
+		if saleID != sale.ID {
+			h.broadcastSaleUpdated(saleID)
+		}
+	}
 
 	utils.SendJSON(w, r, http.StatusOK, "Sale updated successfully", toSaleResponse(row))
 }

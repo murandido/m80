@@ -8,41 +8,40 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover"
 
-// The two rules on this screen that nobody guesses by looking at it: that a sale settles
-// itself once the entries add up, and that cancelling a booking does not touch what the
-// client already paid. Same shape as the "Atalhos" popover on the issuances grid, which is
-// where that screen keeps the rules its layout cannot show.
+// The rules on this screen that nobody guesses by looking at it: where a lump sum from a
+// client goes, what the yellow bar means, and that cancelling a booking does not touch what
+// the client already paid. Same shape as the "Atalhos" popover on the issuances grid, which
+// is where that screen keeps the rules its layout cannot show.
 const SECTIONS = [
   {
-    title: "Pagamentos",
+    title: "Situação",
     lines: [
-      "A venda é quitada quando os lançamentos somam o valor dela — não há mais interruptor de pago.",
-      "Recebeu em partes? Lance cada parte com o dia em que o dinheiro entrou; a coluna Saldo mostra o que falta.",
-      "“Receber tudo” lança o valor cheio de uma vez.",
-      "Lançou errado? Apague o lançamento — o saldo volta sozinho.",
+      "Um clique no botão alterna entre Pago e A Pagar.",
+      "Voltar para A Pagar apaga os pagamentos lançados naquela emissão — o aviso que aparece tem um Desfazer.",
     ],
   },
   {
-    title: "Devolução",
+    title: "Pagamento parcial",
     lines: [
-      "Para devolver dinheiro ao cliente, lance um valor negativo.",
-      "O saldo volta a zero e fica registrado quando foi e quem lançou.",
+      "Na barra de baixo, escolha o cliente e informe quanto ele pagou.",
+      "O valor é abatido nas emissões dele que estão a pagar, da mais antiga para a mais nova — inclusive as fora do período na tela.",
+      "A última emissão alcançada fica parcial: a barra amarela mostra quanto dela já foi pago.",
+      "Pagou a mais? A sobra vira crédito do cliente e é abatida sozinha na próxima emissão vinculada a ele.",
     ],
   },
   {
     title: "Cancelamento",
     lines: [
       "Cancelar o bilhete não mexe no que o cliente já pagou — o dinheiro está no caixa até alguém devolver.",
-      "O que muda é a dívida: um bilhete cancelado não é mais cobrável, então a venda passa a mostrar o que há para devolver.",
-      "Cancelou e ninguém tinha pago? Não há nada a fazer, e a linha aparece como Sem pendência.",
-      "Os pontos e as taxas que voltaram da companhia, e a multa, ficam na emissão — esta tela é só o dinheiro entre a agência e o cliente.",
+      "Uma emissão cancelada que tinha sido paga mostra Devolver; o clique registra a devolução.",
+      "Cancelou e ninguém tinha pago? Não há nada a fazer, e a linha aparece como Cancelada.",
     ],
   },
   {
     title: "A faixa colorida",
     lines: [
-      "Âmbar na borda esquerda: ainda tem dinheiro para entrar ou para sair.",
-      "Verde: nada pendente — quitada, ou cancelada sem dinheiro envolvido.",
+      "Verde: pago. Amarelo: pago em parte. Vermelho: a pagar.",
+      "Cinza: cancelada, ou emissão ainda sem valor.",
     ],
   },
 ]

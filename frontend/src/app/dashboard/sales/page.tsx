@@ -1,7 +1,7 @@
 import type { Metadata } from "next"
 import { cookies } from "next/headers"
 import Link from "next/link"
-import { AlertTriangle, ExternalLink, FileSpreadsheet } from "lucide-react"
+import { AlertTriangle, ExternalLink, FileText } from "lucide-react"
 import { env } from "@/lib/env"
 import { fetchList } from "@/lib/fetch-list"
 import { canAccess } from "@/lib/navigation"
@@ -12,16 +12,9 @@ import { Button } from "@/components/ui/button"
 import { getSalesSchema, type Sale } from "@/schemas/sale"
 import { getClientsSchema, type Client } from "@/schemas/client"
 import { getAgenciesSchema, type Agency } from "@/schemas/agency"
-import {
-  getLoyaltyProgramsSchema,
-  type LoyaltyProgram,
-} from "@/schemas/loyalty-program"
-import { getAccountOptionsSchema, type AccountOption } from "@/schemas/account"
-import { PersonOption, getPeopleOptionsSchema } from "@/schemas/person"
-import { getUsersSchema, type User } from "@/schemas/user"
 import { SalesViewToggle } from "@/components/sales/sales-view-toggle"
-import { PeriodFilter } from "@/components/filters/period-filter"
 import { SalesFilterBar } from "@/components/sales/sales-filter-bar"
+import { SalesPeriodFilter } from "@/components/sales/sales-period-filter"
 import { SalesClientsTable } from "@/components/sales/sales-clients-table"
 import { SalesHelpPopover } from "@/components/sales/sales-help-popover"
 import { LiveRefresh } from "@/components/layout/live-refresh"
@@ -57,19 +50,19 @@ export default async function SalesClientsPage({
     SALES_URL_KEYS,
   )
   const period = resolveSalesPeriod(params)
-  const filters = resolveSalesFilters(params)
+  // This view only offers agency, client and payment status. Program, account and issuer
+  // are dropped even when the URL or the remembered cookie still carries them (the screen
+  // used to have those filters): applied with no control on screen, they would hide sales
+  // with nothing saying why.
+  const filters = {
+    ...resolveSalesFilters(params),
+    loyalty_program_id: "",
+    account_id: "",
+    issuer_id: "",
+  }
   const query = buildSalesQuery(period, filters)
 
-  const [
-    user,
-    sales,
-    clients,
-    agencies,
-    loyaltyPrograms,
-    accounts,
-    people,
-    users,
-  ] = await Promise.all([
+  const [user, sales, clients, agencies] = await Promise.all([
     getSessionUser(),
     fetchList<Sale>(
       `${api}/sales?${query.toString()}`,
@@ -82,18 +75,6 @@ export default async function SalesClientsPage({
       getAgenciesSchema.response,
       authHeader,
     ),
-    fetchList<LoyaltyProgram>(
-      `${api}/loyalty-programs`,
-      getLoyaltyProgramsSchema.response,
-      authHeader,
-    ),
-    fetchList<AccountOption>(
-      `${api}/accounts?view=picker`,
-      getAccountOptionsSchema.response,
-      authHeader,
-    ),
-    fetchList<PersonOption>(`${api}/people?view=picker`, getPeopleOptionsSchema.response, authHeader),
-    fetchList<User>(`${api}/users`, getUsersSchema.response, authHeader),
   ])
 
   // The backend falls back to the main agency when agency_id is absent; resolving it here
@@ -105,32 +86,27 @@ export default async function SalesClientsPage({
   }
 
   return (
-    <div className="p-6 sm:p-8">
+    <div className="p-4 sm:p-8">
       <LiveRefresh />
       <div className="flex flex-col gap-4 sm:gap-6">
-        <div className="flex items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-lg font-semibold text-slate-800">
             Controle de pagamentos
           </h1>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {/* Linking a sale to a client that does not exist yet is the common case here,
                 so the client register is one click away instead of a trip to the sidebar. */}
-            <Button
-              asChild
-              variant="ghost"
-              size="sm"
-              className="text-slate-500"
-            >
+            <Button asChild variant="ghost" className="text-slate-500">
               <Link href="/dashboard/clients">
                 Gerenciar clientes
                 <ExternalLink className="h-4 w-4" />
               </Link>
             </Button>
-            <Button asChild variant="outline" size="sm">
+            <Button asChild variant="outline">
               {/* Native download: the backend sets the filename via Content-Disposition, and
                   `query` is the same string that fetched the list on screen. */}
               <a href={`/api/sales/export?${query.toString()}`} download>
-                <FileSpreadsheet className="h-4 w-4" />
+                <FileText className="h-4 w-4" />
                 Exportar
               </a>
             </Button>
@@ -146,19 +122,12 @@ export default async function SalesClientsPage({
         <SalesFilterBar
           variant="clients"
           agencies={agencies ?? []}
-          loyaltyPrograms={loyaltyPrograms ?? []}
-          accounts={accounts ?? []}
-          people={people ?? []}
-          users={users ?? []}
-          clients={clients ?? []}
+          loyaltyPrograms={[]}
+          accounts={[]}
+          people={[]}
           initialFilters={effectiveFilters}
         >
-          <PeriodFilter
-            dateFrom={period.date_from}
-            dateTo={period.date_to}
-            preset={period.preset}
-            reference={period.reference}
-          />
+          <SalesPeriodFilter dateFrom={period.date_from} dateTo={period.date_to} />
         </SalesFilterBar>
 
         {sales === null ? (
@@ -171,7 +140,14 @@ export default async function SalesClientsPage({
             </AlertDescription>
           </Alert>
         ) : (
-          <SalesClientsTable sales={sales} clients={clients ?? []} />
+          <SalesClientsTable
+            // Remounted when the client filter changes, so the footer's client follows it.
+            key={filters.client_id}
+            sales={sales}
+            clients={clients ?? []}
+            clientFilter={filters.client_id}
+            paidFilter={filters.paid}
+          />
         )}
       </div>
     </div>

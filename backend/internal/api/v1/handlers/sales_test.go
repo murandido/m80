@@ -468,6 +468,53 @@ func TestUpdateSale_OmittedClientKeepsLink(t *testing.T) {
 	})
 }
 
+func TestUpdateSale_Note(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		main := defaultAgency(t, tx)
+		_, sale := seedSaleFixture(t, tx, main.ID)
+
+		readNote := func() *string {
+			var persisted data.Sale
+			if err := tx.First(&persisted, "id = ?", sale.ID).Error; err != nil {
+				t.Fatalf("failed to re-read sale: %v", err)
+			}
+			return persisted.Note
+		}
+
+		rec := callUpdateSale(t, tx, sale.ID, `{"note":"  cobrar na sexta  "}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+		}
+		var resp saleSingleResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+		if resp.Data.Note == nil || *resp.Data.Note != "cobrar na sexta" {
+			t.Errorf("response note: got %v, want the trimmed text", resp.Data.Note)
+		}
+
+		// Another field alone must not be read as clearing the note.
+		if rec := callUpdateSale(t, tx, sale.ID, `{"paid":true}`); rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+		}
+		if note := readNote(); note == nil || *note != "cobrar na sexta" {
+			t.Errorf("omitted note: got %v, want it untouched", note)
+		}
+
+		for _, body := range []string{`{"note":""}`, `{"note":null}`} {
+			if rec := callUpdateSale(t, tx, sale.ID, `{"note":"x"}`); rec.Code != http.StatusOK {
+				t.Fatalf("status: got %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+			}
+			if rec := callUpdateSale(t, tx, sale.ID, body); rec.Code != http.StatusOK {
+				t.Fatalf("%s status: got %d, want 200 (body: %s)", body, rec.Code, rec.Body.String())
+			}
+			if note := readNote(); note != nil {
+				t.Errorf("%s: got %q, want the note cleared", body, *note)
+			}
+		}
+	})
+}
+
 func TestUpdateSale_UnknownClientIsUnprocessable(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		main := defaultAgency(t, tx)

@@ -2,11 +2,7 @@
 
 import { cookies } from "next/headers"
 import { env } from "@/lib/env"
-import {
-  createSalePaymentSchema,
-  getSalePaymentsSchema,
-  updateSaleSchema,
-} from "@/schemas/sale"
+import { createClientPaymentSchema, updateSaleSchema } from "@/schemas/sale"
 import { z } from "zod"
 
 export async function updateSaleAction(
@@ -46,89 +42,33 @@ export async function updateSaleAction(
   }
 }
 
-// The statement of a sale: what the client has handed over, in parts. A sale is settled
-// when these add up to its value, which is why there is no "mark as paid" action any more.
-export async function getSalePaymentsAction(saleId: string) {
-  const cookieStore = await cookies()
-  const token = cookieStore.get("auth_token")?.value
-
-  try {
-    const res = await fetch(
-      `${env.BACKEND_URL}/api/v1/sales/${saleId}/payments`,
-      {
-        headers: { Authorization: `Bearer ${token}` },
-        cache: "no-store",
-      },
-    )
-
-    const parsed = getSalePaymentsSchema.response.safeParse(await res.json())
-    if (!res.ok) {
-      return { error: parsed.data?.message || "Erro ao buscar os lançamentos." }
-    }
-
-    return { success: true as const, payments: parsed.data?.data ?? [] }
-  } catch {
-    return { error: "Erro de conexão com o servidor." }
-  }
-}
-
-export async function createSalePaymentAction(
-  saleId: string,
-  data: z.infer<typeof createSalePaymentSchema.request>,
+export async function createClientPaymentAction(
+  data: z.infer<typeof createClientPaymentSchema.request>,
 ) {
   const cookieStore = await cookies()
   const token = cookieStore.get("auth_token")?.value
 
   try {
-    const res = await fetch(
-      `${env.BACKEND_URL}/api/v1/sales/${saleId}/payments`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(data),
+    const res = await fetch(`${env.BACKEND_URL}/api/v1/sales/client-payments`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
       },
-    )
+      body: JSON.stringify(data),
+    })
 
-    const parsed = createSalePaymentSchema.response.safeParse(await res.json())
+    const parsed = createClientPaymentSchema.response.safeParse(await res.json())
     if (!res.ok) {
-      return { error: parsed.data?.message || "Erro ao lançar o pagamento." }
+      return { error: parsed.data?.message || "Erro ao registrar o pagamento." }
     }
 
-    const payment = parsed.data?.data
-    if (!payment) {
-      return { error: "Erro ao lançar o pagamento." }
+    const result = parsed.data?.data
+    if (!result) {
+      return { error: "Erro ao registrar o pagamento." }
     }
 
-    return { success: true as const, payment }
-  } catch {
-    return { error: "Erro de conexão com o servidor." }
-  }
-}
-
-export async function deleteSalePaymentAction(
-  saleId: string,
-  paymentId: string,
-) {
-  const cookieStore = await cookies()
-  const token = cookieStore.get("auth_token")?.value
-
-  try {
-    const res = await fetch(
-      `${env.BACKEND_URL}/api/v1/sales/${saleId}/payments/${paymentId}`,
-      {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
-      },
-    )
-
-    if (!res.ok) {
-      return { error: "Erro ao apagar o lançamento." }
-    }
-
-    return { success: true as const }
+    return { success: true as const, result }
   } catch {
     return { error: "Erro de conexão com o servidor." }
   }
