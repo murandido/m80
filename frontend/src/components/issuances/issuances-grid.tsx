@@ -1,13 +1,19 @@
 "use client"
 
 import { type ReactNode, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react"
-import { Plus, Keyboard, FileSpreadsheet, AlertTriangle, CalendarDays } from "lucide-react"
+import { Plus, Keyboard, FileSpreadsheet, AlertTriangle, CalendarDays, ChevronDown } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Button } from "@/components/ui/button"
 import { DateInput } from "@/components/ui/date-input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -1361,14 +1367,32 @@ export function IssuancesGrid({
               </dl>
             </PopoverContent>
           </Popover>
-          <Button asChild variant="outline">
-            {/* Native download: the backend sets the filename via Content-Disposition, and
-                filterQuery carries the same filters the page was rendered with. */}
-            <a href={`/api/issuances/export?${filterQuery}`} download>
-              <FileSpreadsheet className="h-4 w-4" />
-              Exportar
-            </a>
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline">
+                <FileSpreadsheet className="h-4 w-4" />
+                Exportar
+                <ChevronDown className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            {/* Native downloads: the backend sets the filename via Content-Disposition, and
+                filterQuery carries the same filters the page was rendered with. Both layouts
+                stay on offer because some operators still reconcile against the old sheet. */}
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem asChild>
+                <a href={`/api/issuances/export?${filterQuery}`} download>
+                  <FileSpreadsheet />
+                  Planilha de controle
+                </a>
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild>
+                <a href={`/api/issuances/export?${filterQuery ? `${filterQuery}&` : ""}layout=legacy`} download>
+                  <FileSpreadsheet />
+                  Planilha Emissões Gerais (antiga)
+                </a>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           {/* Which day the next rows belong to. Sits beside "Nova emissão" because it is
               part of the same act - the rows this button creates are recorded on it. */}
           <label

@@ -128,6 +128,7 @@ func TestRenderIssuancesXLSXLayout(t *testing.T) {
 		"H2": "Pontos",
 		"K2": "Total",
 		"M2": "Observação",
+		"N2": "Taxa Resgate",
 		"A3": "1",
 		// The airline label is upper case, as on the sheet being pasted into.
 		"B3": "SMILES",
@@ -141,6 +142,8 @@ func TestRenderIssuancesXLSXLayout(t *testing.T) {
 		"I3": "R$ 20.00",
 		"J3": "R$ 35.50",
 		"L3": "Conta VIP",
+		// An ordinary account saved no redemption fee, so the cell stays blank.
+		"N3": "",
 	})
 
 	formula, err := f.GetCellFormula("João Emissor", "K3")
@@ -234,6 +237,51 @@ func TestRenderIssuancesXLSXLeavesTaxesBlank(t *testing.T) {
 	f := renderForTest(t, []data.Issuance{issuance})
 
 	assertCells(t, f, "João Emissor", map[string]string{"J3": ""})
+}
+
+// An exempt account shows the fee it did not pay, and the totals band sums it apart from the
+// billing, which it never entered.
+func TestRenderIssuancesXLSXWritesRedemptionFee(t *testing.T) {
+	exempt := sampleIssuance("Azul", "AAA111", "Diamante", "Marcus")
+	exempt.RedemptionFeeSavedCents = intptr(4500)
+
+	f := renderForTest(t, []data.Issuance{
+		exempt,
+		sampleIssuance("Azul", "BBB222", "Comum", "Marcus"),
+	})
+
+	assertCells(t, f, "Marcus", map[string]string{
+		"N3": "R$ 45.00",
+		"N4": "",
+	})
+
+	formula, err := f.GetCellFormula("Marcus", "N5")
+	if err != nil {
+		t.Fatalf("get N5 formula: %v", err)
+	}
+	if formula != "SUM(N3:N4)" {
+		t.Errorf("N5 formula = %q, want %q", formula, "SUM(N3:N4)")
+	}
+	billing, err := f.GetCellFormula("Marcus", "K6")
+	if err != nil {
+		t.Fatalf("get K6 formula: %v", err)
+	}
+	if billing != "K5-J5" {
+		t.Errorf("K6 formula = %q, want the billing to leave the redemption fee out", billing)
+	}
+}
+
+// A booking cancelled on a later day gives its saving back, negative like its refund.
+func TestRenderIssuancesXLSXGivesRedemptionFeeBackOnLaterCancellation(t *testing.T) {
+	cancelledAt := time.Date(2026, 7, 25, 18, 0, 0, 0, time.UTC)
+
+	issuance := sampleIssuance("Azul", "AAA111", "Diamante", "Marcus")
+	issuance.RedemptionFeeSavedCents = intptr(4500)
+	issuance.CancelledAt = &cancelledAt
+
+	f := renderForTest(t, []data.Issuance{issuance})
+
+	assertCells(t, f, "Marcus", map[string]string{"N3": "-R$ 45.00"})
 }
 
 // Two airlines become two blocks separated by a blank row, the way the manual sheet keeps
@@ -340,24 +388,24 @@ func TestRenderIssuancesXLSXSummarisesAccounts(t *testing.T) {
 	})
 
 	assertCells(t, f, "Marcus", map[string]string{
-		"O1": "EMISSÕES JULIANA - SMILES - 22/07/2026",
-		"O2": "COMPANHIA",
-		"P2": "LOCALIZADOR",
-		"Q2": "PONTOS",
-		"R2": "TOTAL",
-		"P3": "AAA111",
-		"P4": "BBB222",
+		"P1": "EMISSÕES JULIANA - SMILES - 22/07/2026",
+		"P2": "COMPANHIA",
+		"Q2": "LOCALIZADOR",
+		"R2": "PONTOS",
+		"S2": "TOTAL",
+		"Q3": "AAA111",
+		"Q4": "BBB222",
 		// One blank row, then the next account's box.
-		"O6": "EMISSÕES MARCIA - SMILES - 22/07/2026",
-		"P8": "CCC333",
+		"P6": "EMISSÕES MARCIA - SMILES - 22/07/2026",
+		"Q8": "CCC333",
 	})
 
-	formula, err := f.GetCellFormula("Marcus", "R3")
+	formula, err := f.GetCellFormula("Marcus", "S3")
 	if err != nil {
-		t.Fatalf("get R3 formula: %v", err)
+		t.Fatalf("get S3 formula: %v", err)
 	}
-	if formula != "SUM(Q3:Q4)" {
-		t.Errorf("R3 formula = %q, want %q", formula, "SUM(Q3:Q4)")
+	if formula != "SUM(R3:R4)" {
+		t.Errorf("S3 formula = %q, want %q", formula, "SUM(R3:R4)")
 	}
 }
 
@@ -395,16 +443,16 @@ func TestRenderIssuancesXLSXSummaryPalette(t *testing.T) {
 		sampleIssuance("Smiles", "AAA111", "Juliana", "Marcus"),
 	})
 
-	id, err := f.GetCellStyle("Marcus", "O3")
+	id, err := f.GetCellStyle("Marcus", "P3")
 	if err != nil {
-		t.Fatalf("get style of O3: %v", err)
+		t.Fatalf("get style of P3: %v", err)
 	}
 	style, err := f.GetStyle(id)
 	if err != nil {
-		t.Fatalf("read style of O3: %v", err)
+		t.Fatalf("read style of P3: %v", err)
 	}
 	if len(style.Fill.Color) == 0 || !strings.EqualFold(style.Fill.Color[0], "FFC000") {
-		t.Errorf("O3 fill = %v, want FFC000", style.Fill.Color)
+		t.Errorf("P3 fill = %v, want FFC000", style.Fill.Color)
 	}
 }
 
@@ -417,10 +465,10 @@ func TestRenderIssuancesXLSXSplitsBoxesPerProgram(t *testing.T) {
 	})
 
 	assertCells(t, f, "Marcus", map[string]string{
-		"O1": "EMISSÕES HERALDO - AZUL - 22/07/2026",
-		"P3": "BBB222",
-		"O5": "EMISSÕES HERALDO - SMILES - 22/07/2026",
-		"P7": "AAA111",
+		"P1": "EMISSÕES HERALDO - AZUL - 22/07/2026",
+		"Q3": "BBB222",
+		"P5": "EMISSÕES HERALDO - SMILES - 22/07/2026",
+		"Q7": "AAA111",
 	})
 }
 

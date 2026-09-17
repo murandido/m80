@@ -504,9 +504,16 @@ func filteredIssuerSheetName(db *gorm.DB, r *http.Request) string {
 	return user.Name
 }
 
+// The spreadsheets GET /issuances/export can build. The control sheet is the default because
+// it is what the panel exported before the choice existed.
+const (
+	issuanceExportLayoutControl = "control"
+	issuanceExportLayoutLegacy  = "legacy"
+)
+
 // GetIssuancesExport handles the GET /issuances/export route.
 // @Summary      Exportar emissões (.xlsx)
-// @Description  Gera uma planilha .xlsx das emissões filtradas, no layout da planilha manual de controle: uma aba por pessoa (a emissão cancelada vai para a aba de quem cancelou, que é onde a listagem também a mostra; com issuer_id informado a planilha vira uma aba só, a dele), colunas A:M (Nº, Companhia, Localizador, Data do Voo, Passageiro Principal, Origem, Destino, Pontos, Milheiro, Taxa, Total, Conta, Observação), as linhas agrupadas em blocos por companhia, o bloco TOTAL DAS CONTAS ao final e, ao lado da tabela, um quadro por conta e companhia com os localizadores e o total de pontos. Dentro de cada bloco a ordem é a da listagem (da mais antiga para a mais recente). Aceita os mesmos filtros da listagem (data, programa de fidelidade, cia aérea, conta, agência e emissor). Emissão cancelada no mesmo dia em que foi criada entra pelo líquido (pontos e taxas menos o reembolso); cancelada em outro dia entra só pelo reembolso, negativo. A linha cancelada é destacada em vermelho claro.
+// @Description  Gera uma planilha .xlsx das emissões filtradas. O layout é escolhido por layout: control (padrão) ou legacy. Layout control: planilha manual de controle, uma aba por pessoa (a emissão cancelada vai para a aba de quem cancelou, que é onde a listagem também a mostra; com issuer_id informado a planilha vira uma aba só, a dele), colunas A:N (Nº, Companhia, Localizador, Data do Voo, Passageiro Principal, Origem, Destino, Pontos, Milheiro, Taxa, Total, Conta, Observação, Taxa Resgate), as linhas agrupadas em blocos por companhia, o bloco TOTAL DAS CONTAS ao final e, ao lado da tabela, um quadro por conta e companhia com os localizadores e o total de pontos. Dentro de cada bloco a ordem é a da listagem (da mais antiga para a mais recente). Aceita os mesmos filtros da listagem (data, programa de fidelidade, cia aérea, conta, agência e emissor). Emissão cancelada no mesmo dia em que foi criada entra pelo líquido (pontos e taxas menos o reembolso); cancelada em outro dia entra só pelo reembolso, negativo. A linha cancelada é destacada em vermelho claro. Layout legacy: a antiga planilha EMISSÕES GERAIS, uma tabela só (B:P) com os totais do modelo, mais a coluna TAXA RESGATE em Q. Nos dois layouts a Taxa Resgate é a taxa que a conta isenta (Azul Diamante Unique) deixou de pagar, em branco nas contas comuns, com o mesmo sinal dos pontos.
 // @Tags         Emissões
 // @Produce      application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
 // @Security     BearerAuth
@@ -518,11 +525,21 @@ func filteredIssuerSheetName(db *gorm.DB, r *http.Request) string {
 // @Param        agency_id           query  string  false  "UUID da agência"
 // @Param        q                   query  string  false  "Busca por localizador, passageiro, origem ou destino. Quando presente, os filtros de data e emissor são ignorados."
 // @Param        issuer_id           query  string  false  "UUID do emissor (usuário)"
+// @Param        layout              query  string  false  "Layout da planilha: control (padrão) ou legacy"  Enums(control, legacy)
 // @Success      200  {file}    binary  "Planilha .xlsx das emissões filtradas"
+// @Failure      400  {object}  schemas.ErrorResponse "Layout desconhecido"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao gerar a planilha"
 // @Router       /issuances/export [get]
 func (h *IssuanceHandler) GetIssuancesExport(w http.ResponseWriter, r *http.Request) {
+	// Checked before the query so a typo in the link fails fast instead of silently handing
+	// back the other spreadsheet.
+	layout := r.URL.Query().Get("layout")
+	if layout != "" && layout != issuanceExportLayoutControl && layout != issuanceExportLayoutLegacy {
+		utils.SendError(w, r, http.StatusBadRequest, "Unknown export layout")
+		return
+	}
+
 	var issuances []data.Issuance
 
 	// Same query as GetIssuances, plus the account holder needed to resolve the CONTA label
@@ -544,7 +561,15 @@ func (h *IssuanceHandler) GetIssuancesExport(w http.ResponseWriter, r *http.Requ
 
 	// No period is passed: whether a cancelled issuance enters the sheet as its booking, as
 	// its refund, or as both netting out is decided by its own two dates, not by the filter.
-	content, err := export.BuildIssuancesXLSX(issuances, filteredIssuerSheetName(h.DB, r))
+	var content []byte
+	var err error
+	filenamePrefix := "emissoes"
+	if layout == issuanceExportLayoutLegacy {
+		content, err = export.BuildLegacyIssuancesXLSX(issuances)
+		filenamePrefix = "emissoes-gerais"
+	} else {
+		content, err = export.BuildIssuancesXLSX(issuances, filteredIssuerSheetName(h.DB, r))
+	}
 	if err != nil {
 		slog.Error("failed to build issuances export", "err", err)
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to build issuances export")
@@ -552,7 +577,7 @@ func (h *IssuanceHandler) GetIssuancesExport(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Binary response: the standard JSON envelope does not apply, mirroring the PDF path.
-	filename := fmt.Sprintf("emissoes-%s.xlsx", exportFilenameDate(time.Now()))
+	filename := fmt.Sprintf("%s-%s.xlsx", filenamePrefix, exportFilenameDate(time.Now()))
 	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
 	w.Header().Set("Content-Length", strconv.Itoa(len(content)))

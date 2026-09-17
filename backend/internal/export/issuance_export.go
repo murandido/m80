@@ -14,7 +14,8 @@ import (
 // workbook the team still keeps while the migration to the M-80 finishes: same thirteen
 // columns in the same order (A:M), same per-airline blocks, same Total formula. That is the
 // whole point of the layout - the operator selects A3:M<last> here and pastes it straight
-// into their own block on the shared sheet, with nothing to rearrange first.
+// into their own block on the shared sheet, with nothing to rearrange first. The one column
+// the manual sheet does not have, Taxa Resgate, sits after them in N for that same reason.
 //
 // It is built from scratch with excelize, like sale_export.go. It used to be a copy of a
 // MODELO downloaded from Google Sheets at runtime and cached on disk; that made the export
@@ -24,9 +25,9 @@ const (
 	issuanceExportTitleRow     = 1
 	issuanceExportHeaderRow    = 2
 	issuanceExportFirstDataRow = 3
-	// The data table ends at M (Observação); N is left empty as the gutter before the
-	// per-account summary that starts at O.
-	issuanceExportLastColumn = "M"
+	// The data table ends at N (Taxa Resgate); O is left empty as the gutter before the
+	// per-account summary that starts at P.
+	issuanceExportLastColumn = "N"
 
 	// The tab an issuance with no issuer lands on. Named rather than merged into somebody
 	// else's tab: an unattributed issuance is a gap to be filled, not one of the operator's.
@@ -40,8 +41,9 @@ const (
 // dates written to the sheet are the operator's local calendar days, not UTC.
 const exportTimezone = "America/Sao_Paulo"
 
-// The thirteen columns of the manual sheet, in its order. The widths are not fixed here any
-// more: autoFitColumns sizes each one to what the export actually wrote.
+// The thirteen columns of the manual sheet, in its order, plus the redemption fee after them.
+// The widths are not fixed here any more: autoFitColumns sizes each one to what the export
+// actually wrote.
 var issuanceExportColumns = []struct {
 	column string
 	label  string
@@ -59,6 +61,7 @@ var issuanceExportColumns = []struct {
 	{"K", "Total"},
 	{"L", "Conta"},
 	{"M", "Observação"},
+	{"N", "Taxa Resgate"},
 }
 
 // exportRow is one issuance reduced to what the sheet writes. Resolved once, up front, so
@@ -80,6 +83,9 @@ type exportRow struct {
 	account string
 	// Free text; blank on an issuance with no observation.
 	observation string
+	// The fee the exempt account (Azul Diamante Unique) did not pay, signed like the taxes.
+	// Nil on an ordinary account, where nothing was saved.
+	redemptionFee *float64
 	// Cancelled rows are tinted so a reconciled block shows at a glance which lines are
 	// giving miles back rather than spending them.
 	cancelled bool
@@ -235,6 +241,10 @@ func toExportRow(issuance data.Issuance, loc *time.Location) exportRow {
 	if taxes != nil {
 		amount := centsToReais(*taxes)
 		row.taxes = &amount
+	}
+	if fee := signedRedemptionFee(issuance, loc); fee != nil {
+		amount := centsToReais(*fee)
+		row.redemptionFee = &amount
 	}
 
 	return row
@@ -526,7 +536,7 @@ func writeIssuerSheet(
 // own fixed widths were dropped here: they were measured for its data, and a longer
 // passenger name or observation ran under the next column.
 //
-// The title is skipped on purpose. It is merged across A:M, and excelize does not measure
+// The title is skipped on purpose. It is merged across A:N, and excelize does not measure
 // merged cells - it would size column A to the whole heading and push the table off screen.
 func autoFitColumns(f *excelize.File, sheet string) error {
 	// The merged cells are emptied first and put back afterwards. excelize does not handle
@@ -745,7 +755,7 @@ func writeProgramBlocks(
 	return blocks, sheetRow - 1, nil
 }
 
-// writeBlockSpacer paints the row that separates two airline blocks across A:M. It carries no
+// writeBlockSpacer paints the row that separates two airline blocks across A:N. It carries no
 // value and no number: it is the gap the manual sheet leaves between AZUL and SMILES, made
 // visible so nobody reads it as a missing issuance.
 func writeBlockSpacer(f *excelize.File, sheet string, sheetRow int, styles *styleCache) error {
@@ -794,7 +804,7 @@ func accountsIn(rows []exportRow) []string {
 	return accounts
 }
 
-// writeIssuanceRow fills a single data row (columns A:M) for one issuance.
+// writeIssuanceRow fills a single data row (columns A:N) for one issuance.
 func writeIssuanceRow(
 	f *excelize.File,
 	sheet string,
@@ -866,7 +876,9 @@ func writeIssuanceRow(
 		{"J", row.taxes, body(cellStyle{numFmt: issuanceMoneyFormat})},
 		{"K", nil, body(cellStyle{numFmt: issuanceMoneyFormat, bold: true})},
 		{"L", row.account, body(cellStyle{bold: true})},
-		{"M", row.observation, body(cellStyle{right: borderMedium})},
+		{"M", row.observation, body(cellStyle{})},
+		// N Taxa Resgate - blank on an ordinary account, like Taxa on an issuance with none.
+		{"N", row.redemptionFee, body(cellStyle{numFmt: issuanceMoneyFormat, right: borderMedium})},
 	}
 
 	for _, cell := range cells {
@@ -952,6 +964,13 @@ func writeIssuanceTotals(
 		{"K", fmt.Sprintf("SUM(K%d:K%d)", issuanceExportFirstDataRow, lastDataRow), cellStyle{
 			fill: issuanceExportSumBG, bold: true, numFmt: issuanceMoneyFormat,
 			right: borderMedium, top: borderMedium, bottom: borderMedium,
+		}},
+		// Summed apart from the billing: the fee was never charged to anyone, so it only
+		// reports what the exempt accounts saved.
+		{"N", fmt.Sprintf("SUM(N%d:N%d)", issuanceExportFirstDataRow, lastDataRow), cellStyle{
+			fill: issuanceExportTaxSumBG, fontColor: issuanceExportWhite, bold: true,
+			numFmt: issuanceMoneyFormat,
+			left:   borderMedium, right: borderMedium, top: borderMedium, bottom: borderMedium,
 		}},
 	}
 	for _, sum := range sums {
@@ -1291,15 +1310,15 @@ func writeMergedRows(
 	return nil
 }
 
-// Where the per-account summary lives: column N is the gutter, so the boxes start at O and
+// Where the per-account summary lives: column O is the gutter, so the boxes start at P and
 // span four columns, one box per account, stacked with a blank row between them. The look
 // is the operator's own block: a dark green banner, a green header row, and rows on pale
 // green with the airline cell coloured and the total in red.
 const (
-	issuanceSummaryProgramColumn = "O"
-	issuanceSummaryLocatorColumn = "P"
-	issuanceSummaryPointsColumn  = "Q"
-	issuanceSummaryTotalColumn   = "R"
+	issuanceSummaryProgramColumn = "P"
+	issuanceSummaryLocatorColumn = "Q"
+	issuanceSummaryPointsColumn  = "R"
+	issuanceSummaryTotalColumn   = "S"
 	// The summary writes points with the same three decimals as the table, without the
 	// thousands separator the block beside the issuances uses.
 	issuanceSummaryPointsFormat = "0.000"
@@ -1564,11 +1583,7 @@ func signedIssuanceAmounts(issuance data.Issuance, loc *time.Location) (int, *in
 
 // signedRedemptionFee is signedIssuanceAmounts' rule applied to the saved redemption fee.
 // Nil - a blank cell - whenever the account is not exempt, because zero would claim a
-// saving of nothing.
-//
-// The sheet stopped carrying a TAXA RESGATE column when it was rebuilt around the manual
-// control sheet, which has no such column. The rule is kept here because it is the only
-// implementation of this accounting for that fee, and the panel still reports it.
+// saving of nothing. Both sheets write it: Taxa Resgate here, TAXA RESGATE on the legacy one.
 func signedRedemptionFee(issuance data.Issuance, loc *time.Location) *int {
 	if issuance.RedemptionFeeSavedCents == nil {
 		return nil
