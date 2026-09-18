@@ -24,16 +24,22 @@ const (
 )
 
 type Account struct {
-	ID               string            `gorm:"primaryKey;type:uuid" json:"id"`
-	LoyaltyProgramID string            `gorm:"column:loyalty_program_id;type:uuid;not null" json:"loyalty_program_id"`
-	LoyaltyProgram   *LoyaltyProgram   `gorm:"foreignKey:LoyaltyProgramID;references:ID" json:"loyalty_program,omitempty"`
-	Login            *string           `json:"login"`
-	Password         *string           `json:"password"`
-	HolderID         *string           `gorm:"column:holder_id;type:uuid" json:"holder_id"`
-	Holder           *Person           `gorm:"foreignKey:HolderID;references:ID" json:"holder,omitempty"`
-	AdministratorID  *string           `gorm:"column:administrator_id;type:uuid" json:"administrator_id"`
-	Administrator    *Person           `gorm:"foreignKey:AdministratorID;references:ID" json:"administrator,omitempty"`
-	Nicknames        []AccountNickname `gorm:"foreignKey:AccountID;references:ID" json:"nicknames,omitempty"`
+	ID               string          `gorm:"primaryKey;type:uuid" json:"id"`
+	LoyaltyProgramID string          `gorm:"column:loyalty_program_id;type:uuid;not null" json:"loyalty_program_id"`
+	LoyaltyProgram   *LoyaltyProgram `gorm:"foreignKey:LoyaltyProgramID;references:ID" json:"loyalty_program,omitempty"`
+	Login            *string         `json:"login"`
+	Password         *string         `json:"password"`
+	// AzulCustomerKey is the opaque hash the Azul API uses to select this account, discovered
+	// once by logging the account in. Encrypted at rest by the same hooks as Password, and
+	// json:"-" because, unlike Password (which staff must see to log in by hand), nobody reads
+	// this off the panel - it is machinery for the sync. Nil until the account is connected.
+	// See migration 54 and internal/azul.
+	AzulCustomerKey *string           `gorm:"column:azul_customer_key" json:"-"`
+	HolderID        *string           `gorm:"column:holder_id;type:uuid" json:"holder_id"`
+	Holder          *Person           `gorm:"foreignKey:HolderID;references:ID" json:"holder,omitempty"`
+	AdministratorID *string           `gorm:"column:administrator_id;type:uuid" json:"administrator_id"`
+	Administrator   *Person           `gorm:"foreignKey:AdministratorID;references:ID" json:"administrator,omitempty"`
+	Nicknames       []AccountNickname `gorm:"foreignKey:AccountID;references:ID" json:"nicknames,omitempty"`
 	// Category decides whether the program's beneficiary cap applies at all.
 	// "injunction" is an account under a court order suspending the cap, and
 	// "unidentified" is one nobody has classified yet - only "standard" is counted.
@@ -99,6 +105,13 @@ func (a *Account) BeforeSave(tx *gorm.DB) error {
 		}
 		a.Password = &encrypted
 	}
+	if a.AzulCustomerKey != nil && !strings.HasPrefix(*a.AzulCustomerKey, "enc:") {
+		encrypted, err := utils.Encrypt(*a.AzulCustomerKey)
+		if err != nil {
+			return err
+		}
+		a.AzulCustomerKey = &encrypted
+	}
 	return nil
 }
 
@@ -109,6 +122,13 @@ func (a *Account) AfterFind(tx *gorm.DB) error {
 			return err
 		}
 		a.Password = &decrypted
+	}
+	if a.AzulCustomerKey != nil {
+		decrypted, err := utils.Decrypt(*a.AzulCustomerKey)
+		if err != nil {
+			return err
+		}
+		a.AzulCustomerKey = &decrypted
 	}
 	return nil
 }

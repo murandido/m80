@@ -55,6 +55,7 @@ func NewRouter(db *gorm.DB, broker *events.Broker, traveosClient *traveos.Client
 		routes.RegisterPointBatchOriginRoutes(r, db)
 		routes.RegisterPointBatchRoutes(r, db)
 		routes.RegisterStatementRoutes(r, db)
+		routes.RegisterAzulStatementRoutes(r, db)
 		routes.RegisterInventoryPeriodRoutes(r, db)
 		// SSE stream, behind the same auth as everything else in this group
 		routes.RegisterEventRoutes(r, broker)

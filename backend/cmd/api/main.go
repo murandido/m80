@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/murandido/m-80-backend/internal/api"
+	"github.com/murandido/m-80-backend/internal/azul"
+	"github.com/murandido/m-80-backend/internal/azulsync"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/events"
 	"github.com/murandido/m-80-backend/internal/health"
@@ -138,6 +140,22 @@ func main() {
 	go monitor.Run(monitorCtx, health.DependencyBot, time.Minute, health.BotProbe(os.Getenv("BOT_INTERNAL_URL")))
 	go monitor.Run(monitorCtx, health.DependencyTraveos, 2*time.Minute, health.TraveosProbe(traveosClient))
 
+	// The Azul statement sync polls the connected inventory accounts on a ticker and stores
+	// their statements for reconciliation. Off by default and never even constructed unless
+	// AZUL_SYNC_ENABLED is set: the whole feature ships inert, to be turned on per environment
+	// after a account is connected and watched. A missing Firebase config disables it with a
+	// warning rather than stopping the panel from booting, exactly like Traveos above.
+	if os.Getenv("AZUL_SYNC_ENABLED") == "true" {
+		azulClient, err := azul.New()
+		if err != nil {
+			slog.Warn("azul statement sync is disabled", "err", err)
+		} else {
+			interval := azulSyncInterval()
+			go azulsync.NewLoop(data.DB, azulClient, interval).Run(context.Background())
+			slog.Info("azul statement sync enabled", "interval", interval.String())
+		}
+	}
+
 	// config router
 	r := api.NewRouter(data.DB, broker, traveosClient, monitor)
 
@@ -173,4 +191,21 @@ func main() {
 		panic(err)
 	}
 
+}
+
+// azulSyncInterval reads AZUL_SYNC_INTERVAL as a Go duration (e.g. "10m"), falling back to the
+// package default when it is unset or unparseable - a typo in the env should slow the sync to
+// the safe default, not crash the boot.
+func azulSyncInterval() time.Duration {
+	raw := os.Getenv("AZUL_SYNC_INTERVAL")
+	if raw == "" {
+		return azulsync.DefaultInterval
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		slog.Warn("AZUL_SYNC_INTERVAL is not a valid duration; using the default",
+			"value", raw, "default", azulsync.DefaultInterval.String())
+		return azulsync.DefaultInterval
+	}
+	return d
 }

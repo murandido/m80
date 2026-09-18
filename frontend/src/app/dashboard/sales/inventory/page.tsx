@@ -24,7 +24,7 @@ import {
 import { InventoryToolbar } from "@/components/inventory/inventory-toolbar"
 import { InventoryBatchesPanel } from "@/components/inventory/inventory-batches-panel"
 import { InventoryClosingPanel } from "@/components/inventory/inventory-closing-panel"
-import { StatementPanel } from "@/components/inventory/statement-panel"
+import { StatementPanel, type StatementProgram } from "@/components/inventory/statement-panel"
 
 export const metadata: Metadata = {
   title: "Estoque de pontos",
@@ -98,6 +98,20 @@ export default async function InventoryPage({ searchParams }: PageProps) {
     .map((id) => id.trim())
     .filter(Boolean)
 
+  // Which reconciliation the selected account gets is decided by its programme: Azul is synced,
+  // Smiles uploads, everything else has no statement path. The code is the stable identifier -
+  // the seeds fix "AZUL"/"SMILES" - so the panel branches on it rather than on the name.
+  const selectedAccount = (accounts ?? []).find((account) => account.id === accountIds[0])
+  const selectedProgram = (loyaltyPrograms ?? []).find(
+    (program) => program.id === selectedAccount?.loyalty_program_id,
+  )
+  const statementProgram: StatementProgram =
+    selectedProgram?.code === "AZUL"
+      ? "azul"
+      : selectedProgram?.code === "SMILES"
+        ? "smiles"
+        : "other"
+
   const [batches, closing] = accountIds.length
     ? await Promise.all([
         // The same window as the closing above it: a screen showing August's closing over
@@ -170,6 +184,8 @@ export default async function InventoryPage({ searchParams }: PageProps) {
           />
           <StatementPanel
             accountId={accountIds[0]}
+            program={statementProgram}
+            programName={selectedProgram?.name ?? "desconhecido"}
             origins={origins ?? []}
             agencies={agencies ?? []}
           />

@@ -1,0 +1,98 @@
+package data
+
+import (
+	"time"
+
+	"github.com/google/uuid"
+	"gorm.io/gorm"
+)
+
+// The kinds stored in azul_statement_lines.kind. The first three mirror internal/statement.Kind
+// exactly (kept as literals rather than an import so the data layer stays free of the statement
+// package); the last two are Azul-specific.
+const (
+	AzulLineRedemption = "redemption"
+	AzulLineRefund     = "refund"
+	AzulLineAccrual    = "accrual"
+	// AzulLineExpiration is a point-expiration movement (type PE). It is stored and shown in
+	// reconciliation but deliberately kept OUT of the FIFO costing for now - see the sync.
+	AzulLineExpiration = "expiration"
+	// AzulLineOther is any movement whose type code the mapping does not recognise. Stored so
+	// nothing is silently dropped, and so an unmapped type shows up in reconciliation.
+	AzulLineOther = "other"
+)
+
+// AzulStatementLine is one synced movement of an account's Azul statement. See migration 55.
+// Unlike internal/statement (which reads a file and drops it), these rows persist: the API is
+// polled on a ticker and the panel reads the last stored window between polls.
+type AzulStatementLine struct {
+	ID        string   `gorm:"primaryKey;type:uuid" json:"id"`
+	AccountID string   `gorm:"column:account_id;type:uuid;not null" json:"account_id"`
+	Account   *Account `gorm:"foreignKey:AccountID;references:ID" json:"account,omitempty"`
+
+	// OccurredOn is the day the movement happened - the grain the window is keyed and replaced
+	// on. OccurredAt is left nil until a source with a real clock exists (the legacy endpoint
+	// gives day precision only).
+	OccurredOn time.Time  `gorm:"column:occurred_on;type:date;not null" json:"occurred_on"`
+	OccurredAt *time.Time `gorm:"column:occurred_at" json:"occurred_at"`
+
+	// Kind is the movement in the panel's terms (see AzulLine* above). TypeCode/TypeDescription
+	// are the airline's own, kept verbatim.
+	Kind            string  `gorm:"column:kind;not null" json:"kind"`
+	TypeCode        *string `gorm:"column:type_code" json:"type_code"`
+	TypeDescription *string `gorm:"column:type_description" json:"type_description"`
+
+	// Points is signed (negative when points left the account).
+	Points int `gorm:"column:points;not null" json:"points"`
+
+	Locator     *string `gorm:"column:locator" json:"locator"`
+	Origin      *string `gorm:"column:origin" json:"origin"`
+	Destination *string `gorm:"column:destination" json:"destination"`
+	PartnerName *string `gorm:"column:partner_name" json:"partner_name"`
+	Description *string `gorm:"column:description" json:"description"`
+
+	// DayBalance is the end-of-day balance the airline reported for OccurredOn. The last day's
+	// value is what the sync validates against points/resume before storing the window.
+	DayBalance *int `gorm:"column:day_balance" json:"day_balance"`
+
+	CreatedAt time.Time `gorm:"column:created_at" json:"created_at"`
+}
+
+func (AzulStatementLine) TableName() string {
+	return "azul_statement_lines"
+}
+
+func (l *AzulStatementLine) BeforeCreate(tx *gorm.DB) error {
+	if l.ID == "" {
+		l.ID = uuid.New().String()
+	}
+	return nil
+}
+
+// ReplaceAzulStatementWindow swaps the whole window from windowStart forward for one account:
+// it deletes every line at or after windowStart and inserts the given lines, in one
+// transaction. This is the storage model the airline's data forces - transactionId is always
+// 0, so there is no key to merge on, and identical rows on one day are legitimately distinct.
+// Replacing the window wholesale is what makes that safe: the fresh statement is the truth for
+// its own period, and anything older than windowStart is left untouched.
+//
+// Passing no lines is valid and just clears the window (an account whose recent statement is
+// genuinely empty).
+func ReplaceAzulStatementWindow(db *gorm.DB, accountID string, windowStart time.Time, lines []AzulStatementLine) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("account_id = ? AND occurred_on >= ?", accountID, windowStart).
+			Delete(&AzulStatementLine{}).Error; err != nil {
+			return err
+		}
+		if len(lines) == 0 {
+			return nil
+		}
+		// Force the account id and a fresh row id so a caller cannot insert a line under the
+		// wrong account or collide with a deleted row's id.
+		for i := range lines {
+			lines[i].AccountID = accountID
+			lines[i].ID = ""
+		}
+		return tx.Create(&lines).Error
+	})
+}

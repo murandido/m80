@@ -242,3 +242,69 @@ export const statementCommitResponseSchema = z.object({
 export type StatementCommitResult = z.infer<
   typeof statementCommitResponseSchema
 >["data"]
+
+// One credit the operator chose to record. Mirrors schemas.StatementBatchSelection on the
+// backend: the position in the reconciliation, plus the two things a statement cannot know
+// (what it cost and where it came from). The Smiles commit sends these inside a multipart form;
+// the Azul commit sends them as a JSON body.
+export interface StatementBatchSelection {
+  index: number
+  origin_id: string
+  cost_cents: number
+  funding_agency_id: string
+  note: string
+}
+
+// --- Sincronização do extrato Azul ---
+
+// The lifecycle states mirror data.AzulSync* on the backend. The Portuguese labels live on the
+// panel; these are the raw values the API sends.
+export const azulSyncStateKindSchema = z.enum([
+  "pending",
+  "ok",
+  "error",
+  "inconsistent",
+  "needs_attention",
+])
+
+export type AzulSyncStateKind = z.infer<typeof azulSyncStateKindSchema>
+
+export const azulSyncStateSchema = z.object({
+  // Whether a customerKey has been discovered. False means the account was never connected, so
+  // the panel offers "Conectar" instead of a running state.
+  connected: z.boolean(),
+  // Whether a background connect login is in flight. The connect is asynchronous, so the panel
+  // shows "conectando" and polls until this clears.
+  connecting: z.boolean(),
+  state: azulSyncStateKindSchema,
+  last_synced_at: z.string().nullish(),
+  last_balance_points: z.number().nullish(),
+  consecutive_failures: z.number(),
+  detail: z.string().nullish(),
+  updated_at: z.string().nullish(),
+})
+
+export type AzulSyncState = z.infer<typeof azulSyncStateSchema>
+
+// The Azul reconciliation route bundles the badge (sync_state) with the reconciliation of the
+// synced window, since both come from the database in one read.
+export const azulStatementSchema = z.object({
+  sync_state: azulSyncStateSchema,
+  reconciliation: statementReconciliationSchema,
+})
+
+export type AzulStatement = z.infer<typeof azulStatementSchema>
+
+export const azulStatementResponseSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
+  data: azulStatementSchema.nullish(),
+})
+
+// The connect is asynchronous: the server acknowledges that the background login started, and the
+// panel watches the sync-state badge for the outcome.
+export const azulConnectResponseSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
+  data: z.object({ connecting: z.boolean() }).nullish(),
+})

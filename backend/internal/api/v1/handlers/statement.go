@@ -7,8 +7,10 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
+	"github.com/murandido/m-80-backend/internal/azulsync"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/inventory"
 	"github.com/murandido/m-80-backend/internal/statement"
@@ -26,15 +28,18 @@ const statementMaxUpload = 4 << 20 // 4 MiB
 // request asking for hundreds is not a statement being reconciled.
 const statementMaxBatches = 200
 
-// Statement formats the screen can send.
-const (
-	statementFormatAzul   = "azul"
-	statementFormatSmiles = "smiles"
-)
+// Statement format the upload route accepts. Azul no longer uploads a file - its statement is
+// synced into the database and read from there (see the /accounts/{id}/azul-statement routes),
+// so Smiles is the only format that still arrives as an upload.
+const statementFormatSmiles = "smiles"
 
 type StatementHandler struct {
 	DB        *gorm.DB
 	Validator *validator.Validate
+	// Tracker is the shared connect-in-flight registry, set on the Azul routes so the sync-state
+	// badge can report "conectando". Nil on the Smiles routes, which never connect - IsConnecting
+	// is nil-safe.
+	Tracker *azulsync.ConnectTracker
 }
 
 func NewStatementHandler(db *gorm.DB) *StatementHandler {
@@ -44,15 +49,15 @@ func NewStatementHandler(db *gorm.DB) *StatementHandler {
 // PreviewStatement handles POST /point-batches/statement/preview
 //
 // Reads the file, compares it with the panel, and writes nothing.
-// @Summary      Conciliar extrato da companhia
-// @Description  Lê o extrato enviado (CSV da Azul ou HTML da Smiles) e compara com o que o painel tem da conta, no período que o próprio arquivo cobre. Devolve três listas — emissões, reembolsos e créditos — cada linha com o veredito. Nada é gravado. Crédito sem lote é o achado que importa: são pontos que entraram e nunca foram precificados.
+// @Summary      Conciliar extrato da Smiles
+// @Description  Lê o extrato HTML da Smiles enviado e compara com o que o painel tem da conta, no período que o próprio arquivo cobre. Devolve três listas — emissões, reembolsos e créditos — cada linha com o veredito. Nada é gravado. Crédito sem lote é o achado que importa: são pontos que entraram e nunca foram precificados. (A Azul deixou de subir arquivo — ver /accounts/{id}/azul-statement.)
 // @Tags         Estoque de pontos
 // @Accept       multipart/form-data
 // @Produce      json
 // @Security     BearerAuth
-// @Param        file       formData  file    true  "Extrato (.csv da Azul ou .html da Smiles)"
+// @Param        file       formData  file    true  "Extrato .html da Smiles"
 // @Param        account_id formData  string  true  "Conta a conciliar"
-// @Param        format     formData  string  true  "azul ou smiles"
+// @Param        format     formData  string  true  "smiles"
 // @Success      200  {object}  schemas.StatementReconciliationSingleResponse
 // @Failure      400  {object}  schemas.ErrorResponse "Arquivo ausente, grande demais ou de outro formato"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
@@ -82,15 +87,15 @@ func (h *StatementHandler) PreviewStatement(w http.ResponseWriter, r *http.Reque
 // Records the chosen credits as batches. The file is read and reconciled again from
 // scratch, exactly as the legacy importer does: the preview is advice, not contract, so the
 // client sends which credits it wants and what they cost - never their contents.
-// @Summary      Lançar lotes a partir do extrato
+// @Summary      Lançar lotes a partir do extrato da Smiles
 // @Description  Soma os créditos marcados que compartilham origem e agência num único lote, datado no crédito mais antigo do grupo — uma compra parcelada em quatro entra como um lote só. O custo informado em cada crédito é somado. O arquivo é lido e conciliado de novo do zero, então uma seleção que já deixou de ser um crédito sem lote é pulada em vez de duplicar o lançamento. Ao fim, recalcula o custeio da conta.
 // @Tags         Estoque de pontos
 // @Accept       multipart/form-data
 // @Produce      json
 // @Security     BearerAuth
-// @Param        file       formData  file    true  "O mesmo extrato da prévia"
+// @Param        file       formData  file    true  "O mesmo extrato da prévia (.html da Smiles)"
 // @Param        account_id formData  string  true  "Conta"
-// @Param        format     formData  string  true  "azul ou smiles"
+// @Param        format     formData  string  true  "smiles"
 // @Param        batches    formData  string  true  "JSON com os créditos marcados ([{index, origin_id, cost_cents, funding_agency_id, note}])"
 // @Success      200  {object}  schemas.StatementCommitSingleResponse
 // @Failure      400  {object}  schemas.ErrorResponse "Arquivo ou seleção inválidos"
@@ -150,8 +155,162 @@ func (h *StatementHandler) CommitStatement(w http.ResponseWriter, r *http.Reques
 	utils.SendJSON(w, r, http.StatusOK, "Lotes lançados a partir do extrato", result)
 }
 
-// read does what both routes share: bound and read the upload, parse it in the format the
-// screen said, and load the account. It answers the client itself on failure.
+// PreviewAzulStatement handles GET /accounts/{id}/azul-statement
+//
+// The Azul counterpart of PreviewStatement, but there is no upload: the statement is the
+// window the collector synced into azul_statement_lines. Reads it, compares it with the panel
+// over its own period, and writes nothing.
+// @Summary      Conciliar extrato sincronizado da Azul
+// @Description  Concilia o extrato que o coletor sincronizou da Azul (tabela azul_statement_lines) com o que o painel tem da conta, no período que a janela sincronizada cobre. Não há upload — a Azul deixou de subir CSV. Devolve as três listas com o veredito de cada linha e nada é gravado. Crédito sem lote é o achado que importa. Conta sem janela sincronizada devolve uma comparação vazia.
+// @Tags         Estoque de pontos
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id   path  string  true  "Conta a conciliar"
+// @Success      200  {object}  schemas.AzulStatementSingleResponse
+// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      403  {object}  schemas.ErrorResponse "Requer admin"
+// @Failure      404  {object}  schemas.ErrorResponse "Conta não encontrada"
+// @Failure      422  {object}  schemas.ErrorResponse "Conta sem estoque próprio"
+// @Failure      500  {object}  schemas.ErrorResponse "Erro ao conciliar"
+// @Router       /accounts/{id}/azul-statement [get]
+func (h *StatementHandler) PreviewAzulStatement(w http.ResponseWriter, r *http.Request) {
+	account, ok := h.azulAccount(w, r)
+	if !ok {
+		return
+	}
+
+	reconciliation, from, to, err := h.reconcileAzul(account.ID)
+	if err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Não consegui conciliar: "+err.Error())
+		return
+	}
+
+	// The badge rides along with the reconciliation: the panel opens on this one read, so the
+	// sync state comes with it rather than as a second round-trip.
+	state, err := azulsync.LoadState(h.DB, account.ID)
+	if err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Não consegui ler o estado da sincronização: "+err.Error())
+		return
+	}
+
+	utils.SendJSON(w, r, http.StatusOK, "Extrato conciliado", schemas.AzulStatementResponse{
+		SyncState:      h.toAzulSyncStateResponse(account, state),
+		Reconciliation: toStatementResponse(statement.Statement{}, reconciliation, from, to),
+	})
+}
+
+// CommitAzulStatement handles POST /accounts/{id}/azul-statement/commit
+//
+// Records the chosen credits as batches, exactly like the Smiles commit, but the statement is
+// re-read from the synced window rather than from a re-uploaded file, and the selection arrives
+// as a JSON body.
+// @Summary      Lançar lotes a partir do extrato sincronizado da Azul
+// @Description  Soma os créditos marcados que compartilham origem e agência num único lote, datado no crédito mais antigo do grupo. O extrato é relido da janela sincronizada e conciliado de novo do zero, então uma seleção que já deixou de ser um crédito sem lote é pulada em vez de duplicar o lançamento. Ao fim, recalcula o custeio da conta.
+// @Tags         Estoque de pontos
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id       path  string                              true  "Conta"
+// @Param        request  body  schemas.StatementAzulCommitRequest  true  "Créditos marcados"
+// @Success      200  {object}  schemas.StatementCommitSingleResponse
+// @Failure      400  {object}  schemas.ErrorResponse "Seleção inválida"
+// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      403  {object}  schemas.ErrorResponse "Requer admin"
+// @Failure      404  {object}  schemas.ErrorResponse "Conta não encontrada"
+// @Failure      422  {object}  schemas.ErrorResponse "Conta sem estoque próprio ou seleção grande demais"
+// @Failure      500  {object}  schemas.ErrorResponse "Erro ao lançar os lotes"
+// @Router       /accounts/{id}/azul-statement/commit [post]
+func (h *StatementHandler) CommitAzulStatement(w http.ResponseWriter, r *http.Request) {
+	account, ok := h.azulAccount(w, r)
+	if !ok {
+		return
+	}
+
+	var body schemas.StatementAzulCommitRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		utils.SendError(w, r, http.StatusBadRequest, "Seleção de créditos inválida")
+		return
+	}
+	if len(body.Batches) == 0 {
+		utils.SendError(w, r, http.StatusBadRequest, "Nenhum crédito marcado")
+		return
+	}
+	if len(body.Batches) > statementMaxBatches {
+		utils.SendError(w, r, http.StatusUnprocessableEntity, "Créditos demais numa importação só")
+		return
+	}
+	for _, selection := range body.Batches {
+		if err := h.Validator.Struct(selection); err != nil {
+			utils.SendError(w, r, http.StatusBadRequest, "Seleção inválida: "+err.Error())
+			return
+		}
+	}
+
+	reconciliation, _, _, err := h.reconcileAzul(account.ID)
+	if err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Não consegui conciliar: "+err.Error())
+		return
+	}
+
+	result, err := h.recordBatches(account, reconciliation.Credits, body.Batches)
+	if err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Não consegui lançar os lotes: "+err.Error())
+		return
+	}
+
+	if result.Created > 0 {
+		if err := inventory.Recompute(h.DB, account.ID); err != nil {
+			utils.SendError(w, r, http.StatusInternalServerError, "Lotes lançados, mas o custeio falhou: "+err.Error())
+			return
+		}
+	}
+
+	utils.SendJSON(w, r, http.StatusOK, "Lotes lançados a partir do extrato", result)
+}
+
+// azulAccount loads the account named in the URL and checks it owns its own inventory,
+// answering the client itself on failure.
+func (h *StatementHandler) azulAccount(w http.ResponseWriter, r *http.Request) (data.Account, bool) {
+	var account data.Account
+	if err := h.DB.First(&account, "id = ?", chi.URLParam(r, "id")).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			utils.SendError(w, r, http.StatusNotFound, "Conta não encontrada")
+			return account, false
+		}
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch account: "+err.Error())
+		return account, false
+	}
+	if !account.OwnsPointInventory {
+		utils.SendError(w, r, http.StatusUnprocessableEntity,
+			"Esta conta não controla estoque próprio de pontos")
+		return account, false
+	}
+	return account, true
+}
+
+// reconcileAzul reads the synced window and reconciles it against the panel over its own
+// period. A window that has not been synced yet is an empty comparison, not an error.
+func (h *StatementHandler) reconcileAzul(
+	accountID string,
+) (statement.Reconciliation, time.Time, time.Time, error) {
+	parsed, err := statement.LoadAzulStatement(h.DB, accountID)
+	if err != nil {
+		return statement.Reconciliation{}, time.Time{}, time.Time{}, err
+	}
+	from, to, ok := statement.PeriodOf(parsed)
+	if !ok {
+		return statement.Reconciliation{}, time.Time{}, time.Time{}, nil
+	}
+
+	bookings, batches, err := statement.LoadPanel(h.DB, accountID, from, to)
+	if err != nil {
+		return statement.Reconciliation{}, from, to, err
+	}
+	return statement.Reconcile(parsed.Movements, bookings, batches), from, to, nil
+}
+
+// read does what both Smiles routes share: bound and read the upload, parse it, and load the
+// account. It answers the client itself on failure.
 func (h *StatementHandler) read(w http.ResponseWriter, r *http.Request) (data.Account, statement.Statement, bool) {
 	var account data.Account
 	var parsed statement.Statement
@@ -178,21 +337,17 @@ func (h *StatementHandler) read(w http.ResponseWriter, r *http.Request) (data.Ac
 		return account, parsed, false
 	}
 
-	switch r.FormValue("format") {
-	case statementFormatAzul:
-		parsed, err = statement.ParseAzul(content)
-	case statementFormatSmiles:
-		parsed, err = statement.ParseSmiles(content)
-	default:
-		utils.SendError(w, r, http.StatusBadRequest, "Informe o formato: azul ou smiles")
+	if r.FormValue("format") != statementFormatSmiles {
+		utils.SendError(w, r, http.StatusBadRequest, "Informe o formato: smiles")
 		return account, parsed, false
 	}
+	parsed, err = statement.ParseSmiles(content)
 	if err != nil {
-		// The two "not this format" errors are the common mistake - the Azul file sent as
-		// Smiles, or a spreadsheet sent by accident - and deserve the plain sentence.
-		if errors.Is(err, statement.ErrNotAzulStatement) || errors.Is(err, statement.ErrNotSmilesStatement) {
+		// "Not this format" is the common mistake - a spreadsheet sent by accident, or an
+		// Azul file sent here now that Azul no longer uploads - and deserves the plain sentence.
+		if errors.Is(err, statement.ErrNotSmilesStatement) {
 			utils.SendError(w, r, http.StatusBadRequest,
-				"O arquivo não é um extrato desse programa. Confira o formato escolhido.")
+				"O arquivo não é um extrato da Smiles. Confira o formato escolhido.")
 			return account, parsed, false
 		}
 		utils.SendError(w, r, http.StatusBadRequest, "Não consegui ler o extrato: "+err.Error())
@@ -357,8 +512,8 @@ func toStatementResponse(
 ) schemas.StatementReconciliationResponse {
 	response := schemas.StatementReconciliationResponse{
 		AccountNumber:      parsed.AccountNumber,
-		From:               from.Format(batchDateLayout),
-		To:                 to.Format(batchDateLayout),
+		From:               formatDayOrEmpty(from),
+		To:                 formatDayOrEmpty(to),
 		Bookings:           make([]schemas.StatementBookingLine, 0, len(reconciliation.Bookings)),
 		Refunds:            make([]schemas.StatementRefundLine, 0, len(reconciliation.Refunds)),
 		Credits:            make([]schemas.StatementCreditLine, 0, len(reconciliation.Credits)),
@@ -403,4 +558,33 @@ func toStatementResponse(
 	}
 
 	return response
+}
+
+// toAzulSyncStateResponse turns the stored sync state into what the panel's badge reads, adding
+// whether the account has a customerKey at all (account.AzulCustomerKey is never returned in the
+// clear, so "connected" is the one bit the panel gets from it). A never-synced account carries a
+// zero UpdatedAt, which is reported as null rather than as the epoch.
+func (h *StatementHandler) toAzulSyncStateResponse(account data.Account, state *data.AzulSyncState) schemas.AzulSyncStateResponse {
+	response := schemas.AzulSyncStateResponse{
+		Connected:           account.AzulCustomerKey != nil && *account.AzulCustomerKey != "",
+		Connecting:          h.Tracker.IsConnecting(account.ID),
+		State:               state.State,
+		LastSyncedAt:        state.LastSyncedAt,
+		LastBalancePoints:   state.LastBalancePoints,
+		ConsecutiveFailures: state.ConsecutiveFailures,
+		Detail:              state.Detail,
+	}
+	if !state.UpdatedAt.IsZero() {
+		response.UpdatedAt = &state.UpdatedAt
+	}
+	return response
+}
+
+// formatDayOrEmpty renders a day, or "" for the zero time - which is what an account whose
+// statement has not been synced yet produces (no period to name).
+func formatDayOrEmpty(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.Format(batchDateLayout)
 }

@@ -1,5 +1,7 @@
 package schemas
 
+import "time"
+
 // StatementBookingLine compares one booking between the statement and the panel.
 type StatementBookingLine struct {
 	Locator string `json:"locator" example:"MJF6HC"`
@@ -78,6 +80,70 @@ type StatementBatchSelection struct {
 	FundingAgencyID string `json:"funding_agency_id" validate:"required,uuid4"`
 	// Note travels onto the batch, for the operator's own labelling.
 	Note string `json:"note"`
+}
+
+// StatementAzulCommitRequest is the body of the Azul commit route. Unlike the Smiles route,
+// the Azul statement is not uploaded - it is read from the synced window - so the request
+// carries only the selected credits, as a JSON body rather than a multipart form.
+type StatementAzulCommitRequest struct {
+	Batches []StatementBatchSelection `json:"batches" validate:"required,min=1,dive"`
+}
+
+// AzulConnectResponse is what the connect route reports: the account's sync state after the
+// connection (pending on success - the first real sync happens on the next ticker pass).
+// AzulConnectResponse acknowledges that the background login was started. The connect is
+// asynchronous, so there is no customerKey or final state to return yet - the panel watches the
+// sync-state badge for the outcome.
+type AzulConnectResponse struct {
+	Connecting bool `json:"connecting" example:"true"`
+}
+
+// AzulSyncStateResponse is the account's statement-sync lifecycle as the panel reads it: whether
+// it has ever been connected, the badge (state + detail), when the last round ran and the last
+// balance it saw. Mirrors data.AzulSyncState; the Portuguese labels live on the panel.
+type AzulSyncStateResponse struct {
+	// Connected is whether a customerKey has been discovered for the account. False means it has
+	// never been connected, so the panel offers "Conectar" rather than a running state.
+	Connected bool `json:"connected" example:"true"`
+	// Connecting is whether a background connect login is in flight right now. The connect is
+	// asynchronous, so the panel shows "conectando" and polls this until it clears - then Connected
+	// is true (success) or the state carries the failure.
+	Connecting bool `json:"connecting" example:"false"`
+	// State is one of pending|ok|error|inconsistent|needs_attention (see data.AzulSync*).
+	State string `json:"state" example:"ok"`
+	// LastSyncedAt and LastBalancePoints are the last successful read; null until the first one.
+	LastSyncedAt      *time.Time `json:"last_synced_at"`
+	LastBalancePoints *int       `json:"last_balance_points"`
+	// ConsecutiveFailures is how many rounds (login or read) have failed in a row; it is what
+	// tips the state into needs_attention once it crosses the threshold.
+	ConsecutiveFailures int `json:"consecutive_failures" example:"0"`
+	// Detail is a short human note for the panel (the last error, or a balance mismatch). Null
+	// on an account that has nothing to report yet.
+	Detail *string `json:"detail"`
+	// UpdatedAt is when the state row last changed; null on an account with no row yet.
+	UpdatedAt *time.Time `json:"updated_at"`
+}
+
+// AzulStatementResponse is what the Azul reconciliation route returns: the sync state (for the
+// badge) alongside the reconciliation of the synced window. Unlike Smiles there is no upload, so
+// both come from the database in a single read.
+type AzulStatementResponse struct {
+	SyncState      AzulSyncStateResponse           `json:"sync_state"`
+	Reconciliation StatementReconciliationResponse `json:"reconciliation"`
+}
+
+// AzulStatementSingleResponse is the Azul reconciliation route's envelope.
+type AzulStatementSingleResponse struct {
+	Success bool                  `json:"success" example:"true"`
+	Message string                `json:"message" example:"Extrato conciliado"`
+	Data    AzulStatementResponse `json:"data"`
+}
+
+// AzulConnectSingleResponse is the connect route's envelope.
+type AzulConnectSingleResponse struct {
+	Success bool                `json:"success" example:"true"`
+	Message string              `json:"message" example:"Conta conectada"`
+	Data    AzulConnectResponse `json:"data"`
 }
 
 // StatementCommitResponse says what the commit wrote.
