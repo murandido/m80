@@ -4,14 +4,22 @@ import { cookies } from "next/headers"
 import { revalidatePath } from "next/cache"
 import { env } from "@/lib/env"
 import {
+  azulBatchLinkResponseSchema,
+  azulBookingLinkResponseSchema,
   azulConnectResponseSchema,
+  azulStatementEntriesResponseSchema,
   azulStatementResponseSchema,
+  getPointBatchesSchema,
   statementCommitResponseSchema,
   statementReconciliationResponseSchema,
+  type AzulStatementEntries,
+  type AzulStatementLinkedBatch,
+  type AzulStatementLinkedIssuance,
   type AzulStatement,
   type StatementBatchSelection,
   type StatementReconciliation,
 } from "@/schemas/inventory"
+import { getIssuancesSchema } from "@/schemas/issuance"
 
 // Server actions for the statement reconciliation. They forward the operator's file to the
 // Go API with the JWT attached, which is the panel's standard mutation path.
@@ -197,7 +205,298 @@ export async function connectAzulAccountAction(
       return { error: "Resposta inesperada do servidor." }
     }
     revalidatePath("/dashboard/sales/inventory")
+    revalidatePath("/dashboard/accounts")
     return { success: true }
+  } catch {
+    return { error: "Erro de conexão com o servidor." }
+  }
+}
+
+// --- Statement page: entries and manual booking links ---
+
+type EntriesResult =
+  | { error: string }
+  | { success: true; entries: AzulStatementEntries }
+
+// Reads the synced lines for the statement page, each redemption already resolved to its
+// issuance by locator. A never-synced account returns an empty window, not an error.
+export async function getAzulStatementEntriesAction(
+  accountId: string,
+): Promise<EntriesResult> {
+  try {
+    const { base, token } = await accountsAuth()
+    const res = await fetch(
+      `${base}/${encodeURIComponent(accountId)}/azul-statement/entries`,
+      { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" },
+    )
+    const json = await res.json().catch(() => null)
+    if (!res.ok) {
+      return { error: json?.message || "Erro ao carregar o extrato." }
+    }
+    const parsed = azulStatementEntriesResponseSchema.safeParse(json)
+    if (!parsed.success || !parsed.data.data) {
+      return { error: "Resposta inesperada do servidor." }
+    }
+    return { success: true, entries: parsed.data.data }
+  } catch {
+    return { error: "Erro de conexão com o servidor." }
+  }
+}
+
+type LinkResult =
+  | { error: string }
+  | { success: true; linked: AzulStatementLinkedIssuance | null }
+
+// Pins a statement locator to an issuance (edit mode). Returns how the locator resolves now, so
+// the page can update the line in place, and revalidates the statement page.
+export async function linkAzulBookingAction(
+  accountId: string,
+  locator: string,
+  issuanceId: string,
+): Promise<LinkResult> {
+  try {
+    const { base, token } = await accountsAuth()
+    const res = await fetch(
+      `${base}/${encodeURIComponent(accountId)}/azul-statement/links`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ locator, issuance_id: issuanceId }),
+        cache: "no-store",
+      },
+    )
+    const json = await res.json().catch(() => null)
+    if (!res.ok) {
+      return { error: json?.message || "Erro ao salvar o vínculo." }
+    }
+    const parsed = azulBookingLinkResponseSchema.safeParse(json)
+    if (!parsed.success || !parsed.data.data) {
+      return { error: "Resposta inesperada do servidor." }
+    }
+    revalidatePath(`/dashboard/accounts/${accountId}/statement`)
+    return { success: true, linked: parsed.data.data.linked_issuance ?? null }
+  } catch {
+    return { error: "Erro de conexão com o servidor." }
+  }
+}
+
+// Removes a manual pin, handing the locator back to the automatic match.
+export async function unlinkAzulBookingAction(
+  accountId: string,
+  locator: string,
+): Promise<LinkResult> {
+  try {
+    const { base, token } = await accountsAuth()
+    const res = await fetch(
+      `${base}/${encodeURIComponent(accountId)}/azul-statement/links`,
+      {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ locator }),
+        cache: "no-store",
+      },
+    )
+    const json = await res.json().catch(() => null)
+    if (!res.ok) {
+      return { error: json?.message || "Erro ao remover o vínculo." }
+    }
+    const parsed = azulBookingLinkResponseSchema.safeParse(json)
+    if (!parsed.success || !parsed.data.data) {
+      return { error: "Resposta inesperada do servidor." }
+    }
+    revalidatePath(`/dashboard/accounts/${accountId}/statement`)
+    return { success: true, linked: parsed.data.data.linked_issuance ?? null }
+  } catch {
+    return { error: "Erro de conexão com o servidor." }
+  }
+}
+
+type BatchLinkResult =
+  | { error: string }
+  | { success: true; linked: AzulStatementLinkedBatch | null }
+
+// Pins a purchase/accrual line to a batch. occurredOn/points let the response recompute the auto
+// match after an unlink; both link and unlink revalidate the statement page.
+export async function linkAzulBatchAction(
+  accountId: string,
+  key: string,
+  batchId: string,
+  occurredOn: string,
+  points: number,
+): Promise<BatchLinkResult> {
+  return batchLinkRequest("POST", accountId, {
+    key,
+    batch_id: batchId,
+    occurred_on: occurredOn,
+    points,
+  })
+}
+
+export async function unlinkAzulBatchAction(
+  accountId: string,
+  key: string,
+  occurredOn: string,
+  points: number,
+): Promise<BatchLinkResult> {
+  return batchLinkRequest("DELETE", accountId, { key, occurred_on: occurredOn, points })
+}
+
+async function batchLinkRequest(
+  method: "POST" | "DELETE",
+  accountId: string,
+  body: Record<string, unknown>,
+): Promise<BatchLinkResult> {
+  try {
+    const { base, token } = await accountsAuth()
+    const res = await fetch(
+      `${base}/${encodeURIComponent(accountId)}/azul-statement/batch-links`,
+      {
+        method,
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        cache: "no-store",
+      },
+    )
+    const json = await res.json().catch(() => null)
+    if (!res.ok) {
+      return { error: json?.message || "Erro ao salvar o vínculo." }
+    }
+    const parsed = azulBatchLinkResponseSchema.safeParse(json)
+    if (!parsed.success || !parsed.data.data) {
+      return { error: "Resposta inesperada do servidor." }
+    }
+    revalidatePath(`/dashboard/accounts/${accountId}/statement`)
+    return { success: true, linked: parsed.data.data.linked_batch ?? null }
+  } catch {
+    return { error: "Erro de conexão com o servidor." }
+  }
+}
+
+// One batch option for the manual-link picker.
+export type BatchLinkOption = {
+  id: string
+  origin: string
+  acquired_on: string
+  points: number
+  cost_cents: number
+}
+
+// Lists the account's batches for the batch-link picker. There are few per account, so the whole
+// list comes back and the picker filters it client-side.
+export async function getAccountBatchesAction(
+  accountId: string,
+): Promise<{ error: string } | { success: true; batches: BatchLinkOption[] }> {
+  try {
+    const cookieStore = await cookies()
+    const token = cookieStore.get("auth_token")?.value
+    const res = await fetch(
+      `${env.BACKEND_URL}/api/v1/point-batches?account_id=${encodeURIComponent(accountId)}`,
+      { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" },
+    )
+    const json = await res.json().catch(() => null)
+    if (!res.ok) {
+      return { error: json?.message || "Erro ao buscar os lotes." }
+    }
+    const parsed = getPointBatchesSchema.response.safeParse(json)
+    if (!parsed.success) {
+      return { error: "Resposta inesperada do servidor." }
+    }
+    const batches: BatchLinkOption[] = (parsed.data.data ?? []).map((batch) => ({
+      id: batch.id,
+      origin: batch.origin?.name ?? "Lote",
+      acquired_on: batch.acquired_on,
+      points: batch.points,
+      cost_cents: batch.cost_cents,
+    }))
+    return { success: true, batches }
+  } catch {
+    return { error: "Erro de conexão com o servidor." }
+  }
+}
+
+// Assigns the IATA code for a statement place name. Global (applies to every account's statement),
+// so it revalidates the current statement page and the caller refreshes to pick the mapping up on
+// every line.
+export async function assignAzulCityCodeAction(
+  accountId: string,
+  city: string,
+  iata: string,
+): Promise<{ error: string } | { success: true }> {
+  const code = iata.trim().toUpperCase()
+  if (!/^[A-Za-z]{3}$/.test(code)) {
+    return { error: "O código IATA precisa ter 3 letras." }
+  }
+  try {
+    const cookieStore = await cookies()
+    const token = cookieStore.get("auth_token")?.value
+    const res = await fetch(`${env.BACKEND_URL}/api/v1/azul-city-codes`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ city: city.trim(), iata: code }),
+      cache: "no-store",
+    })
+    const json = await res.json().catch(() => null)
+    if (!res.ok) {
+      return { error: json?.message || "Erro ao salvar o código." }
+    }
+    revalidatePath(`/dashboard/accounts/${accountId}/statement`)
+    return { success: true }
+  } catch {
+    return { error: "Erro de conexão com o servidor." }
+  }
+}
+
+// One issuance option for the manual-link picker: the fields it shows and the id it sends back.
+export type IssuanceLinkOption = {
+  id: string
+  program_locator: string
+  main_passenger_name: string | null
+  origin_iata_code: string | null
+  destination_iata_code: string | null
+  points: number
+  issued_on: string
+}
+
+// Searches the account's issuances by locator (reusing GET /issuances?account_id=&q=), for the
+// manual-link picker. An empty query returns nothing rather than the whole account.
+export async function searchAccountIssuancesAction(
+  accountId: string,
+  query: string,
+): Promise<{ error: string } | { success: true; issuances: IssuanceLinkOption[] }> {
+  const trimmed = query.trim()
+  if (trimmed === "") {
+    return { success: true, issuances: [] }
+  }
+  try {
+    const cookieStore = await cookies()
+    const token = cookieStore.get("auth_token")?.value
+    const params = new URLSearchParams({
+      account_id: accountId,
+      q: trimmed,
+      limit: "10",
+    })
+    const res = await fetch(`${env.BACKEND_URL}/api/v1/issuances?${params.toString()}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    })
+    const json = await res.json().catch(() => null)
+    if (!res.ok) {
+      return { error: json?.message || "Erro ao buscar emissões." }
+    }
+    const parsed = getIssuancesSchema.response.safeParse(json)
+    if (!parsed.success) {
+      return { error: "Resposta inesperada do servidor." }
+    }
+    const issuances: IssuanceLinkOption[] = (parsed.data.data ?? []).map((issuance) => ({
+      id: issuance.id,
+      program_locator: issuance.program_locator,
+      main_passenger_name: issuance.main_passenger_name,
+      origin_iata_code: issuance.origin_iata_code,
+      destination_iata_code: issuance.destination_iata_code,
+      points: issuance.points,
+      issued_on: issuance.issued_on,
+    }))
+    return { success: true, issuances }
   } catch {
     return { error: "Erro de conexão com o servidor." }
   }

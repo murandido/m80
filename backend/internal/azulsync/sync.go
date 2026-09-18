@@ -131,7 +131,7 @@ func toStatementLines(accountID string, txs []azul.Transaction) []data.AzulState
 		lines = append(lines, data.AzulStatementLine{
 			AccountID:       accountID,
 			OccurredOn:      t.Date,
-			Kind:            kindFromTypeCode(t.TypeCode),
+			Kind:            data.AzulKindFromTypeCode(t.TypeCode, t.PartnerName+" "+t.TypeDescription, t.Comments),
 			TypeCode:        ptrOrNil(t.TypeCode),
 			TypeDescription: ptrOrNil(t.TypeDescription),
 			Points:          t.Points,
@@ -140,30 +140,11 @@ func toStatementLines(accountID string, txs []azul.Transaction) []data.AzulState
 			Destination:     ptrOrNil(t.Destination),
 			PartnerName:     ptrOrNil(t.PartnerName),
 			Description:     ptrOrNil(firstNonEmpty(t.PartnerName, t.TypeDescription)),
+			Comment:         ptrOrNil(t.Comments),
 			DayBalance:      intPtr(t.DayBalance),
 		})
 	}
 	return lines
-}
-
-// kindFromTypeCode maps an Azul type code onto the stored kind. Only the codes actually
-// measured are mapped: AI (flight/points accrual), AN (redemption) and PE (point expiration).
-//
-// The refund code is NOT among them: no refund was observed in the read-only probe, so there is
-// nothing honest to map it to yet. An unrecognised code becomes "other" - counted in the net so
-// nothing is silently dropped, but not reconciled. When a refund is seen in the wild, add its
-// code here rather than guessing from the description.
-func kindFromTypeCode(code string) string {
-	switch strings.ToUpper(strings.TrimSpace(code)) {
-	case "AI":
-		return data.AzulLineAccrual
-	case "AN":
-		return data.AzulLineRedemption
-	case "PE":
-		return data.AzulLineExpiration
-	default:
-		return data.AzulLineOther
-	}
 }
 
 // --- state transitions, each writing exactly one row ---

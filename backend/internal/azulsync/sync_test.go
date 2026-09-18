@@ -19,22 +19,6 @@ import (
 
 // --- pure tests ---
 
-func TestKindFromTypeCode(t *testing.T) {
-	t.Parallel()
-	cases := map[string]string{
-		"AI":   data.AzulLineAccrual,
-		"an":   data.AzulLineRedemption, // case-insensitive
-		" PE ": data.AzulLineExpiration, // trimmed
-		"ZZ":   data.AzulLineOther,
-		"":     data.AzulLineOther,
-	}
-	for code, want := range cases {
-		if got := kindFromTypeCode(code); got != want {
-			t.Errorf("kindFromTypeCode(%q) = %q, want %q", code, got, want)
-		}
-	}
-}
-
 func TestLastDayBalanceTakesTheLatestDay(t *testing.T) {
 	t.Parallel()
 	txs := []azul.Transaction{

@@ -81,6 +81,16 @@ export const accountSchema = z.object({
   // an account that does not own its point inventory, where there is no credit side to
   // derive it from.
   expected_balance_points: z.number().nullish(),
+  // Whether the Azul statement sync can read this account (a customerKey was discovered).
+  // Defaulted like the flags above: an API published before this field still parses, and
+  // false is what every account meant before it existed.
+  azul_connected: z
+    .boolean()
+    .nullish()
+    .transform((value) => value ?? false),
+  // When the statement sync last succeeded, for the card's "atualizado há…". Null until
+  // the first successful sync.
+  azul_last_synced_at: z.string().nullish(),
   cpf_usage: cpfUsageSchema.nullish(),
   complete: z.boolean(),
   created_at: z.string(),
@@ -163,6 +173,15 @@ export const getAccountsSchema = {
   }),
 }
 
+// GET /accounts/{id}: the full account, read whole for the per-account statement page header.
+export const getAccountSchema = {
+  response: z.object({
+    success: z.boolean(),
+    message: z.string(),
+    data: accountSchema.nullish(),
+  }),
+}
+
 // GET /accounts/manage. The plain /accounts stays an array because the pickers on the
 // issuances grid, the sales screens and the importer read it whole.
 export const listAccountsSchema = {
@@ -216,10 +235,7 @@ export const updateAccountSchema = {
     waives_redemption_fee: z.boolean().optional(),
     owns_point_inventory: z.boolean().optional(),
     default_profit_share_percent: z.number().min(0).max(100).optional(),
-    // The reading off the airline's page. Absent leaves the last one alone; sending it
-    // without a date is taken as read today.
-    real_balance_points: z.number().min(0).optional(),
-    real_balance_checked_on: z.string().optional(),
+    // The real balance is no longer editable here: the Azul statement sync owns it.
   }),
   response: z.object({
     success: z.boolean(),

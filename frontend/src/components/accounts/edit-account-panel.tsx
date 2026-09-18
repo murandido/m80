@@ -6,7 +6,6 @@ import { Controller, useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
 import { Eye, EyeOff, Hash, Save } from "lucide-react"
-import { DateInput } from "@/components/ui/date-input"
 import { Button } from "@/components/ui/button"
 import { Field, FieldError, FieldLabel } from "@/components/ui/field"
 import {
@@ -27,12 +26,7 @@ import { Switch } from "@/components/ui/switch"
 import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 import { ACCOUNT_CATEGORY_OPTIONS } from "@/lib/account-category"
-import {
-  applyPaddedThousandsMask,
-  formatPointsInThousands,
-  parsePointsFromThousands,
-  sanitizeThousandsInput,
-} from "@/lib/points"
+import { applyPaddedThousandsMask } from "@/lib/points"
 import { Account, updateAccountSchema } from "@/schemas/account"
 import { PersonOption } from "@/schemas/person"
 import { LoyaltyProgram } from "@/schemas/loyalty-program"
@@ -62,16 +56,7 @@ function toFormValues(account: Account): FormData {
     waives_redemption_fee: account.waives_redemption_fee,
     owns_point_inventory: account.owns_point_inventory,
     default_profit_share_percent: account.default_profit_share_percent,
-    real_balance_checked_on: account.real_balance_checked_on ?? "",
   }
-}
-
-// The stored balance as the field shows it: milheiros, the unit every point count in the
-// panel is typed in.
-function toBalanceText(account: Account): string {
-  return account.real_balance_points === null || account.real_balance_points === undefined
-    ? ""
-    : formatPointsInThousands(account.real_balance_points)
 }
 
 export function EditAccountPanel({
@@ -84,10 +69,6 @@ export function EditAccountPanel({
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
   const [showPassword, setShowPassword] = useState(false)
-  // Held outside the form because it is typed in milheiros and stored in points: letting
-  // react-hook-form own the number would convert on every keystroke and eat the separator
-  // halfway through "632,7".
-  const [realBalance, setRealBalance] = useState(() => toBalanceText(account))
 
   const form = useForm<FormData>({
     resolver: zodResolver(updateAccountSchema.request),
@@ -99,28 +80,22 @@ export function EditAccountPanel({
   useEffect(() => {
     if (!isOpen) {
       form.reset(toFormValues(account))
-      setRealBalance(toBalanceText(account))
     }
   }, [isOpen]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const typedBalance = realBalance.trim() === "" ? null : parsePointsFromThousands(realBalance)
+  // Both are read-only here now: the sync owns the real balance, and the expected one is derived.
+  const realBalance = account.real_balance_points ?? null
   const expected = account.expected_balance_points
   // The gap, when both numbers exist. Positive means the panel counts more points than the
   // airline shows - stock that was spent without the panel hearing about it.
   const divergence =
-    expected !== null && expected !== undefined && typedBalance !== null
-      ? expected - typedBalance
+    expected !== null && expected !== undefined && realBalance !== null
+      ? expected - realBalance
       : null
 
   function onSubmit(data: FormData) {
     startTransition(async () => {
-      const result = await updateAccountAction(account.id, {
-        ...data,
-        // Only when it changed: an untouched field must not restamp the reading's date.
-        ...(typedBalance !== null && typedBalance !== account.real_balance_points
-          ? { real_balance_points: typedBalance }
-          : {}),
-      })
+      const result = await updateAccountAction(account.id, data)
       if (result.error) {
         form.setError("root", { message: result.error })
         return
@@ -389,7 +364,7 @@ export function EditAccountPanel({
                 />
               </div>
 
-              {/* saldo previsto x saldo real */}
+              {/* saldo previsto x saldo real (read-only: the sync owns the real balance) */}
               <div className="flex flex-col gap-2 rounded-md border border-slate-200 p-3 text-sm">
                 <div className="flex items-baseline justify-between gap-3">
                   <span className="text-xs font-medium tracking-wide text-slate-500 uppercase">
@@ -405,60 +380,24 @@ export function EditAccountPanel({
                     </span>
                   )}
                 </div>
-                {/* Derived from the batches and the bookings; the airline's own page is the
-                    only place the real number exists, so somebody reads it and types it here. */}
-                <p className="text-xs text-slate-500">
-                  O previsto vem dos lotes menos o que foi emitido. O real é o que a companhia
-                  mostra na página da conta — nenhum extrato traz saldo, então ele é conferido à
-                  mão.
-                </p>
-
-                <div className="flex flex-wrap items-end gap-3">
-                  <div className="flex min-w-0 flex-1 flex-col gap-1">
-                    <FieldLabel htmlFor="edit-account-real-balance">
-                      Saldo real
-                      <span className="ml-1 font-normal text-slate-400">em milheiros</span>
-                    </FieldLabel>
-                    <InputGroup>
-                      <InputGroupInput
-                        id="edit-account-real-balance"
-                        inputMode="decimal"
-                        placeholder="632,7"
-                        value={realBalance}
-                        onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
-                          setRealBalance(sanitizeThousandsInput(event.target.value))
-                        }
-                        disabled={isPending}
-                      />
-                      <InputGroupAddon align="inline-end">mil</InputGroupAddon>
-                    </InputGroup>
-                    {typedBalance !== null && (
-                      <p className="text-xs text-slate-500">
-                        = {applyPaddedThousandsMask(String(typedBalance))} pontos
-                      </p>
-                    )}
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <Controller
-                      name="real_balance_checked_on"
-                      control={form.control}
-                      render={({ field }) => (
-                        <>
-                          <FieldLabel htmlFor="edit-account-balance-checked-on">
-                            Conferido em
-                          </FieldLabel>
-                          <DateInput
-                            id="edit-account-balance-checked-on"
-                            value={field.value ?? ""}
-                            onChange={field.onChange}
-                            disabled={isPending}
-                            className="w-44"
-                          />
-                        </>
-                      )}
-                    />
-                  </div>
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="text-xs font-medium tracking-wide text-slate-500 uppercase">
+                    Saldo real
+                  </span>
+                  {realBalance === null ? (
+                    <span className="text-xs text-slate-400">sincronizado da companhia</span>
+                  ) : (
+                    <span className="tabular-nums font-medium">
+                      {applyPaddedThousandsMask(String(realBalance))} pontos
+                    </span>
+                  )}
                 </div>
+                {/* The real balance is no longer typed here - the Azul statement sync reads it
+                    off the airline and keeps it current. Connect the account on the card. */}
+                <p className="text-xs text-slate-500">
+                  O previsto vem dos lotes menos o que foi emitido. O real é lido pela
+                  sincronização da Azul — não se digita mais aqui.
+                </p>
 
                 {divergence !== null &&
                   (divergence === 0 ? (

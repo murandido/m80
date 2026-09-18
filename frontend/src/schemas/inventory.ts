@@ -308,3 +308,109 @@ export const azulConnectResponseSchema = z.object({
   message: z.string(),
   data: z.object({ connecting: z.boolean() }).nullish(),
 })
+
+// --- Statement page: entries with the resolved issuance link ---
+
+// The kinds a statement line can carry, mirroring data.AzulLine* on the backend. The Portuguese
+// labels live on the statement page.
+export const azulStatementKindSchema = z.enum([
+  "redemption",
+  "refund",
+  "accrual",
+  "purchase",
+  "expiration",
+  "other",
+])
+
+export type AzulStatementKind = z.infer<typeof azulStatementKindSchema>
+
+// The real issuance a statement line resolves to. manual says whether it was pinned by hand
+// (true) or matched automatically by locator (false).
+export const azulStatementLinkedIssuanceSchema = z.object({
+  issuance_id: z.string(),
+  passenger_name: z.string(),
+  origin: z.string(),
+  destination: z.string(),
+  issued_on: z.string(),
+  points: z.number(),
+  manual: z.boolean(),
+})
+
+export type AzulStatementLinkedIssuance = z.infer<typeof azulStatementLinkedIssuanceSchema>
+
+// The point batch (lote) a purchase or accrual line resolves to. manual says whether it was
+// pinned by hand (true) or matched automatically by the batch's recorded credits (false).
+export const azulStatementLinkedBatchSchema = z.object({
+  batch_id: z.string(),
+  origin: z.string(),
+  acquired_on: z.string(),
+  points: z.number(),
+  cost_cents: z.number(),
+  manual: z.boolean(),
+})
+
+export type AzulStatementLinkedBatch = z.infer<typeof azulStatementLinkedBatchSchema>
+
+// One synced statement line as the page shows it: the raw movement plus its resolved issuance
+// (null when the line has no locator or nothing matched). An unknown kind from a newer API
+// degrades to "other" rather than failing the parse.
+export const azulStatementEntrySchema = z.object({
+  // The key a manual link is stored under: the locator, or a content signature when the line
+  // has none. Sent back to link or unlink the line.
+  key: z.string(),
+  occurred_on: z.string(),
+  kind: azulStatementKindSchema.catch("other"),
+  type_code: z.string().nullish(),
+  type_description: z.string().nullish(),
+  points: z.number(),
+  locator: z.string(),
+  origin: z.string(),
+  destination: z.string(),
+  partner_name: z.string(),
+  description: z.string(),
+  day_balance: z.number().nullish(),
+  linked_issuance: azulStatementLinkedIssuanceSchema.nullish(),
+  linked_batch: azulStatementLinkedBatchSchema.nullish(),
+})
+
+export type AzulStatementEntry = z.infer<typeof azulStatementEntrySchema>
+
+export const azulStatementEntriesSchema = z.object({
+  sync_state: azulSyncStateSchema,
+  from: z.string(),
+  to: z.string(),
+  lines: z.array(azulStatementEntrySchema),
+})
+
+export type AzulStatementEntries = z.infer<typeof azulStatementEntriesSchema>
+
+export const azulStatementEntriesResponseSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
+  data: azulStatementEntriesSchema.nullish(),
+})
+
+// The link routes answer with how the locator now resolves, so the page can update the line in
+// place without a full refetch.
+export const azulBookingLinkResponseSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
+  data: z
+    .object({
+      locator: z.string(),
+      linked_issuance: azulStatementLinkedIssuanceSchema.nullish(),
+    })
+    .nullish(),
+})
+
+// The batch-link routes answer with how the line now resolves to a batch.
+export const azulBatchLinkResponseSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
+  data: z
+    .object({
+      key: z.string(),
+      linked_batch: azulStatementLinkedBatchSchema.nullish(),
+    })
+    .nullish(),
+})

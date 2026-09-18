@@ -50,7 +50,10 @@ func azulLineKind(stored string) Kind {
 		return KindRedemption
 	case data.AzulLineRefund:
 		return KindRefund
-	case data.AzulLineAccrual:
+	case data.AzulLineAccrual, data.AzulLinePurchase:
+		// A purchase (which includes campaign/promotion credits) is a point entry that needs a cost
+		// basis just like any accrual, so the reconciliation treats them the same - the split exists
+		// only for the page's label.
 		return KindAccrual
 	case data.AzulLineExpiration:
 		return KindExpiration

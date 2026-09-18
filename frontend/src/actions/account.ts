@@ -108,13 +108,11 @@ export async function updateAccountAction(
   const cookieStore = await cookies()
   const token = cookieStore.get("auth_token")?.value
 
-  // Same reason as in createAccountAction: `false` and `0` must survive the strip - and a
-  // balance of zero is a real reading, not an empty field.
+  // Same reason as in createAccountAction: `false` and `0` must survive the strip.
   const {
     waives_redemption_fee,
     owns_point_inventory,
     default_profit_share_percent,
-    real_balance_points,
     ...rest
   } = data
   const body = {
@@ -122,7 +120,6 @@ export async function updateAccountAction(
     ...(waives_redemption_fee === undefined ? {} : { waives_redemption_fee }),
     ...(owns_point_inventory === undefined ? {} : { owns_point_inventory }),
     ...(default_profit_share_percent === undefined ? {} : { default_profit_share_percent }),
-    ...(real_balance_points === undefined ? {} : { real_balance_points }),
   }
 
   try {

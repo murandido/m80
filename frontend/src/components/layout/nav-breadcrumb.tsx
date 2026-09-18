@@ -20,6 +20,7 @@ const nestedSegmentLabels: Record<string, string> = {
   inventory: "Estoque de pontos",
   "point-batch-origins": "Origens de lote",
   ticket: "Bilhete",
+  statement: "Extrato",
 }
 
 interface Crumb {

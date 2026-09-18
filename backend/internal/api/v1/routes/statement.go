@@ -51,7 +51,21 @@ func RegisterAzulStatementRoutes(r chi.Router, db *gorm.DB) {
 
 		r.Get("/", h.PreviewAzulStatement)
 		r.Post("/commit", h.CommitAzulStatement)
+
+		// The per-account statement page: the synced lines with each redemption resolved to
+		// its issuance, plus the manual-link override (edit mode) and a CSV export.
+		r.Get("/entries", h.AzulStatementEntries)
+		r.Get("/export", h.ExportAzulStatement)
+		r.Post("/links", h.LinkAzulBooking)
+		r.Delete("/links", h.UnlinkAzulBooking)
+		// The point-entry side: purchases and accruals link to a batch (lote).
+		r.Post("/batch-links", h.LinkAzulBatch)
+		r.Delete("/batch-links", h.UnlinkAzulBatch)
 	})
 
 	r.With(middleware.RequireAdmin()).Post("/accounts/{id}/azul-connect", connect.ConnectAzulAccount)
+
+	// The city-to-IATA table is global, not per-account: assigning a code fixes the route display
+	// for every account's statement at once.
+	r.With(middleware.RequireAdmin()).Post("/azul-city-codes", h.AssignAzulCityCode)
 }

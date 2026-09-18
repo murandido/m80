@@ -53,16 +53,12 @@ type UpdateAccountRequest struct {
 	// DefaultProfitSharePercent seeds the split on new batches of this account. Each batch
 	// freezes its own copy, so changing this never revises a month already settled.
 	DefaultProfitSharePercent *int `json:"default_profit_share_percent" validate:"omitempty,min=0,max=100"`
-	// RealBalancePoints is the balance read off the airline's own page, which is the only
-	// place it exists - no statement export carries a position. Absent leaves the last
-	// reading alone; a wrong one is corrected by sending the right number, not by clearing
-	// it.
-	RealBalancePoints *int `json:"real_balance_points" validate:"omitempty,min=0"`
-	// RealBalanceCheckedOn (YYYY-MM-DD) is the day of that reading, and is what makes it
-	// comparable to a panel that has moved since. Omitted alongside a balance, it is taken
-	// as today - a reading always happened on some day, and a dateless one is worthless.
-	RealBalanceCheckedOn *string `json:"real_balance_checked_on" validate:"omitempty,datetime=2006-01-02" example:"2026-09-09"`
-	// Complete overrides the automatically recomputed value when provided
+	// The real balance is no longer editable here: it is owned by the Azul statement sync,
+	// which reads it off the airline and writes accounts.real_balance_points itself (see
+	// internal/azulsync). It stays on AccountResponse for reading. A program without a sync
+	// yet (Smiles) simply has no real balance until its own sync ships.
+	//
+	// Complete overrides the automatically recomputed value when provided.
 	Complete *bool `json:"complete" validate:"omitempty"`
 }
 
@@ -99,6 +95,15 @@ type AccountResponse struct {
 	// there is no credit side to it in the panel, so a figure would be derived from half
 	// a history. See inventory.ExpectedBalances.
 	ExpectedBalancePoints *int `json:"expected_balance_points"`
+	// AzulConnected is whether a customerKey has been discovered for this account - i.e.
+	// whether the Azul statement sync can read it. The key itself is never returned (it is
+	// json:"-" on the model), so this bit is how the panel knows to offer "Conectar" versus
+	// showing the synced balance. Always false on accounts of other programs.
+	AzulConnected bool `json:"azul_connected"`
+	// AzulLastSyncedAt is when the statement sync last succeeded for this account, so the
+	// card can show "atualizado há…". Null until the first successful sync, or on accounts
+	// with no sync state row.
+	AzulLastSyncedAt *time.Time `json:"azul_last_synced_at"`
 	// CPFUsage is how much of the program's beneficiary cap this account has consumed,
 	// and is null whenever there is no cap to report: an injunction suspends it, an
 	// unidentified account gives no basis to claim one, and a program nobody has

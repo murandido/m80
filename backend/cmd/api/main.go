@@ -101,6 +101,12 @@ func main() {
 		log.Fatal("❌ Failed to seed point batch origins: ", err)
 	}
 
+	// Fills the Azul city-to-IATA table from the Go default the first time; never overwrites a
+	// code the operator assigned by hand.
+	if err := data.SeedAzulCityCodes(data.DB); err != nil {
+		log.Fatal("❌ Failed to seed azul city codes: ", err)
+	}
+
 	// Encrypts whatever CPFs migration 38 left in plain text. Not fatal on purpose: it reports
 	// the rows it could not rewrite and lets the API come up, because a single duplicate
 	// document is not a reason to leave the panel down.

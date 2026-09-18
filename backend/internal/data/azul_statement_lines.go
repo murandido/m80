@@ -1,6 +1,7 @@
 package data
 
 import (
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,6 +15,11 @@ const (
 	AzulLineRedemption = "redemption"
 	AzulLineRefund     = "refund"
 	AzulLineAccrual    = "accrual"
+	// AzulLinePurchase is a point acquisition (type ER "Sale") - buying or transferring points in
+	// from a bank or partner, and campaign/promotion credits, which are the same thing. It is a
+	// point entry like an accrual and reconciles the same way (see azulLineKind), kept as its own
+	// kind so the statement page can label it "Compra" instead of lumping it with flight accrual.
+	AzulLinePurchase = "purchase"
 	// AzulLineExpiration is a point-expiration movement (type PE). It is stored and shown in
 	// reconciliation but deliberately kept OUT of the FIFO costing for now - see the sync.
 	AzulLineExpiration = "expiration"
@@ -21,6 +27,81 @@ const (
 	// nothing is silently dropped, and so an unmapped type shows up in reconciliation.
 	AzulLineOther = "other"
 )
+
+// AzulKindFromTypeCode maps an Azul statement type code onto the stored kind. It is the single
+// source of truth for that mapping, used both when the sync stores a line and when the statement
+// page derives a line's kind for display. context is the movement's partner name and type
+// description joined (to tell a plain purchase from a club/card accrual); comment is the airline's
+// free-text note (to tell a promotional entry from an ordinary one).
+//
+// The codes are the ones measured on live accounts:
+//   - AN  Direct redemption          -> redemption
+//   - AI  Airline Issuance           -> accrual (points earned on a flight)
+//   - RF  Redemption Refund          -> refund (the estorno of a cancelled redemption)
+//   - PE  Point expiration           -> expiration (kept out of the FIFO for now)
+//   - ER  Sale                       -> accrual for a club/card partner (Clube TudoAzul earns as a
+//     membership); else purchase - buying points, a partner transfer and a campaign credit are all
+//     the same "Compra"
+//   - PC  Points Corrections         -> purchase when the comment names a promotion (a correction
+//     of one, the same as buying points back in); else other
+//   - OI  Aceite de Campanha Promo.  -> other (a zero-point enrolment with no comment), and
+//     anything unrecognised
+//
+// purchase reconciles as a batch credit exactly like accrual (see azulLineKind); it is a separate
+// kind only so the page can label it. "other" is counted in the net so nothing is silently
+// dropped, but is not reconciled.
+func AzulKindFromTypeCode(code, context, comment string) string {
+	switch strings.ToUpper(strings.TrimSpace(code)) {
+	case "AN":
+		return AzulLineRedemption
+	case "AI":
+		return AzulLineAccrual
+	case "RF":
+		return AzulLineRefund
+	case "PE":
+		return AzulLineExpiration
+	case "ER":
+		if mentionsClubOrCard(context) {
+			return AzulLineAccrual
+		}
+		return AzulLinePurchase
+	case "PC":
+		if mentionsPromotion(comment) {
+			return AzulLinePurchase
+		}
+		return AzulLineOther
+	default:
+		return AzulLineOther
+	}
+}
+
+// mentionsPromotion reports whether the airline's comment names a promotion or campaign, matched
+// case-insensitively on the accented and unaccented spellings the field uses. It reads the
+// comment, not the type description, on purpose: the OI enrolment's own description is "Aceite de
+// Campanha Promocional" but its comment is empty, so it stays "other" as the operator asked. It
+// is what promotes a points correction that fixes a promotion into a "Compra".
+func mentionsPromotion(comment string) bool {
+	lowered := strings.ToLower(comment)
+	for _, needle := range []string{"promoção", "promocao", "campanha"} {
+		if strings.Contains(lowered, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+// mentionsClubOrCard reports whether the movement's partner/description names an Azul club or a
+// co-branded card, which earns points as a membership (an accrual) rather than a one-off
+// purchase. Matched case-insensitively on the accented and unaccented spellings the field uses.
+func mentionsClubOrCard(context string) bool {
+	lowered := strings.ToLower(context)
+	for _, needle := range []string{"clube", "cartão", "cartao", "card"} {
+		if strings.Contains(lowered, needle) {
+			return true
+		}
+	}
+	return false
+}
 
 // AzulStatementLine is one synced movement of an account's Azul statement. See migration 55.
 // Unlike internal/statement (which reads a file and drops it), these rows persist: the API is
@@ -50,6 +131,9 @@ type AzulStatementLine struct {
 	Destination *string `gorm:"column:destination" json:"destination"`
 	PartnerName *string `gorm:"column:partner_name" json:"partner_name"`
 	Description *string `gorm:"column:description" json:"description"`
+	// Comment is the airline's free-text note, kept verbatim so the page can tell a promotional
+	// entry from an ordinary one. Nil on rows synced before migration 60.
+	Comment *string `gorm:"column:comment" json:"comment"`
 
 	// DayBalance is the end-of-day balance the airline reported for OccurredOn. The last day's
 	// value is what the sync validates against points/resume before storing the window.

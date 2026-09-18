@@ -62,6 +62,40 @@ func runInAzulTx(t *testing.T, fn func(tx *gorm.DB)) {
 	fn(tx)
 }
 
+func TestAzulKindFromTypeCode(t *testing.T) {
+	type tc struct {
+		code    string
+		context string
+		comment string
+		want    string
+	}
+	cases := []tc{
+		{"AN", "", "Booking: ABC123", AzulLineRedemption},
+		{"ai", "", "", AzulLineAccrual}, // case-insensitive
+		{"RF", "", "PNR LP52SA", AzulLineRefund},
+		{" PE ", "", "", AzulLineExpiration}, // trimmed
+		// ER is a "Compra": a bank transfer and a campaign credit are the same acquisition...
+		{"ER", "Parceiro Banco Inter", "Resgate pontos Inter", AzulLinePurchase},
+		{"ER", "Pontos Livelo", "", AzulLinePurchase},
+		{"ER", "ALLOYAL", "crédito de pontos em campanha bonificada", AzulLinePurchase},
+		// ...unless the partner is a club/card, which is an accrual.
+		{"ER", "Clube TudoAzul", "", AzulLineAccrual},
+		{"ER", "Cartão Azul Itaú", "", AzulLineAccrual},
+		// PC: a correction of a promotion is a Compra (points back in); an ordinary one is other.
+		{"PC", "Azul", "Liberalidade - promoção B088OPC690", AzulLinePurchase},
+		{"PC", "Azul", "ajuste operacional", AzulLineOther},
+		// OI: its comment is empty, so it stays other even though its description names a campaign.
+		{"OI", "Aceite de Campanha Promocional", "", AzulLineOther},
+		{"ZZ", "", "", AzulLineOther},
+		{"", "", "", AzulLineOther},
+	}
+	for _, c := range cases {
+		if got := AzulKindFromTypeCode(c.code, c.context, c.comment); got != c.want {
+			t.Errorf("AzulKindFromTypeCode(%q, %q, %q) = %q, want %q", c.code, c.context, c.comment, got, c.want)
+		}
+	}
+}
+
 func TestReplaceAzulStatementWindow_InsertsWindow(t *testing.T) {
 	runInAzulTx(t, func(tx *gorm.DB) {
 		account := seedAzulAccount(t, tx)
