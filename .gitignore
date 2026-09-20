@@ -70,3 +70,7 @@ deploy/.deploy-state
 # already covers .env files, and being last it overrode the !.env.sample
 # exception - silently, since the two tracked samples survive on being tracked.
 .vercel
+
+# Report the CI vulnerability gate writes (.github/scripts/govulncheck-gate.sh).
+# Lives at backend/ on a run, and there is no backend/.gitignore on this branch.
+govulncheck.json
