@@ -60,14 +60,17 @@ type IssuanceHandler struct {
 	// is opt-in per airline, so that is a supported state, not a fatal one - the
 	// routes that need it answer 503 and everything else works untouched.
 	Traveos *traveos.Client
+	// TraveosLookups holds what a lookup fetched until the create that reuses it.
+	TraveosLookups *issuancesvc.LookupCache
 }
 
 func NewIssuanceHandler(db *gorm.DB, broker *events.Broker, traveosClient *traveos.Client) *IssuanceHandler {
 	return &IssuanceHandler{
-		Traveos:   traveosClient,
-		DB:        db,
-		Validator: validator.New(),
-		Broker:    broker,
+		Traveos:        traveosClient,
+		TraveosLookups: issuancesvc.NewLookupCache(),
+		DB:             db,
+		Validator:      validator.New(),
+		Broker:         broker,
 	}
 }
 
@@ -735,9 +738,107 @@ func (h *IssuanceHandler) CreateIssuance(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	if req.TraveosLookupID != nil || req.TraveosTicketCode != nil {
+		h.applyTraveosLookup(r.Context(), &created, derefString(req.TraveosLookupID), derefString(req.TraveosTicketCode))
+	}
+
 	h.broadcastIssuance(eventIssuanceCreated, created.ID)
 
 	utils.SendJSON(w, r, http.StatusCreated, "Issuance created successfully", toIssuanceResponse(created))
+}
+
+// applyTraveosLookup writes a lookup's itinerary onto the issuance just created and
+// reloads it, so the response already carries the synced row. Best-effort by design:
+// the issuance is committed by now, and losing the autofill is recoverable with the
+// refetch button - failing the create over it would not be.
+func (h *IssuanceHandler) applyTraveosLookup(ctx context.Context, created *data.Issuance, lookupID, ticketCode string) {
+	// A nil *traveos.Client inside the interface would not compare equal to nil, so the
+	// client is only handed over when there is one. The cached path never needs it.
+	var client issuancesvc.TraveosClient
+	if h.Traveos != nil {
+		client = h.Traveos
+	}
+
+	applyCtx, cancel := context.WithTimeout(ctx, traveosSyncTimeout)
+	defer cancel()
+	if err := issuancesvc.ApplyLookup(applyCtx, h.DB, client, h.TraveosLookups, created.ID, lookupID, ticketCode); err != nil {
+		slog.Error("failed to apply the traveos lookup to a new issuance", "issuance_id", created.ID, "err", err)
+		return
+	}
+
+	if err := preloadIssuanceAssociations(h.DB).
+		Preload("Flights", func(db *gorm.DB) *gorm.DB {
+			return db.Where("direction = ?", "outbound").Order("leg_order asc")
+		}).
+		First(created, "id = ?", created.ID).Error; err != nil {
+		slog.Error("failed to reload the issuance after the traveos lookup", "issuance_id", created.ID, "err", err)
+	}
+}
+
+// LookupTraveos handles the POST /issuances/traveos-lookup route.
+// @Summary      Consultar reserva na Traveos antes de criar a emissão
+// @Description  Busca o bilhete na Traveos (emitindo lá primeiro, se ainda não existir) sem gravar nada, e devolve uma prévia do itinerário. O lookup_id devolvido, enviado em traveos_lookup_id no POST /issuances, grava o itinerário na emissão criada sem consultar a Traveos de novo.
+// @Tags         Emissões
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        payload body schemas.TraveosLookupRequest true "Dados que a Traveos usa para localizar a reserva"
+// @Success      200  {object}  schemas.TraveosLookupSingleResponse
+// @Failure      400  {object}  schemas.ErrorResponse "Payload inválido"
+// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      422  {object}  schemas.ErrorResponse "A cia aérea não usa Traveos, não tem o id da Traveos configurado, ou falta um campo que a cia exige"
+// @Failure      502  {object}  schemas.ErrorResponse "A Traveos recusou ou falhou"
+// @Failure      503  {object}  schemas.ErrorResponse "Integração com a Traveos não configurada neste servidor"
+// @Router       /issuances/traveos-lookup [post]
+func (h *IssuanceHandler) LookupTraveos(w http.ResponseWriter, r *http.Request) {
+	if h.Traveos == nil {
+		// 503 and not 401 - see SyncIssuanceWithTraveos.
+		utils.SendError(w, r, http.StatusServiceUnavailable,
+			"A integração com a Traveos não está configurada neste servidor")
+		return
+	}
+
+	var req schemas.TraveosLookupRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		utils.SendError(w, r, http.StatusBadRequest, "Invalid JSON payload")
+		return
+	}
+	if err := h.Validator.Struct(req); err != nil {
+		utils.SendError(w, r, http.StatusBadRequest, "Validation failed: "+err.Error())
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), traveosSyncTimeout)
+	defer cancel()
+
+	result, err := issuancesvc.Lookup(ctx, h.DB, h.Traveos, h.TraveosLookups, issuancesvc.LookupInput{
+		AirlineID:           req.AirlineID,
+		ProgramLocator:      req.ProgramLocator,
+		AirlineLocator:      req.AirlineLocator,
+		OriginIATACode:      req.OriginIATACode,
+		MainPassengerName:   req.MainPassengerName,
+		LatamPurchaseNumber: req.LatamPurchaseNumber,
+	})
+	if err != nil {
+		h.respondToTraveosSyncError(w, r, "", err)
+		return
+	}
+
+	var flightDate *string
+	if result.FlightDate != nil {
+		formatted := result.FlightDate.Format("2006-01-02")
+		flightDate = &formatted
+	}
+
+	utils.SendJSON(w, r, http.StatusOK, "Reserva encontrada na Traveos", schemas.TraveosLookupResponse{
+		LookupID:            result.LookupID,
+		TicketCode:          result.TicketCode,
+		FlightDate:          flightDate,
+		OriginIATACode:      result.OriginIATACode,
+		DestinationIATACode: result.DestinationIATACode,
+		MainPassengerName:   result.MainPassengerName,
+		LatamPurchaseNumber: result.LatamPurchaseNumber,
+	})
 }
 
 // UpdateIssuance handles the PATCH /issuances/{id} route

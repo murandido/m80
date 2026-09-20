@@ -7,6 +7,7 @@ import {
   HoverCardContent,
   HoverCardTrigger,
 } from "@/components/ui/hover-card"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { CellStateProps, useGridContext } from "@/components/issuances/grid-context"
 import { IssuanceRow } from "@/components/issuances/types"
 import { IssuanceStatus } from "@/schemas/issuance"
@@ -23,6 +24,27 @@ function statusPillClass(status: IssuanceStatus): string {
     status === "incomplete" && "bg-amber-100 text-amber-800",
     status === "complete" && "bg-emerald-100 text-emerald-800",
     status === "cancelled" && "bg-red-100 text-red-800",
+  )
+}
+
+// The read view is just a dot: the column sits last and narrow, and the label is one
+// hover away. A solid core inside a pale halo of the same hue, the look of the reference
+// the designer drew; same colour family as the pill the edit view still uses.
+function statusDotHaloClass(status: IssuanceStatus): string {
+  return cn(
+    "flex h-4 w-4 items-center justify-center rounded-full",
+    status === "incomplete" && "bg-amber-100",
+    status === "complete" && "bg-emerald-100",
+    status === "cancelled" && "bg-red-100",
+  )
+}
+
+function statusDotCoreClass(status: IssuanceStatus): string {
+  return cn(
+    "h-2 w-2 rounded-full",
+    status === "incomplete" && "bg-amber-500",
+    status === "complete" && "bg-emerald-700",
+    status === "cancelled" && "bg-red-600",
   )
 }
 
@@ -138,26 +160,41 @@ export const StatusCell = memo(function StatusCell({
   }, [isThisCellEditing, activeIndex])
 
   if (!isThisCellEditing) {
-    const pill = (
-      <button type="button" onClick={() => onCellClick(r, c)} className="block w-full px-2 py-1.5 text-left">
-        <span className={statusPillClass(row.status)}>{STATUS_LABELS[row.status]}</span>
+    const dot = (
+      <button
+        type="button"
+        onClick={() => onCellClick(r, c)}
+        aria-label={STATUS_LABELS[row.status]}
+        className="flex w-full items-center justify-center px-1 py-2"
+      >
+        <span className={statusDotHaloClass(row.status)}>
+          <span className={statusDotCoreClass(row.status)} />
+        </span>
+        {/* Kept in the DOM for Ctrl+C, which copies the cell's rendered text. */}
+        <span className="sr-only">{STATUS_LABELS[row.status]}</span>
       </button>
     )
 
-    // Hovering a cancelled row's pill reveals who cancelled it, when, and the refund
+    // Hovering a cancelled row's dot reveals who cancelled it, when, and the refund
     // breakdown. Click still selects the cell (the trigger wraps the same button).
     if (row.status === "cancelled") {
       return (
         <HoverCard openDelay={150}>
-          <HoverCardTrigger asChild>{pill}</HoverCardTrigger>
+          <HoverCardTrigger asChild>{dot}</HoverCardTrigger>
           <HoverCardContent className="w-64">
+            <p className="mb-2 text-xs font-medium">{STATUS_LABELS.cancelled}</p>
             <CancellationDetails row={row} users={users} />
           </HoverCardContent>
         </HoverCard>
       )
     }
 
-    return pill
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>{dot}</TooltipTrigger>
+        <TooltipContent>{STATUS_LABELS[row.status]}</TooltipContent>
+      </Tooltip>
+    )
   }
 
   // Edit mode: a focusable anchor showing the highlighted option as a pill, with an

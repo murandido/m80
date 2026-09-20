@@ -140,6 +140,11 @@ export const createIssuanceSchema = {
     flight_date: z.string().optional(),
     // The day the issuance happened, when it is not today. Omitted means now.
     issued_on: z.string().optional(),
+    // A Traveos lookup made before the row existed: the backend writes its itinerary onto
+    // the new issuance without asking the vendor again. The ticket code is the fallback
+    // for when the server no longer holds the lookup.
+    traveos_lookup_id: z.string().optional(),
+    traveos_ticket_code: z.string().optional(),
   }),
   response: z.object({
     success: z.boolean(),
@@ -232,6 +237,32 @@ export const uncancelIssuanceSchema = {
 // refetch, because the only thing that reaches it is an operator pressing the
 // button, and a deliberate press on an already-synced row means "the flight
 // changed", not "retry".
+export const lookupTraveosSchema = {
+  request: z.object({
+    airline_id: z.string().uuid(),
+    program_locator: z.string().min(1),
+    airline_locator: z.string().optional(),
+    origin_iata_code: z.string().optional(),
+    main_passenger_name: z.string().optional(),
+    latam_purchase_number: z.string().optional(),
+  }),
+  response: z.object({
+    success: z.boolean(),
+    message: z.string(),
+    data: z
+      .object({
+        lookup_id: z.string(),
+        ticket_code: z.string(),
+        flight_date: z.string().nullish(),
+        origin_iata_code: z.string().nullish(),
+        destination_iata_code: z.string().nullish(),
+        main_passenger_name: z.string().nullish(),
+        latam_purchase_number: z.string().nullish(),
+      })
+      .nullish(),
+  }),
+}
+
 export const syncIssuanceWithTraveosSchema = {
   response: z.object({
     success: z.boolean(),

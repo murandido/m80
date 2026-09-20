@@ -10,9 +10,8 @@ export type Direction = "down" | "up" | "tab-right" | "tab-left"
 // "Destino", "Pontos", "Valor milheiro", "Taxas", "Valor total" (calculated),
 // "Conta", "Emissor", "Agência", "Status", "Observação", "Taxa de resgate".
 export const COLUMN_COUNT = 16
-// "Data da emissão" sits after all of them, and is the one column the operator can hide.
-// Hiding it is passing COLUMN_COUNT where the resolvers below take a count - which only
-// works because it is last: no other index moves.
+// "Data da emissão" is numbered after all of them, and is the one column the operator can
+// hide - see columnOrder for where it is shown.
 export const ISSUED_ON_COLUMN_INDEX = 16
 export const COLUMN_COUNT_WITH_ISSUED_ON = 17
 export const LOCATOR_COLUMN_INDEX = 1
@@ -39,18 +38,34 @@ export interface ResolvedCell {
   appendRow: boolean
 }
 
+// The order the columns are shown in, as column indices. Kept apart from the indices
+// themselves so a column can move on screen without renumbering every cell, clear patch
+// and copy rule keyed on them. Status is shown last; "Data da emissão", when visible,
+// sits just before it.
+export const STATUS_COLUMN_INDEX = 13
+
+export function columnOrder(issuedOnVisible: boolean): number[] {
+  const order = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, OBSERVATION_COLUMN_INDEX, REDEMPTION_FEE_COLUMN_INDEX]
+  if (issuedOnVisible) order.push(ISSUED_ON_COLUMN_INDEX)
+  order.push(STATUS_COLUMN_INDEX)
+  return order
+}
+
 // Shared "next valid cell" resolver used by Enter, arrows-while-editing, and
 // Tab/Shift+Tab (in any state). Recurses over cancelled rows and steps around
 // the calculated column so callers never have to special-case either skip.
+//
+// sel.c is a column index; moving left and right walks `order`, the on-screen order.
 export function resolveNextCell<T extends NavigableRow>(
   rows: T[],
   sel: { r: number; c: number },
   direction: Direction,
+  order: readonly number[],
   depth = 0,
-  columnCount: number = COLUMN_COUNT,
 ): ResolvedCell {
+  const last = order.length - 1
   // Guards against infinite recursion if every row happens to be cancelled.
-  if (depth > rows.length + columnCount + 5) {
+  if (depth > rows.length + order.length + 5) {
     return { r: sel.r, c: sel.c, appendRow: false }
   }
 
@@ -64,7 +79,7 @@ export function resolveNextCell<T extends NavigableRow>(
       return { r: rows.length - 1, c: sel.c, appendRow: false }
     }
     if (isSkippableRow(rows[r])) {
-      return resolveNextCell(rows, { r, c: sel.c }, direction, depth + 1, columnCount)
+      return resolveNextCell(rows, { r, c: sel.c }, direction, order, depth + 1)
     }
     return { r, c: sel.c, appendRow: false }
   }
@@ -72,27 +87,27 @@ export function resolveNextCell<T extends NavigableRow>(
   // tab-right / tab-left
   const step = direction === "tab-right" ? 1 : -1
   let r = sel.r
-  let c = sel.c + step
+  let position = Math.max(order.indexOf(sel.c), 0) + step
   let crossedIntoNewRow = false
 
-  if (c === CALCULATED_COLUMN_INDEX) c += step
+  if (order[position] === CALCULATED_COLUMN_INDEX) position += step
 
-  if (c < 0) {
+  if (position < 0) {
     r -= 1
-    c = columnCount - 1
-    if (c === CALCULATED_COLUMN_INDEX) c -= 1
+    position = last
+    if (order[position] === CALCULATED_COLUMN_INDEX) position -= 1
     crossedIntoNewRow = true
-  } else if (c >= columnCount) {
+  } else if (position > last) {
     r += 1
-    c = 0
-    if (c === CALCULATED_COLUMN_INDEX) c += 1
+    position = 0
+    if (order[position] === CALCULATED_COLUMN_INDEX) position += 1
     crossedIntoNewRow = true
   }
 
-  if (r < 0) return { r: 0, c: 0, appendRow: false }
+  if (r < 0) return { r: 0, c: order[0], appendRow: false }
   if (r >= rows.length) {
-    if (direction === "tab-right") return { r: rows.length, c: 0, appendRow: true }
-    return { r: rows.length - 1, c: columnCount - 1, appendRow: false }
+    if (direction === "tab-right") return { r: rows.length, c: order[0], appendRow: true }
+    return { r: rows.length - 1, c: order[last], appendRow: false }
   }
   // Only treat landing on a cancelled row as "skippable" when this step
   // actually crossed a row boundary - Tab/Shift+Tab moving column-to-column
@@ -102,10 +117,10 @@ export function resolveNextCell<T extends NavigableRow>(
     // Skip the whole cancelled row in one jump - recurse from its far edge
     // so the next step crosses into another row again, instead of stepping
     // column-by-column through cells that must never be landed on.
-    const jumpSel = direction === "tab-right" ? { r, c: columnCount - 1 } : { r, c: 0 }
-    return resolveNextCell(rows, jumpSel, direction, depth + 1, columnCount)
+    const jumpSel = direction === "tab-right" ? { r, c: order[last] } : { r, c: order[0] }
+    return resolveNextCell(rows, jumpSel, direction, order, depth + 1)
   }
-  return { r, c, appendRow: false }
+  return { r, c: order[position], appendRow: false }
 }
 
 // Plain arrow-key navigation outside edit mode: a trivial clamp, deliberately
@@ -117,9 +132,9 @@ export function clampMove(
   sel: { r: number; c: number },
   dr: number,
   dc: number,
-  columnCount: number = COLUMN_COUNT,
+  order: readonly number[],
 ): { r: number; c: number } {
   const r = Math.min(Math.max(sel.r + dr, 0), Math.max(rowCount - 1, 0))
-  const c = Math.min(Math.max(sel.c + dc, 0), columnCount - 1)
-  return { r, c }
+  const position = Math.min(Math.max(Math.max(order.indexOf(sel.c), 0) + dc, 0), order.length - 1)
+  return { r, c: order[position] }
 }

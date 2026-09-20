@@ -17,6 +17,9 @@ func RegisterIssuanceRoutes(r chi.Router, db *gorm.DB, broker *events.Broker, tr
 		// create issuance
 		r.Post("/", issuanceHandler.CreateIssuance)
 
+		// look a booking up at Traveos before the issuance exists
+		r.Post("/traveos-lookup", issuanceHandler.LookupTraveos)
+
 		// get issuances
 		r.Get("/", issuanceHandler.GetIssuances)
 

@@ -10,7 +10,9 @@ edição inline célula a célula, com autosave. Deve continuar parecendo e oper
 planilha (Excel/Sheets), não como um formulário.
 
 ## Layout
-- **Toolbar** (topo): botão **Atalhos** (popover com a legenda de teclas) + **Nova emissão**.
+- **Toolbar** (topo): botão **Atalhos** (popover com a legenda de teclas), Exportar e data de lançamento.
+- **Abaixo da grade:** **Nova emissão** + toggle **Autocompletar dados** — ou, no fluxo
+  Traveos-primeiro, o formulário curto da emissão sendo consultada (ver abaixo).
 - **Grade** numa região de scroll com **cabeçalho fixo**; coluna `#` à esquerda com o número
   da linha + **bolinha de autosave**; coluna de ações (lixeira) à direita ao passar o mouse.
 - Linhas **canceladas** e com **erro de salvamento** aparecem com fundo vermelho.
@@ -32,7 +34,7 @@ planilha (Excel/Sheets), não como um formulário.
 | 10 | Conta | `account_id` (+ `account_nickname_id`) | Combobox filtrado pelo programa, com **criação inline** de conta. |
 | 11 | Emissor | `issuer_id` | Combobox (usuários). Default: usuário logado. |
 | 12 | Agência | `agency_id` | Combobox (agências). |
-| 13 | Status | `status` | Select colorido (Incompleto/Completo/Cancelado). |
+| 13 | Status | `status` | **Exibida por último.** Bolinha colorida com tooltip; em edição, select (Incompleto/Completo). |
 
 ## Modelo de interação (teclado-first)
 - **Uma célula ativa** por vez (anel de seleção).
@@ -93,29 +95,40 @@ avisa que campos de seleção podem vir incompletos.
   tela explicitamente.
 
 ## Autocompletar dados (Traveos)
-Toggle na barra de filtros (preferência em `localStorage`, `issuances:autocomplete`). Ligado, a
-grade puxa o itinerário da Traveos sozinha na **primeira linha candidata** — uma de cada vez, uma
-tentativa por linha por carregamento de página (`isAutocompleteCandidate` + `autocompleteAttemptedRef`).
+Toggle abaixo da grade, ao lado de **Nova emissão** (preferência em `localStorage`,
+`issuances:autocomplete`). Ele muda duas coisas.
 
-O mínimo para disparar **varia por companhia**, e por isso os cabeçalhos das colunas que ainda
-faltam ficam **vermelhos enquanto a linha estiver selecionada** (`autocompleteHintFor`), com o
-motivo no `title`:
+### Nova emissão: Traveos primeiro
+Com o toggle ligado, **Nova emissão** não abre a linha inteira: abre, abaixo da grade, só o que a
+Traveos precisa, e o botão **Desistir dessa emissão**. O estado vive só na aba — fechou, perdeu.
 
-| Sempre | Só se a cia exigir |
+| Etapa (`traveosLookup`) | O que aparece |
 |---|---|
-| Localizador (do programa ou da cia), Origem | Passageiro principal (`requires_last_name`) |
-| Pontos, Valor milheiro, Conta | Nº da compra (`requires_purchase_number`) |
+| `collecting` | Cia aérea; escolhida uma cia integrada, também Localizador, Origem e — se a cia exigir — Passageiro. Nº da compra continua depois de `/` no Localizador. |
+| `looking-up` | A linha entra na grade com todas as colunas. Cia, Localizador, Data, Passageiro, Origem e Destino ficam travados (azul pulsando); Pontos, Milheiro, Taxas e Conta são editáveis. A seleção pula para Pontos. |
+| `done` | Data, Destino, Passageiro e nº da compra preenchidos pela consulta. Rascunho comum. |
+| `failed` | Erro da Traveos (ou 503 sem integração): toast, e a linha vira rascunho comum para preencher à mão. Cia não integrada cai aqui direto, com o aviso âmbar. |
 
-- **Taxas não entra** — é anulável, a linha salva sem ela.
-- **Pontos / Valor milheiro / Conta** não são exigências da Traveos: são o que
-  `draftIsReadyToCreate` pede para a linha ser salva, e o autocomplete só olha para linhas salvas.
-- **Nº da compra não tem coluna** — é digitado depois de um `/` na célula Localizador, então
-  acende aquele cabeçalho e o `title` explica.
+- A consulta é `POST /issuances/traveos-lookup` (**sem id**, nada é gravado): busca antes de emitir,
+  como o sync. Dispara **uma vez por linha** (`lookupAttemptedRef`).
+- Enquanto ela roda o rascunho **não é criado** (`lookupInFlightRef`), mesmo com os 5 campos
+  obrigatórios; quando ela responde e a linha já está pronta, o POST sai sozinho.
+- O POST leva `traveos_lookup_id` (+ `traveos_ticket_code` de reserva): o backend grava o
+  itinerário que a consulta já trouxe — passageiros, voos, assentos, bagagens — **sem chamar a
+  Traveos de novo** e a linha nasce completa. Se o servidor não tiver mais a consulta em memória,
+  lê o bilhete direto pelo código (uma chamada, nunca busca nem emissão).
+- Trocar cia ou localizador depois da consulta descarta os ids: aquele itinerário é outra reserva.
+
+### Linhas já salvas
+A grade puxa o itinerário sozinha na **primeira linha salva candidata** — uma de cada vez, uma
+tentativa por linha por carregamento de página (`isAutocompleteCandidate` + `autocompleteAttemptedRef`).
+O cabeçalho das colunas que ainda faltam fica vermelho com a linha selecionada
+(`autocompleteHintFor`): Localizador/Origem sempre, Passageiro e nº da compra quando a cia exige.
+Rascunhos não recebem esse realce — o fluxo acima já mostra só o que falta.
+
+- **Origem é exigência só do frontend.** O backend não a valida e mandaria `""` para a Traveos.
 - **Cia sem integração** (`traveos_supported` off ou sem `traveos_airline_id`): nenhum vermelho, e
-  um aviso âmbar na toolbar — preencher tudo não faria a linha autocompletar.
-- **Origem é exigência só do frontend.** O backend não a valida e mandaria `""` para a Traveos;
-  sem ela o autocomplete simplesmente nunca dispara, sem erro nenhum. É o caso que mais justifica
-  o realce.
+  um aviso âmbar na toolbar.
 
 ## Performance
 Hoje a grade usa **um único contexto React**; mover a seleção re-renderiza todas as células

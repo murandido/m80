@@ -253,6 +253,13 @@ type IssuanceListResponse struct {
 	Data    []IssuanceResponse `json:"data"`
 }
 
+// TraveosLookupSingleResponse is the response from POST /issuances/traveos-lookup
+type TraveosLookupSingleResponse struct {
+	Success bool                  `json:"success" example:"true"`
+	Message string                `json:"message" example:"Reserva encontrada na Traveos"`
+	Data    TraveosLookupResponse `json:"data"`
+}
+
 // IssuanceSingleResponse is the response from single-issuance routes
 type IssuanceSingleResponse struct {
 	Success bool             `json:"success" example:"true"`

@@ -38,6 +38,34 @@ type CreateIssuanceRequest struct {
 	// a booking found missing on a statement and recorded afterwards. Absent means now,
 	// which is the truth for everything recorded as it happens.
 	IssuedOn *string `json:"issued_on" validate:"omitempty,datetime=2006-01-02" example:"2026-09-03"`
+	// TraveosLookupID names a POST /issuances/traveos-lookup whose itinerary is written
+	// onto the issuance as it is created, without asking the vendor again.
+	TraveosLookupID *string `json:"traveos_lookup_id" validate:"omitempty"`
+	// TraveosTicketCode is the same lookup's ticket, read directly when the lookup has
+	// expired from the server's memory - one call, never a search or an emission.
+	TraveosTicketCode *string `json:"traveos_ticket_code" validate:"omitempty"`
+}
+
+// TraveosLookupRequest is what the panel knows about a booking before the issuance
+// exists: the fields Traveos is asked with, and nothing else.
+type TraveosLookupRequest struct {
+	AirlineID           string  `json:"airline_id" validate:"required,uuid"`
+	ProgramLocator      string  `json:"program_locator" validate:"required"`
+	AirlineLocator      *string `json:"airline_locator" validate:"omitempty"`
+	OriginIATACode      *string `json:"origin_iata_code" validate:"omitempty"`
+	MainPassengerName   *string `json:"main_passenger_name" validate:"omitempty"`
+	LatamPurchaseNumber *string `json:"latam_purchase_number" validate:"omitempty"`
+}
+
+// TraveosLookupResponse previews the booking and names the lookup the create reuses.
+type TraveosLookupResponse struct {
+	LookupID            string  `json:"lookup_id"`
+	TicketCode          string  `json:"ticket_code"`
+	FlightDate          *string `json:"flight_date" example:"2026-10-22"`
+	OriginIATACode      *string `json:"origin_iata_code"`
+	DestinationIATACode *string `json:"destination_iata_code"`
+	MainPassengerName   *string `json:"main_passenger_name"`
+	LatamPurchaseNumber *string `json:"latam_purchase_number"`
 }
 
 // UpdateIssuanceRequest defines the payload for a partial (autosave) update of an

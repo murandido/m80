@@ -316,8 +316,6 @@ export function IssuancesFilterBar({
         </span>
       )}
 
-      <AutocompleteToggle />
-
       {hasAnyFilter && (
         <Button
           type="button"
@@ -340,6 +338,9 @@ export function IssuancesFilterBar({
   )
 }
 
+// Rendered by the grid, beside "Nova emissão" under the table: with it on, that button
+// starts the Traveos-first flow, so the two read as one control.
+//
 // Opt-in, and off by default. With it on, a row fetches from Traveos by itself as
 // soon as it has the minimum fields the airline needs - which is a real emission
 // at the vendor, so it must never happen because someone opened the page.
@@ -348,11 +349,11 @@ export function IssuancesFilterBar({
 // toggle is the deliberate difference: the operator fixing yesterday's numbers is
 // editing the same fields as the one entering a new booking, and the vendor cannot
 // tell those two apart.
-function AutocompleteToggle() {
+export function AutocompleteToggle() {
   const [enabled, setEnabled] = useAutocompletePreference()
 
   return (
-    <label className="ml-auto flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+    <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
       <Switch
         checked={enabled}
         onCheckedChange={setEnabled}

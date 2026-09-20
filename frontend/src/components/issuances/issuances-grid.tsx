@@ -1,7 +1,7 @@
 "use client"
 
 import { type ReactNode, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react"
-import { Plus, Keyboard, FileSpreadsheet, AlertTriangle, CalendarDays } from "lucide-react"
+import { Plus, Keyboard, FileSpreadsheet, AlertTriangle, CalendarDays, X } from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -34,9 +34,16 @@ import { buildCalculo, buildEmissaoResumo } from "@/components/issuances/emissao
 import { copyEmissaoText } from "@/components/issuances/copy-emissao-menu"
 import { reconcileRows } from "@/components/issuances/reconcile-rows"
 import {
+  TRAVEOS_LOOKUP_LOCKED_COLUMNS,
+  airlineOf,
   autocompleteHintFor,
   isAutocompleteCandidate,
+  isReadyForLookup,
+  isTraveosIntegrated,
+  lookupColumnsFor,
 } from "@/components/issuances/autocomplete"
+import { AutocompleteToggle } from "@/components/issuances/issuances-filter-bar"
+import type { Airline } from "@/schemas/airline"
 import { useAutocompletePreference } from "@/hooks/use-autocomplete-preference"
 import { useAirports } from "@/hooks/use-airports"
 import { clearPatchForColumn } from "@/components/issuances/column-fields"
@@ -45,12 +52,15 @@ import {
   ACCOUNT_COLUMN_INDEX,
   CALCULATED_COLUMN_INDEX,
   COLUMN_COUNT,
-  COLUMN_COUNT_WITH_ISSUED_ON,
+  STATUS_COLUMN_INDEX,
   LOCATOR_COLUMN_INDEX,
   OBSERVATION_COLUMN_INDEX,
+  PASSENGER_COLUMN_INDEX,
+  POINTS_COLUMN_INDEX,
   REDEMPTION_FEE_COLUMN_INDEX,
   TAXES_COLUMN_INDEX,
   clampMove,
+  columnOrder,
   resolveNextCell,
   Direction,
 } from "@/lib/grid-navigation"
@@ -65,6 +75,7 @@ import {
   cancelIssuanceAction,
   uncancelIssuanceAction,
   syncIssuanceWithTraveosAction,
+  lookupTraveosAction,
 } from "@/actions/issuance"
 import { CancelIssuanceInput } from "@/schemas/issuance"
 import { RedemptionFeeSummary } from "@/components/issuances/redemption-fee-summary"
@@ -100,7 +111,7 @@ const COLUMN_LABELS = [
   "Taxa de resgate",
   // The day the issuance happened - normally today, and corrected when a booking is
   // recorded after the fact. Last of all, which is also what lets it be hidden without
-  // moving any other column: see COLUMN_COUNT_WITH_ISSUED_ON.
+  // moving any other column's index: see columnOrder.
   "Data da emissão",
 ]
 
@@ -198,6 +209,56 @@ function isLockedByCancellation(c: number, row: IssuanceRow | undefined): boolea
   return row?.status === "cancelled" && c !== TAXES_COLUMN_INDEX
 }
 
+// The Traveos lookup overwrites these columns when it answers, so they wait for it. See
+// TRAVEOS_LOOKUP_LOCKED_COLUMNS. Module scope for the same reason as the check above.
+function isLockedByLookup(c: number, row: IssuanceRow | undefined): boolean {
+  return row?.traveosLookup === "looking-up" && TRAVEOS_LOOKUP_LOCKED_COLUMNS.has(c)
+}
+
+// The columns a row can be navigated through, in on-screen order. A "collecting" row only
+// has the fields the lookup is asked with; every other row has the whole grid.
+function columnsForRow(
+  row: IssuanceRow | undefined,
+  airlines: Airline[],
+  visibleColumns: readonly number[],
+): readonly number[] {
+  return row?.traveosLookup === "collecting" ? lookupColumnsFor(row, airlines) : visibleColumns
+}
+
+// Lands a selection that moved onto a row on a column that row actually shows.
+function fitColumnToRow(
+  row: IssuanceRow | undefined,
+  c: number,
+  airlines: Airline[],
+  visibleColumns: readonly number[],
+): number {
+  const columns = columnsForRow(row, airlines, visibleColumns)
+  return columns.includes(c) ? c : columns[0]
+}
+
+// Tab/Enter inside a "collecting" row walk its few fields and stop at the ends: leaving
+// the row, or appending another one, would be walking away from a booking half asked for.
+function stepWithinRow(columns: readonly number[], c: number, direction: Direction): number {
+  const step = direction === "tab-left" || direction === "up" ? -1 : 1
+  const position = Math.min(Math.max(Math.max(columns.indexOf(c), 0) + step, 0), columns.length - 1)
+  return columns[position]
+}
+
+// Whether a field of the "collecting" form is still blank, so it shows its column name as
+// a placeholder - that row has no header of its own above it.
+function isLookupFieldBlank(row: IssuanceRow, c: number): boolean {
+  switch (c) {
+    case 0:
+      return row.loyalty_program_id === null
+    case LOCATOR_COLUMN_INDEX:
+      return row.program_locator.trim() === "" && !(row.airline_locator ?? "").trim()
+    case PASSENGER_COLUMN_INDEX:
+      return !(row.main_passenger_name ?? "").trim()
+    default:
+      return !(row.origin_iata_code ?? "").trim()
+  }
+}
+
 // A draft row nobody has touched yet - clicking "Nova emissão" repeatedly
 // should focus this one instead of piling up empty rows.
 function isUntouchedDraft(row: IssuanceRow): boolean {
@@ -251,12 +312,13 @@ export function IssuancesGrid({
   // being written are no longer the obvious ones.
   const backdating = recordingOn !== todayISO()
   const issuedOnVisible = showIssuedOn || backdating
-  const columnCount = issuedOnVisible ? COLUMN_COUNT_WITH_ISSUED_ON : COLUMN_COUNT
+  // Column indices in the order they are on screen - see columnOrder.
+  const visibleColumns = useMemo(() => columnOrder(issuedOnVisible), [issuedOnVisible])
 
   // The two callbacks below are memoized with dependency lists that must not include a
   // value changing this often, so they read the current one from a ref instead.
-  const columnCountRef = useRef(columnCount)
-  columnCountRef.current = columnCount
+  const visibleColumnsRef = useRef(visibleColumns)
+  visibleColumnsRef.current = visibleColumns
   const recordingOnRef = useRef(recordingOn)
   recordingOnRef.current = recordingOn
 
@@ -270,7 +332,7 @@ export function IssuancesGrid({
     }
     // The selection cannot be left on a column that is no longer rendered.
     if (!next && !backdating && interaction.sel.c >= COLUMN_COUNT) {
-      dispatch({ type: "SELECT_ONLY", r: interaction.sel.r, c: COLUMN_COUNT - 1 })
+      dispatch({ type: "SELECT_ONLY", r: interaction.sel.r, c: STATUS_COLUMN_INDEX })
     }
   }
   const activeCellSaveRef = useRef<(() => void) | null>(null)
@@ -318,6 +380,16 @@ export function IssuancesGrid({
   // minimum fields would fire again on each one.
   const autocompleteAttemptedRef = useRef<Set<string>>(new Set())
   const [autocompleteEnabled] = useAutocompletePreference()
+  // Read by the memoized handlers that append a draft, which must not list it as a dep.
+  const autocompleteEnabledRef = useRef(autocompleteEnabled)
+  autocompleteEnabledRef.current = autocompleteEnabled
+  // Draft keys whose Traveos lookup has been fired - one per row, same reasoning as the
+  // set above: the lookup can issue a real ticket, and a failure would fail again.
+  const lookupAttemptedRef = useRef<Set<string>>(new Set())
+  // Draft keys whose lookup is in flight. A ref and not the row's stage, because persist
+  // has to see it the instant it changes: a create fired meanwhile would save the row
+  // without the itinerary the lookup is about to hand over.
+  const lookupInFlightRef = useRef<Set<string>>(new Set())
   // True while the sweep below is pulling a row, so it never starts a second one.
   const [autocompleteRunning, setAutocompleteRunning] = useState(false)
   // Row index awaiting delete confirmation, driven by the Ctrl+Shift+Backspace shortcut.
@@ -470,6 +542,8 @@ export function IssuancesGrid({
         }
 
         if (!draftIsReadyToCreate(merged)) return
+        // Created once the lookup answers instead - see runLookup.
+        if (lookupInFlightRef.current.has(row.key)) return
 
         creatingKeysRef.current.add(row.key)
         updateRow(row.key, { saveStatus: "saving" })
@@ -498,6 +572,10 @@ export function IssuancesGrid({
           // Sent on the create so a row typed for another day is born on it, rather than
           // being created today and moved a moment later.
           issued_on: merged.issued_on,
+          // The lookup this draft already made: the backend writes that itinerary onto the
+          // new issuance, so saving it costs no second trip to Traveos.
+          traveos_lookup_id: merged.traveos_lookup_id ?? undefined,
+          traveos_ticket_code: merged.traveos_ticket_code ?? undefined,
         }).finally(() => creatingKeysRef.current.delete(row.key))
 
         const queued = queuedPatchesRef.current.get(row.key)
@@ -661,6 +739,7 @@ export function IssuancesGrid({
     const editable =
       c !== CALCULATED_COLUMN_INDEX &&
       !isLockedByCancellation(c, row) &&
+      !isLockedByLookup(c, row) &&
       !(row && isRowSyncing(row, syncingRowKeysRef.current)) &&
       !(c === REDEMPTION_FEE_COLUMN_INDEX && row && !acceptsRedemptionFee(row, accountsRef.current))
     dispatch({ type: "CLICK_CELL", r, c, editable })
@@ -670,8 +749,19 @@ export function IssuancesGrid({
   // inline account creation, which lands its patch long after the cell has moved on -
   // both need the accountClearedKeys bookkeeping, or the account cell stays flagged red.
   const applyPatch = useCallback(
-    (row: IssuanceRow, patch: Partial<IssuanceRow>) => {
-      if (Object.keys(patch).length === 0) return
+    (row: IssuanceRow, incomingPatch: Partial<IssuanceRow>) => {
+      if (Object.keys(incomingPatch).length === 0) return
+
+      // A lookup describes one booking on one carrier. Once either changes, its itinerary
+      // is somebody else's, and the create must not write it onto this row.
+      let patch = incomingPatch
+      const identifiesTheBooking = ["loyalty_program_id", "airline_id", "program_locator", "airline_locator"] as const
+      if (
+        row.traveos_lookup_id &&
+        identifiesTheBooking.some((field) => field in patch && patch[field] !== row[field])
+      ) {
+        patch = { ...patch, traveos_lookup_id: null, traveos_ticket_code: null }
+      }
 
       // Record the inverse (the fields as they were before this patch) so Ctrl+Z can
       // replay it. `row` is the pre-patch state, so this is just its current values for
@@ -748,13 +838,36 @@ export function IssuancesGrid({
       }
 
       const { sel, sticky } = interactionRef.current
-      const resolved = resolveNextCell(currentRows, sel, direction, 0, columnCountRef.current)
-      if (resolved.appendRow) {
-        setRows((prev) => [...prev, makeDraftRow(currentUserId, defaultAgencyId, recordingOnRef.current)])
+      const airlines = referenceData.airlines
+      // Read with the patch applied: picking the carrier is what decides which fields the
+      // row asks for next.
+      const merged = { ...row, ...patch }
+      if (merged.traveosLookup === "collecting") {
+        const c = stepWithinRow(lookupColumnsFor(merged, airlines), sel.c, direction)
+        dispatch({ type: "MOVE", r: sel.r, c, alsoEdit: sticky && c !== sel.c })
+        return
       }
-      dispatch({ type: "MOVE", r: resolved.r, c: resolved.c, alsoEdit: sticky })
+
+      const resolved = resolveNextCell(currentRows, sel, direction, visibleColumnsRef.current)
+      if (resolved.appendRow) {
+        // One booking being asked for at a time: walking off the grid lands on it.
+        const collecting = currentRows.findIndex((candidate) => candidate.traveosLookup === "collecting")
+        if (collecting !== -1) {
+          dispatch({ type: "MOVE", r: collecting, c: 0, alsoEdit: sticky })
+          return
+        }
+        setRows((prev) => [
+          ...prev,
+          makeDraftRow(currentUserId, defaultAgencyId, recordingOnRef.current, autocompleteEnabledRef.current),
+        ])
+      }
+      const target = resolved.appendRow ? undefined : currentRows[resolved.r]
+      const c = resolved.appendRow && autocompleteEnabledRef.current
+        ? 0
+        : fitColumnToRow(target, resolved.c, airlines, visibleColumnsRef.current)
+      dispatch({ type: "MOVE", r: resolved.r, c, alsoEdit: sticky })
     },
-    [applyPatch, currentUserId, defaultAgencyId],
+    [applyPatch, currentUserId, defaultAgencyId, referenceData.airlines],
   )
 
   const resolveAccountEntryForRow = useCallback(
@@ -1018,6 +1131,103 @@ export function IssuancesGrid({
     onSyncRowWithTraveos,
   ])
 
+  // Asks Traveos about a "collecting" draft whose fields are all in, then hands the row
+  // over to the operator for points, prices and account while the vendor works.
+  const runLookup = useCallback(
+    async (row: IssuanceRow) => {
+      lookupInFlightRef.current.add(row.key)
+      updateRow(row.key, { traveosLookup: "looking-up" })
+
+      // The row just grew its full set of columns; the next thing to type is the points.
+      const { sel, editing, sticky } = interactionRef.current
+      const index = rowsRef.current.findIndex((candidate) => candidate.key === row.key)
+      if (index !== -1 && sel.r === index && !editing) {
+        dispatch({ type: "MOVE", r: index, c: POINTS_COLUMN_INDEX, alsoEdit: sticky })
+      }
+
+      let result: Awaited<ReturnType<typeof lookupTraveosAction>>
+      try {
+        result = await lookupTraveosAction({
+          airline_id: row.airline_id!,
+          program_locator: row.program_locator,
+          airline_locator: row.airline_locator || undefined,
+          origin_iata_code: row.origin_iata_code ?? undefined,
+          main_passenger_name: row.main_passenger_name ?? undefined,
+          latam_purchase_number: row.latam_purchase_number || undefined,
+        })
+      } finally {
+        lookupInFlightRef.current.delete(row.key)
+      }
+
+      // Gone means the operator gave up on it while Traveos was working.
+      const current = rowsRef.current.find((candidate) => candidate.key === row.key)
+      if (!current) return
+
+      if ("error" in result) {
+        toast.error(result.error)
+        updateRow(row.key, { traveosLookup: "failed" })
+        // The sweep would otherwise ask again as soon as the row is saved, for the same
+        // answer - and possibly another real ticket at the vendor.
+        autocompleteAttemptedRef.current.add(row.key)
+        return
+      }
+
+      const lookup = result.lookup
+      // The destination only when it is an airport the create will accept: the backend
+      // refuses an unknown IATA code, and the preview comes straight from the vendor.
+      const knownDestination =
+        lookup.destination_iata_code &&
+        (airports.length === 0 || airports.some((airport) => airport.iata_code === lookup.destination_iata_code))
+      const patch: Partial<IssuanceRow> = {
+        traveosLookup: "done",
+        traveos_lookup_id: lookup.lookup_id,
+        traveos_ticket_code: lookup.ticket_code,
+        flight_date: lookup.flight_date ?? current.flight_date,
+        destination_iata_code: knownDestination ? lookup.destination_iata_code! : current.destination_iata_code,
+        main_passenger_name: lookup.main_passenger_name ?? current.main_passenger_name,
+        latam_purchase_number: lookup.latam_purchase_number ?? current.latam_purchase_number,
+      }
+      updateRow(row.key, patch)
+      toast.success("Dados da Traveos preenchidos.")
+
+      // The operator may have finished the prices while Traveos was working, and their
+      // last edit was held back by the in-flight check in persist.
+      const merged = { ...current, ...patch }
+      if (draftIsReadyToCreate(merged) && !creatingKeysRef.current.has(row.key)) {
+        void persistRef.current?.(merged, {})
+      }
+    },
+    [updateRow, airports],
+  )
+
+  useEffect(() => {
+    if (!autocompleteEnabled) return
+    for (const row of rows) {
+      if (row.traveosLookup !== "collecting") continue
+
+      const airline = airlineOf(row, referenceData.airlines)
+      if (airline && !isTraveosIntegrated(airline)) {
+        // This carrier will never answer, so the row turns into an ordinary draft to be
+        // filled by hand; the toolbar's amber warning says why.
+        updateRow(row.key, { traveosLookup: "failed" })
+        continue
+      }
+      if (!isReadyForLookup(row, referenceData.airlines)) continue
+      if (lookupAttemptedRef.current.has(row.key)) continue
+
+      lookupAttemptedRef.current.add(row.key)
+      void runLookup(row)
+    }
+  }, [rows, autocompleteEnabled, referenceData.airlines, updateRow, runLookup])
+
+  // "Desistir dessa emissão": the draft only ever lived in this tab, so there is nothing
+  // to delete anywhere - and, unlike removeRow, no fresh draft takes its place.
+  function discardLookupRow(key: string) {
+    const index = rows.findIndex((row) => row.key === key)
+    setRows((prev) => prev.filter((row) => row.key !== key))
+    if (index > 0) dispatch({ type: "SELECT_ONLY", r: index - 1, c: 0 })
+  }
+
   // Keyboard entry point for deleting the active row. An untouched empty draft has nothing
   // to lose, so it is dropped without a prompt; anything else opens the confirm dialog.
   function requestRowDelete(r: number) {
@@ -1031,14 +1241,28 @@ export function IssuancesGrid({
   }
 
   function handleAddRow() {
+    // One booking being asked for at a time.
+    const collecting = rows.findIndex((row) => row.traveosLookup === "collecting")
+    if (collecting !== -1) {
+      dispatch({ type: "CLICK_CELL", r: collecting, c: 0, editable: true })
+      return
+    }
+
     const lastRow = rows[rows.length - 1]
     if (lastRow && isUntouchedDraft(lastRow)) {
+      // The toggle may have flipped since this draft was made.
+      if (autocompleteEnabled && lastRow.traveosLookup === null) {
+        updateRow(lastRow.key, { traveosLookup: "collecting" })
+      }
       dispatch({ type: "CLICK_CELL", r: rows.length - 1, c: 0, editable: true })
       return
     }
 
     const newIndex = rows.length
-    setRows((prev) => [...prev, makeDraftRow(currentUserId, defaultAgencyId, recordingOnRef.current)])
+    setRows((prev) => [
+      ...prev,
+      makeDraftRow(currentUserId, defaultAgencyId, recordingOnRef.current, autocompleteEnabled),
+    ])
     dispatch({ type: "CLICK_CELL", r: newIndex, c: 0, editable: true })
   }
 
@@ -1068,20 +1292,14 @@ export function IssuancesGrid({
     ) {
       e.preventDefault()
       const lastRow = Math.max(rows.length - 1, 0)
-      const lastCol = columnCount - 1
       const toCorner = e.ctrlKey || e.metaKey // Ctrl+Home/End jump to the grid corner
       let r = interaction.sel.r
-      let c = interaction.sel.c
-      if (e.key === "Home") {
-        c = 0
-        if (toCorner) r = 0
-      } else if (e.key === "End") {
-        c = lastCol
-        if (toCorner) r = lastRow
-      } else if (e.key === "ArrowUp") r = 0
-      else if (e.key === "ArrowDown") r = lastRow
-      else if (e.key === "ArrowLeft") c = 0
-      else if (e.key === "ArrowRight") c = lastCol
+      if ((e.key === "Home" && toCorner) || e.key === "ArrowUp") r = 0
+      else if ((e.key === "End" && toCorner) || e.key === "ArrowDown") r = lastRow
+      const columns = columnsForRow(rows[r], referenceData.airlines, visibleColumns)
+      let c = fitColumnToRow(rows[r], interaction.sel.c, referenceData.airlines, visibleColumns)
+      if (e.key === "Home" || e.key === "ArrowLeft") c = columns[0]
+      else if (e.key === "End" || e.key === "ArrowRight") c = columns[columns.length - 1]
       dispatch({ type: "SELECT_ONLY", r, c })
       return
     }
@@ -1104,17 +1322,34 @@ export function IssuancesGrid({
             ? -1
             : 0
       const dc = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0
-      const next = clampMove(rows.length, interaction.sel, dr, dc, columnCount)
-      dispatch({ type: "SELECT_ONLY", r: next.r, c: next.c })
+      const next = clampMove(
+        rows.length,
+        interaction.sel,
+        dr,
+        dc,
+        columnsForRow(rows[interaction.sel.r], referenceData.airlines, visibleColumns),
+      )
+      const c = fitColumnToRow(rows[next.r], next.c, referenceData.airlines, visibleColumns)
+      dispatch({ type: "SELECT_ONLY", r: next.r, c })
       return
     }
 
     if (e.key === "Tab") {
       e.preventDefault()
       const direction: Direction = e.shiftKey ? "tab-left" : "tab-right"
-      const resolved = resolveNextCell(rows, interaction.sel, direction, 0, columnCount)
-      if (resolved.appendRow) setRows((prev) => [...prev, makeDraftRow(currentUserId, defaultAgencyId, recordingOnRef.current)])
-      dispatch({ type: "MOVE", r: resolved.r, c: resolved.c, alsoEdit: interaction.sticky })
+      const current = rows[interaction.sel.r]
+      if (current?.traveosLookup === "collecting") {
+        const c = stepWithinRow(lookupColumnsFor(current, referenceData.airlines), interaction.sel.c, direction)
+        dispatch({ type: "MOVE", r: interaction.sel.r, c, alsoEdit: interaction.sticky })
+        return
+      }
+      const resolved = resolveNextCell(rows, interaction.sel, direction, visibleColumns)
+      if (resolved.appendRow) {
+        handleAddRow()
+        return
+      }
+      const c = fitColumnToRow(rows[resolved.r], resolved.c, referenceData.airlines, visibleColumns)
+      dispatch({ type: "MOVE", r: resolved.r, c, alsoEdit: interaction.sticky })
       return
     }
 
@@ -1169,10 +1404,9 @@ export function IssuancesGrid({
     // A cancelled row is read-only apart from its taxes: block every path that starts an
     // edit or mutates a cell (F2, Delete, replace-on-type below). Navigation and Ctrl+C stay
     // allowed - hence these guards are per-branch rather than a single early return.
-    const cellIsLockedByCancellation = isLockedByCancellation(
-      interaction.sel.c,
-      rows[interaction.sel.r],
-    )
+    const cellIsLockedByCancellation =
+      isLockedByCancellation(interaction.sel.c, rows[interaction.sel.r]) ||
+      isLockedByLookup(interaction.sel.c, rows[interaction.sel.r])
 
     if (e.key === "F2") {
       if (cellIsLockedByCancellation) return
@@ -1241,6 +1475,7 @@ export function IssuancesGrid({
     // A cancelled row is read-only apart from its taxes - a paste must not seed an edit
     // into any other cell of it.
     if (isLockedByCancellation(interaction.sel.c, rows[interaction.sel.r])) return
+    if (isLockedByLookup(interaction.sel.c, rows[interaction.sel.r])) return
     if (isLockedRedemptionFee(interaction.sel.c, rows[interaction.sel.r])) return
     e.preventDefault()
     const text = e.clipboardData.getData("text/plain")
@@ -1322,8 +1557,7 @@ export function IssuancesGrid({
         {filters}
         <div className="ml-auto flex items-center gap-2">
           {/* Sits here rather than in the filter bar (which the page owns and passes in as
-              `filters`), and lands next to the Autocompletar toggle because that toggle is
-              ml-auto at the filter bar's right edge. No red headers in this case: the row
+              `filters`). No red headers in this case: the row
               will never autocomplete, so pointing at columns would be a false promise. */}
           {autocompleteHint.kind === "unsupported" && (
             <span className="flex items-center gap-1.5 text-xs text-amber-600">
@@ -1369,8 +1603,8 @@ export function IssuancesGrid({
               Exportar
             </a>
           </Button>
-          {/* Which day the next rows belong to. Sits beside "Nova emissão" because it is
-              part of the same act - the rows this button creates are recorded on it. */}
+          {/* Which day the next rows belong to - the rows "Nova emissão" creates are
+              recorded on it. */}
           <label
             className={cn(
               "flex items-center gap-2 rounded-md border px-2 py-1 text-sm",
@@ -1411,19 +1645,11 @@ export function IssuancesGrid({
             <CalendarDays className="h-4 w-4" />
             Data da emissão
           </Button>
-          <Button type="button" onClick={handleAddRow}>
-            <Plus className="h-4 w-4" />
-            Nova emissão
-          </Button>
         </div>
       </div>
-      <div
-        ref={containerRef}
-        onKeyDown={handleContainerKeyDown}
-        // Bounded scroll region so the header can stick to its top (a sticky header needs a
-        // scroll ancestor with a fixed height) and long lists scroll inside the grid.
-        className="relative max-h-[calc(100vh-13rem)] overflow-auto rounded-md border outline-none"
-      >
+      {/* Wraps the table and the bar under it: the "collecting" row lives in that bar and
+          is navigated with the same keyboard handler as every other row. */}
+      <div ref={containerRef} onKeyDown={handleContainerKeyDown} className="relative outline-none">
         {/* Off-screen focus holder: keydown and paste events from it bubble to the
             container's onKeyDown/handlePaste. Kept empty (onInput clears any char
             that type-to-replace lets through) so it never accumulates text. */}
@@ -1437,128 +1663,201 @@ export function IssuancesGrid({
           }}
           className="pointer-events-none absolute left-0 top-0 h-px w-px resize-none opacity-0"
         />
-        <table className="w-full caption-bottom text-sm">
-          <TableHeader>
-            <TableRow className="hover:bg-transparent">
-              <TableHead className="sticky top-0 z-10 w-8 bg-background p-1 text-center">#</TableHead>
-              {/* Sliced rather than mapped whole: the last label is the issuance date,
-                  which is only on screen when the column is. */}
-              {COLUMN_LABELS.slice(0, columnCount).map((label, c) => {
-                // Red means "the autocomplete is still waiting on this one", and it clears
-                // as each is filled - so the header row doubles as a live checklist for
-                // the row being typed.
-                const missingReason = missingColumnReasons.get(c)
-                return (
-                  <TableHead
-                    key={label}
-                    title={missingReason}
-                    className={cn(
-                      "sticky top-0 z-10 whitespace-nowrap bg-background",
-                      c === CALCULATED_COLUMN_INDEX && "text-right",
-                      missingReason && "text-destructive",
-                    )}
-                  >
-                    {label}
-                  </TableHead>
-                )
-              })}
-              <TableHead className="sticky top-0 z-10 w-8 bg-background p-1" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.length === 0 && (
+        <div
+          // Bounded scroll region so the header can stick to its top (a sticky header needs a
+          // scroll ancestor with a fixed height) and long lists scroll inside the grid.
+          className="max-h-[calc(100vh-16rem)] overflow-auto rounded-md border"
+        >
+          <table className="w-full caption-bottom text-sm">
+            <TableHeader>
               <TableRow className="hover:bg-transparent">
-                <TableCell
-                  colSpan={columnCount + 2}
-                  className="h-32 text-center text-sm text-muted-foreground"
-                >
-                  Nenhuma emissão encontrada para o período e filtros selecionados.
-                  <br />
-                  Ajuste os filtros ou clique em{" "}
-                  <span className="font-medium">Nova emissão</span> para cadastrar.
-                </TableCell>
+                <TableHead className="sticky top-0 z-10 w-8 bg-background p-1 text-center">#</TableHead>
+                {/* In on-screen order, which is not index order: Status is shown last. */}
+                {visibleColumns.map((c) => {
+                  const label = COLUMN_LABELS[c]
+                  // Red means "the autocomplete is still waiting on this one", and it clears
+                  // as each is filled - so the header row doubles as a live checklist for
+                  // the row being typed.
+                  const missingReason = missingColumnReasons.get(c)
+                  return (
+                    <TableHead
+                      key={label}
+                      title={missingReason}
+                      className={cn(
+                        "sticky top-0 z-10 whitespace-nowrap bg-background",
+                        c === CALCULATED_COLUMN_INDEX && "text-right",
+                        // Shrunk to its label: the cells under it only hold a dot.
+                      c === STATUS_COLUMN_INDEX && "w-px px-2 text-center",
+                        missingReason && "text-destructive",
+                      )}
+                    >
+                      {label}
+                    </TableHead>
+                  )
+                })}
+                <TableHead className="sticky top-0 z-10 w-8 bg-background p-1" />
               </TableRow>
-            )}
-            {rows.map((row, r) => (
-              <TableRow
-                key={row.key}
-                className={cn(
-                  "group/row",
-                  // Cancelled reads as archived/terminal (muted grey), keeping red exclusively
-                  // for a failed save so the two states are never confused.
-                  row.status === "cancelled" && "bg-muted/40 text-muted-foreground hover:bg-muted/40",
-                  row.hasError && "bg-red-50 hover:bg-red-50",
-                  // Locked while Traveos is being read - see onCellClick.
-                  isRowSyncing(row, syncingRowKeys) && "bg-sky-50/60 hover:bg-sky-50/60",
-                )}
-              >
-                <TableCell
+            </TableHeader>
+            <TableBody>
+              {rows.every((row) => row.traveosLookup === "collecting") && (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell
+                    colSpan={visibleColumns.length + 2}
+                    className="h-32 text-center text-sm text-muted-foreground"
+                  >
+                    Nenhuma emissão encontrada para o período e filtros selecionados.
+                    <br />
+                    Ajuste os filtros ou clique em{" "}
+                    <span className="font-medium">Nova emissão</span> para cadastrar.
+                  </TableCell>
+                </TableRow>
+              )}
+              {rows.map((row, r) => row.traveosLookup === "collecting" ? null : (
+                <TableRow
+                  key={row.key}
                   className={cn(
-                    "relative w-8 p-1 text-center text-xs text-muted-foreground tabular-nums",
-                    row.hasError && "border-l-4 border-l-red-600",
+                    "group/row",
+                    // Cancelled reads as archived/terminal (muted grey), keeping red exclusively
+                    // for a failed save so the two states are never confused.
+                    row.status === "cancelled" && "bg-muted/40 text-muted-foreground hover:bg-muted/40",
+                    row.hasError && "bg-red-50 hover:bg-red-50",
+                    // Locked while Traveos is being read - see onCellClick.
+                    isRowSyncing(row, syncingRowKeys) && "bg-sky-50/60 hover:bg-sky-50/60",
                   )}
                 >
+                  <TableCell
+                    className={cn(
+                      "relative w-8 p-1 text-center text-xs text-muted-foreground tabular-nums",
+                      row.hasError && "border-l-4 border-l-red-600",
+                    )}
+                  >
+                    {r + 1}
+                    <span className="absolute right-0.5 top-0.5">
+                      <AutosaveDot status={row.saveStatus} />
+                    </span>
+                  </TableCell>
+                  {visibleColumns.map((c) => {
+                    const accountNeedsPicking =
+                      c === ACCOUNT_COLUMN_INDEX && accountClearedKeys.has(row.key)
+                    const isSelected = interaction.sel.r === r && interaction.sel.c === c
+                    const isEditing = isSelected && interaction.editing
+                    const waitingOnLookup = isLockedByLookup(c, row)
+                    return (
+                      <TableCell
+                        key={c}
+                        // Marks the cell for Ctrl+C, which copies its rendered text.
+                        data-cell={`${r}-${c}`}
+                        // Background rather than a ring or border: the selection ring below
+                        // already owns --tw-ring-color on this cell, and two competing
+                        // ring-* utilities resolve by their order in the generated CSS, not
+                        // by the order they appear here.
+                        className={cn(
+                          // scroll-mt clears the sticky header when scrollIntoView lands here.
+                          "scroll-mt-9 whitespace-normal border-l p-0 first:border-l-0",
+                          // The only free-text column with no length of its own. Bounded so
+                          // one long observation cannot widen the table for every other row -
+                          // the cell truncates and the full text is on the hover title.
+                          c === OBSERVATION_COLUMN_INDEX && "max-w-64",
+                        c === STATUS_COLUMN_INDEX && "w-px",
+                          accountNeedsPicking && "bg-red-100",
+                          waitingOnLookup && "animate-pulse bg-sky-50",
+                          // Strike through the locator of a cancelled row - a "voided" cue on the
+                          // cell that identifies the issuance.
+                          row.status === "cancelled" && c === LOCATOR_COLUMN_INDEX && "line-through",
+                          isSelected && "ring-2 ring-inset ring-primary",
+                        )}
+                        title={
+                          waitingOnLookup
+                            ? "Buscando na Traveos…"
+                            : accountNeedsPicking
+                            ? row.isDraft
+                              ? "Selecione uma conta — a emissão não será salva sem ela."
+                              : "Selecione uma conta — a emissão ainda está vinculada à conta do programa anterior."
+                            : undefined
+                        }
+                      >
+                        {/* Volatile state as props: `row` (stable ref unless this row was
+                            edited), whether this cell is editing, and pendingChar only while
+                            it is. Every other cell gets identical props across a selection
+                            move, so its memoized GridCell skips re-rendering. */}
+                        <GridCell
+                          r={r}
+                          c={c}
+                          row={row}
+                          isEditing={isEditing}
+                          pendingChar={isEditing ? interaction.pendingChar : null}
+                        />
+                      </TableCell>
+                    )
+                  })}
+                  <TableCell className="p-1">
+                    <RowActions r={r} row={row} />
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </table>
+        </div>
+
+        {/* Under the table, as in a spreadsheet's next empty line: either the button that
+            starts a new issuance, or - on the Traveos-first flow - the few fields of the one
+            being asked for, until the lookup starts and it joins the table. */}
+        <div className="mt-3 flex flex-wrap items-center gap-4">
+          {rows.map((row, r) => {
+            if (row.traveosLookup !== "collecting") return null
+            return (
+              <div key={row.key} className="flex items-stretch overflow-hidden rounded-md border text-sm">
+                <span className="flex w-10 items-center justify-center border-r text-xs text-muted-foreground tabular-nums">
                   {r + 1}
-                  <span className="absolute right-0.5 top-0.5">
-                    <AutosaveDot status={row.saveStatus} />
-                  </span>
-                </TableCell>
-                {Array.from({ length: columnCount }, (_, c) => {
-                  const accountNeedsPicking =
-                    c === ACCOUNT_COLUMN_INDEX && accountClearedKeys.has(row.key)
+                </span>
+                {lookupColumnsFor(row, referenceData.airlines).map((c) => {
                   const isSelected = interaction.sel.r === r && interaction.sel.c === c
                   const isEditing = isSelected && interaction.editing
                   return (
-                    <TableCell
+                    <div
                       key={c}
-                      // Marks the cell for Ctrl+C, which copies its rendered text.
                       data-cell={`${r}-${c}`}
-                      // Background rather than a ring or border: the selection ring below
-                      // already owns --tw-ring-color on this cell, and two competing
-                      // ring-* utilities resolve by their order in the generated CSS, not
-                      // by the order they appear here.
-                      className={cn(
-                        // scroll-mt clears the sticky header when scrollIntoView lands here.
-                        "scroll-mt-9 whitespace-normal border-l p-0 first:border-l-0",
-                        // The only free-text column with no length of its own. Bounded so
-                        // one long observation cannot widen the table for every other row -
-                        // the cell truncates and the full text is on the hover title.
-                        c === OBSERVATION_COLUMN_INDEX && "max-w-64",
-                        accountNeedsPicking && "bg-red-100",
-                        // Strike through the locator of a cancelled row - a "voided" cue on the
-                        // cell that identifies the issuance.
-                        row.status === "cancelled" && c === LOCATOR_COLUMN_INDEX && "line-through",
-                        isSelected && "ring-2 ring-inset ring-primary",
-                      )}
-                      title={
-                        accountNeedsPicking
-                          ? row.isDraft
-                            ? "Selecione uma conta — a emissão não será salva sem ela."
-                            : "Selecione uma conta — a emissão ainda está vinculada à conta do programa anterior."
-                          : undefined
-                      }
+                      className={cn("w-44 border-r", isSelected && "ring-2 ring-inset ring-primary")}
                     >
-                      {/* Volatile state as props: `row` (stable ref unless this row was
-                          edited), whether this cell is editing, and pendingChar only while
-                          it is. Every other cell gets identical props across a selection
-                          move, so its memoized GridCell skips re-rendering. */}
-                      <GridCell
-                        r={r}
-                        c={c}
-                        row={row}
-                        isEditing={isEditing}
-                        pendingChar={isEditing ? interaction.pendingChar : null}
-                      />
-                    </TableCell>
+                      {!isEditing && isLookupFieldBlank(row, c) ? (
+                        <button
+                          type="button"
+                          onClick={() => onCellClick(r, c)}
+                          className="block w-full px-2 py-1.5 text-left text-muted-foreground"
+                        >
+                          {COLUMN_LABELS[c]}
+                        </button>
+                      ) : (
+                        <GridCell
+                          r={r}
+                          c={c}
+                          row={row}
+                          isEditing={isEditing}
+                          pendingChar={isEditing ? interaction.pendingChar : null}
+                        />
+                      )}
+                    </div>
                   )
                 })}
-                <TableCell className="p-1">
-                  <RowActions r={r} row={row} />
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </table>
+                <Button
+                  type="button"
+                  onClick={() => discardLookupRow(row.key)}
+                  className="h-auto rounded-none"
+                >
+                  <X className="h-4 w-4" />
+                  Desistir dessa emissão
+                </Button>
+              </div>
+            )
+          })}
+          {!rows.some((row) => row.traveosLookup === "collecting") && (
+            <Button type="button" onClick={handleAddRow}>
+              <Plus className="h-4 w-4" />
+              Nova emissão
+            </Button>
+          )}
+          <AutocompleteToggle />
+        </div>
       </div>
 
       <RedemptionFeeSummary rows={rows} />
