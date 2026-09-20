@@ -52,6 +52,10 @@ func RegisterAzulStatementRoutes(r chi.Router, db *gorm.DB) {
 		r.Get("/", h.PreviewAzulStatement)
 		r.Post("/commit", h.CommitAzulStatement)
 
+		// The cheap sync-state badge on its own, for the account card to poll while a connect runs
+		// (the entries endpoint below is far heavier - it resolves every link).
+		r.Get("/status", h.AzulConnectStatus)
+
 		// The per-account statement page: the synced lines with each redemption resolved to
 		// its issuance, plus the manual-link override (edit mode) and a CSV export.
 		r.Get("/entries", h.AzulStatementEntries)

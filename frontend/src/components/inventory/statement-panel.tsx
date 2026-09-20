@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/select"
 import { applyPaddedThousandsMask } from "@/lib/points"
 import { formatCurrencyBRL, parseCurrencyBRLInput } from "@/lib/currency"
+import { formatConnectingElapsed } from "@/lib/elapsed"
 import {
   commitAzulStatementAction,
   commitStatementAction,
@@ -299,12 +300,16 @@ function AzulStatementPanel({
   // The connect is asynchronous: the server logs in for minutes in the background, so while it is
   // in flight, poll the state until it clears (then Connected is true, or the state carries the
   // failure). Also covers a page reopened mid-connect, since `connecting` comes from the server.
+  // The one-second tick advances the elapsed time shown next to "conectando".
+  const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     if (!connecting) return
-    const interval = setInterval(() => {
-      void refresh()
-    }, 4000)
-    return () => clearInterval(interval)
+    const poll = setInterval(() => void refresh(), 4000)
+    const tick = setInterval(() => setNow(Date.now()), 1000)
+    return () => {
+      clearInterval(poll)
+      clearInterval(tick)
+    }
   }, [connecting, refresh])
 
   // Announce the outcome once, on the transition out of connecting - success or the failure detail.
@@ -381,8 +386,11 @@ function AzulStatementPanel({
       ) : connecting && !connected ? (
         <div className="flex items-center gap-2 p-4 text-sm text-slate-600 dark:text-slate-300">
           <Loader2 className="size-4 animate-spin" />
-          Conectando à Azul… o login roda em segundo plano e pode levar alguns minutos. Pode deixar
-          esta tela aberta.
+          Conectando à Azul{" "}
+          {syncState?.connecting_since
+            ? `(${formatConnectingElapsed(syncState.connecting_since, now)})`
+            : ""}
+          … o login roda em segundo plano e pode levar alguns minutos. Pode deixar esta tela aberta.
         </div>
       ) : !connected ? (
         <div className="flex flex-col items-start gap-3 p-4">

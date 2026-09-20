@@ -3,6 +3,7 @@ package azulsync
 import (
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestConnectTracker_BeginRefusesDuplicateUntilEnd(t *testing.T) {
@@ -35,6 +36,32 @@ func TestConnectTracker_NilIsNotConnecting(t *testing.T) {
 	var tracker *ConnectTracker
 	if tracker.IsConnecting("acc-1") {
 		t.Fatal("a nil tracker must report not connecting, not panic")
+	}
+	if tracker.ConnectingSince("acc-1") != nil {
+		t.Fatal("a nil tracker must report no start time, not panic")
+	}
+}
+
+func TestConnectTracker_ConnectingSinceTracksTheStart(t *testing.T) {
+	tracker := NewConnectTracker()
+
+	if tracker.ConnectingSince("acc-1") != nil {
+		t.Fatal("an account not in flight has no start time")
+	}
+
+	before := time.Now()
+	tracker.Begin("acc-1")
+	since := tracker.ConnectingSince("acc-1")
+	if since == nil {
+		t.Fatal("an in-flight account must report when its login started")
+	}
+	if since.Before(before) || since.After(time.Now()) {
+		t.Fatalf("start time %v should sit between %v and now", since, before)
+	}
+
+	tracker.End("acc-1")
+	if tracker.ConnectingSince("acc-1") != nil {
+		t.Fatal("start time must clear once the login ends")
 	}
 }
 

@@ -276,6 +276,9 @@ export const azulSyncStateSchema = z.object({
   // Whether a background connect login is in flight. The connect is asynchronous, so the panel
   // shows "conectando" and polls until this clears.
   connecting: z.boolean(),
+  // When the in-flight login started, so the panel can show the elapsed time. Null when not
+  // connecting.
+  connecting_since: z.string().nullish(),
   state: azulSyncStateKindSchema,
   last_synced_at: z.string().nullish(),
   last_balance_points: z.number().nullish(),

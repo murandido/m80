@@ -259,6 +259,9 @@ type AzulSyncStateResponse struct {
 	// asynchronous, so the panel shows "conectando" and polls this until it clears - then Connected
 	// is true (success) or the state carries the failure.
 	Connecting bool `json:"connecting" example:"false"`
+	// ConnectingSince is when the in-flight login started, so the panel can show the elapsed time
+	// (the login legitimately takes minutes across retries). Null whenever Connecting is false.
+	ConnectingSince *time.Time `json:"connecting_since"`
 	// State is one of pending|ok|error|inconsistent|needs_attention (see data.AzulSync*).
 	State string `json:"state" example:"ok"`
 	// LastSyncedAt and LastBalancePoints are the last successful read; null until the first one.
@@ -294,6 +297,15 @@ type AzulConnectSingleResponse struct {
 	Success bool                `json:"success" example:"true"`
 	Message string              `json:"message" example:"Conta conectada"`
 	Data    AzulConnectResponse `json:"data"`
+}
+
+// AzulSyncStateSingleResponse is the connect-status route's envelope: just the sync-state badge,
+// cheap to poll. The account card reads it to know whether a connect is in flight without
+// pulling the whole statement.
+type AzulSyncStateSingleResponse struct {
+	Success bool                  `json:"success" example:"true"`
+	Message string                `json:"message" example:"Estado carregado"`
+	Data    AzulSyncStateResponse `json:"data"`
 }
 
 // StatementCommitResponse says what the commit wrote.

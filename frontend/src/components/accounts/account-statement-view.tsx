@@ -1,14 +1,18 @@
 "use client"
 
-import { useMemo, useState, useTransition } from "react"
+import { useEffect, useMemo, useRef, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { formatDistanceToNow } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { toast } from "sonner"
 import {
+  AlertTriangle,
   ArrowDownCircle,
   ArrowUpCircle,
   Boxes,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   CircleSlash,
   Download,
   Link2,
@@ -146,6 +150,18 @@ function routeOf(origin: string, destination: string): string | null {
   return origin || destination || null
 }
 
+// How many movements one page shows. The window is loaded whole (filters and sort stay instant,
+// client-side), but a long history would be an unreadable wall of rows, so it is paged here.
+const STATEMENT_PAGE_SIZE = 100
+
+// Whether a day's listed movements account for its whole balance change. The airline caps a
+// statement query at 100 entries, so a busy day pulled inside a month window can arrive truncated;
+// this is how the operator sees which days are trustworthy.
+//   complete     - previous day's closing + this day's movements == this day's closing.
+//   incomplete   - they do not add up, so a movement is missing (nothing to do but flag it).
+//   unverifiable - the first day in the window has no previous day here to check against.
+type DayCompleteness = "complete" | "incomplete" | "unverifiable"
+
 interface AccountStatementViewProps {
   accountId: string
   accountName: string
@@ -178,6 +194,15 @@ export function AccountStatementView({
   // Newest day first by default, which is how a statement is normally read; the operator can flip
   // it to oldest-first.
   const [sortOrder, setSortOrder] = useState<"desc" | "asc">("desc")
+  // 1-based page over the filtered movements. Any filter or sort change resets it to the first page
+  // (done in the handlers, not an effect), so the operator never lands on a page that no longer
+  // exists.
+  const [page, setPage] = useState(1)
+  // Anchor at the top of the list, so paging brings the first row of the new page into view rather
+  // than leaving the operator scrolled at the pager where they clicked.
+  const listTopRef = useRef<HTMLSpanElement>(null)
+  // First render must not scroll (the page loads at the top already); only a later page change does.
+  const didMountRef = useRef(false)
 
   const { sync_state: syncState, from, to, lines } = entries
 
@@ -204,6 +229,46 @@ export function AccountStatementView({
     ? formatDistanceToNow(new Date(syncState.last_synced_at), { addSuffix: true, locale: ptBR })
     : "nunca"
 
+  // Per-day completeness, computed over the WHOLE window (never the filtered or paged view - a kind
+  // filter would drop movements and make the sums lie). Walk days oldest-first: each day's closing
+  // must equal the previous day's closing plus the day's movements. day_balance is the airline's
+  // own end-of-day balance and points are signed, so this is exact-integer arithmetic. The first
+  // day has no predecessor here, and any day whose balance did not survive breaks the chain for the
+  // next one, so both are left unverifiable rather than falsely flagged.
+  const dayCompleteness = useMemo(() => {
+    const status = new Map<string, DayCompleteness>()
+    const perDay: { day: string; movements: number; closing: number | null }[] = []
+    for (const line of lines) {
+      const last = perDay[perDay.length - 1]
+      if (last && last.day === line.occurred_on) {
+        last.movements += line.points
+        if (last.closing == null && line.day_balance != null) last.closing = line.day_balance
+      } else {
+        perDay.push({
+          day: line.occurred_on,
+          movements: line.points,
+          closing: line.day_balance ?? null,
+        })
+      }
+    }
+    let previousClosing: number | null = null
+    for (let i = 0; i < perDay.length; i++) {
+      const { day, movements, closing } = perDay[i]
+      if (closing == null) {
+        status.set(day, "unverifiable")
+        previousClosing = null
+        continue
+      }
+      if (i === 0 || previousClosing == null) {
+        status.set(day, "unverifiable")
+      } else {
+        status.set(day, previousClosing + movements === closing ? "complete" : "incomplete")
+      }
+      previousClosing = closing
+    }
+    return status
+  }, [lines])
+
   // The lines that pass the filters. occurred_on is an ISO day, so string comparison is date
   // comparison. An empty bound is open on that side.
   const filteredLines = useMemo(() => {
@@ -215,11 +280,45 @@ export function AccountStatementView({
     })
   }, [lines, dateFrom, dateTo, kindFilter])
 
-  // Lines grouped by day, preserving the server's day order, each carrying the day's end-of-day
-  // balance (every line of a day reports the same one, so the first non-null wins).
+  // The filtered lines in display order: the server sends them oldest-first; flipping to the
+  // newest-first default reverses whole days, never the movements within a day (a day is always
+  // read top-to-bottom). Grouping by day first, reversing the day order, then flattening keeps
+  // that, and gives a flat list to page over.
+  const orderedLines = useMemo(() => {
+    const byDay: AzulStatementEntry[][] = []
+    for (const line of filteredLines) {
+      const last = byDay[byDay.length - 1]
+      if (last && last[0].occurred_on === line.occurred_on) last.push(line)
+      else byDay.push([line])
+    }
+    if (sortOrder === "desc") byDay.reverse()
+    return byDay.flat()
+  }, [filteredLines, sortOrder])
+
+  const totalPages = Math.max(1, Math.ceil(orderedLines.length / STATEMENT_PAGE_SIZE))
+  // Clamp rather than trust `page`: a filter that shrinks the list could otherwise leave it past
+  // the end for a render before a handler resets it.
+  const currentPage = Math.min(page, totalPages)
+  const pageStart = (currentPage - 1) * STATEMENT_PAGE_SIZE
+  const pageLines = orderedLines.slice(pageStart, pageStart + STATEMENT_PAGE_SIZE)
+
+  // After a page change has rendered, jump the list top into view - otherwise a click on the pager
+  // (which sits at the bottom) leaves the operator stranded in the middle of the new page. Runs
+  // post-commit, so the new page's height is already settled and the scroll is not cut short.
+  useEffect(() => {
+    if (!didMountRef.current) {
+      didMountRef.current = true
+      return
+    }
+    listTopRef.current?.scrollIntoView({ block: "start" })
+  }, [currentPage])
+
+  // The current page's lines grouped by day for rendering. They are already in display order, so a
+  // day split across two pages simply shows its header again on each - every line carries the same
+  // day balance, so the partial day still reports it.
   const days = useMemo(() => {
     const groups: { day: string; balance: number | null; lines: AzulStatementEntry[] }[] = []
-    for (const line of filteredLines) {
+    for (const line of pageLines) {
       const last = groups[groups.length - 1]
       if (last && last.day === line.occurred_on) {
         last.lines.push(line)
@@ -232,9 +331,8 @@ export function AccountStatementView({
         })
       }
     }
-    // The server orders lines oldest-first; reverse the day groups for the newest-first default.
-    return sortOrder === "desc" ? groups.reverse() : groups
-  }, [filteredLines, sortOrder])
+    return groups
+  }, [pageLines])
 
   const hasFilters = dateFrom !== "" || dateTo !== "" || kindFilter !== "all"
 
@@ -298,11 +396,15 @@ export function AccountStatementView({
             onChange={({ from: nextFrom, to: nextTo }) => {
               setDateFrom(nextFrom)
               setDateTo(nextTo)
+              setPage(1)
             }}
           />
           <Select
             value={kindFilter}
-            onValueChange={(value) => setKindFilter(value as AzulStatementKind | "all")}
+            onValueChange={(value) => {
+              setKindFilter(value as AzulStatementKind | "all")
+              setPage(1)
+            }}
           >
             <SelectTrigger className="w-44">
               <SelectValue placeholder="Tipo" />
@@ -319,7 +421,10 @@ export function AccountStatementView({
           </Select>
           <Select
             value={sortOrder}
-            onValueChange={(value) => setSortOrder(value as "desc" | "asc")}
+            onValueChange={(value) => {
+              setSortOrder(value as "desc" | "asc")
+              setPage(1)
+            }}
           >
             <SelectTrigger className="w-44">
               <SelectValue />
@@ -338,6 +443,7 @@ export function AccountStatementView({
                 setDateFrom("")
                 setDateTo("")
                 setKindFilter("all")
+                setPage(1)
               }}
             >
               <X className="mr-1 h-3.5 w-3.5" />
@@ -351,10 +457,15 @@ export function AccountStatementView({
         </label>
       </div>
 
-      <span className="text-sm text-slate-500">
+      <span ref={listTopRef} className="text-sm text-slate-500">
         {filteredLines.length}
         {hasFilters ? ` de ${lines.length}` : ""}{" "}
         {filteredLines.length === 1 ? "movimentação" : "movimentações"}
+        {totalPages > 1 &&
+          ` · mostrando ${pageStart + 1}–${Math.min(
+            pageStart + STATEMENT_PAGE_SIZE,
+            orderedLines.length,
+          )}`}
       </span>
 
       {lines.length === 0 ? (
@@ -370,10 +481,13 @@ export function AccountStatementView({
         <div className="flex flex-col gap-5">
           {days.map((group) => (
             <div key={group.day} className="flex flex-col gap-2">
-              <div className="flex items-baseline justify-between">
-                <h2 className="text-xs font-semibold tracking-wide text-slate-400 uppercase">
-                  {formatDay(group.day)}
-                </h2>
+              <div className="flex items-baseline justify-between gap-2">
+                <div className="flex items-baseline gap-2">
+                  <h2 className="text-xs font-semibold tracking-wide text-slate-400 uppercase">
+                    {formatDay(group.day)}
+                  </h2>
+                  <DayCompletenessBadge status={dayCompleteness.get(group.day)} />
+                </div>
                 {group.balance != null && (
                   <span className="text-xs text-slate-400 tabular-nums">
                     saldo do dia {group.balance.toLocaleString("pt-BR")}
@@ -402,7 +516,73 @@ export function AccountStatementView({
           ))}
         </div>
       )}
+
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between gap-2 pt-1">
+          <span className="text-xs text-slate-500">
+            Página {currentPage} de {totalPages}
+          </span>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8"
+              disabled={currentPage <= 1}
+              onClick={() => setPage(currentPage - 1)}
+            >
+              <ChevronLeft className="mr-1 h-3.5 w-3.5" />
+              Anterior
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8"
+              disabled={currentPage >= totalPages}
+              onClick={() => setPage(currentPage + 1)}
+            >
+              Próxima
+              <ChevronRight className="ml-1 h-3.5 w-3.5" />
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
+  )
+}
+
+// The per-day trust marker in the day header. "completo" is kept quiet (it is the usual case);
+// "incompleto" is the one that needs the operator's eye, so it carries a background. The title
+// spells out the why on hover, which is where the 100-per-query cap is explained.
+function DayCompletenessBadge({ status }: { status: DayCompleteness | undefined }) {
+  if (status === "complete") {
+    return (
+      <span
+        className="flex items-center gap-1 text-[11px] font-medium text-emerald-600"
+        title="As movimentações do dia fecham com o saldo do dia."
+      >
+        <CheckCircle2 className="h-3 w-3" />
+        dia completo
+      </span>
+    )
+  }
+  if (status === "incomplete") {
+    return (
+      <span
+        className="flex items-center gap-1 rounded bg-amber-100 px-1.5 text-[11px] font-medium text-amber-800"
+        title="As movimentações listadas não fecham com o saldo do dia — pode faltar lançamento (a Azul limita a 100 por consulta)."
+      >
+        <AlertTriangle className="h-3 w-3" />
+        dia incompleto
+      </span>
+    )
+  }
+  return (
+    <span
+      className="text-[11px] text-slate-400"
+      title="Sem dia anterior no período para conferir o fechamento."
+    >
+      não verificável
+    </span>
   )
 }
 

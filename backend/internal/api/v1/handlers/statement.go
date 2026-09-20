@@ -568,6 +568,7 @@ func (h *StatementHandler) toAzulSyncStateResponse(account data.Account, state *
 	response := schemas.AzulSyncStateResponse{
 		Connected:           account.AzulCustomerKey != nil && *account.AzulCustomerKey != "",
 		Connecting:          h.Tracker.IsConnecting(account.ID),
+		ConnectingSince:     h.Tracker.ConnectingSince(account.ID),
 		State:               state.State,
 		LastSyncedAt:        state.LastSyncedAt,
 		LastBalancePoints:   state.LastBalancePoints,
