@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState, useTransition } from "react"
+import { useEffect, useMemo, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import {
   Check,
@@ -45,6 +45,7 @@ import {
 } from "@/components/sales/supplier-amount"
 import { updateSupplierIssuancesAction } from "@/actions/supplier-issuances"
 import {
+  bulkIncrementSupplierExportCounterAction,
   incrementSupplierExportCounterAction,
   setSupplierExportCounterAction,
 } from "@/actions/supplier-export-counter"
@@ -167,16 +168,91 @@ function ReportButton({
   )
 }
 
-// The PDF file name: "resumo-<administrador>-<contador>.pdf". Built here rather than left to the
-// backend's Content-Disposition because the route is same-origin, so the <a download> value wins -
-// which is what lets the per-export counter reach the file name without a round trip through the
-// GET that streams the PDF.
+// The PDF file name suggested to the browser as a fallback. The authoritative name is the
+// backend's Content-Disposition (which wins over the download attribute), built from the `seq`
+// query param - see withSeq. This just keeps a sensible name if that header is ever absent.
 function reportFileName(label: string, counter: number): string {
   const slug =
     normalizeSearch(label)
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "") || "fornecedor"
   return `resumo-${slug}-${String(counter).padStart(4, "0")}.pdf`
+}
+
+// withSeq appends the just-incremented counter so the backend names the file with it.
+function withSeq(href: string, seq: number): string {
+  return `${href}${href.includes("?") ? "&" : "?"}seq=${seq}`
+}
+
+// triggerDownload navigates a hidden anchor to a same-origin route that responds with a PDF
+// attachment. filename is only a fallback: the backend's Content-Disposition is authoritative.
+function triggerDownload(url: string, filename: string) {
+  const anchor = document.createElement("a")
+  anchor.href = url
+  anchor.download = filename
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+}
+
+// The "all suppliers" export: one combined PDF covering every visible administrator. It carries
+// no single sequence number - the backend dates the file - so pressing it bumps the counter of
+// each administrator it includes, keeping their individual sequences moving.
+function AllSuppliersExport({
+  href,
+  missingCost,
+  administratorIds,
+}: {
+  href: string
+  missingCost: number
+  administratorIds: string[]
+}) {
+  const router = useRouter()
+  const [exporting, setExporting] = useState(false)
+  const blocked = missingCost > 0
+
+  async function handleExport() {
+    if (blocked || exporting) return
+    setExporting(true)
+    const result = await bulkIncrementSupplierExportCounterAction(administratorIds)
+    setExporting(false)
+    if ("error" in result) {
+      toast.error(result.error)
+      return
+    }
+    triggerDownload(href, "resumo-fornecedores.pdf")
+    // Refetch so the per-administrator counters on screen reflect the bump.
+    router.refresh()
+  }
+
+  const button = (
+    <Button
+      type="button"
+      size="sm"
+      variant="outline"
+      disabled={blocked || exporting}
+      aria-label="Gerar PDF de todas"
+      onClick={handleExport}
+    >
+      <FileText className="h-4 w-4" />
+      <span className="ml-1.5">Gerar PDF de todas</span>
+    </Button>
+  )
+
+  if (!blocked) return button
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="inline-flex cursor-not-allowed">{button}</span>
+      </TooltipTrigger>
+      <TooltipContent>
+        {missingCost === 1
+          ? "1 emissão está sem milheiro de custo."
+          : `${missingCost} emissões estão sem milheiro de custo.`}
+      </TooltipContent>
+    </Tooltip>
+  )
 }
 
 // The per-administrator export: an editable counter and the PDF button beside it. Pressing the
@@ -199,6 +275,13 @@ function AdministratorExport({
   const [text, setText] = useState(String(initialCounter))
   const [exporting, setExporting] = useState(false)
   const [, startTransition] = useTransition()
+
+  // Follow the server value when it changes underneath us - e.g. after "Gerar PDF de todas"
+  // bumps this administrator among others and the page refetches.
+  useEffect(() => {
+    setCounter(initialCounter)
+    setText(String(initialCounter))
+  }, [initialCounter])
   const blocked = missingCost > 0
 
   async function handleExport() {
@@ -213,14 +296,10 @@ function AdministratorExport({
     setCounter(result.counter)
     setText(String(result.counter))
 
-    // Programmatic download so the file name carries the fresh number: the same-origin route
-    // lets the download attribute override the backend's Content-Disposition.
-    const anchor = document.createElement("a")
-    anchor.href = href
-    anchor.download = reportFileName(label, result.counter)
-    document.body.appendChild(anchor)
-    anchor.click()
-    anchor.remove()
+    // The number is passed to the backend as `seq` rather than only set on the download
+    // attribute: browsers give the server's Content-Disposition filename precedence over the
+    // download attribute, so the backend is the only place that can put the number in the name.
+    triggerDownload(withSeq(href, result.counter), reportFileName(label, result.counter))
   }
 
   function commitCounter() {
@@ -340,6 +419,19 @@ export function SalesSuppliersTable({ balances, query, groupBy }: SalesSuppliers
   )
   const hiddenCount = balances.length - visible.length
 
+  // The administrators the "all suppliers" PDF covers - every distinct administrator across the
+  // visible rows. Their counters are bumped together when that PDF is generated.
+  const includedAdministratorIds = useMemo(
+    () => [
+      ...new Set(
+        visible
+          .map((balance) => balance.administrator_id)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ],
+    [visible],
+  )
+
   // Summed in the browser rather than asked of the API: the table does not paginate, so
   // these are exactly the rows on screen - which is what "total do que está aparecendo"
   // means. A server-side total could disagree with the visible rows and nobody would know
@@ -433,10 +525,10 @@ export function SalesSuppliersTable({ balances, query, groupBy }: SalesSuppliers
             </Button>
           </span>
         )}
-        <ReportButton
+        <AllSuppliersExport
           href={reportHref(query, excludedAccountIds)}
           missingCost={totals.missingCost}
-          label="Gerar PDF de todas"
+          administratorIds={includedAdministratorIds}
         />
       </div>
 

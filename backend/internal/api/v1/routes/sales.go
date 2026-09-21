@@ -37,6 +37,8 @@ func RegisterSaleRoutes(r chi.Router, db *gorm.DB, broker *events.Broker) {
 		// by hand.
 		r.With(middleware.RequireAdmin()).Post("/suppliers/export-counter", saleHandler.IncrementSupplierExportCounter)
 		r.With(middleware.RequireAdmin()).Put("/suppliers/export-counter", saleHandler.SetSupplierExportCounter)
+		// bulk bump for the "all suppliers" PDF, which covers several administrators at once
+		r.With(middleware.RequireAdmin()).Post("/suppliers/export-counter/bulk", saleHandler.BulkIncrementSupplierExportCounter)
 
 		// link a client (and, for a panel that has not been published yet, the old
 		// paid switch - translated into a payment; see settleSaleFromLegacyFlag)

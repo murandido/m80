@@ -330,6 +330,13 @@ type SupplierExportCounterSingleResponse struct {
 	Data    SupplierExportCounterResponse `json:"data"`
 }
 
+// BulkSupplierExportCounterSingleResponse is the response of the bulk export-counter route
+type BulkSupplierExportCounterSingleResponse struct {
+	Success bool                              `json:"success" example:"true"`
+	Message string                            `json:"message" example:"Contadores atualizados com sucesso"`
+	Data    BulkSupplierExportCounterResponse `json:"data"`
+}
+
 // DashboardSingleResponse is the GET /dashboard route response
 type DashboardSingleResponse struct {
 	Success bool              `json:"success" example:"true"`

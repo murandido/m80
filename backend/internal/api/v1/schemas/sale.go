@@ -208,3 +208,14 @@ type SetSupplierExportCounterRequest struct {
 type SupplierExportCounterResponse struct {
 	Counter int `json:"counter"`
 }
+
+// BulkIncrementSupplierExportCounterRequest bumps several administrators' counters at once, for
+// the "all suppliers" PDF that covers many administrators in one document.
+type BulkIncrementSupplierExportCounterRequest struct {
+	AdministratorIDs []string `json:"administrator_ids" validate:"required,min=1,dive,uuid"`
+}
+
+// BulkSupplierExportCounterResponse reports how many administrators were incremented.
+type BulkSupplierExportCounterResponse struct {
+	Updated int `json:"updated"`
+}

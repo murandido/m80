@@ -1044,6 +1044,47 @@ func (h *SaleHandler) SetSupplierExportCounter(w http.ResponseWriter, r *http.Re
 		schemas.SupplierExportCounterResponse{Counter: req.Counter})
 }
 
+// BulkIncrementSupplierExportCounter handles the POST /sales/suppliers/export-counter/bulk route.
+// @Summary      Incrementar o contador de vários administradores
+// @Description  Soma 1 ao contador de exportação de cada administrador informado, numa única operação. Usado pelo botão "Gerar PDF de todas", que cobre vários administradores de uma vez. Rota restrita a administradores.
+// @Tags         Vendas
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        request  body  schemas.BulkIncrementSupplierExportCounterRequest  true  "Administradores"
+// @Success      200  {object}  schemas.BulkSupplierExportCounterSingleResponse
+// @Failure      400  {object}  schemas.ErrorResponse "Payload inválido"
+// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      403  {object}  schemas.ErrorResponse "Usuário não é administrador"
+// @Failure      500  {object}  schemas.ErrorResponse "Erro ao incrementar os contadores"
+// @Router       /sales/suppliers/export-counter/bulk [post]
+func (h *SaleHandler) BulkIncrementSupplierExportCounter(w http.ResponseWriter, r *http.Request) {
+	var req schemas.BulkIncrementSupplierExportCounterRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		utils.SendError(w, r, http.StatusBadRequest, "Invalid JSON payload")
+		return
+	}
+	if err := h.Validator.Struct(req); err != nil {
+		utils.SendError(w, r, http.StatusBadRequest, "Validation failed: "+err.Error())
+		return
+	}
+
+	// One statement for the whole set, so the "all suppliers" export never bumps half the
+	// administrators and then fails.
+	result := h.DB.Model(&data.Person{}).
+		Where("id IN ?", req.AdministratorIDs).
+		UpdateColumn("report_export_counter", gorm.Expr("report_export_counter + 1"))
+	if result.Error != nil {
+		slog.Error("failed to bulk-increment supplier export counters",
+			"administrator_count", len(req.AdministratorIDs), "err", result.Error)
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to increment the export counters")
+		return
+	}
+
+	utils.SendJSON(w, r, http.StatusOK, "Export counters incremented successfully",
+		schemas.BulkSupplierExportCounterResponse{Updated: int(result.RowsAffected)})
+}
+
 // supplierStatementLine builds one line of an account's statement. Points and taxes are
 // passed in already signed rather than derived here, because only the caller knows which of
 // the two branches it is in.
