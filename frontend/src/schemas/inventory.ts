@@ -255,31 +255,42 @@ export interface StatementBatchSelection {
   note: string
 }
 
-// --- Sincronização do extrato Azul ---
+// Which programme's synced-statement routes to talk to. The two share every shape below; only
+// the path segment differs.
+export type SyncedProgram = "azul" | "smiles"
 
-// The lifecycle states mirror data.AzulSync* on the backend. The Portuguese labels live on the
-// panel; these are the raw values the API sends.
-export const azulSyncStateKindSchema = z.enum([
+// --- Sincronização do extrato (Azul e Smiles) ---
+//
+// Both programmes are synced and reconciled through the same shapes, because to the panel they
+// say the same things. Where one has a field the other does not, the field is optional and the
+// comment says which programme it belongs to - that is cheaper than two near-identical screens.
+
+// The lifecycle states, mirroring data.AzulSync* and data.SmilesSync* on the backend. The
+// Portuguese labels live on the panel; these are the raw values the API sends.
+export const statementSyncKindSchema = z.enum([
   "pending",
   "ok",
   "error",
+  // Azul only: the statement did not add up to the balance, so the window was not stored.
+  // Smiles publishes no end-of-day balance, so nothing there can disagree.
   "inconsistent",
+  // Smiles only: the stored session was refused and only a new verification code fixes it.
+  "needs_mfa",
   "needs_attention",
 ])
 
-export type AzulSyncStateKind = z.infer<typeof azulSyncStateKindSchema>
+export type StatementSyncKind = z.infer<typeof statementSyncKindSchema>
 
-export const azulSyncStateSchema = z.object({
-  // Whether a customerKey has been discovered. False means the account was never connected, so
+export const statementSyncStateSchema = z.object({
+  // Whether the account has been connected. False means it never was (or was disconnected), so
   // the panel offers "Conectar" instead of a running state.
   connected: z.boolean(),
-  // Whether a background connect login is in flight. The connect is asynchronous, so the panel
-  // shows "conectando" and polls until this clears.
-  connecting: z.boolean(),
-  // When the in-flight login started, so the panel can show the elapsed time. Null when not
-  // connecting.
+  // Azul only: whether a background connect login is in flight. That login drives a browser and
+  // takes minutes, so the panel shows "conectando" and polls until this clears. The Smiles
+  // connect answers within the request at every step, so it sends neither field.
+  connecting: z.boolean().nullish(),
   connecting_since: z.string().nullish(),
-  state: azulSyncStateKindSchema,
+  state: statementSyncKindSchema,
   last_synced_at: z.string().nullish(),
   last_balance_points: z.number().nullish(),
   consecutive_failures: z.number(),
@@ -287,21 +298,21 @@ export const azulSyncStateSchema = z.object({
   updated_at: z.string().nullish(),
 })
 
-export type AzulSyncState = z.infer<typeof azulSyncStateSchema>
+export type StatementSyncState = z.infer<typeof statementSyncStateSchema>
 
-// The Azul reconciliation route bundles the badge (sync_state) with the reconciliation of the
+// Both reconciliation routes bundle the badge (sync_state) with the reconciliation of the
 // synced window, since both come from the database in one read.
-export const azulStatementSchema = z.object({
-  sync_state: azulSyncStateSchema,
+export const syncedStatementSchema = z.object({
+  sync_state: statementSyncStateSchema,
   reconciliation: statementReconciliationSchema,
 })
 
-export type AzulStatement = z.infer<typeof azulStatementSchema>
+export type SyncedStatement = z.infer<typeof syncedStatementSchema>
 
-export const azulStatementResponseSchema = z.object({
+export const syncedStatementResponseSchema = z.object({
   success: z.boolean(),
   message: z.string(),
-  data: azulStatementSchema.nullish(),
+  data: syncedStatementSchema.nullish(),
 })
 
 // The connect is asynchronous: the server acknowledges that the background login started, and the
@@ -314,22 +325,23 @@ export const azulConnectResponseSchema = z.object({
 
 // --- Statement page: entries with the resolved issuance link ---
 
-// The kinds a statement line can carry, mirroring data.AzulLine* on the backend. The Portuguese
-// labels live on the statement page.
-export const azulStatementKindSchema = z.enum([
+// The kinds a statement line can carry, mirroring data.AzulLine* and data.SmilesLine* on the
+// backend. The Portuguese labels live on the statement page.
+export const statementLineKindSchema = z.enum([
   "redemption",
   "refund",
   "accrual",
   "purchase",
+  // Azul only: the Smiles statement carries no expiry movement.
   "expiration",
   "other",
 ])
 
-export type AzulStatementKind = z.infer<typeof azulStatementKindSchema>
+export type StatementLineKind = z.infer<typeof statementLineKindSchema>
 
 // The real issuance a statement line resolves to. manual says whether it was pinned by hand
 // (true) or matched automatically by locator (false).
-export const azulStatementLinkedIssuanceSchema = z.object({
+export const statementLinkedIssuanceSchema = z.object({
   issuance_id: z.string(),
   passenger_name: z.string(),
   origin: z.string(),
@@ -339,11 +351,11 @@ export const azulStatementLinkedIssuanceSchema = z.object({
   manual: z.boolean(),
 })
 
-export type AzulStatementLinkedIssuance = z.infer<typeof azulStatementLinkedIssuanceSchema>
+export type StatementLinkedIssuance = z.infer<typeof statementLinkedIssuanceSchema>
 
 // The point batch (lote) a purchase or accrual line resolves to. manual says whether it was
 // pinned by hand (true) or matched automatically by the batch's recorded credits (false).
-export const azulStatementLinkedBatchSchema = z.object({
+export const statementLinkedBatchSchema = z.object({
   batch_id: z.string(),
   origin: z.string(),
   acquired_on: z.string(),
@@ -352,17 +364,17 @@ export const azulStatementLinkedBatchSchema = z.object({
   manual: z.boolean(),
 })
 
-export type AzulStatementLinkedBatch = z.infer<typeof azulStatementLinkedBatchSchema>
+export type StatementLinkedBatch = z.infer<typeof statementLinkedBatchSchema>
 
 // One synced statement line as the page shows it: the raw movement plus its resolved issuance
 // (null when the line has no locator or nothing matched). An unknown kind from a newer API
 // degrades to "other" rather than failing the parse.
-export const azulStatementEntrySchema = z.object({
+export const statementEntrySchema = z.object({
   // The key a manual link is stored under: the locator, or a content signature when the line
   // has none. Sent back to link or unlink the line.
   key: z.string(),
   occurred_on: z.string(),
-  kind: azulStatementKindSchema.catch("other"),
+  kind: statementLineKindSchema.catch("other"),
   type_code: z.string().nullish(),
   type_description: z.string().nullish(),
   points: z.number(),
@@ -371,51 +383,99 @@ export const azulStatementEntrySchema = z.object({
   destination: z.string(),
   partner_name: z.string(),
   description: z.string(),
-  // Free-text detail of a non-flight redemption (the Azul Viagens hotel/product). Empty otherwise.
+  // Azul only: free-text detail of a non-flight redemption (the Azul Viagens hotel/product).
   note: z.string().nullish(),
+  // What the account held at the end of the day. The two programmes mean different things by
+  // it, and the page has to keep them apart: on Azul it is the airline's own figure, which is
+  // why a day that does not add up to it is worth flagging. On Smiles the airline reports none,
+  // so the sync derives it from these very movements - it always adds up, so it is shown and
+  // never checked.
   day_balance: z.number().nullish(),
-  linked_issuance: azulStatementLinkedIssuanceSchema.nullish(),
-  linked_batch: azulStatementLinkedBatchSchema.nullish(),
+  // Smiles only: the airline's own sub-classification ("Cancellation" on a credit is an estorno)
+  // and where the movement was made ("Web", "APP", "MSR").
+  sub_type: z.string().nullish(),
+  channel: z.string().nullish(),
+  linked_issuance: statementLinkedIssuanceSchema.nullish(),
+  linked_batch: statementLinkedBatchSchema.nullish(),
 })
 
-export type AzulStatementEntry = z.infer<typeof azulStatementEntrySchema>
+export type StatementEntry = z.infer<typeof statementEntrySchema>
 
-export const azulStatementEntriesSchema = z.object({
-  sync_state: azulSyncStateSchema,
+export const statementEntriesSchema = z.object({
+  sync_state: statementSyncStateSchema,
   from: z.string(),
   to: z.string(),
-  lines: z.array(azulStatementEntrySchema),
+  lines: z.array(statementEntrySchema),
 })
 
-export type AzulStatementEntries = z.infer<typeof azulStatementEntriesSchema>
+export type StatementEntries = z.infer<typeof statementEntriesSchema>
 
-export const azulStatementEntriesResponseSchema = z.object({
+export const statementEntriesResponseSchema = z.object({
   success: z.boolean(),
   message: z.string(),
-  data: azulStatementEntriesSchema.nullish(),
+  data: statementEntriesSchema.nullish(),
 })
 
 // The link routes answer with how the locator now resolves, so the page can update the line in
 // place without a full refetch.
-export const azulBookingLinkResponseSchema = z.object({
+export const bookingLinkResponseSchema = z.object({
   success: z.boolean(),
   message: z.string(),
   data: z
     .object({
       locator: z.string(),
-      linked_issuance: azulStatementLinkedIssuanceSchema.nullish(),
+      linked_issuance: statementLinkedIssuanceSchema.nullish(),
     })
     .nullish(),
 })
 
 // The batch-link routes answer with how the line now resolves to a batch.
-export const azulBatchLinkResponseSchema = z.object({
+export const batchLinkResponseSchema = z.object({
   success: z.boolean(),
   message: z.string(),
   data: z
     .object({
       key: z.string(),
-      linked_batch: azulStatementLinkedBatchSchema.nullish(),
+      linked_batch: statementLinkedBatchSchema.nullish(),
+    })
+    .nullish(),
+})
+
+// --- Conexão da conta Smiles ---
+//
+// Unlike Azul's one-shot background login, connecting Smiles is a conversation: log in, pick a
+// channel, type the code. Each step answers within its own request, so there is no "connecting"
+// state to poll - what the panel tracks is which step it is on.
+
+export const smilesAuthenticatorSchema = z.object({
+  id: z.string(),
+  // "sms" or "email".
+  channel: z.string(),
+  // Already masked by the server ("***77", "f***@o***"). The real number never reaches here.
+  target: z.string(),
+})
+
+export type SmilesAuthenticator = z.infer<typeof smilesAuthenticatorSchema>
+
+export const smilesConnectResponseSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
+  data: z
+    .object({
+      connected: z.boolean(),
+      mfa_required: z.boolean(),
+      authenticators: z.array(smilesAuthenticatorSchema).nullish(),
+    })
+    .nullish(),
+})
+
+export const smilesChallengeResponseSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
+  data: z
+    .object({
+      channel: z.string(),
+      sent_to: z.string(),
     })
     .nullish(),
 })

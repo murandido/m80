@@ -12,12 +12,13 @@ import (
 	v1 "github.com/murandido/m-80-backend/internal/api/v1"
 	"github.com/murandido/m-80-backend/internal/events"
 	"github.com/murandido/m-80-backend/internal/health"
+	"github.com/murandido/m-80-backend/internal/smilessync"
 	"github.com/murandido/m-80-backend/internal/traveos"
 	httpSwagger "github.com/swaggo/http-swagger"
 	"gorm.io/gorm"
 )
 
-func NewRouter(db *gorm.DB, broker *events.Broker, traveosClient *traveos.Client, monitor *health.Monitor) *chi.Mux {
+func NewRouter(db *gorm.DB, broker *events.Broker, traveosClient *traveos.Client, monitor *health.Monitor, smilesGuard *smilessync.SessionGuard) *chi.Mux {
 	r := chi.NewRouter()
 
 	// Before Logger and the rate limiter, both of which read r.RemoteAddr and
@@ -50,7 +51,7 @@ func NewRouter(db *gorm.DB, broker *events.Broker, traveosClient *traveos.Client
 		))
 	}
 
-	r.Mount("/api/v1", v1.NewRouter(db, broker, traveosClient, monitor))
+	r.Mount("/api/v1", v1.NewRouter(db, broker, traveosClient, monitor, smilesGuard))
 
 	return r
 }

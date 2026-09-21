@@ -152,7 +152,7 @@ func TestAzulBookingLinkAndUnlink(t *testing.T) {
 		// Pin LOC to the "OTHER" issuance.
 		rec := httptest.NewRecorder()
 		body := `{"locator":"LOC","issuance_id":"` + pinned.ID + `"}`
-		handler.LinkAzulBooking(rec, azulStatementRequest(http.MethodPost, account.ID, user.ID, body))
+		handler.LinkStatementBooking(rec, azulStatementRequest(http.MethodPost, account.ID, user.ID, body))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("link status: got %d, want 200 (body: %s)", rec.Code, rec.Body.String())
 		}
@@ -173,7 +173,7 @@ func TestAzulBookingLinkAndUnlink(t *testing.T) {
 
 		// Unlink: LOC falls back to its automatic match.
 		rec = httptest.NewRecorder()
-		handler.UnlinkAzulBooking(rec, azulStatementRequest(http.MethodDelete, account.ID, user.ID, `{"locator":"LOC"}`))
+		handler.UnlinkStatementBooking(rec, azulStatementRequest(http.MethodDelete, account.ID, user.ID, `{"locator":"LOC"}`))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("unlink status: got %d, want 200 (body: %s)", rec.Code, rec.Body.String())
 		}
@@ -204,7 +204,7 @@ func TestAzulBookingLinkRejectsForeignIssuance(t *testing.T) {
 		handler := NewStatementHandler(tx)
 		rec := httptest.NewRecorder()
 		body := `{"locator":"LOC","issuance_id":"` + foreign.ID + `"}`
-		handler.LinkAzulBooking(rec, azulStatementRequest(http.MethodPost, account.ID, user.ID, body))
+		handler.LinkStatementBooking(rec, azulStatementRequest(http.MethodPost, account.ID, user.ID, body))
 		if rec.Code != http.StatusUnprocessableEntity {
 			t.Fatalf("status: got %d, want 422 (body: %s)", rec.Code, rec.Body.String())
 		}

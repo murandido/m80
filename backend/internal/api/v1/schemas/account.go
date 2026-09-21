@@ -104,6 +104,13 @@ type AccountResponse struct {
 	// card can show "atualizado há…". Null until the first successful sync, or on accounts
 	// with no sync state row.
 	AzulLastSyncedAt *time.Time `json:"azul_last_synced_at"`
+	// SmilesConnected is whether a session is stored for this account - i.e. whether the
+	// Smiles statement sync can read it. The session itself is never returned (it is
+	// json:"-" on the model), so this bit is how the panel knows to offer "Conectar" versus
+	// showing the synced balance. Always false on accounts of other programs.
+	SmilesConnected bool `json:"smiles_connected"`
+	// SmilesLastSyncedAt is the Smiles twin of AzulLastSyncedAt.
+	SmilesLastSyncedAt *time.Time `json:"smiles_last_synced_at"`
 	// CPFUsage is how much of the program's beneficiary cap this account has consumed,
 	// and is null whenever there is no cap to report: an injunction suspends it, an
 	// unidentified account gives no basis to claim one, and a program nobody has

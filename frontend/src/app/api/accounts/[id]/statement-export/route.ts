@@ -6,16 +6,21 @@ import { env } from "@/lib/env"
 // <a download> cannot send one - so this handler attaches the Bearer token and streams the
 // generated CSV back to the browser, preserving the download filename the backend set.
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params
   const cookieStore = await cookies()
   const token = cookieStore.get("auth_token")?.value
 
+  // Which programme's export to fetch. Validated against the two that exist rather than
+  // interpolated as given: this segment goes straight into a backend URL.
+  const requested = new URL(request.url).searchParams.get("program")
+  const program = requested === "smiles" ? "smiles" : "azul"
+
   const backendUrl = `${env.BACKEND_URL}/api/v1/accounts/${encodeURIComponent(
     id,
-  )}/azul-statement/export`
+  )}/${program}-statement/export`
 
   const res = await fetch(backendUrl, {
     headers: { Authorization: `Bearer ${token}` },

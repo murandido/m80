@@ -34,12 +34,19 @@ type Account struct {
 	// json:"-" because, unlike Password (which staff must see to log in by hand), nobody reads
 	// this off the panel - it is machinery for the sync. Nil until the account is connected.
 	// See migration 54 and internal/azul.
-	AzulCustomerKey *string           `gorm:"column:azul_customer_key" json:"-"`
-	HolderID        *string           `gorm:"column:holder_id;type:uuid" json:"holder_id"`
-	Holder          *Person           `gorm:"foreignKey:HolderID;references:ID" json:"holder,omitempty"`
-	AdministratorID *string           `gorm:"column:administrator_id;type:uuid" json:"administrator_id"`
-	Administrator   *Person           `gorm:"foreignKey:AdministratorID;references:ID" json:"administrator,omitempty"`
-	Nicknames       []AccountNickname `gorm:"foreignKey:AccountID;references:ID" json:"nicknames,omitempty"`
+	AzulCustomerKey *string `gorm:"column:azul_customer_key" json:"-"`
+	// SmilesRefreshToken is the session of a connected Smiles account: it renews the access
+	// without a second verification code. Unlike AzulCustomerKey it is a live credential
+	// rather than an identifier, and the tenant rotates it on every renewal - so it is
+	// rewritten on each sync round, and keeping a stale one costs the operator a new code.
+	// Encrypted at rest by the same hooks as Password, and json:"-" because nobody reads it
+	// off the panel. Nil until the account is connected. See migration 63 and internal/smiles.
+	SmilesRefreshToken *string           `gorm:"column:smiles_refresh_token" json:"-"`
+	HolderID           *string           `gorm:"column:holder_id;type:uuid" json:"holder_id"`
+	Holder             *Person           `gorm:"foreignKey:HolderID;references:ID" json:"holder,omitempty"`
+	AdministratorID    *string           `gorm:"column:administrator_id;type:uuid" json:"administrator_id"`
+	Administrator      *Person           `gorm:"foreignKey:AdministratorID;references:ID" json:"administrator,omitempty"`
+	Nicknames          []AccountNickname `gorm:"foreignKey:AccountID;references:ID" json:"nicknames,omitempty"`
 	// Category decides whether the program's beneficiary cap applies at all.
 	// "injunction" is an account under a court order suspending the cap, and
 	// "unidentified" is one nobody has classified yet - only "standard" is counted.
@@ -112,6 +119,13 @@ func (a *Account) BeforeSave(tx *gorm.DB) error {
 		}
 		a.AzulCustomerKey = &encrypted
 	}
+	if a.SmilesRefreshToken != nil && !strings.HasPrefix(*a.SmilesRefreshToken, "enc:") {
+		encrypted, err := utils.Encrypt(*a.SmilesRefreshToken)
+		if err != nil {
+			return err
+		}
+		a.SmilesRefreshToken = &encrypted
+	}
 	return nil
 }
 
@@ -129,6 +143,13 @@ func (a *Account) AfterFind(tx *gorm.DB) error {
 			return err
 		}
 		a.AzulCustomerKey = &decrypted
+	}
+	if a.SmilesRefreshToken != nil {
+		decrypted, err := utils.Decrypt(*a.SmilesRefreshToken)
+		if err != nil {
+			return err
+		}
+		a.SmilesRefreshToken = &decrypted
 	}
 	return nil
 }

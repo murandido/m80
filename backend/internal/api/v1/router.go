@@ -7,11 +7,12 @@ import (
 	"github.com/murandido/m-80-backend/internal/api/v1/routes"
 	"github.com/murandido/m-80-backend/internal/events"
 	"github.com/murandido/m-80-backend/internal/health"
+	"github.com/murandido/m-80-backend/internal/smilessync"
 	"github.com/murandido/m-80-backend/internal/traveos"
 	"gorm.io/gorm"
 )
 
-func NewRouter(db *gorm.DB, broker *events.Broker, traveosClient *traveos.Client, monitor *health.Monitor) chi.Router {
+func NewRouter(db *gorm.DB, broker *events.Broker, traveosClient *traveos.Client, monitor *health.Monitor, smilesGuard *smilessync.SessionGuard) chi.Router {
 	r := chi.NewRouter()
 
 	authHandler := handlers.NewAuthHandler(db)
@@ -54,8 +55,8 @@ func NewRouter(db *gorm.DB, broker *events.Broker, traveosClient *traveos.Client
 		// something the issuances grid may ever surface.
 		routes.RegisterPointBatchOriginRoutes(r, db)
 		routes.RegisterPointBatchRoutes(r, db)
-		routes.RegisterStatementRoutes(r, db)
 		routes.RegisterAzulStatementRoutes(r, db)
+		routes.RegisterSmilesStatementRoutes(r, db, smilesGuard)
 		routes.RegisterInventoryPeriodRoutes(r, db)
 		// SSE stream, behind the same auth as everything else in this group
 		routes.RegisterEventRoutes(r, broker)

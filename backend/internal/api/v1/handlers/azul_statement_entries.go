@@ -40,7 +40,7 @@ import (
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao carregar o extrato"
 // @Router       /accounts/{id}/azul-statement/entries [get]
 func (h *StatementHandler) AzulStatementEntries(w http.ResponseWriter, r *http.Request) {
-	account, ok := h.azulAccount(w, r)
+	account, ok := h.inventoryAccount(w, r)
 	if !ok {
 		return
 	}
@@ -159,7 +159,7 @@ func (h *StatementHandler) AzulStatementEntries(w http.ResponseWriter, r *http.R
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao gerar o CSV"
 // @Router       /accounts/{id}/azul-statement/export [get]
 func (h *StatementHandler) ExportAzulStatement(w http.ResponseWriter, r *http.Request) {
-	account, ok := h.azulAccount(w, r)
+	account, ok := h.inventoryAccount(w, r)
 	if !ok {
 		return
 	}
@@ -271,7 +271,7 @@ func (h *StatementHandler) AssignAzulCityCode(w http.ResponseWriter, r *http.Req
 	utils.SendJSON(w, r, http.StatusOK, "Código atribuído", schemas.AzulCityCodeResponse{City: city, IATA: iata})
 }
 
-// LinkAzulBooking handles POST /accounts/{id}/azul-statement/links
+// LinkStatementBooking handles POST /accounts/{id}/{azul|smiles}-statement/links
 //
 // Pins a statement locator to a real issuance, overriding the automatic match. Only reachable
 // from the statement page's edit mode; the pinned issuance must belong to the account.
@@ -291,8 +291,9 @@ func (h *StatementHandler) AssignAzulCityCode(w http.ResponseWriter, r *http.Req
 // @Failure      422  {object}  schemas.ErrorResponse "Conta sem estoque próprio ou emissão não é da conta"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao salvar o vínculo"
 // @Router       /accounts/{id}/azul-statement/links [post]
-func (h *StatementHandler) LinkAzulBooking(w http.ResponseWriter, r *http.Request) {
-	account, ok := h.azulAccount(w, r)
+// @Router       /accounts/{id}/smiles-statement/links [post]
+func (h *StatementHandler) LinkStatementBooking(w http.ResponseWriter, r *http.Request) {
+	account, ok := h.inventoryAccount(w, r)
 	if !ok {
 		return
 	}
@@ -331,7 +332,7 @@ func (h *StatementHandler) LinkAzulBooking(w http.ResponseWriter, r *http.Reques
 	h.respondBookingLink(w, r, account.ID, body.Locator, "Vínculo salvo")
 }
 
-// UnlinkAzulBooking handles DELETE /accounts/{id}/azul-statement/links
+// UnlinkStatementBooking handles DELETE /accounts/{id}/{azul|smiles}-statement/links
 //
 // Removes a manual pin, handing the locator back to the automatic match. The response reports
 // how the locator resolves now (the automatic match, or null when there is none).
@@ -351,8 +352,9 @@ func (h *StatementHandler) LinkAzulBooking(w http.ResponseWriter, r *http.Reques
 // @Failure      422  {object}  schemas.ErrorResponse "Conta sem estoque próprio"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao remover o vínculo"
 // @Router       /accounts/{id}/azul-statement/links [delete]
-func (h *StatementHandler) UnlinkAzulBooking(w http.ResponseWriter, r *http.Request) {
-	account, ok := h.azulAccount(w, r)
+// @Router       /accounts/{id}/smiles-statement/links [delete]
+func (h *StatementHandler) UnlinkStatementBooking(w http.ResponseWriter, r *http.Request) {
+	account, ok := h.inventoryAccount(w, r)
 	if !ok {
 		return
 	}
@@ -390,7 +392,7 @@ func (h *StatementHandler) respondBookingLink(w http.ResponseWriter, r *http.Req
 	utils.SendJSON(w, r, http.StatusOK, message, response)
 }
 
-// LinkAzulBatch handles POST /accounts/{id}/azul-statement/batch-links
+// LinkStatementBatch handles POST /accounts/{id}/{azul|smiles}-statement/batch-links
 //
 // Pins a point-entry line (a purchase or accrual) to a batch, overriding the automatic match.
 // The batch must belong to the account. Reached from the statement page's edit mode.
@@ -410,8 +412,9 @@ func (h *StatementHandler) respondBookingLink(w http.ResponseWriter, r *http.Req
 // @Failure      422  {object}  schemas.ErrorResponse "Conta sem estoque próprio ou lote não é da conta"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao salvar o vínculo"
 // @Router       /accounts/{id}/azul-statement/batch-links [post]
-func (h *StatementHandler) LinkAzulBatch(w http.ResponseWriter, r *http.Request) {
-	account, ok := h.azulAccount(w, r)
+// @Router       /accounts/{id}/smiles-statement/batch-links [post]
+func (h *StatementHandler) LinkStatementBatch(w http.ResponseWriter, r *http.Request) {
+	account, ok := h.inventoryAccount(w, r)
 	if !ok {
 		return
 	}
@@ -449,7 +452,7 @@ func (h *StatementHandler) LinkAzulBatch(w http.ResponseWriter, r *http.Request)
 	h.respondBatchLink(w, r, account.ID, body.Key, body.OccurredOn, body.Points, "Vínculo salvo")
 }
 
-// UnlinkAzulBatch handles DELETE /accounts/{id}/azul-statement/batch-links
+// UnlinkStatementBatch handles DELETE /accounts/{id}/{azul|smiles}-statement/batch-links
 //
 // Removes a manual batch pin, handing the line back to the automatic match.
 // @Summary      Remover o vínculo manual de uma linha de entrada com o lote
@@ -468,8 +471,9 @@ func (h *StatementHandler) LinkAzulBatch(w http.ResponseWriter, r *http.Request)
 // @Failure      422  {object}  schemas.ErrorResponse "Conta sem estoque próprio"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao remover o vínculo"
 // @Router       /accounts/{id}/azul-statement/batch-links [delete]
-func (h *StatementHandler) UnlinkAzulBatch(w http.ResponseWriter, r *http.Request) {
-	account, ok := h.azulAccount(w, r)
+// @Router       /accounts/{id}/smiles-statement/batch-links [delete]
+func (h *StatementHandler) UnlinkStatementBatch(w http.ResponseWriter, r *http.Request) {
+	account, ok := h.inventoryAccount(w, r)
 	if !ok {
 		return
 	}

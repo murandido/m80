@@ -40,21 +40,22 @@ import { cn } from "@/lib/utils"
 import { LoyaltyProgramBadge } from "./loyalty-program-badge"
 import { LoyaltyProgramSummary } from "@/schemas/account"
 import {
-  type AzulStatementEntries,
-  type AzulStatementEntry,
-  type AzulStatementKind,
-  type AzulStatementLinkedBatch,
-  type AzulStatementLinkedIssuance,
-  type AzulSyncStateKind,
+  type StatementEntries,
+  type SyncedProgram,
+  type StatementEntry,
+  type StatementLineKind,
+  type StatementLinkedBatch,
+  type StatementLinkedIssuance,
+  type StatementSyncKind,
 } from "@/schemas/inventory"
 import {
   assignAzulCityCodeAction,
   getAccountBatchesAction,
-  linkAzulBatchAction,
-  linkAzulBookingAction,
+  linkStatementBatchAction,
+  linkStatementBookingAction,
   searchAccountIssuancesAction,
-  unlinkAzulBatchAction,
-  unlinkAzulBookingAction,
+  unlinkStatementBatchAction,
+  unlinkStatementBookingAction,
   type BatchLinkOption,
   type IssuanceLinkOption,
 } from "@/actions/statement"
@@ -62,7 +63,7 @@ import { formatCurrencyBRL } from "@/lib/currency"
 
 // The kinds, in the panel's Portuguese, with a colour and an icon each. Mirrors data.AzulLine*.
 const KIND_META: Record<
-  AzulStatementKind,
+  StatementLineKind,
   { label: string; className: string; icon: typeof ArrowDownCircle }
 > = {
   redemption: { label: "Resgate", className: "text-rose-600", icon: ArrowUpCircle },
@@ -74,11 +75,12 @@ const KIND_META: Record<
 }
 
 // The sync-state badge, mirroring the labels used on the inventory panel.
-const SYNC_STATE_META: Record<AzulSyncStateKind, { label: string; className: string }> = {
+const SYNC_STATE_META: Record<StatementSyncKind, { label: string; className: string }> = {
   pending: { label: "Aguardando 1ª sync", className: "bg-slate-100 text-slate-600" },
   ok: { label: "Sincronizado", className: "bg-emerald-100 text-emerald-700" },
   error: { label: "Erro na sincronização", className: "bg-rose-100 text-rose-700" },
   inconsistent: { label: "Saldo divergente", className: "bg-amber-100 text-amber-800" },
+  needs_mfa: { label: "Precisa de código novo", className: "bg-amber-100 text-amber-800" },
   needs_attention: { label: "Precisa de atenção", className: "bg-rose-100 text-rose-700" },
 }
 
@@ -101,13 +103,13 @@ function typeLabel(typeDescription: string | null | undefined): string {
 
 // Which kinds carry a booking link. Only redemptions and refunds (cancellations) map to an
 // issuance, by locator. Everything else either links to a batch or, like "other", to nothing.
-function isLinkable(kind: AzulStatementKind): boolean {
+function isLinkable(kind: StatementLineKind): boolean {
   return kind === "redemption" || kind === "refund"
 }
 
 // Point entries - purchases (which include campaign/promotion credits) and accruals - link to a
 // batch (lote) rather than an issuance.
-function isBatchLinkable(kind: AzulStatementKind): boolean {
+function isBatchLinkable(kind: StatementLineKind): boolean {
   return kind === "accrual" || kind === "purchase"
 }
 
@@ -115,7 +117,7 @@ function isBatchLinkable(kind: AzulStatementKind): boolean {
 // description (which was just the partner and read as "AZUL" on a promotion). The type label says
 // what the movement is and the partner who it came from; the route is rendered separately so its
 // cities can be made assignable. Each shown only when it adds something, never truncated.
-function detailParts(entry: AzulStatementEntry): string[] {
+function detailParts(entry: StatementEntry): string[] {
   const parts: string[] = []
   const label = typeLabel(entry.type_description)
   if (label) parts.push(label)
@@ -172,7 +174,11 @@ interface AccountStatementViewProps {
   accountName: string
   accountDocument: string | null
   program: LoyaltyProgramSummary
-  entries: AzulStatementEntries
+  // Which programme's routes to talk to, and which of the two airlines' quirks apply. It is
+  // derived from the programme on the server rather than sniffed from the code here, so the
+  // screen never guesses.
+  syncedProgram: SyncedProgram
+  entries: StatementEntries
 }
 
 export function AccountStatementView({
@@ -180,22 +186,23 @@ export function AccountStatementView({
   accountName,
   accountDocument,
   program,
+  syncedProgram,
   entries,
 }: AccountStatementViewProps) {
   const [editMode, setEditMode] = useState(false)
   // Overrides keyed by locator, so linking one line updates every line that shares the locator
   // without a refetch. Undefined means "use the value the server sent".
   const [overrides, setOverrides] = useState<
-    Record<string, AzulStatementLinkedIssuance | null>
+    Record<string, StatementLinkedIssuance | null>
   >({})
   const [batchOverrides, setBatchOverrides] = useState<
-    Record<string, AzulStatementLinkedBatch | null>
+    Record<string, StatementLinkedBatch | null>
   >({})
   // Client-side filters over the loaded window: the whole month is already here, so there is no
   // round-trip. Empty means no bound / all kinds.
   const [dateFrom, setDateFrom] = useState("")
   const [dateTo, setDateTo] = useState("")
-  const [kindFilter, setKindFilter] = useState<AzulStatementKind | "all">("all")
+  const [kindFilter, setKindFilter] = useState<StatementLineKind | "all">("all")
   // Newest day first by default, which is how a statement is normally read; the operator can flip
   // it to oldest-first.
   const [sortOrder, setSortOrder] = useState<"desc" | "asc">("desc")
@@ -211,14 +218,14 @@ export function AccountStatementView({
 
   const { sync_state: syncState, from, to, lines } = entries
 
-  function linkedFor(entry: AzulStatementEntry): AzulStatementLinkedIssuance | null {
+  function linkedFor(entry: StatementEntry): StatementLinkedIssuance | null {
     if (entry.key in overrides) {
       return overrides[entry.key]
     }
     return entry.linked_issuance ?? null
   }
 
-  function linkedBatchFor(entry: AzulStatementEntry): AzulStatementLinkedBatch | null {
+  function linkedBatchFor(entry: StatementEntry): StatementLinkedBatch | null {
     if (entry.key in batchOverrides) {
       return batchOverrides[entry.key]
     }
@@ -290,7 +297,7 @@ export function AccountStatementView({
   // read top-to-bottom). Grouping by day first, reversing the day order, then flattening keeps
   // that, and gives a flat list to page over.
   const orderedLines = useMemo(() => {
-    const byDay: AzulStatementEntry[][] = []
+    const byDay: StatementEntry[][] = []
     for (const line of filteredLines) {
       const last = byDay[byDay.length - 1]
       if (last && last[0].occurred_on === line.occurred_on) last.push(line)
@@ -322,7 +329,7 @@ export function AccountStatementView({
   // day split across two pages simply shows its header again on each - every line carries the same
   // day balance, so the partial day still reports it.
   const days = useMemo(() => {
-    const groups: { day: string; balance: number | null; lines: AzulStatementEntry[] }[] = []
+    const groups: { day: string; balance: number | null; lines: StatementEntry[] }[] = []
     for (const line of pageLines) {
       const last = groups[groups.length - 1]
       if (last && last.day === line.occurred_on) {
@@ -363,7 +370,7 @@ export function AccountStatementView({
               title="Exportar CSV"
               className="h-7 gap-1 px-2 text-xs text-slate-600 hover:border-emerald-600 hover:bg-emerald-600 hover:text-white"
             >
-              <a href={`/api/accounts/${accountId}/statement-export`}>
+              <a href={`/api/accounts/${accountId}/statement-export?program=${syncedProgram}`}>
                 <Download className="h-3.5 w-3.5" />
                 CSV
               </a>
@@ -407,7 +414,7 @@ export function AccountStatementView({
           <Select
             value={kindFilter}
             onValueChange={(value) => {
-              setKindFilter(value as AzulStatementKind | "all")
+              setKindFilter(value as StatementLineKind | "all")
               setPage(1)
             }}
           >
@@ -491,7 +498,13 @@ export function AccountStatementView({
                   <h2 className="text-xs font-semibold tracking-wide text-slate-400 uppercase">
                     {formatDay(group.day)}
                   </h2>
-                  <DayCompletenessBadge status={dayCompleteness.get(group.day)} />
+                  {/* Both programmes show a closing balance, but only Azul's comes from the
+                      airline, so only Azul's can disagree with the day's movements. The Smiles
+                      one is derived from them and always adds up, so a badge there would be a
+                      green tick that means nothing - worse than none. */}
+                  {syncedProgram === "azul" && (
+                    <DayCompletenessBadge status={dayCompleteness.get(group.day)} />
+                  )}
                 </div>
                 {group.balance != null && (
                   <span className="text-xs text-slate-400 tabular-nums">
@@ -504,6 +517,7 @@ export function AccountStatementView({
                   <StatementLine
                     key={`${group.day}-${index}`}
                     accountId={accountId}
+                    syncedProgram={syncedProgram}
                     entry={entry}
                     linked={linkedFor(entry)}
                     linkedBatch={linkedBatchFor(entry)}
@@ -593,16 +607,18 @@ function DayCompletenessBadge({ status }: { status: DayCompleteness | undefined 
 
 interface StatementLineProps {
   accountId: string
-  entry: AzulStatementEntry
-  linked: AzulStatementLinkedIssuance | null
-  linkedBatch: AzulStatementLinkedBatch | null
+  syncedProgram: SyncedProgram
+  entry: StatementEntry
+  linked: StatementLinkedIssuance | null
+  linkedBatch: StatementLinkedBatch | null
   editMode: boolean
-  onLinkedChange: (linkKey: string, linked: AzulStatementLinkedIssuance | null) => void
-  onBatchLinkedChange: (linkKey: string, linked: AzulStatementLinkedBatch | null) => void
+  onLinkedChange: (linkKey: string, linked: StatementLinkedIssuance | null) => void
+  onBatchLinkedChange: (linkKey: string, linked: StatementLinkedBatch | null) => void
 }
 
 function StatementLine({
   accountId,
+  syncedProgram,
   entry,
   linked,
   linkedBatch,
@@ -630,9 +646,17 @@ function StatementLine({
             </span>
             {(entry.origin || entry.destination) && (
               <span className="flex items-center gap-1 text-xs text-slate-500">
-                <CityChip accountId={accountId} value={entry.origin} editMode={editMode} />
-                {entry.origin && entry.destination && <span>→</span>}
-                <CityChip accountId={accountId} value={entry.destination} editMode={editMode} />
+                {/* Azul sends a city name, which has to be mapped to an IATA code by hand;
+                    Smiles sends the code itself, so there is nothing to assign. */}
+                {syncedProgram === "azul" ? (
+                  <>
+                    <CityChip accountId={accountId} value={entry.origin} editMode={editMode} />
+                    {entry.origin && entry.destination && <span>→</span>}
+                    <CityChip accountId={accountId} value={entry.destination} editMode={editMode} />
+                  </>
+                ) : (
+                  <span className="font-mono">{routeOf(entry.origin, entry.destination)}</span>
+                )}
               </span>
             )}
             {detail && (
@@ -650,6 +674,7 @@ function StatementLine({
       {linkable && (
         <BookingLink
           accountId={accountId}
+          syncedProgram={syncedProgram}
           linkKey={entry.key}
           linked={linked}
           editMode={editMode}
@@ -660,6 +685,7 @@ function StatementLine({
       {batchLinkable && (
         <BatchLink
           accountId={accountId}
+          syncedProgram={syncedProgram}
           linkKey={entry.key}
           occurredOn={entry.occurred_on}
           points={entry.points}
@@ -674,14 +700,16 @@ function StatementLine({
 
 interface BookingLinkProps {
   accountId: string
+  syncedProgram: SyncedProgram
   linkKey: string
-  linked: AzulStatementLinkedIssuance | null
+  linked: StatementLinkedIssuance | null
   editMode: boolean
-  onLinkedChange: (linkKey: string, linked: AzulStatementLinkedIssuance | null) => void
+  onLinkedChange: (linkKey: string, linked: StatementLinkedIssuance | null) => void
 }
 
 function BookingLink({
   accountId,
+  syncedProgram,
   linkKey,
   linked,
   editMode,
@@ -691,7 +719,7 @@ function BookingLink({
 
   function handleUnlink() {
     startTransition(async () => {
-      const result = await unlinkAzulBookingAction(accountId, linkKey)
+      const result = await unlinkStatementBookingAction(syncedProgram, accountId, linkKey)
       if ("error" in result) {
         toast.error(result.error)
         return
@@ -703,7 +731,7 @@ function BookingLink({
 
   function handlePick(issuance: IssuanceLinkOption) {
     startTransition(async () => {
-      const result = await linkAzulBookingAction(accountId, linkKey, issuance.id)
+      const result = await linkStatementBookingAction(syncedProgram, accountId, linkKey, issuance.id)
       if ("error" in result) {
         toast.error(result.error)
         return
@@ -883,12 +911,13 @@ function IssuancePicker({ accountId, disabled, onPick }: IssuancePickerProps) {
 
 interface BatchLinkProps {
   accountId: string
+  syncedProgram: SyncedProgram
   linkKey: string
   occurredOn: string
   points: number
-  linked: AzulStatementLinkedBatch | null
+  linked: StatementLinkedBatch | null
   editMode: boolean
-  onLinkedChange: (linkKey: string, linked: AzulStatementLinkedBatch | null) => void
+  onLinkedChange: (linkKey: string, linked: StatementLinkedBatch | null) => void
 }
 
 // The lote side of a line, mirroring BookingLink: shows the batch a purchase/accrual maps to
@@ -896,6 +925,7 @@ interface BatchLinkProps {
 // clear a batch. The day and points ride along so the server can recompute the auto match.
 function BatchLink({
   accountId,
+  syncedProgram,
   linkKey,
   occurredOn,
   points,
@@ -907,7 +937,7 @@ function BatchLink({
 
   function handleUnlink() {
     startTransition(async () => {
-      const result = await unlinkAzulBatchAction(accountId, linkKey, occurredOn, points)
+      const result = await unlinkStatementBatchAction(syncedProgram, accountId, linkKey, occurredOn, points)
       if ("error" in result) {
         toast.error(result.error)
         return
@@ -919,7 +949,7 @@ function BatchLink({
 
   function handlePick(batch: BatchLinkOption) {
     startTransition(async () => {
-      const result = await linkAzulBatchAction(accountId, linkKey, batch.id, occurredOn, points)
+      const result = await linkStatementBatchAction(syncedProgram, accountId, linkKey, batch.id, occurredOn, points)
       if ("error" in result) {
         toast.error(result.error)
         return

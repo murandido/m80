@@ -28,7 +28,7 @@ import (
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao carregar o estado"
 // @Router       /accounts/{id}/azul-statement/status [get]
 func (h *StatementHandler) AzulConnectStatus(w http.ResponseWriter, r *http.Request) {
-	account, ok := h.azulAccount(w, r)
+	account, ok := h.inventoryAccount(w, r)
 	if !ok {
 		return
 	}

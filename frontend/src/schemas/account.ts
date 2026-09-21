@@ -91,6 +91,13 @@ export const accountSchema = z.object({
   // When the statement sync last succeeded, for the card's "atualizado há…". Null until
   // the first successful sync.
   azul_last_synced_at: z.string().nullish(),
+  // The Smiles twins: whether a session is stored for the account, and when its sync last
+  // succeeded. Defaulted the same way, for the same reason.
+  smiles_connected: z
+    .boolean()
+    .nullish()
+    .transform((value) => value ?? false),
+  smiles_last_synced_at: z.string().nullish(),
   cpf_usage: cpfUsageSchema.nullish(),
   complete: z.boolean(),
   created_at: z.string(),

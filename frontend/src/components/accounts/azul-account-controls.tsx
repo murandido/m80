@@ -9,7 +9,7 @@ import { toast } from "sonner"
 import { FileText, Link2, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { connectAzulAccountAction } from "@/actions/statement"
-import { azulSyncStateSchema, type AzulSyncState } from "@/schemas/inventory"
+import { statementSyncStateSchema, type StatementSyncState } from "@/schemas/inventory"
 import { formatConnectingElapsed } from "@/lib/elapsed"
 import { Account } from "@/schemas/account"
 
@@ -45,7 +45,7 @@ export function AzulAccountControls({ account }: AzulAccountControlsProps) {
   const [isConnecting, startConnecting] = useTransition()
   // The server-owned sync state, once fetched. Null before the first read; until then the card
   // falls back to what the account row already carried from the server render.
-  const [status, setStatus] = useState<AzulSyncState | null>(null)
+  const [status, setStatus] = useState<StatementSyncState | null>(null)
   // A ticking clock, so the elapsed time next to "conectando" advances every second.
   const [now, setNow] = useState(() => Date.now())
   // Remembers we were mid-connect, so the moment the poll reports it finished we refresh the page
@@ -62,7 +62,7 @@ export function AzulAccountControls({ account }: AzulAccountControlsProps) {
         cache: "no-store",
       })
       if (!response.ok) return
-      const parsed = azulSyncStateSchema.safeParse(await response.json())
+      const parsed = statementSyncStateSchema.safeParse(await response.json())
       if (parsed.success) setStatus(parsed.data)
     } catch {
       // A failed poll is not worth a toast: the next tick tries again, and the card keeps showing
@@ -82,7 +82,7 @@ export function AzulAccountControls({ account }: AzulAccountControlsProps) {
       .then((response) => (response.ok ? response.json() : null))
       .then((data) => {
         if (!active) return
-        const parsed = azulSyncStateSchema.safeParse(data)
+        const parsed = statementSyncStateSchema.safeParse(data)
         if (parsed.success) setStatus(parsed.data)
       })
       .catch(() => {})

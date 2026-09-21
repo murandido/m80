@@ -7,7 +7,8 @@ import { env } from "@/lib/env"
 import { Button } from "@/components/ui/button"
 import { requireAdmin } from "@/lib/session"
 import { getAccountSchema, type Account } from "@/schemas/account"
-import { getAzulStatementEntriesAction } from "@/actions/statement"
+import { getStatementEntriesAction } from "@/actions/statement"
+import type { SyncedProgram } from "@/schemas/inventory"
 import { AccountStatementView } from "@/components/accounts/account-statement-view"
 
 export const metadata: Metadata = {
@@ -64,7 +65,19 @@ export default async function AccountStatementPage({
     notFound()
   }
 
-  const result = await getAzulStatementEntriesAction(id)
+  // Which programme this account's statement comes from. Only these two are synced; anything
+  // else has no statement page to show.
+  const syncedProgram: SyncedProgram | null =
+    account.loyalty_program.code === "AZUL"
+      ? "azul"
+      : account.loyalty_program.code === "SMILES"
+        ? "smiles"
+        : null
+  if (!syncedProgram) {
+    notFound()
+  }
+
+  const result = await getStatementEntriesAction(syncedProgram, id)
 
   const holderName = account.holder_id ? await fetchHolderName(account.holder_id) : null
   // The name leads; the document (the login/CPF) is the secondary line. Fall back to the login as
@@ -94,6 +107,7 @@ export default async function AccountStatementPage({
           accountName={accountName}
           accountDocument={accountDocument}
           program={account.loyalty_program}
+          syncedProgram={syncedProgram}
           entries={result.entries}
         />
       )}

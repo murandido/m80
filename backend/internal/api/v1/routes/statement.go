@@ -8,29 +8,9 @@ import (
 	"gorm.io/gorm"
 )
 
-// RegisterStatementRoutes mounts the screen that reconciles an airline statement against
-// the panel.
-//
-// Mounted as a static "/point-batches/statement" child, the same shape the legacy importer
-// uses under "/issuances": chi checks static children before any catch-all, so this never
-// collides with "/point-batches/{id}" whatever the registration order.
-//
-// Admin-only like the rest of the inventory - it reads what points cost and writes batches.
-//
-// Temporary in the same sense the importer is: it exists because neither programme has an
-// API. When one does, the parsers go and the reconciliation stays, fed from the API instead
-// of from a file.
-func RegisterStatementRoutes(r chi.Router, db *gorm.DB) {
-	h := handlers.NewStatementHandler(db)
-
-	// Smiles still uploads a file - the /point-batches/statement path is now Smiles-only.
-	r.Route("/point-batches/statement", func(r chi.Router) {
-		r.Use(middleware.RequireAdmin())
-
-		r.Post("/preview", h.PreviewStatement)
-		r.Post("/commit", h.CommitStatement)
-	})
-}
+// Both programmes' statements are now synced and read from the database. The upload that used
+// to live at /point-batches/statement is gone with the Smiles HTML parser it fed: nothing in
+// the panel pointed at it any more, and a route nobody calls is a route nobody tests.
 
 // RegisterAzulStatementRoutes mounts the Azul reconciliation, which reads the synced window
 // from the database instead of an upload, plus the one-time connect action that discovers the
@@ -60,11 +40,11 @@ func RegisterAzulStatementRoutes(r chi.Router, db *gorm.DB) {
 		// its issuance, plus the manual-link override (edit mode) and a CSV export.
 		r.Get("/entries", h.AzulStatementEntries)
 		r.Get("/export", h.ExportAzulStatement)
-		r.Post("/links", h.LinkAzulBooking)
-		r.Delete("/links", h.UnlinkAzulBooking)
+		r.Post("/links", h.LinkStatementBooking)
+		r.Delete("/links", h.UnlinkStatementBooking)
 		// The point-entry side: purchases and accruals link to a batch (lote).
-		r.Post("/batch-links", h.LinkAzulBatch)
-		r.Delete("/batch-links", h.UnlinkAzulBatch)
+		r.Post("/batch-links", h.LinkStatementBatch)
+		r.Delete("/batch-links", h.UnlinkStatementBatch)
 	})
 
 	r.With(middleware.RequireAdmin()).Post("/accounts/{id}/azul-connect", connect.ConnectAzulAccount)

@@ -84,41 +84,66 @@ func fillExpectedBalances(db *gorm.DB, responses []schemas.AccountResponse) {
 	}
 }
 
-// fillAzulLastSynced writes each connected account's last successful sync time onto its
-// response, for the card's "atualizado há…". Batched into one query for the whole page, like
-// fillExpectedBalances, and best-effort for the same reason: a failed read leaves the field
-// null rather than failing the listing. AzulConnected is already set by the response builder.
-func fillAzulLastSynced(db *gorm.DB, responses []schemas.AccountResponse) {
+// fillLastSynced writes each connected account's last successful sync time onto its
+// response, for the card's "atualizado há…". One query per programme for the whole page, like
+// fillExpectedBalances, and best-effort for the same reason: a failed read leaves the field null
+// rather than failing the listing. The Connected bits are already set by the response builder.
+func fillLastSynced(db *gorm.DB, responses []schemas.AccountResponse) {
 	if len(responses) == 0 {
 		return
 	}
 
-	ids := make([]string, 0, len(responses))
+	azulIDs := make([]string, 0, len(responses))
+	smilesIDs := make([]string, 0, len(responses))
 	for _, response := range responses {
 		if response.AzulConnected {
-			ids = append(ids, response.ID)
+			azulIDs = append(azulIDs, response.ID)
+		}
+		if response.SmilesConnected {
+			smilesIDs = append(smilesIDs, response.ID)
 		}
 	}
-	if len(ids) == 0 {
-		return
+
+	if len(azulIDs) > 0 {
+		var states []data.AzulSyncState
+		if err := db.Where("account_id IN ? AND last_synced_at IS NOT NULL", azulIDs).
+			Find(&states).Error; err != nil {
+			slog.Error("could not load the azul sync states", "err", err)
+		} else {
+			lastSynced := make(map[string]time.Time, len(states))
+			for _, state := range states {
+				if state.LastSyncedAt != nil {
+					lastSynced[state.AccountID] = *state.LastSyncedAt
+				}
+			}
+			for i := range responses {
+				if at, ok := lastSynced[responses[i].ID]; ok {
+					synced := at
+					responses[i].AzulLastSyncedAt = &synced
+				}
+			}
+		}
 	}
 
-	var states []data.AzulSyncState
-	if err := db.Where("account_id IN ? AND last_synced_at IS NOT NULL", ids).
-		Find(&states).Error; err != nil {
-		slog.Error("could not load the azul sync states", "err", err)
+	if len(smilesIDs) == 0 {
 		return
 	}
-	lastSynced := make(map[string]time.Time, len(states))
-	for _, state := range states {
+	var smilesStates []data.SmilesSyncState
+	if err := db.Where("account_id IN ? AND last_synced_at IS NOT NULL", smilesIDs).
+		Find(&smilesStates).Error; err != nil {
+		slog.Error("could not load the smiles sync states", "err", err)
+		return
+	}
+	smilesSynced := make(map[string]time.Time, len(smilesStates))
+	for _, state := range smilesStates {
 		if state.LastSyncedAt != nil {
-			lastSynced[state.AccountID] = *state.LastSyncedAt
+			smilesSynced[state.AccountID] = *state.LastSyncedAt
 		}
 	}
 	for i := range responses {
-		if at, ok := lastSynced[responses[i].ID]; ok {
+		if at, ok := smilesSynced[responses[i].ID]; ok {
 			synced := at
-			responses[i].AzulLastSyncedAt = &synced
+			responses[i].SmilesLastSyncedAt = &synced
 		}
 	}
 }
@@ -157,6 +182,7 @@ func toAccountResponseWithUsage(account data.Account, usage *acct.Usage) schemas
 		ID:                        account.ID,
 		Category:                  account.Category,
 		AzulConnected:             account.AzulCustomerKey != nil && *account.AzulCustomerKey != "",
+		SmilesConnected:           account.SmilesRefreshToken != nil && *account.SmilesRefreshToken != "",
 		RealBalancePoints:         account.RealBalancePoints,
 		RealBalanceCheckedOn:      checkedOn,
 		WaivesRedemptionFee:       account.WaivesRedemptionFee,
@@ -422,7 +448,7 @@ func (h *AccountHandler) GetAccounts(w http.ResponseWriter, r *http.Request) {
 		resp = append(resp, toAccountResponseWithUsage(acc, usage[acc.ID]))
 	}
 	fillExpectedBalances(h.DB, resp)
-	fillAzulLastSynced(h.DB, resp)
+	fillLastSynced(h.DB, resp)
 
 	utils.SendJSON(w, r, http.StatusOK, "Accounts fetched successfully", resp)
 }
@@ -484,7 +510,7 @@ func (h *AccountHandler) ListAccounts(w http.ResponseWriter, r *http.Request) {
 		items = append(items, toAccountResponseWithUsage(account, usage[account.ID]))
 	}
 	fillExpectedBalances(h.DB, items)
-	fillAzulLastSynced(h.DB, items)
+	fillLastSynced(h.DB, items)
 
 	utils.SendJSON(w, r, http.StatusOK, "Accounts fetched successfully", schemas.AccountPaginatedData{
 		Accounts: items,
@@ -538,7 +564,7 @@ func (h *AccountHandler) GetAccount(w http.ResponseWriter, r *http.Request) {
 
 	fetched := []schemas.AccountResponse{toAccountResponseWithUsage(account, usage[account.ID])}
 	fillExpectedBalances(h.DB, fetched)
-	fillAzulLastSynced(h.DB, fetched)
+	fillLastSynced(h.DB, fetched)
 
 	utils.SendJSON(w, r, http.StatusOK, "Account fetched successfully", fetched[0])
 }
@@ -629,7 +655,7 @@ func (h *AccountHandler) UpdateAccount(w http.ResponseWriter, r *http.Request) {
 
 	updated := []schemas.AccountResponse{toAccountResponse(account)}
 	fillExpectedBalances(h.DB, updated)
-	fillAzulLastSynced(h.DB, updated)
+	fillLastSynced(h.DB, updated)
 
 	utils.SendJSON(w, r, http.StatusOK, "Account updated successfully", updated[0])
 }

@@ -3,7 +3,6 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"time"
 
@@ -18,20 +17,9 @@ import (
 	"gorm.io/gorm"
 )
 
-// A month of Azul's CSV is 14 KB and a month of Smiles' HTML about the same. The ceiling is
-// generous against that and still small enough that no request can make the parsers chew
-// through an arbitrary amount of memory - the HTML one builds a DOM, and this box runs the
-// database too.
-const statementMaxUpload = 4 << 20 // 4 MiB
-
 // statementMaxBatches bounds what one commit can write. A month brings a dozen credits; a
 // request asking for hundreds is not a statement being reconciled.
 const statementMaxBatches = 200
-
-// Statement format the upload route accepts. Azul no longer uploads a file - its statement is
-// synced into the database and read from there (see the /accounts/{id}/azul-statement routes),
-// so Smiles is the only format that still arrives as an upload.
-const statementFormatSmiles = "smiles"
 
 type StatementHandler struct {
 	DB        *gorm.DB
@@ -46,120 +34,10 @@ func NewStatementHandler(db *gorm.DB) *StatementHandler {
 	return &StatementHandler{DB: db, Validator: validator.New()}
 }
 
-// PreviewStatement handles POST /point-batches/statement/preview
-//
-// Reads the file, compares it with the panel, and writes nothing.
-// @Summary      Conciliar extrato da Smiles
-// @Description  Lê o extrato HTML da Smiles enviado e compara com o que o painel tem da conta, no período que o próprio arquivo cobre. Devolve três listas — emissões, reembolsos e créditos — cada linha com o veredito. Nada é gravado. Crédito sem lote é o achado que importa: são pontos que entraram e nunca foram precificados. (A Azul deixou de subir arquivo — ver /accounts/{id}/azul-statement.)
-// @Tags         Estoque de pontos
-// @Accept       multipart/form-data
-// @Produce      json
-// @Security     BearerAuth
-// @Param        file       formData  file    true  "Extrato .html da Smiles"
-// @Param        account_id formData  string  true  "Conta a conciliar"
-// @Param        format     formData  string  true  "smiles"
-// @Success      200  {object}  schemas.StatementReconciliationSingleResponse
-// @Failure      400  {object}  schemas.ErrorResponse "Arquivo ausente, grande demais ou de outro formato"
-// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
-// @Failure      403  {object}  schemas.ErrorResponse "Requer admin"
-// @Failure      404  {object}  schemas.ErrorResponse "Conta não encontrada"
-// @Failure      422  {object}  schemas.ErrorResponse "Conta sem estoque próprio"
-// @Failure      500  {object}  schemas.ErrorResponse "Erro ao conciliar"
-// @Router       /point-batches/statement/preview [post]
-func (h *StatementHandler) PreviewStatement(w http.ResponseWriter, r *http.Request) {
-	account, parsed, ok := h.read(w, r)
-	if !ok {
-		return
-	}
-
-	reconciliation, from, to, err := h.reconcile(account.ID, parsed)
-	if err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Não consegui conciliar: "+err.Error())
-		return
-	}
-
-	utils.SendJSON(w, r, http.StatusOK, "Extrato conciliado",
-		toStatementResponse(parsed, reconciliation, from, to))
-}
-
-// CommitStatement handles POST /point-batches/statement/commit
-//
-// Records the chosen credits as batches. The file is read and reconciled again from
-// scratch, exactly as the legacy importer does: the preview is advice, not contract, so the
-// client sends which credits it wants and what they cost - never their contents.
-// @Summary      Lançar lotes a partir do extrato da Smiles
-// @Description  Soma os créditos marcados que compartilham origem e agência num único lote, datado no crédito mais antigo do grupo — uma compra parcelada em quatro entra como um lote só. O custo informado em cada crédito é somado. O arquivo é lido e conciliado de novo do zero, então uma seleção que já deixou de ser um crédito sem lote é pulada em vez de duplicar o lançamento. Ao fim, recalcula o custeio da conta.
-// @Tags         Estoque de pontos
-// @Accept       multipart/form-data
-// @Produce      json
-// @Security     BearerAuth
-// @Param        file       formData  file    true  "O mesmo extrato da prévia (.html da Smiles)"
-// @Param        account_id formData  string  true  "Conta"
-// @Param        format     formData  string  true  "smiles"
-// @Param        batches    formData  string  true  "JSON com os créditos marcados ([{index, origin_id, cost_cents, funding_agency_id, note}])"
-// @Success      200  {object}  schemas.StatementCommitSingleResponse
-// @Failure      400  {object}  schemas.ErrorResponse "Arquivo ou seleção inválidos"
-// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
-// @Failure      403  {object}  schemas.ErrorResponse "Requer admin"
-// @Failure      404  {object}  schemas.ErrorResponse "Conta não encontrada"
-// @Failure      422  {object}  schemas.ErrorResponse "Conta sem estoque próprio ou seleção grande demais"
-// @Failure      500  {object}  schemas.ErrorResponse "Erro ao lançar os lotes"
-// @Router       /point-batches/statement/commit [post]
-func (h *StatementHandler) CommitStatement(w http.ResponseWriter, r *http.Request) {
-	account, parsed, ok := h.read(w, r)
-	if !ok {
-		return
-	}
-
-	var selections []schemas.StatementBatchSelection
-	if err := json.Unmarshal([]byte(r.FormValue("batches")), &selections); err != nil {
-		utils.SendError(w, r, http.StatusBadRequest, "Seleção de créditos inválida")
-		return
-	}
-	if len(selections) == 0 {
-		utils.SendError(w, r, http.StatusBadRequest, "Nenhum crédito marcado")
-		return
-	}
-	if len(selections) > statementMaxBatches {
-		utils.SendError(w, r, http.StatusUnprocessableEntity, "Créditos demais numa importação só")
-		return
-	}
-	for _, selection := range selections {
-		if err := h.Validator.Struct(selection); err != nil {
-			utils.SendError(w, r, http.StatusBadRequest, "Seleção inválida: "+err.Error())
-			return
-		}
-	}
-
-	reconciliation, _, _, err := h.reconcile(account.ID, parsed)
-	if err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Não consegui conciliar: "+err.Error())
-		return
-	}
-
-	result, err := h.recordBatches(account, reconciliation.Credits, selections)
-	if err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Não consegui lançar os lotes: "+err.Error())
-		return
-	}
-
-	// The point of doing it here: the pending points the operator came to fix disappear in
-	// the same action, rather than on whatever later request happens to recompute.
-	if result.Created > 0 {
-		if err := inventory.Recompute(h.DB, account.ID); err != nil {
-			utils.SendError(w, r, http.StatusInternalServerError, "Lotes lançados, mas o custeio falhou: "+err.Error())
-			return
-		}
-	}
-
-	utils.SendJSON(w, r, http.StatusOK, "Lotes lançados a partir do extrato", result)
-}
-
 // PreviewAzulStatement handles GET /accounts/{id}/azul-statement
 //
-// The Azul counterpart of PreviewStatement, but there is no upload: the statement is the
-// window the collector synced into azul_statement_lines. Reads it, compares it with the panel
-// over its own period, and writes nothing.
+// There is no upload: the statement is the window the sync wrote into azul_statement_lines.
+// Reads it, compares it with the panel over its own period, and writes nothing.
 // @Summary      Conciliar extrato sincronizado da Azul
 // @Description  Concilia o extrato que o coletor sincronizou da Azul (tabela azul_statement_lines) com o que o painel tem da conta, no período que a janela sincronizada cobre. Não há upload — a Azul deixou de subir CSV. Devolve as três listas com o veredito de cada linha e nada é gravado. Crédito sem lote é o achado que importa. Conta sem janela sincronizada devolve uma comparação vazia.
 // @Tags         Estoque de pontos
@@ -174,7 +52,7 @@ func (h *StatementHandler) CommitStatement(w http.ResponseWriter, r *http.Reques
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao conciliar"
 // @Router       /accounts/{id}/azul-statement [get]
 func (h *StatementHandler) PreviewAzulStatement(w http.ResponseWriter, r *http.Request) {
-	account, ok := h.azulAccount(w, r)
+	account, ok := h.inventoryAccount(w, r)
 	if !ok {
 		return
 	}
@@ -221,7 +99,7 @@ func (h *StatementHandler) PreviewAzulStatement(w http.ResponseWriter, r *http.R
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao lançar os lotes"
 // @Router       /accounts/{id}/azul-statement/commit [post]
 func (h *StatementHandler) CommitAzulStatement(w http.ResponseWriter, r *http.Request) {
-	account, ok := h.azulAccount(w, r)
+	account, ok := h.inventoryAccount(w, r)
 	if !ok {
 		return
 	}
@@ -268,9 +146,10 @@ func (h *StatementHandler) CommitAzulStatement(w http.ResponseWriter, r *http.Re
 	utils.SendJSON(w, r, http.StatusOK, "Lotes lançados a partir do extrato", result)
 }
 
-// azulAccount loads the account named in the URL and checks it owns its own inventory,
-// answering the client itself on failure.
-func (h *StatementHandler) azulAccount(w http.ResponseWriter, r *http.Request) (data.Account, bool) {
+// inventoryAccount loads the account named in the URL and checks it owns its own inventory,
+// answering the client itself on failure. Shared by both programmes' statement routes: which
+// airline an account belongs to changes what is read, never who may read it.
+func (h *StatementHandler) inventoryAccount(w http.ResponseWriter, r *http.Request) (data.Account, bool) {
 	var account data.Account
 	if err := h.DB.First(&account, "id = ?", chi.URLParam(r, "id")).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -306,86 +185,6 @@ func (h *StatementHandler) reconcileAzul(
 	if err != nil {
 		return statement.Reconciliation{}, from, to, err
 	}
-	return statement.Reconcile(parsed.Movements, bookings, batches), from, to, nil
-}
-
-// read does what both Smiles routes share: bound and read the upload, parse it, and load the
-// account. It answers the client itself on failure.
-func (h *StatementHandler) read(w http.ResponseWriter, r *http.Request) (data.Account, statement.Statement, bool) {
-	var account data.Account
-	var parsed statement.Statement
-
-	r.Body = http.MaxBytesReader(w, r.Body, statementMaxUpload)
-	//nolint:gosec // G120: the body is bounded on the line above - MaxBytesReader caps the
-	// total read, so the parse cannot pull in more than statementMaxUpload however the
-	// parts are laid out. gosec does not follow the wrap through this helper's parameters.
-	if err := r.ParseMultipartForm(statementMaxUpload); err != nil {
-		utils.SendError(w, r, http.StatusBadRequest, "Não consegui ler o envio. O extrato precisa ter menos de 4 MB")
-		return account, parsed, false
-	}
-
-	file, _, err := r.FormFile("file")
-	if err != nil {
-		utils.SendError(w, r, http.StatusBadRequest, "Envie o extrato no campo \"file\"")
-		return account, parsed, false
-	}
-	defer func() { _ = file.Close() }()
-
-	content, err := io.ReadAll(file)
-	if err != nil {
-		utils.SendError(w, r, http.StatusBadRequest, "Não consegui ler o arquivo enviado")
-		return account, parsed, false
-	}
-
-	if r.FormValue("format") != statementFormatSmiles {
-		utils.SendError(w, r, http.StatusBadRequest, "Informe o formato: smiles")
-		return account, parsed, false
-	}
-	parsed, err = statement.ParseSmiles(content)
-	if err != nil {
-		// "Not this format" is the common mistake - a spreadsheet sent by accident, or an
-		// Azul file sent here now that Azul no longer uploads - and deserves the plain sentence.
-		if errors.Is(err, statement.ErrNotSmilesStatement) {
-			utils.SendError(w, r, http.StatusBadRequest,
-				"O arquivo não é um extrato da Smiles. Confira o formato escolhido.")
-			return account, parsed, false
-		}
-		utils.SendError(w, r, http.StatusBadRequest, "Não consegui ler o extrato: "+err.Error())
-		return account, parsed, false
-	}
-	if len(parsed.Movements) == 0 {
-		utils.SendError(w, r, http.StatusBadRequest, "O extrato não tem nenhuma movimentação")
-		return account, parsed, false
-	}
-
-	if err := h.DB.First(&account, "id = ?", r.FormValue("account_id")).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			utils.SendError(w, r, http.StatusNotFound, "Conta não encontrada")
-			return account, parsed, false
-		}
-		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch account: "+err.Error())
-		return account, parsed, false
-	}
-	if !account.OwnsPointInventory {
-		utils.SendError(w, r, http.StatusUnprocessableEntity,
-			"Esta conta não controla estoque próprio de pontos")
-		return account, parsed, false
-	}
-
-	return account, parsed, true
-}
-
-func (h *StatementHandler) reconcile(
-	accountID string,
-	parsed statement.Statement,
-) (statement.Reconciliation, time.Time, time.Time, error) {
-	from, to, _ := statement.PeriodOf(parsed)
-
-	bookings, batches, err := statement.LoadPanel(h.DB, accountID, from, to)
-	if err != nil {
-		return statement.Reconciliation{}, from, to, err
-	}
-
 	return statement.Reconcile(parsed.Movements, bookings, batches), from, to, nil
 }
 

@@ -66,17 +66,44 @@ func TestPointsInventoryRoutesAreAdminOnlyIncludingReads(t *testing.T) {
 			method:   http.MethodPost,
 			path:     "/inventory-periods",
 		},
+		// The Smiles connect is the one place in the inventory where an under-gated route
+		// would not merely leak a number: it logs into a real airline account with the stored
+		// credentials and sends a verification code to the holder's phone.
 		{
-			name:     "the statement preview refuses a plain user",
-			register: RegisterStatementRoutes,
+			name:     "starting a Smiles connect refuses a plain user",
+			register: registerSmilesRoutes,
 			method:   http.MethodPost,
-			path:     "/point-batches/statement/preview",
+			path:     "/accounts/00000000-0000-0000-0000-000000000000/smiles-connect",
 		},
 		{
-			name:     "the statement commit refuses a plain user",
-			register: RegisterStatementRoutes,
+			name:     "asking for a Smiles code refuses a plain user",
+			register: registerSmilesRoutes,
 			method:   http.MethodPost,
-			path:     "/point-batches/statement/commit",
+			path:     "/accounts/00000000-0000-0000-0000-000000000000/smiles-connect/challenge",
+		},
+		{
+			name:     "sending a Smiles code refuses a plain user",
+			register: registerSmilesRoutes,
+			method:   http.MethodPost,
+			path:     "/accounts/00000000-0000-0000-0000-000000000000/smiles-connect/code",
+		},
+		{
+			name:     "disconnecting a Smiles account refuses a plain user",
+			register: registerSmilesRoutes,
+			method:   http.MethodDelete,
+			path:     "/accounts/00000000-0000-0000-0000-000000000000/smiles-connect",
+		},
+		{
+			name:     "the Smiles statement refuses a plain user",
+			register: registerSmilesRoutes,
+			method:   http.MethodGet,
+			path:     "/accounts/00000000-0000-0000-0000-000000000000/smiles-statement",
+		},
+		{
+			name:     "the Smiles statement commit refuses a plain user",
+			register: registerSmilesRoutes,
+			method:   http.MethodPost,
+			path:     "/accounts/00000000-0000-0000-0000-000000000000/smiles-statement/commit",
 		},
 		{
 			name:     "the closing report refuses a plain user",
@@ -98,4 +125,10 @@ func TestPointsInventoryRoutesAreAdminOnlyIncludingReads(t *testing.T) {
 			}
 		})
 	}
+}
+
+// registerSmilesRoutes adapts the Smiles registration to the table's signature. It passes no
+// session guard: these cases never reach a handler, because the gate is what is under test.
+func registerSmilesRoutes(r chi.Router, db *gorm.DB) {
+	RegisterSmilesStatementRoutes(r, db, nil)
 }

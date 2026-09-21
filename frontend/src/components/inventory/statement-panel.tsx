@@ -2,10 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react"
 import { toast } from "sonner"
-import { AlertTriangle, Check, FileUp, Loader2, Plug, RefreshCw, X } from "lucide-react"
+import { AlertTriangle, Check, FileUp, Loader2, Plug, RefreshCw, Unplug, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import {
   Select,
@@ -19,15 +18,30 @@ import { formatCurrencyBRL, parseCurrencyBRLInput } from "@/lib/currency"
 import { formatConnectingElapsed } from "@/lib/elapsed"
 import {
   commitAzulStatementAction,
-  commitStatementAction,
+  commitSmilesStatementAction,
   connectAzulAccountAction,
+  disconnectSmilesAccountAction,
   getAzulStatementAction,
-  previewStatementAction,
+  getSmilesStatementAction,
+  startSmilesLoginAction,
 } from "@/actions/statement"
+import { SmilesConnectDialog } from "@/components/accounts/smiles-connect-dialog"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"
 import type { Agency } from "@/schemas/agency"
 import type {
-  AzulSyncState,
-  AzulSyncStateKind,
+  SmilesAuthenticator,
+  StatementSyncState,
+  StatementSyncKind,
   PointBatchOrigin,
   StatementBatchSelection,
   StatementCreditLine,
@@ -35,9 +49,9 @@ import type {
   StatementVerdict,
 } from "@/schemas/inventory"
 
-// Which reconciliation each program has. Azul is synced (no upload); Smiles still uploads its
-// HTML. Every other program has no statement path, so the panel says so rather than showing
-// controls that lead nowhere.
+// Which reconciliation each program has. Azul and Smiles are both synced - there is no file to
+// upload for either. Every other program has no statement path, so the panel says so rather than
+// showing controls that lead nowhere.
 export type StatementProgram = "azul" | "smiles" | "other"
 
 interface Props {
@@ -119,7 +133,7 @@ export function StatementPanel({ accountId, program, programName, origins, agenc
   )
 }
 
-// --- Smiles: the upload path, unchanged in substance ---
+// --- Smiles: the synced path ---
 
 function SmilesStatementPanel({
   accountId,
@@ -131,100 +145,177 @@ function SmilesStatementPanel({
   agencies: Agency[]
 }) {
   const [pending, startTransition] = useTransition()
-  const [file, setFile] = useState<File | null>(null)
+  const [loaded, setLoaded] = useState(false)
+  const [syncState, setSyncState] = useState<StatementSyncState | null>(null)
   const [result, setResult] = useState<StatementReconciliation | null>(null)
-  const fileName = useRef<string>("")
+  const [authenticators, setAuthenticators] = useState<SmilesAuthenticator[] | null>(null)
+  const [dialogOpen, setDialogOpen] = useState(false)
 
-  function preview() {
-    if (!file) {
-      toast.error("Escolha o arquivo do extrato.")
-      return
-    }
-    const form = new FormData()
-    form.set("file", file)
-    form.set("account_id", accountId)
-    form.set("format", "smiles")
+  const refresh = useCallback(async () => {
+    const response = await getSmilesStatementAction(accountId)
+    if ("error" in response) return
+    setSyncState(response.statement.sync_state)
+    setResult(response.statement.reconciliation)
+  }, [accountId])
+
+  function load() {
     startTransition(async () => {
-      const response = await previewStatementAction(form)
+      const response = await getSmilesStatementAction(accountId)
+      setLoaded(true)
       if ("error" in response) {
         toast.error(response.error)
         return
       }
-      setResult(response.reconciliation)
+      setSyncState(response.statement.sync_state)
+      setResult(response.statement.reconciliation)
     })
   }
 
-  // The Smiles commit re-sends the file: the statement is read and reconciled again from
-  // scratch on the server, so the selection alone is not enough.
-  async function commit(selections: StatementBatchSelection[]): Promise<CommitOutcome | null> {
-    if (!file) {
-      toast.error("Escolha o arquivo do extrato.")
-      return null
-    }
-    const form = new FormData()
-    form.set("file", file)
-    form.set("account_id", accountId)
-    form.set("format", "smiles")
-    form.set("batches", JSON.stringify(selections))
+  useEffect(load, [accountId])
 
-    const response = await commitStatementAction(form)
+  // Connecting is a conversation with a person in it, not a background job: the login answers at
+  // once with the channels the holder registered, and the dialog collects the code. So there is
+  // nothing to poll while it happens - only the first read afterwards is asynchronous, and the
+  // refresh below picks it up.
+  function connect() {
+    startTransition(async () => {
+      const response = await startSmilesLoginAction(accountId)
+      if ("error" in response) {
+        toast.error(response.error)
+        return
+      }
+      if (response.connected) {
+        toast.success("Conta conectada.")
+        await refresh()
+        return
+      }
+      setAuthenticators(response.authenticators)
+      setDialogOpen(true)
+    })
+  }
+
+  function disconnect() {
+    startTransition(async () => {
+      const response = await disconnectSmilesAccountAction(accountId)
+      if ("error" in response) {
+        toast.error(response.error)
+        return
+      }
+      toast.success("Conta desconectada. O extrato sincronizado foi apagado.")
+      await refresh()
+    })
+  }
+
+  async function commit(selections: StatementBatchSelection[]): Promise<CommitOutcome | null> {
+    const response = await commitSmilesStatementAction(accountId, selections)
     if ("error" in response) {
       toast.error(response.error)
       return null
     }
     announceCommit(response)
-    // Reconcile again so what was just recorded shows as settled, rather than leaving the
-    // screen offering to create it a second time.
-    const again = await previewStatementAction(form)
-    if (!("error" in again)) setResult(again.reconciliation)
+    await refresh()
     return response
   }
+
+  const connected = syncState?.connected ?? false
+  const needsCode = syncState?.state === "needs_mfa"
+  const hasWindow = result !== null && result.from !== ""
+
+  const dialog = authenticators ? (
+    <SmilesConnectDialog
+      accountId={accountId}
+      accountLabel="esta conta"
+      authenticators={authenticators}
+      open={dialogOpen}
+      onOpenChange={setDialogOpen}
+      onConnected={() => {
+        setAuthenticators(null)
+        // The first read runs in the background on the server; give it a moment, then pick it up.
+        startTransition(async () => {
+          await refresh()
+        })
+      }}
+      onExpired={() => setAuthenticators(null)}
+    />
+  ) : null
 
   return (
     <section className="overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700">
       <header className="flex flex-wrap items-center gap-3 bg-[#1F3864] px-4 py-2.5 text-white">
-        <FileUp className="size-4" />
-        <h2 className="font-semibold">Conciliar extrato da Smiles</h2>
+        <RefreshCw className="size-4" />
+        <h2 className="font-semibold">Extrato da Smiles (sincronizado)</h2>
         <span className="text-xs text-white/70">
-          Nada do arquivo é guardado — ele é lido, comparado e descartado.
+          O extrato é lido sozinho da Smiles — não há arquivo para subir.
         </span>
+        {loaded && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={load}
+            disabled={pending}
+            className="ml-auto text-white hover:bg-white/10 hover:text-white"
+          >
+            {pending ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+            Atualizar
+          </Button>
+        )}
       </header>
 
-      <div className="flex flex-wrap items-end gap-3 border-b bg-slate-50 px-4 py-3 dark:bg-slate-900/40">
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="statement-file" className="text-xs text-slate-500">
-            Arquivo do extrato (.html)
-          </Label>
-          <Input
-            id="statement-file"
-            type="file"
-            accept=".html,text/html"
-            onChange={(event) => {
-              const chosen = event.target.files?.[0] ?? null
-              setFile(chosen)
-              fileName.current = chosen?.name ?? ""
-              setResult(null)
-            }}
-            className="w-72"
-          />
+      {!loaded ? (
+        <div className="flex items-center gap-2 p-4 text-sm text-slate-500">
+          <Loader2 className="size-4 animate-spin" />
+          Lendo o estado da sincronização…
         </div>
+      ) : !connected || needsCode ? (
+        <div className="flex flex-col items-start gap-3 p-4">
+          <p className="text-sm text-slate-600 dark:text-slate-300">
+            {needsCode
+              ? "A sessão salva desta conta deixou de valer. Conectar de novo pede um código de verificação à Smiles — é o único jeito de renovar."
+              : "Esta conta ainda não foi conectada. Conectar faz o login na Smiles com as credenciais já salvas e pede um código de verificação ao titular. Depois disso o extrato é lido sozinho."}
+          </p>
+          {syncState?.detail && syncState.state !== "pending" && (
+            <p className="text-xs text-amber-800 dark:text-amber-300">{syncState.detail}</p>
+          )}
+          <Button onClick={connect} disabled={pending}>
+            {pending ? <Loader2 className="size-4 animate-spin" /> : <Plug className="size-4" />}
+            {needsCode ? "Reconectar conta Smiles" : "Conectar conta Smiles"}
+          </Button>
+          {dialog}
+        </div>
+      ) : (
+        <div className="flex flex-col gap-4 p-4">
+          {syncState && (
+            <SyncBadge
+              state={syncState}
+              onReconnect={connect}
+              reconnecting={pending}
+              // Disconnecting throws away a stored credential and the window read with it, so it
+              // asks first - and it is offered only here, where connecting also lives.
+              onDisconnect={disconnect}
+            />
+          )}
 
-        <Button onClick={preview} disabled={pending || !file}>
-          {pending && <Loader2 className="size-4 animate-spin" />}
-          Conciliar
-        </Button>
-      </div>
-
-      {result && (
-        <ReconciliationResult
-          result={result}
-          origins={origins}
-          agencies={agencies}
-          pending={pending}
-          onCommit={(selections) =>
-            new Promise((resolve) => startTransition(async () => resolve(await commit(selections))))
-          }
-        />
+          {!hasWindow ? (
+            <p className="text-sm text-slate-500">
+              Conta conectada. Ainda não há uma janela de extrato sincronizada — ela aparece após a
+              primeira leitura em que o saldo mudar.
+            </p>
+          ) : (
+            <ReconciliationResult
+              result={result}
+              origins={origins}
+              agencies={agencies}
+              pending={pending}
+              hideAccountNumber
+              onCommit={(selections) =>
+                new Promise((resolve) =>
+                  startTransition(async () => resolve(await commit(selections))),
+                )
+              }
+            />
+          )}
+          {dialog}
+        </div>
       )}
     </section>
   )
@@ -232,8 +323,8 @@ function SmilesStatementPanel({
 
 // --- Azul: the synced path, no upload ---
 
-const AZUL_BADGE: Record<
-  AzulSyncStateKind,
+const SYNC_BADGE: Record<
+  StatementSyncKind,
   { label: string; variant: "default" | "secondary" | "destructive" | "outline"; className: string }
 > = {
   pending: { label: "Aguardando sincronização", variant: "secondary", className: "" },
@@ -252,6 +343,11 @@ const AZUL_BADGE: Record<
     variant: "outline",
     className: "border-red-300 text-red-700 dark:border-red-800 dark:text-red-400",
   },
+  needs_mfa: {
+    label: "Precisa de código novo",
+    variant: "outline",
+    className: "border-amber-300 text-amber-800 dark:border-amber-800 dark:text-amber-300",
+  },
   needs_attention: { label: "Precisa de atenção", variant: "destructive", className: "" },
 }
 
@@ -266,7 +362,7 @@ function AzulStatementPanel({
 }) {
   const [pending, startTransition] = useTransition()
   const [loaded, setLoaded] = useState(false)
-  const [syncState, setSyncState] = useState<AzulSyncState | null>(null)
+  const [syncState, setSyncState] = useState<StatementSyncState | null>(null)
   const [result, setResult] = useState<StatementReconciliation | null>(null)
 
   // Quiet refetch used by the connect poll and after a commit: it refreshes the state and window
@@ -444,12 +540,16 @@ function SyncBadge({
   state,
   onReconnect,
   reconnecting,
+  onDisconnect,
 }: {
-  state: AzulSyncState
+  state: StatementSyncState
   onReconnect: () => void
   reconnecting: boolean
+  // Only the programmes that store a credential offer this; Azul stores an identifier it has
+  // no reason to withdraw, so it passes nothing and no button appears.
+  onDisconnect?: () => void
 }) {
-  const badge = AZUL_BADGE[state.state]
+  const badge = SYNC_BADGE[state.state]
   const lastSynced = formatDateTime(state.last_synced_at)
 
   return (
@@ -484,6 +584,30 @@ function SyncBadge({
           {reconnecting ? <Loader2 className="size-4 animate-spin" /> : <Plug className="size-4" />}
           Reconectar
         </Button>
+        {onDisconnect && (
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="ghost" size="sm" disabled={reconnecting} className="text-slate-500">
+                <Unplug className="size-4" />
+                Desconectar
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Desconectar esta conta?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  A sessão salva é apagada e o extrato sincronizado sai da tela. Os lotes já
+                  lançados a partir dele não são tocados. Para reconectar, a Smiles vai pedir um
+                  código de verificação novo.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                <AlertDialogAction onClick={onDisconnect}>Desconectar</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        )}
       </div>
 
       {state.state === "needs_attention" && (
@@ -492,10 +616,17 @@ function SyncBadge({
           reconecte.
         </p>
       )}
+      {/* Azul only: it is the one programme that reports a closing balance to check against. */}
       {state.state === "inconsistent" && (
         <p className="text-xs text-red-700 dark:text-red-400">
           O saldo da Azul não bateu com a soma do extrato, então a janela não foi atualizada. A
           comparação abaixo é a última que fechou.
+        </p>
+      )}
+      {/* Smiles only: the stored session was refused, and only a new code renews it. */}
+      {state.state === "needs_mfa" && (
+        <p className="text-xs text-amber-800 dark:text-amber-300">
+          A Smiles recusou a sessão salva. Reconecte para receber um código novo.
         </p>
       )}
       {state.detail && state.state !== "ok" && state.state !== "pending" && (

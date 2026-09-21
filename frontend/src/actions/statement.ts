@@ -4,104 +4,34 @@ import { cookies } from "next/headers"
 import { revalidatePath } from "next/cache"
 import { env } from "@/lib/env"
 import {
-  azulBatchLinkResponseSchema,
-  azulBookingLinkResponseSchema,
+  batchLinkResponseSchema,
+  bookingLinkResponseSchema,
   azulConnectResponseSchema,
-  azulStatementEntriesResponseSchema,
-  azulStatementResponseSchema,
+  statementEntriesResponseSchema,
+  smilesChallengeResponseSchema,
+  smilesConnectResponseSchema,
+  syncedStatementResponseSchema,
   getPointBatchesSchema,
   statementCommitResponseSchema,
-  statementReconciliationResponseSchema,
-  type AzulStatementEntries,
-  type AzulStatementLinkedBatch,
-  type AzulStatementLinkedIssuance,
-  type AzulStatement,
+  type StatementEntries,
+  type StatementLinkedBatch,
+  type StatementLinkedIssuance,
+  type SmilesAuthenticator,
+  type SyncedProgram,
+  type SyncedStatement,
   type StatementBatchSelection,
-  type StatementReconciliation,
 } from "@/schemas/inventory"
 import { getIssuancesSchema } from "@/schemas/issuance"
 
-// Server actions for the statement reconciliation. They forward the operator's file to the
-// Go API with the JWT attached, which is the panel's standard mutation path.
+// Server actions for the statement reconciliation.
 //
-// The file is uploaded again on every call rather than parked server-side. It is a few
-// kilobytes, and nothing about a statement is stored - the whole feature leaves no
-// temporary state behind, which is what makes re-submitting the same file harmless.
-async function postStatement(path: string, body: FormData) {
-  const cookieStore = await cookies()
-  const token = cookieStore.get("auth_token")?.value
-
-  return fetch(`${env.BACKEND_URL}/api/v1/point-batches/statement/${path}`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
-    body,
-    cache: "no-store",
-  })
-}
-
-// Explicit result types rather than inferred ones: these cross the server/client boundary,
-// and an inferred union of object literals reaches the caller with every key optional,
-// which defeats the narrowing the caller does on "error".
-type PreviewResult =
-  | { error: string }
-  | { success: true; reconciliation: StatementReconciliation }
+// Both programmes' statements are synced into the database and read from there, so nothing here
+// uploads a file any more: an action names an account and, where it matters, which programme's
+// routes to talk to.
 
 type CommitResult =
   | { error: string }
   | { success: true; created: number; credits: number; skipped: number }
-
-export async function previewStatementAction(formData: FormData): Promise<PreviewResult> {
-  const file = formData.get("file")
-  if (!(file instanceof File) || file.size === 0) {
-    return { error: "Escolha o arquivo do extrato antes de continuar." }
-  }
-
-  try {
-    const res = await postStatement("preview", formData)
-    const json = await res.json().catch(() => null)
-    if (!res.ok) {
-      return { error: json?.message || "Erro ao conciliar o extrato." }
-    }
-
-    const parsed = statementReconciliationResponseSchema.safeParse(json)
-    if (!parsed.success || !parsed.data.data) {
-      return { error: "Resposta inesperada do servidor." }
-    }
-    return { success: true, reconciliation: parsed.data.data }
-  } catch {
-    return { error: "Erro de conexão com o servidor." }
-  }
-}
-
-export async function commitStatementAction(formData: FormData): Promise<CommitResult> {
-  const file = formData.get("file")
-  if (!(file instanceof File) || file.size === 0) {
-    return { error: "Escolha o arquivo do extrato antes de continuar." }
-  }
-
-  try {
-    const res = await postStatement("commit", formData)
-    const json = await res.json().catch(() => null)
-    if (!res.ok) {
-      return { error: json?.message || "Erro ao lançar os lotes." }
-    }
-
-    const parsed = statementCommitResponseSchema.safeParse(json)
-    if (!parsed.success || !parsed.data.data) {
-      return { error: "Resposta inesperada do servidor." }
-    }
-
-    revalidatePath("/dashboard/sales/inventory")
-    return {
-      success: true,
-      created: parsed.data.data.created,
-      credits: parsed.data.data.credits,
-      skipped: parsed.data.data.skipped,
-    }
-  } catch {
-    return { error: "Erro de conexão com o servidor." }
-  }
-}
 
 // --- Azul: sync state, reconciliation and the one-time connect ---
 //
@@ -117,7 +47,7 @@ async function accountsAuth() {
 
 type AzulStatementResult =
   | { error: string }
-  | { success: true; statement: AzulStatement }
+  | { success: true; statement: SyncedStatement }
 
 // Reads the synced window and the sync-state badge in one call. An account that has never been
 // synced still returns a reconciliation (empty) alongside a pending or unconnected state.
@@ -134,7 +64,7 @@ export async function getAzulStatementAction(
     if (!res.ok) {
       return { error: json?.message || "Erro ao ler o extrato sincronizado." }
     }
-    const parsed = azulStatementResponseSchema.safeParse(json)
+    const parsed = syncedStatementResponseSchema.safeParse(json)
     if (!parsed.success || !parsed.data.data) {
       return { error: "Resposta inesperada do servidor." }
     }
@@ -216,24 +146,25 @@ export async function connectAzulAccountAction(
 
 type EntriesResult =
   | { error: string }
-  | { success: true; entries: AzulStatementEntries }
+  | { success: true; entries: StatementEntries }
 
 // Reads the synced lines for the statement page, each redemption already resolved to its
 // issuance by locator. A never-synced account returns an empty window, not an error.
-export async function getAzulStatementEntriesAction(
+export async function getStatementEntriesAction(
+  program: SyncedProgram,
   accountId: string,
 ): Promise<EntriesResult> {
   try {
     const { base, token } = await accountsAuth()
     const res = await fetch(
-      `${base}/${encodeURIComponent(accountId)}/azul-statement/entries`,
+      `${base}/${encodeURIComponent(accountId)}/${program}-statement/entries`,
       { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" },
     )
     const json = await res.json().catch(() => null)
     if (!res.ok) {
       return { error: json?.message || "Erro ao carregar o extrato." }
     }
-    const parsed = azulStatementEntriesResponseSchema.safeParse(json)
+    const parsed = statementEntriesResponseSchema.safeParse(json)
     if (!parsed.success || !parsed.data.data) {
       return { error: "Resposta inesperada do servidor." }
     }
@@ -245,11 +176,12 @@ export async function getAzulStatementEntriesAction(
 
 type LinkResult =
   | { error: string }
-  | { success: true; linked: AzulStatementLinkedIssuance | null }
+  | { success: true; linked: StatementLinkedIssuance | null }
 
 // Pins a statement locator to an issuance (edit mode). Returns how the locator resolves now, so
 // the page can update the line in place, and revalidates the statement page.
-export async function linkAzulBookingAction(
+export async function linkStatementBookingAction(
+  program: SyncedProgram,
   accountId: string,
   locator: string,
   issuanceId: string,
@@ -257,7 +189,7 @@ export async function linkAzulBookingAction(
   try {
     const { base, token } = await accountsAuth()
     const res = await fetch(
-      `${base}/${encodeURIComponent(accountId)}/azul-statement/links`,
+      `${base}/${encodeURIComponent(accountId)}/${program}-statement/links`,
       {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
@@ -269,7 +201,7 @@ export async function linkAzulBookingAction(
     if (!res.ok) {
       return { error: json?.message || "Erro ao salvar o vínculo." }
     }
-    const parsed = azulBookingLinkResponseSchema.safeParse(json)
+    const parsed = bookingLinkResponseSchema.safeParse(json)
     if (!parsed.success || !parsed.data.data) {
       return { error: "Resposta inesperada do servidor." }
     }
@@ -281,14 +213,15 @@ export async function linkAzulBookingAction(
 }
 
 // Removes a manual pin, handing the locator back to the automatic match.
-export async function unlinkAzulBookingAction(
+export async function unlinkStatementBookingAction(
+  program: SyncedProgram,
   accountId: string,
   locator: string,
 ): Promise<LinkResult> {
   try {
     const { base, token } = await accountsAuth()
     const res = await fetch(
-      `${base}/${encodeURIComponent(accountId)}/azul-statement/links`,
+      `${base}/${encodeURIComponent(accountId)}/${program}-statement/links`,
       {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
@@ -300,7 +233,7 @@ export async function unlinkAzulBookingAction(
     if (!res.ok) {
       return { error: json?.message || "Erro ao remover o vínculo." }
     }
-    const parsed = azulBookingLinkResponseSchema.safeParse(json)
+    const parsed = bookingLinkResponseSchema.safeParse(json)
     if (!parsed.success || !parsed.data.data) {
       return { error: "Resposta inesperada do servidor." }
     }
@@ -313,18 +246,19 @@ export async function unlinkAzulBookingAction(
 
 type BatchLinkResult =
   | { error: string }
-  | { success: true; linked: AzulStatementLinkedBatch | null }
+  | { success: true; linked: StatementLinkedBatch | null }
 
 // Pins a purchase/accrual line to a batch. occurredOn/points let the response recompute the auto
 // match after an unlink; both link and unlink revalidate the statement page.
-export async function linkAzulBatchAction(
+export async function linkStatementBatchAction(
+  program: SyncedProgram,
   accountId: string,
   key: string,
   batchId: string,
   occurredOn: string,
   points: number,
 ): Promise<BatchLinkResult> {
-  return batchLinkRequest("POST", accountId, {
+  return batchLinkRequest("POST", program, accountId, {
     key,
     batch_id: batchId,
     occurred_on: occurredOn,
@@ -332,24 +266,26 @@ export async function linkAzulBatchAction(
   })
 }
 
-export async function unlinkAzulBatchAction(
+export async function unlinkStatementBatchAction(
+  program: SyncedProgram,
   accountId: string,
   key: string,
   occurredOn: string,
   points: number,
 ): Promise<BatchLinkResult> {
-  return batchLinkRequest("DELETE", accountId, { key, occurred_on: occurredOn, points })
+  return batchLinkRequest("DELETE", program, accountId, { key, occurred_on: occurredOn, points })
 }
 
 async function batchLinkRequest(
   method: "POST" | "DELETE",
+  program: SyncedProgram,
   accountId: string,
   body: Record<string, unknown>,
 ): Promise<BatchLinkResult> {
   try {
     const { base, token } = await accountsAuth()
     const res = await fetch(
-      `${base}/${encodeURIComponent(accountId)}/azul-statement/batch-links`,
+      `${base}/${encodeURIComponent(accountId)}/${program}-statement/batch-links`,
       {
         method,
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
@@ -361,7 +297,7 @@ async function batchLinkRequest(
     if (!res.ok) {
       return { error: json?.message || "Erro ao salvar o vínculo." }
     }
-    const parsed = azulBatchLinkResponseSchema.safeParse(json)
+    const parsed = batchLinkResponseSchema.safeParse(json)
     if (!parsed.success || !parsed.data.data) {
       return { error: "Resposta inesperada do servidor." }
     }
@@ -497,6 +433,217 @@ export async function searchAccountIssuancesAction(
       issued_on: issuance.issued_on,
     }))
     return { success: true, issuances }
+  } catch {
+    return { error: "Erro de conexão com o servidor." }
+  }
+}
+
+// --- Smiles: sync state, reconciliation and the three-step connect ---
+//
+// The shapes are the Azul ones; only the path differs, because the panel reconciles both
+// programmes through the same screens. What is genuinely different is the connect: it is a
+// conversation with a person in the middle, so it is three calls instead of one.
+
+// Reads the synced window and the badge in one call, exactly like the Azul one.
+export async function getSmilesStatementAction(
+  accountId: string,
+): Promise<AzulStatementResult> {
+  try {
+    const { base, token } = await accountsAuth()
+    const res = await fetch(`${base}/${encodeURIComponent(accountId)}/smiles-statement`, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    })
+    const json = await res.json().catch(() => null)
+    if (!res.ok) {
+      return { error: json?.message || "Erro ao ler o extrato sincronizado." }
+    }
+    const parsed = syncedStatementResponseSchema.safeParse(json)
+    if (!parsed.success || !parsed.data.data) {
+      return { error: "Resposta inesperada do servidor." }
+    }
+    return { success: true, statement: parsed.data.data }
+  } catch {
+    return { error: "Erro de conexão com o servidor." }
+  }
+}
+
+export async function commitSmilesStatementAction(
+  accountId: string,
+  batches: StatementBatchSelection[],
+): Promise<CommitResult> {
+  if (batches.length === 0) {
+    return { error: "Marque ao menos um crédito." }
+  }
+  try {
+    const { base, token } = await accountsAuth()
+    const res = await fetch(`${base}/${encodeURIComponent(accountId)}/smiles-statement/commit`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ batches }),
+      cache: "no-store",
+    })
+    const json = await res.json().catch(() => null)
+    if (!res.ok) {
+      return { error: json?.message || "Erro ao lançar os lotes." }
+    }
+    const parsed = statementCommitResponseSchema.safeParse(json)
+    if (!parsed.success || !parsed.data.data) {
+      return { error: "Resposta inesperada do servidor." }
+    }
+    revalidatePath("/dashboard/sales/inventory")
+    return {
+      success: true,
+      created: parsed.data.data.created,
+      credits: parsed.data.data.credits,
+      skipped: parsed.data.data.skipped,
+    }
+  } catch {
+    return { error: "Erro de conexão com o servidor." }
+  }
+}
+
+type SmilesLoginStart =
+  | { error: string }
+  | { success: true; connected: true }
+  | { success: true; connected: false; authenticators: SmilesAuthenticator[] }
+
+// Step one: log in with the credentials already stored on the account. Almost always Smiles
+// answers "a code is required" and hands back the channels the holder registered; an account
+// without a second factor is connected outright.
+export async function startSmilesLoginAction(accountId: string): Promise<SmilesLoginStart> {
+  try {
+    const { base, token } = await accountsAuth()
+    const res = await fetch(`${base}/${encodeURIComponent(accountId)}/smiles-connect`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    })
+    const json = await res.json().catch(() => null)
+    if (!res.ok) {
+      return { error: json?.message || "Erro ao conectar a conta." }
+    }
+    const parsed = smilesConnectResponseSchema.safeParse(json)
+    if (!parsed.success || !parsed.data.data) {
+      return { error: "Resposta inesperada do servidor." }
+    }
+    if (parsed.data.data.connected) {
+      revalidatePath("/dashboard/accounts")
+      revalidatePath("/dashboard/sales/inventory")
+      return { success: true, connected: true }
+    }
+    return {
+      success: true,
+      connected: false,
+      authenticators: parsed.data.data.authenticators ?? [],
+    }
+  } catch {
+    return { error: "Erro de conexão com o servidor." }
+  }
+}
+
+// Step two: ask Smiles to send the code on the chosen channel. Every call costs a real SMS or
+// e-mail and Smiles throttles resends per channel, so this only ever runs from a button.
+export async function challengeSmilesLoginAction(
+  accountId: string,
+  authenticatorId: string,
+): Promise<{ error: string } | { success: true; sentTo: string }> {
+  try {
+    const { base, token } = await accountsAuth()
+    const res = await fetch(
+      `${base}/${encodeURIComponent(accountId)}/smiles-connect/challenge`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ authenticator_id: authenticatorId }),
+        cache: "no-store",
+      },
+    )
+    const json = await res.json().catch(() => null)
+    if (!res.ok) {
+      return { error: json?.message || "Erro ao pedir o código." }
+    }
+    const parsed = smilesChallengeResponseSchema.safeParse(json)
+    if (!parsed.success || !parsed.data.data) {
+      return { error: "Resposta inesperada do servidor." }
+    }
+    return { success: true, sentTo: parsed.data.data.sent_to }
+  } catch {
+    return { error: "Erro de conexão com o servidor." }
+  }
+}
+
+// Step three: hand over the digits. A wrong code comes back as an error the dialog shows without
+// closing, so the operator retypes it - nothing here asks for another code, because Smiles counts
+// failed attempts and throttles the channel.
+export async function confirmSmilesLoginAction(
+  accountId: string,
+  code: string,
+): Promise<{ error: string } | { success: true }> {
+  try {
+    const { base, token } = await accountsAuth()
+    const res = await fetch(`${base}/${encodeURIComponent(accountId)}/smiles-connect/code`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+      cache: "no-store",
+    })
+    const json = await res.json().catch(() => null)
+    if (!res.ok) {
+      return { error: json?.message || "Erro ao confirmar o código." }
+    }
+    revalidatePath("/dashboard/accounts")
+    revalidatePath("/dashboard/sales/inventory")
+    return { success: true }
+  } catch {
+    return { error: "Erro de conexão com o servidor." }
+  }
+}
+
+// Forgets the stored session and the synced window. The batches already recorded from the
+// statement are untouched - only the synced extract goes.
+export async function disconnectSmilesAccountAction(
+  accountId: string,
+): Promise<{ error: string } | { success: true }> {
+  try {
+    const { base, token } = await accountsAuth()
+    const res = await fetch(`${base}/${encodeURIComponent(accountId)}/smiles-connect`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    })
+    const json = await res.json().catch(() => null)
+    if (!res.ok) {
+      return { error: json?.message || "Erro ao desconectar a conta." }
+    }
+    revalidatePath("/dashboard/accounts")
+    revalidatePath("/dashboard/sales/inventory")
+    revalidatePath(`/dashboard/accounts/${accountId}/statement`)
+    return { success: true }
+  } catch {
+    return { error: "Erro de conexão com o servidor." }
+  }
+}
+
+// The per-account statement page, for Smiles. Same shape as the Azul entries.
+export async function getSmilesStatementEntriesAction(
+  accountId: string,
+): Promise<EntriesResult> {
+  try {
+    const { base, token } = await accountsAuth()
+    const res = await fetch(
+      `${base}/${encodeURIComponent(accountId)}/smiles-statement/entries`,
+      { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" },
+    )
+    const json = await res.json().catch(() => null)
+    if (!res.ok) {
+      return { error: json?.message || "Erro ao carregar o extrato." }
+    }
+    const parsed = statementEntriesResponseSchema.safeParse(json)
+    if (!parsed.success || !parsed.data.data) {
+      return { error: "Resposta inesperada do servidor." }
+    }
+    return { success: true, entries: parsed.data.data }
   } catch {
     return { error: "Erro de conexão com o servidor." }
   }

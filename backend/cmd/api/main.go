@@ -15,6 +15,8 @@ import (
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/events"
 	"github.com/murandido/m-80-backend/internal/health"
+	"github.com/murandido/m-80-backend/internal/smiles"
+	"github.com/murandido/m-80-backend/internal/smilessync"
 	"github.com/murandido/m-80-backend/internal/traveos"
 )
 
@@ -162,8 +164,28 @@ func main() {
 		}
 	}
 
+	// One guard for the whole process, created here because two things need the same one: the
+	// connect handlers (via the router) and the Smiles ticker below. The tenant revokes a
+	// session whose refresh token is used twice, so a connect's first sync and a ticker round
+	// must never overlap on one account - and two guards would not know about each other.
+	smilesGuard := smilessync.NewSessionGuard()
+
+	// The Smiles statement sync polls the connected inventory accounts on a ticker and stores
+	// their statements for reconciliation. Off by default, exactly like the Azul one above, and
+	// for the same reason: the feature ships inert and is turned on per environment once an
+	// account has been connected and watched.
+	//
+	// Unlike Azul's, the client needs no configuration to build - what a round needs is the
+	// account's own stored session - so there is nothing here that can disable it with a
+	// warning.
+	if os.Getenv("SMILES_SYNC_ENABLED") == "true" {
+		interval := smilesSyncInterval()
+		go smilessync.NewLoop(data.DB, smiles.New(), smilesGuard, interval).Run(context.Background())
+		slog.Info("smiles statement sync enabled", "interval", interval.String())
+	}
+
 	// config router
-	r := api.NewRouter(data.DB, broker, traveosClient, monitor)
+	r := api.NewRouter(data.DB, broker, traveosClient, monitor, smilesGuard)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -197,6 +219,23 @@ func main() {
 		panic(err)
 	}
 
+}
+
+// smilesSyncInterval reads SMILES_SYNC_INTERVAL as a Go duration (e.g. "10m"), falling back to
+// the package default when it is unset or unparseable - a typo in the env should slow the sync
+// to the safe default, not crash the boot.
+func smilesSyncInterval() time.Duration {
+	raw := os.Getenv("SMILES_SYNC_INTERVAL")
+	if raw == "" {
+		return smilessync.DefaultInterval
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		slog.Warn("SMILES_SYNC_INTERVAL is not a valid duration; using the default",
+			"value", raw, "default", smilessync.DefaultInterval.String())
+		return smilessync.DefaultInterval
+	}
+	return d
 }
 
 // azulSyncInterval reads AZUL_SYNC_INTERVAL as a Go duration (e.g. "10m"), falling back to the
