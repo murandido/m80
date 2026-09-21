@@ -56,8 +56,9 @@ type Issuance struct {
 	// would claim the rule ran and found nothing to save.
 	//
 	// What an ordinary account actually paid the airline is not recorded anywhere: it is
-	// settled outside this system and has no reader here. Nor does this take part in what
-	// the client owes - see sale.PointsValueCents.
+	// settled outside this system and has no reader here. This column itself is a saving and
+	// does not enter sale.PointsValueCents; the fee reaches what the client owes through Taxes,
+	// where issuance.RecalculateRedemptionFee folds it once on an exempt, synced issuance.
 	RedemptionFeeSavedCents *int `gorm:"column:redemption_fee_saved_cents" json:"redemption_fee_saved_cents"`
 	// RedemptionFeeManual is set the moment an operator types the amount by hand, and is
 	// what stops the next Traveos sync from overwriting the correction. Clearing the cell

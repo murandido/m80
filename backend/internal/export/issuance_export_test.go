@@ -76,18 +76,12 @@ func sampleIssuance(program, locator, account, issuer string) data.Issuance {
 	}
 }
 
-// renderForTest runs the export at a fixed instant and hands back the reopened workbook.
+// renderForTest runs the export at a fixed instant and hands back the reopened workbook. The
+// whole file is one sheet now, named issuanceExportSheetName.
 func renderForTest(t *testing.T, issuances []data.Issuance) *excelize.File {
 	t.Helper()
-	return renderForTestOnSheet(t, issuances, "")
-}
 
-// renderForTestOnSheet is renderForTest with the single-tab name the handler passes when the
-// listing was filtered down to one issuer.
-func renderForTestOnSheet(t *testing.T, issuances []data.Issuance, singleSheetIssuer string) *excelize.File {
-	t.Helper()
-
-	out, err := renderIssuancesXLSX(issuances, time.Date(2026, 7, 22, 15, 0, 0, 0, time.UTC), singleSheetIssuer)
+	out, err := renderIssuancesXLSX(issuances, time.Date(2026, 7, 22, 15, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatalf("renderIssuancesXLSX: %v", err)
 	}
@@ -114,21 +108,22 @@ func assertCells(t *testing.T, f *excelize.File, sheet string, cells map[string]
 	}
 }
 
-// TestRenderIssuancesXLSXLayout pins the thirteen columns of the manual control sheet: the
-// whole point of the export is that A:M can be pasted into that sheet unchanged.
+// TestRenderIssuancesXLSXLayout pins the columns of the manual control sheet, plus the Emissor
+// column the single-sheet export adds after Taxa Resgate.
 func TestRenderIssuancesXLSXLayout(t *testing.T) {
 	f := renderForTest(t, []data.Issuance{
 		sampleIssuance("Smiles", "ABC123", "Conta VIP", "João Emissor"),
 	})
 
-	assertCells(t, f, "João Emissor", map[string]string{
-		"A1": "CONTROLE DE EMISSÕES - 22/07/2026 - JOÃO EMISSOR",
+	assertCells(t, f, issuanceExportSheetName, map[string]string{
+		"A1": "CONTROLE DE EMISSÕES - 22/07/2026",
 		"A2": "Nº",
 		"B2": "Companhia",
 		"H2": "Pontos",
 		"K2": "Total",
 		"M2": "Observação",
 		"N2": "Taxa Resgate",
+		"O2": "Emissor",
 		"A3": "1",
 		// The airline label is upper case, as on the sheet being pasted into.
 		"B3": "SMILES",
@@ -144,9 +139,11 @@ func TestRenderIssuancesXLSXLayout(t *testing.T) {
 		"L3": "Conta VIP",
 		// An ordinary account saved no redemption fee, so the cell stays blank.
 		"N3": "",
+		// Emissor names who made the row.
+		"O3": "João Emissor",
 	})
 
-	formula, err := f.GetCellFormula("João Emissor", "K3")
+	formula, err := f.GetCellFormula(issuanceExportSheetName, "K3")
 	if err != nil {
 		t.Fatalf("get K3 formula: %v", err)
 	}
@@ -166,7 +163,7 @@ func TestRenderIssuancesXLSXNetsSameDayCancellation(t *testing.T) {
 
 	f := renderForTest(t, []data.Issuance{issuance})
 
-	assertCells(t, f, "João Emissor", map[string]string{
+	assertCells(t, f, issuanceExportSheetName, map[string]string{
 		// 10000 spent less 4000 given back.
 		"H3": "6.000",
 		"J3": "R$ 25.50",
@@ -185,7 +182,7 @@ func TestRenderIssuancesXLSXRefundOnlyOnLaterCancellation(t *testing.T) {
 
 	f := renderForTest(t, []data.Issuance{issuance})
 
-	assertCells(t, f, "João Emissor", map[string]string{
+	assertCells(t, f, issuanceExportSheetName, map[string]string{
 		"H3": "-10.000",
 		"J3": "-R$ 35.50",
 	})
@@ -202,7 +199,7 @@ func TestRenderIssuancesXLSXTintsCancelledRow(t *testing.T) {
 	f := renderForTest(t, []data.Issuance{issuance})
 
 	for _, cell := range []string{"A3", "C3", "M3"} {
-		id, err := f.GetCellStyle("Marcus", cell)
+		id, err := f.GetCellStyle(issuanceExportSheetName, cell)
 		if err != nil {
 			t.Fatalf("get style of %s: %v", cell, err)
 		}
@@ -215,7 +212,7 @@ func TestRenderIssuancesXLSXTintsCancelledRow(t *testing.T) {
 		}
 	}
 
-	id, err := f.GetCellStyle("Marcus", "B3")
+	id, err := f.GetCellStyle(issuanceExportSheetName, "B3")
 	if err != nil {
 		t.Fatalf("get style of B3: %v", err)
 	}
@@ -236,7 +233,7 @@ func TestRenderIssuancesXLSXLeavesTaxesBlank(t *testing.T) {
 
 	f := renderForTest(t, []data.Issuance{issuance})
 
-	assertCells(t, f, "João Emissor", map[string]string{"J3": ""})
+	assertCells(t, f, issuanceExportSheetName, map[string]string{"J3": ""})
 }
 
 // An exempt account shows the fee it did not pay, and the totals band sums it apart from the
@@ -250,19 +247,19 @@ func TestRenderIssuancesXLSXWritesRedemptionFee(t *testing.T) {
 		sampleIssuance("Azul", "BBB222", "Comum", "Marcus"),
 	})
 
-	assertCells(t, f, "Marcus", map[string]string{
+	assertCells(t, f, issuanceExportSheetName, map[string]string{
 		"N3": "R$ 45.00",
 		"N4": "",
 	})
 
-	formula, err := f.GetCellFormula("Marcus", "N5")
+	formula, err := f.GetCellFormula(issuanceExportSheetName, "N5")
 	if err != nil {
 		t.Fatalf("get N5 formula: %v", err)
 	}
 	if formula != "SUM(N3:N4)" {
 		t.Errorf("N5 formula = %q, want %q", formula, "SUM(N3:N4)")
 	}
-	billing, err := f.GetCellFormula("Marcus", "K6")
+	billing, err := f.GetCellFormula(issuanceExportSheetName, "K6")
 	if err != nil {
 		t.Fatalf("get K6 formula: %v", err)
 	}
@@ -281,7 +278,7 @@ func TestRenderIssuancesXLSXGivesRedemptionFeeBackOnLaterCancellation(t *testing
 
 	f := renderForTest(t, []data.Issuance{issuance})
 
-	assertCells(t, f, "Marcus", map[string]string{"N3": "-R$ 45.00"})
+	assertCells(t, f, issuanceExportSheetName, map[string]string{"N3": "-R$ 45.00"})
 }
 
 // Two airlines become two blocks separated by a blank row, the way the manual sheet keeps
@@ -293,7 +290,7 @@ func TestRenderIssuancesXLSXGroupsByProgram(t *testing.T) {
 		sampleIssuance("Smiles", "CCC333", "Conta VIP", "João Emissor"),
 	})
 
-	assertCells(t, f, "João Emissor", map[string]string{
+	assertCells(t, f, issuanceExportSheetName, map[string]string{
 		"C3": "AAA111",
 		"C4": "CCC333",
 		// Row 5 is the spacer between the two airline blocks.
@@ -306,7 +303,7 @@ func TestRenderIssuancesXLSXGroupsByProgram(t *testing.T) {
 	})
 
 	// The spacer is painted, so the break reads as a separator and not as a hole.
-	id, err := f.GetCellStyle("João Emissor", "C5")
+	id, err := f.GetCellStyle(issuanceExportSheetName, "C5")
 	if err != nil {
 		t.Fatalf("get style of C5: %v", err)
 	}
@@ -319,25 +316,26 @@ func TestRenderIssuancesXLSXGroupsByProgram(t *testing.T) {
 	}
 }
 
-// The sheet is "for one person": two issuers come back as two tabs, each titled with its
-// own name, so nobody has to filter the file before pasting.
-func TestRenderIssuancesXLSXOneTabPerIssuer(t *testing.T) {
+// Every issuer is on one tab now: two issuers come back as one sheet, and the Emissor column
+// is what says who made each row.
+func TestRenderIssuancesXLSXSingleTabWithIssuerColumn(t *testing.T) {
 	f := renderForTest(t, []data.Issuance{
 		sampleIssuance("Smiles", "AAA111", "Conta VIP", "Marcus"),
 		sampleIssuance("Smiles", "BBB222", "Conta VIP", "Wilmara"),
 	})
 
-	want := []string{"Marcus", "Wilmara"}
-	if got := f.GetSheetList(); len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
-		t.Fatalf("sheets = %v, want %v", got, want)
+	if got := f.GetSheetList(); len(got) != 1 || got[0] != issuanceExportSheetName {
+		t.Fatalf("sheets = %v, want [%s]", got, issuanceExportSheetName)
 	}
-	assertCells(t, f, "Marcus", map[string]string{"C3": "AAA111"})
-	assertCells(t, f, "Wilmara", map[string]string{"C3": "BBB222"})
+	assertCells(t, f, issuanceExportSheetName, map[string]string{
+		"C3": "AAA111", "O3": "Marcus",
+		"C4": "BBB222", "O4": "Wilmara",
+	})
 }
 
-// A cancelled issuance belongs to whoever cancelled it: that is the flow the listing puts it
-// in, and reading the creator's tab was how those rows looked missing to the operator.
-func TestRenderIssuancesXLSXPutsCancelledRowOnCancellerTab(t *testing.T) {
+// A cancelled issuance is attributed to whoever cancelled it: that is the flow the listing puts
+// it in, so the Emissor column shows the canceller, not the creator.
+func TestRenderIssuancesXLSXAttributesCancelledRowToCanceller(t *testing.T) {
 	cancelledAt := time.Date(2026, 7, 25, 18, 0, 0, 0, time.UTC)
 
 	cancelled := sampleIssuance("Smiles", "AAA111", "Conta VIP", "Wilmara")
@@ -350,33 +348,13 @@ func TestRenderIssuancesXLSXPutsCancelledRowOnCancellerTab(t *testing.T) {
 		sampleIssuance("Smiles", "BBB222", "Conta VIP", "Wilmara"),
 	})
 
-	want := []string{"Marcus", "Wilmara"}
-	if got := f.GetSheetList(); len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
-		t.Fatalf("sheets = %v, want %v", got, want)
+	if got := f.GetSheetList(); len(got) != 1 || got[0] != issuanceExportSheetName {
+		t.Fatalf("sheets = %v, want [%s]", got, issuanceExportSheetName)
 	}
-	assertCells(t, f, "Marcus", map[string]string{"C3": "AAA111"})
-	assertCells(t, f, "Wilmara", map[string]string{"C3": "BBB222"})
-}
-
-// Filtering by an issuer makes the file that person's own block: one tab, holding both what
-// they issued and what they only cancelled, in the order the listing showed them.
-func TestRenderIssuancesXLSXCollapsesToTheFilteredIssuerTab(t *testing.T) {
-	cancelledAt := time.Date(2026, 7, 25, 18, 0, 0, 0, time.UTC)
-
-	cancelled := sampleIssuance("Smiles", "AAA111", "Conta VIP", "Wilmara")
-	cancelled.CancelledAt = &cancelledAt
-	cancelled.CancelledBy = &data.User{Name: "Marcus"}
-	cancelled.RefundedPoints = intptr(10000)
-
-	f := renderForTestOnSheet(t, []data.Issuance{
-		cancelled,
-		sampleIssuance("Smiles", "BBB222", "Conta VIP", "Marcus"),
-	}, "Marcus")
-
-	if got := f.GetSheetList(); len(got) != 1 || got[0] != "Marcus" {
-		t.Fatalf("sheets = %v, want [Marcus]", got)
-	}
-	assertCells(t, f, "Marcus", map[string]string{"C3": "AAA111", "C4": "BBB222"})
+	assertCells(t, f, issuanceExportSheetName, map[string]string{
+		"C3": "AAA111", "O3": "Marcus",
+		"C4": "BBB222", "O4": "Wilmara",
+	})
 }
 
 // The summary beside the table: one box per account used, listing that account's locators.
@@ -387,25 +365,25 @@ func TestRenderIssuancesXLSXSummarisesAccounts(t *testing.T) {
 		sampleIssuance("Smiles", "CCC333", "Marcia", "Marcus"),
 	})
 
-	assertCells(t, f, "Marcus", map[string]string{
-		"P1": "EMISSÕES JULIANA - SMILES - 22/07/2026",
-		"P2": "COMPANHIA",
-		"Q2": "LOCALIZADOR",
-		"R2": "PONTOS",
-		"S2": "TOTAL",
-		"Q3": "AAA111",
-		"Q4": "BBB222",
+	assertCells(t, f, issuanceExportSheetName, map[string]string{
+		"Q1": "EMISSÕES JULIANA - SMILES - 22/07/2026",
+		"Q2": "COMPANHIA",
+		"R2": "LOCALIZADOR",
+		"S2": "PONTOS",
+		"T2": "TOTAL",
+		"R3": "AAA111",
+		"R4": "BBB222",
 		// One blank row, then the next account's box.
-		"P6": "EMISSÕES MARCIA - SMILES - 22/07/2026",
-		"Q8": "CCC333",
+		"Q6": "EMISSÕES MARCIA - SMILES - 22/07/2026",
+		"R8": "CCC333",
 	})
 
-	formula, err := f.GetCellFormula("Marcus", "S3")
+	formula, err := f.GetCellFormula(issuanceExportSheetName, "T3")
 	if err != nil {
-		t.Fatalf("get S3 formula: %v", err)
+		t.Fatalf("get T3 formula: %v", err)
 	}
-	if formula != "SUM(R3:R4)" {
-		t.Errorf("S3 formula = %q, want %q", formula, "SUM(R3:R4)")
+	if formula != "SUM(S3:S4)" {
+		t.Errorf("T3 formula = %q, want %q", formula, "SUM(S3:S4)")
 	}
 }
 
@@ -422,7 +400,7 @@ func TestRenderIssuancesXLSXColorsProgramCell(t *testing.T) {
 	// B3 Smiles, B5 LATAM Pass, B7 TudoAzul - each block separated by a spacer row.
 	want := map[string]string{"B3": "FFFF00", "B5": "FF0000", "B7": "A6CAEC"}
 	for cell, fill := range want {
-		id, err := f.GetCellStyle("Marcus", cell)
+		id, err := f.GetCellStyle(issuanceExportSheetName, cell)
 		if err != nil {
 			t.Fatalf("get style of %s: %v", cell, err)
 		}
@@ -443,16 +421,16 @@ func TestRenderIssuancesXLSXSummaryPalette(t *testing.T) {
 		sampleIssuance("Smiles", "AAA111", "Juliana", "Marcus"),
 	})
 
-	id, err := f.GetCellStyle("Marcus", "P3")
+	id, err := f.GetCellStyle(issuanceExportSheetName, "Q3")
 	if err != nil {
-		t.Fatalf("get style of P3: %v", err)
+		t.Fatalf("get style of Q3: %v", err)
 	}
 	style, err := f.GetStyle(id)
 	if err != nil {
-		t.Fatalf("read style of P3: %v", err)
+		t.Fatalf("read style of Q3: %v", err)
 	}
 	if len(style.Fill.Color) == 0 || !strings.EqualFold(style.Fill.Color[0], "FFC000") {
-		t.Errorf("P3 fill = %v, want FFC000", style.Fill.Color)
+		t.Errorf("Q3 fill = %v, want FFC000", style.Fill.Color)
 	}
 }
 
@@ -464,11 +442,11 @@ func TestRenderIssuancesXLSXSplitsBoxesPerProgram(t *testing.T) {
 		sampleIssuance("Azul", "BBB222", "Heraldo", "Marcus"),
 	})
 
-	assertCells(t, f, "Marcus", map[string]string{
-		"P1": "EMISSÕES HERALDO - AZUL - 22/07/2026",
-		"Q3": "BBB222",
-		"P5": "EMISSÕES HERALDO - SMILES - 22/07/2026",
-		"Q7": "AAA111",
+	assertCells(t, f, issuanceExportSheetName, map[string]string{
+		"Q1": "EMISSÕES HERALDO - AZUL - 22/07/2026",
+		"R3": "BBB222",
+		"Q5": "EMISSÕES HERALDO - SMILES - 22/07/2026",
+		"R7": "AAA111",
 	})
 }
 
@@ -482,12 +460,12 @@ func TestRenderIssuancesXLSXLeavesEveryRowAutoFitted(t *testing.T) {
 
 	// Two airline blocks of one row each (3 and 5), the sums on 6 and TOTAL FATURAMENTO on
 	// 7, so the block header lands on 10: header, issuer, one row per account, then GERAL.
-	def, err := f.GetRowHeight("Marcus", 1)
+	def, err := f.GetRowHeight(issuanceExportSheetName, 1)
 	if err != nil {
 		t.Fatalf("get default height: %v", err)
 	}
 	for row := 1; row <= 14; row++ {
-		got, err := f.GetRowHeight("Marcus", row)
+		got, err := f.GetRowHeight(issuanceExportSheetName, row)
 		if err != nil {
 			t.Fatalf("get height of row %d: %v", row, err)
 		}
@@ -497,7 +475,7 @@ func TestRenderIssuancesXLSXLeavesEveryRowAutoFitted(t *testing.T) {
 	}
 
 	// The GERAL row is closed on the left by the billing band rather than left blank.
-	id, err := f.GetCellStyle("Marcus", "B14")
+	id, err := f.GetCellStyle(issuanceExportSheetName, "B14")
 	if err != nil {
 		t.Fatalf("get style of B14: %v", err)
 	}
@@ -522,7 +500,7 @@ func TestRenderIssuancesXLSXAutoFitsColumns(t *testing.T) {
 
 	width := func(column string) float64 {
 		t.Helper()
-		got, err := f.GetColWidth("Marcus", column)
+		got, err := f.GetColWidth(issuanceExportSheetName, column)
 		if err != nil {
 			t.Fatalf("get width of %s: %v", column, err)
 		}
@@ -544,7 +522,7 @@ func TestRenderIssuancesXLSXWithNoIssuances(t *testing.T) {
 	if sheets := f.GetSheetList(); len(sheets) != 1 {
 		t.Fatalf("sheets = %v, want exactly one", sheets)
 	}
-	assertCells(t, f, issuanceExportNoIssuerSheet, map[string]string{"A2": "Nº"})
+	assertCells(t, f, issuanceExportSheetName, map[string]string{"A2": "Nº"})
 }
 
 func TestSignedIssuanceAmounts(t *testing.T) {

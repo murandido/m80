@@ -32,6 +32,12 @@ func RegisterSaleRoutes(r chi.Router, db *gorm.DB, broker *events.Broker) {
 		// the payment summary sent to the account's administrator
 		r.With(middleware.RequireAdmin()).Get("/suppliers/report", saleHandler.GetSupplierReportPDF)
 
+		// the per-administrator export counter that numbers each supplier PDF. Admin-only,
+		// like everything else on the suppliers side. POST bumps it per export; PUT sets it
+		// by hand.
+		r.With(middleware.RequireAdmin()).Post("/suppliers/export-counter", saleHandler.IncrementSupplierExportCounter)
+		r.With(middleware.RequireAdmin()).Put("/suppliers/export-counter", saleHandler.SetSupplierExportCounter)
+
 		// link a client (and, for a panel that has not been published yet, the old
 		// paid switch - translated into a payment; see settleSaleFromLegacyFlag)
 		r.Patch("/{id}", saleHandler.UpdateSale)

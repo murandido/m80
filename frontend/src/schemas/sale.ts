@@ -144,6 +144,9 @@ export const supplierBalanceSchema = z.object({
   loyalty_program_color: z.string(),
   administrator_id: z.string().nullable(),
   administrator_name: z.string().nullable(),
+  // The administrator's supplier-PDF export count. Present only on an administrator-grouped
+  // row; absent otherwise, and on an API published before this field existed.
+  export_counter: z.number().nullish(),
   issued_points: z.number(),
   refunded_points: z.number(),
   net_points: z.number(),

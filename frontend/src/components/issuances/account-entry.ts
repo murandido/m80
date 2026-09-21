@@ -20,6 +20,13 @@ function trimDanglingDash(value: string): string {
   return value.replace(/^-+|-+$/g, "").trim()
 }
 
+// The inverse of parseAccountEntry's split: joins an alias and its administrator back into the
+// "conta - administrador" shape. Used when creating an account from the grid so the saved alias
+// keeps the administrator in it ("Marlon - Wilmara") rather than the bare handle.
+export function formatAccountAlias(nickname: string, administratorName: string | null): string {
+  return administratorName ? `${nickname}${SEPARATOR}${administratorName}` : nickname
+}
+
 export function parseAccountEntry(typed: string): AccountEntry {
   const text = typed.trim()
   const at = text.indexOf(SEPARATOR)

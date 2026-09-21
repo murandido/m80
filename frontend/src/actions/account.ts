@@ -8,6 +8,7 @@ import {
   findPersonByNameOrNicknameAction,
   resolveOrCreatePersonAction,
 } from "@/actions/person"
+import { formatAccountAlias } from "@/components/issuances/account-entry"
 import {
   accountBeneficiaryMutationSchema,
   checkAccountNicknameAvailabilitySchema,
@@ -310,7 +311,10 @@ export async function createAccountForIssuanceAction(
     return { error: `${account.error} A pessoa "${name}" foi criada e ficou sem conta.` }
   }
 
-  const nickname = await createAccountNicknameAction(account.accountId, name, loyaltyProgramId)
+  // The saved alias keeps the administrator in it ("Marlon - Wilmara"), the same shape the
+  // operator typed, rather than the bare handle before the dash.
+  const alias = formatAccountAlias(name, administratorName ?? null)
+  const nickname = await createAccountNicknameAction(account.accountId, alias, loyaltyProgramId)
   if ("error" in nickname || !nickname.nickname) {
     const reason = "error" in nickname ? nickname.error : "Erro ao adicionar apelido."
     return { error: `${reason} A conta foi criada sem apelido.` }

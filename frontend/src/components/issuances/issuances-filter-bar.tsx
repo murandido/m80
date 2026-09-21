@@ -25,7 +25,7 @@ import { LoyaltyProgramCombobox } from "@/components/loyalty-programs/loyalty-pr
 import { AirlineCombobox } from "@/components/airlines/airline-combobox"
 import { AccountCombobox } from "@/components/accounts/account-combobox"
 import { AgencyCombobox } from "@/components/agencies/agency-combobox"
-import { UserCombobox } from "@/components/users/user-combobox"
+import { UserMultiCombobox } from "@/components/users/user-multi-combobox"
 import type { LoyaltyProgram } from "@/schemas/loyalty-program"
 import type { Airline } from "@/schemas/airline"
 import type { AccountOption } from "@/schemas/account"
@@ -47,6 +47,27 @@ const FILTER_KEYS = [
 ] as const
 
 type FilterState = Record<(typeof FILTER_KEYS)[number], string>
+
+// The two non-uuid values issuer_id can carry, matching the backend: "all" restricts to nothing
+// (every issuer), "none" matches nothing (no issuer selected).
+const ISSUERS_ALL = "all"
+const ISSUERS_NONE = "none"
+
+// issuer_id <-> the multi-select's selected ids. An empty selection is "none" (show nothing),
+// and a full one collapses to "all" so the URL stays short and survives a new user being added.
+// An absent/empty param is treated as every issuer, which is what the panel falls back to when
+// it cannot tell who "me" is.
+function parseIssuerParam(param: string, users: User[]): string[] {
+  if (param === "" || param === ISSUERS_ALL) return users.map((u) => u.id)
+  if (param === ISSUERS_NONE) return []
+  return param.split(",").filter(Boolean)
+}
+
+function serializeIssuerSelection(ids: string[], users: User[]): string {
+  if (ids.length === 0) return ISSUERS_NONE
+  if (users.length > 0 && ids.length >= users.length) return ISSUERS_ALL
+  return ids.join(",")
+}
 
 interface IssuancesFilterBarProps {
   loyaltyPrograms: LoyaltyProgram[]
@@ -295,11 +316,10 @@ export function IssuancesFilterBar({
       </div>
 
       <div className="w-44" title={hasSearch ? searchOverrideTitle : undefined}>
-        <UserCombobox
+        <UserMultiCombobox
           users={users}
-          value={filters.issuer_id}
-          onChange={(id) => update({ issuer_id: id })}
-          placeholder="Todos os emissores"
+          value={parseIssuerParam(filters.issuer_id, users)}
+          onChange={(ids) => update({ issuer_id: serializeIssuerSelection(ids, users) })}
           disabled={hasSearch}
         />
       </div>

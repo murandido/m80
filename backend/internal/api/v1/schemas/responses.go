@@ -323,6 +323,13 @@ type UpdateSupplierIssuancesSingleResponse struct {
 	Data    UpdateSupplierIssuancesResponse `json:"data"`
 }
 
+// SupplierExportCounterSingleResponse is the response of the supplier export-counter routes
+type SupplierExportCounterSingleResponse struct {
+	Success bool                          `json:"success" example:"true"`
+	Message string                        `json:"message" example:"Contador atualizado com sucesso"`
+	Data    SupplierExportCounterResponse `json:"data"`
+}
+
 // DashboardSingleResponse is the GET /dashboard route response
 type DashboardSingleResponse struct {
 	Success bool              `json:"success" example:"true"`

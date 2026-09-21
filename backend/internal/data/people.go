@@ -31,9 +31,13 @@ type Person struct {
 	Complement     *string          `json:"complement"`
 	Neighborhood   *string          `json:"neighborhood"`
 	Nicknames      []PersonNickname `gorm:"foreignKey:PersonID;references:ID" json:"nicknames,omitempty"`
-	Complete       bool             `gorm:"not null;default:false" json:"complete"`
-	CreatedAt      time.Time        `json:"created_at"`
-	UpdatedAt      time.Time        `json:"updated_at"`
+	// ReportExportCounter is bumped every time the supplier payment PDF is exported for this
+	// person as an administrator, and the number goes into the file name. Editable by hand from
+	// the suppliers view, so a fresh clone or a corrected count can be set directly.
+	ReportExportCounter int       `gorm:"column:report_export_counter;not null;default:0" json:"report_export_counter"`
+	Complete            bool      `gorm:"not null;default:false" json:"complete"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
 }
 
 // BeforeSave keeps the CPF and its fingerprint in step, and encrypts the number.

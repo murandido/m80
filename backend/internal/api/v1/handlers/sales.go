@@ -23,6 +23,7 @@ import (
 	"github.com/murandido/m-80-backend/internal/sale"
 	"github.com/murandido/m-80-backend/internal/utils"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // A sale changes through two doors: the issuance behind it, which already announces
@@ -546,13 +547,16 @@ type supplierIssuanceRow struct {
 	// data.Account.OwnsPointInventory.
 	OwnsPointInventory bool
 
-	AccountLogin        *string
-	AccountNickname     *string
-	HolderName          *string
-	AdministratorID     *string
-	AdministratorName   *string
-	LoyaltyProgramName  string
-	LoyaltyProgramColor string
+	AccountLogin      *string
+	AccountNickname   *string
+	HolderName        *string
+	AdministratorID   *string
+	AdministratorName *string
+	// AdministratorExportCounter is the administrator's supplier-PDF export count. Nil on an
+	// account with no administrator (the LEFT JOIN produces NULL there).
+	AdministratorExportCounter *int
+	LoyaltyProgramName         string
+	LoyaltyProgramColor        string
 	// LoyaltyProgramCode and DefaultAirlineCode resolve the brand mark on the payment
 	// summary, program first and its airline second - TudoAzul and AZUL share artwork,
 	// Smiles and GOL do not. They stay off the JSON response: the panel has no use for
@@ -644,6 +648,7 @@ func (h *SaleHandler) fetchSupplierRows(r *http.Request) ([]supplierIssuanceRow,
 			holders.name AS holder_name,
 			accounts.administrator_id,
 			administrators.name AS administrator_name,
+			administrators.report_export_counter AS administrator_export_counter,
 			loyalty_programs.name AS loyalty_program_name,
 			loyalty_programs.color AS loyalty_program_color,
 			loyalty_programs.code AS loyalty_program_code,
@@ -831,6 +836,11 @@ func aggregateSupplierBalances(
 			NetPoints:           acc.issuedPoints - acc.refundedPoints,
 			Issuances:           acc.statement,
 		}
+		// The export counter belongs to the administrator, so it is only meaningful on an
+		// administrator-grouped row that actually has one (never the "Sem administrador" bucket).
+		if grouping == groupByAdministrator && acc.row.AdministratorID != nil {
+			balance.ExportCounter = acc.row.AdministratorExportCounter
+		}
 		balances = append(balances, balance)
 	}
 
@@ -942,6 +952,96 @@ func (h *SaleHandler) UpdateSupplierIssuances(w http.ResponseWriter, r *http.Req
 
 	utils.SendJSON(w, r, http.StatusOK, "Payment terms updated successfully",
 		schemas.UpdateSupplierIssuancesResponse{Updated: int(result.RowsAffected)})
+}
+
+// IncrementSupplierExportCounter handles the POST /sales/suppliers/export-counter route.
+// @Summary      Incrementar o contador de exportação do administrador
+// @Description  Soma 1 ao contador de exportação do PDF de pagamento do administrador (people.report_export_counter) e devolve o novo valor, que o painel usa no nome do arquivo. Chamado a cada exportação. Rota restrita a administradores.
+// @Tags         Vendas
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        request  body  schemas.IncrementSupplierExportCounterRequest  true  "Administrador"
+// @Success      200  {object}  schemas.SupplierExportCounterSingleResponse
+// @Failure      400  {object}  schemas.ErrorResponse "Payload inválido"
+// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      403  {object}  schemas.ErrorResponse "Usuário não é administrador"
+// @Failure      404  {object}  schemas.ErrorResponse "Administrador não encontrado"
+// @Failure      500  {object}  schemas.ErrorResponse "Erro ao incrementar o contador"
+// @Router       /sales/suppliers/export-counter [post]
+func (h *SaleHandler) IncrementSupplierExportCounter(w http.ResponseWriter, r *http.Request) {
+	var req schemas.IncrementSupplierExportCounterRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		utils.SendError(w, r, http.StatusBadRequest, "Invalid JSON payload")
+		return
+	}
+	if err := h.Validator.Struct(req); err != nil {
+		utils.SendError(w, r, http.StatusBadRequest, "Validation failed: "+err.Error())
+		return
+	}
+
+	// One atomic statement with RETURNING: the increment and the value read back are the same
+	// row-level operation, so two concurrent exports never hand back the same number.
+	person := data.Person{ID: req.AdministratorID}
+	result := h.DB.Model(&person).
+		Clauses(clause.Returning{Columns: []clause.Column{{Name: "report_export_counter"}}}).
+		Where("id = ?", req.AdministratorID).
+		UpdateColumn("report_export_counter", gorm.Expr("report_export_counter + 1"))
+	if result.Error != nil {
+		slog.Error("failed to increment supplier export counter", "administrator_id", req.AdministratorID, "err", result.Error)
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to increment the export counter")
+		return
+	}
+	if result.RowsAffected == 0 {
+		utils.SendError(w, r, http.StatusNotFound, "Administrator not found")
+		return
+	}
+
+	utils.SendJSON(w, r, http.StatusOK, "Export counter incremented successfully",
+		schemas.SupplierExportCounterResponse{Counter: person.ReportExportCounter})
+}
+
+// SetSupplierExportCounter handles the PUT /sales/suppliers/export-counter route.
+// @Summary      Definir o contador de exportação do administrador
+// @Description  Grava um valor exato no contador de exportação do administrador (people.report_export_counter), para corrigi-lo ou reiniciar a sequência à mão. Rota restrita a administradores.
+// @Tags         Vendas
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        request  body  schemas.SetSupplierExportCounterRequest  true  "Administrador e valor"
+// @Success      200  {object}  schemas.SupplierExportCounterSingleResponse
+// @Failure      400  {object}  schemas.ErrorResponse "Payload inválido"
+// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      403  {object}  schemas.ErrorResponse "Usuário não é administrador"
+// @Failure      404  {object}  schemas.ErrorResponse "Administrador não encontrado"
+// @Failure      500  {object}  schemas.ErrorResponse "Erro ao gravar o contador"
+// @Router       /sales/suppliers/export-counter [put]
+func (h *SaleHandler) SetSupplierExportCounter(w http.ResponseWriter, r *http.Request) {
+	var req schemas.SetSupplierExportCounterRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		utils.SendError(w, r, http.StatusBadRequest, "Invalid JSON payload")
+		return
+	}
+	if err := h.Validator.Struct(req); err != nil {
+		utils.SendError(w, r, http.StatusBadRequest, "Validation failed: "+err.Error())
+		return
+	}
+
+	result := h.DB.Model(&data.Person{}).
+		Where("id = ?", req.AdministratorID).
+		UpdateColumn("report_export_counter", req.Counter)
+	if result.Error != nil {
+		slog.Error("failed to set supplier export counter", "administrator_id", req.AdministratorID, "err", result.Error)
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to set the export counter")
+		return
+	}
+	if result.RowsAffected == 0 {
+		utils.SendError(w, r, http.StatusNotFound, "Administrator not found")
+		return
+	}
+
+	utils.SendJSON(w, r, http.StatusOK, "Export counter updated successfully",
+		schemas.SupplierExportCounterResponse{Counter: req.Counter})
 }
 
 // supplierStatementLine builds one line of an account's statement. Points and taxes are

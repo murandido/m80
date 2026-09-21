@@ -179,10 +179,32 @@ type SupplierBalanceResponse struct {
 	AdministratorID     *string `json:"administrator_id"`
 	AdministratorName   *string `json:"administrator_name"`
 
+	// ExportCounter is the administrator's supplier-PDF export count, present only on an
+	// administrator-grouped row - the number lives on the person, not the account.
+	ExportCounter *int `json:"export_counter,omitempty"`
+
 	IssuedPoints   int `json:"issued_points"`
 	RefundedPoints int `json:"refunded_points"`
 	NetPoints      int `json:"net_points"`
 
 	// Issuances is every line that produced the totals above, in chronological order.
 	Issuances []SupplierIssuanceResponse `json:"issuances"`
+}
+
+// IncrementSupplierExportCounterRequest bumps an administrator's supplier-PDF export counter by
+// one, called just before the download so the number in the file name advances per export.
+type IncrementSupplierExportCounterRequest struct {
+	AdministratorID string `json:"administrator_id" validate:"required,uuid"`
+}
+
+// SetSupplierExportCounterRequest overwrites an administrator's counter with an exact value, for
+// correcting it or starting a fresh sequence by hand.
+type SetSupplierExportCounterRequest struct {
+	AdministratorID string `json:"administrator_id" validate:"required,uuid"`
+	Counter         int    `json:"counter" validate:"min=0"`
+}
+
+// SupplierExportCounterResponse carries the administrator's counter after the change.
+type SupplierExportCounterResponse struct {
+	Counter int `json:"counter"`
 }

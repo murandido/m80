@@ -341,6 +341,13 @@ func preloadIssuanceAssociations(query *gorm.DB) *gorm.DB {
 // answer "does not exist" for every issuance older than this morning. The panel
 // greys the two controls out while a search is active so the suspension is visible
 // rather than surprising; the other dimensions keep applying as plain ANDs.
+// The two non-uuid values the issuer_id filter accepts, mirroring the panel's multi-select:
+// "all" restricts to nothing (every issuer), "none" matches nothing (no issuer selected).
+const (
+	issuerFilterAll  = "all"
+	issuerFilterNone = "none"
+)
+
 func applyIssuanceListFilters(db *gorm.DB, query *gorm.DB, r *http.Request) *gorm.DB {
 	q := r.URL.Query()
 
@@ -362,12 +369,25 @@ func applyIssuanceListFilters(db *gorm.DB, query *gorm.DB, r *http.Request) *gor
 		return query
 	}
 
+	// issuer_id carries the multi-select's choice: a comma-separated list of ids, or one of two
+	// tokens. "none" is the explicit "no issuers selected" state - the panel sends it so that
+	// clearing every issuer shows nothing rather than everything, so short-circuit to an empty
+	// result. "all" (like an absent param) means no issuer restriction. A single id has no comma,
+	// so a panel bundle that still sends one keeps working.
+	rawIssuer := q.Get("issuer_id")
+	if rawIssuer == issuerFilterNone {
+		return query.Where("1 = 0")
+	}
+	var issuers []string
+	if rawIssuer != "" && rawIssuer != issuerFilterAll {
+		issuers = splitIDs(rawIssuer)
+	}
+
 	// created_at/cancelled_at are UTC in the DB; parseDateRange resolves the local
 	// calendar days into UTC bounds so "today" matches the operator's day.
-	issuer := q.Get("issuer_id")
 	from, to := parseDateRange(r)
 
-	if issuer == "" && from == nil && to == nil {
+	if len(issuers) == 0 && from == nil && to == nil {
 		return query
 	}
 
@@ -376,11 +396,11 @@ func applyIssuanceListFilters(db *gorm.DB, query *gorm.DB, r *http.Request) *gor
 	creationArgs := []any{}
 	cancellationArgs := []any{false}
 
-	if issuer != "" {
-		creation = append(creation, "issuer_id = ?")
-		creationArgs = append(creationArgs, issuer)
-		cancellation = append(cancellation, "cancelled_by_id = ?")
-		cancellationArgs = append(cancellationArgs, issuer)
+	if len(issuers) > 0 {
+		creation = append(creation, "issuer_id IN ?")
+		creationArgs = append(creationArgs, issuers)
+		cancellation = append(cancellation, "cancelled_by_id IN ?")
+		cancellationArgs = append(cancellationArgs, issuers)
 	}
 	if from != nil {
 		creation = append(creation, "created_at >= ?")
@@ -445,7 +465,7 @@ func issuanceSearchGroup(db *gorm.DB, search string) *gorm.DB {
 // @Param        account_id          query  string  false  "UUID da conta"
 // @Param        agency_id           query  string  false  "UUID da agência"
 // @Param        q                   query  string  false  "Busca por localizador, passageiro, origem ou destino. Quando presente, os filtros de data e emissor são ignorados."
-// @Param        issuer_id           query  string  false  "UUID do emissor (usuário)"
+// @Param        issuer_id           query  string  false  "UUID do emissor (usuário). Aceita vários separados por vírgula; o token 'all' não filtra (todos os emissores) e 'none' não retorna nenhum."
 // @Success      200  {object}  schemas.IssuanceListResponse
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao buscar emissões"
@@ -475,35 +495,6 @@ func (h *IssuanceHandler) GetIssuances(w http.ResponseWriter, r *http.Request) {
 	utils.SendJSON(w, r, http.StatusOK, "Issuances fetched successfully", resp)
 }
 
-// filteredIssuerSheetName resolves the single tab name the export should collapse into, or ""
-// to keep the one-tab-per-person grouping.
-//
-// It returns a name only when the listing was actually narrowed to one issuer: the operator
-// asked for their own issuances, so the whole file is their block of the manual sheet -
-// including the ones somebody else created and they cancelled, which the cancellation branch
-// of applyIssuanceListFilters brings in. A search suspends that branch (see the filter's
-// comment), so while q is present the export goes back to grouping.
-//
-// The user is read Unscoped so a soft-deleted operator still names their own tab instead of
-// silently falling back to the grouping, and an id that matches nothing degrades to the
-// grouping rather than to an error - the rows are right either way.
-func filteredIssuerSheetName(db *gorm.DB, r *http.Request) string {
-	if strings.TrimSpace(r.URL.Query().Get("q")) != "" {
-		return ""
-	}
-
-	issuer := r.URL.Query().Get("issuer_id")
-	if issuer == "" {
-		return ""
-	}
-
-	var user data.User
-	if err := db.Unscoped().Select("name").First(&user, "id = ?", issuer).Error; err != nil {
-		return ""
-	}
-	return user.Name
-}
-
 // The spreadsheets GET /issuances/export can build. The control sheet is the default because
 // it is what the panel exported before the choice existed.
 const (
@@ -513,7 +504,7 @@ const (
 
 // GetIssuancesExport handles the GET /issuances/export route.
 // @Summary      Exportar emissões (.xlsx)
-// @Description  Gera uma planilha .xlsx das emissões filtradas. O layout é escolhido por layout: control (padrão) ou legacy. Layout control: planilha manual de controle, uma aba por pessoa (a emissão cancelada vai para a aba de quem cancelou, que é onde a listagem também a mostra; com issuer_id informado a planilha vira uma aba só, a dele), colunas A:N (Nº, Companhia, Localizador, Data do Voo, Passageiro Principal, Origem, Destino, Pontos, Milheiro, Taxa, Total, Conta, Observação, Taxa Resgate), as linhas agrupadas em blocos por companhia, o bloco TOTAL DAS CONTAS ao final e, ao lado da tabela, um quadro por conta e companhia com os localizadores e o total de pontos. Dentro de cada bloco a ordem é a da listagem (da mais antiga para a mais recente). Aceita os mesmos filtros da listagem (data, programa de fidelidade, cia aérea, conta, agência e emissor). Emissão cancelada no mesmo dia em que foi criada entra pelo líquido (pontos e taxas menos o reembolso); cancelada em outro dia entra só pelo reembolso, negativo. A linha cancelada é destacada em vermelho claro. Layout legacy: a antiga planilha EMISSÕES GERAIS, uma tabela só (B:P) com os totais do modelo, mais a coluna TAXA RESGATE em Q. Nos dois layouts a Taxa Resgate é a taxa que a conta isenta (Azul Diamante Unique) deixou de pagar, em branco nas contas comuns, com o mesmo sinal dos pontos.
+// @Description  Gera uma planilha .xlsx das emissões filtradas. O layout é escolhido por layout: control (padrão) ou legacy. Layout control: planilha manual de controle numa aba única (a emissão cancelada é atribuída a quem cancelou, que é onde a listagem também a mostra), colunas A:O (Nº, Companhia, Localizador, Data do Voo, Passageiro Principal, Origem, Destino, Pontos, Milheiro, Taxa, Total, Conta, Observação, Taxa Resgate, Emissor), as linhas agrupadas em blocos por companhia, o bloco TOTAL DAS CONTAS ao final e, ao lado da tabela, um quadro por conta e companhia com os localizadores e o total de pontos. A coluna Emissor identifica quem fez cada linha, já que todos os emissores ficam na mesma aba. Dentro de cada bloco a ordem é a da listagem (da mais antiga para a mais recente). Aceita os mesmos filtros da listagem (data, programa de fidelidade, cia aérea, conta, agência e emissor). Emissão cancelada no mesmo dia em que foi criada entra pelo líquido (pontos e taxas menos o reembolso); cancelada em outro dia entra só pelo reembolso, negativo. A linha cancelada é destacada em vermelho claro. Layout legacy: a antiga planilha EMISSÕES GERAIS, uma tabela só (B:P) com os totais do modelo, mais a coluna TAXA RESGATE em Q. Nos dois layouts a Taxa Resgate é a taxa que a conta isenta (Azul Diamante Unique) deixou de pagar, em branco nas contas comuns, com o mesmo sinal dos pontos.
 // @Tags         Emissões
 // @Produce      application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
 // @Security     BearerAuth
@@ -524,7 +515,7 @@ const (
 // @Param        account_id          query  string  false  "UUID da conta"
 // @Param        agency_id           query  string  false  "UUID da agência"
 // @Param        q                   query  string  false  "Busca por localizador, passageiro, origem ou destino. Quando presente, os filtros de data e emissor são ignorados."
-// @Param        issuer_id           query  string  false  "UUID do emissor (usuário)"
+// @Param        issuer_id           query  string  false  "UUID do emissor (usuário). Aceita vários separados por vírgula; o token 'all' não filtra (todos os emissores) e 'none' não retorna nenhum."
 // @Param        layout              query  string  false  "Layout da planilha: control (padrão) ou legacy"  Enums(control, legacy)
 // @Success      200  {file}    binary  "Planilha .xlsx das emissões filtradas"
 // @Failure      400  {object}  schemas.ErrorResponse "Layout desconhecido"
@@ -568,7 +559,7 @@ func (h *IssuanceHandler) GetIssuancesExport(w http.ResponseWriter, r *http.Requ
 		content, err = export.BuildLegacyIssuancesXLSX(issuances)
 		filenamePrefix = "emissoes-gerais"
 	} else {
-		content, err = export.BuildIssuancesXLSX(issuances, filteredIssuerSheetName(h.DB, r))
+		content, err = export.BuildIssuancesXLSX(issuances)
 	}
 	if err != nil {
 		slog.Error("failed to build issuances export", "err", err)
