@@ -135,7 +135,11 @@ type AzulStatementEntry struct {
 	Destination string `json:"destination" example:"REC"`
 	PartnerName string `json:"partner_name"`
 	Description string `json:"description" example:"Resgate de passagem"`
-	DayBalance  *int   `json:"day_balance" example:"1202717"`
+	// Note is the free-text detail parsed out of a non-flight redemption's comment - the hotel,
+	// assist card or product of an Azul Viagens redemption ("Ibis Budget … (20/11 - 22/11)").
+	// Empty for a flight redemption or an Azul pelo Mundo debit, which carry only a code.
+	Note       string `json:"note"`
+	DayBalance *int   `json:"day_balance" example:"1202717"`
 	// LinkedIssuance is the resolved issuance (for redemptions/refunds/promotions), or null when
 	// nothing matched. LinkedBatch is the resolved batch (for purchases/accruals), or null. A
 	// line carries at most one of them.

@@ -119,6 +119,11 @@ function detailParts(entry: AzulStatementEntry): string[] {
   const parts: string[] = []
   const label = typeLabel(entry.type_description)
   if (label) parts.push(label)
+  // The note names what a non-flight redemption bought (the Azul Viagens hotel/product) - the
+  // useful detail on a line that has no route.
+  if (entry.note && entry.note.trim()) {
+    parts.push(entry.note.trim())
+  }
   // "Azul" as a partner adds nothing (it is the programme itself); a real partner names the
   // source of the points, which is the useful part of an accrual.
   if (entry.partner_name && entry.partner_name.trim().toLowerCase() !== "azul") {

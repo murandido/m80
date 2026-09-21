@@ -371,6 +371,8 @@ export const azulStatementEntrySchema = z.object({
   destination: z.string(),
   partner_name: z.string(),
   description: z.string(),
+  // Free-text detail of a non-flight redemption (the Azul Viagens hotel/product). Empty otherwise.
+  note: z.string().nullish(),
   day_balance: z.number().nullish(),
   linked_issuance: azulStatementLinkedIssuanceSchema.nullish(),
   linked_batch: azulStatementLinkedBatchSchema.nullish(),

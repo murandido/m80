@@ -113,13 +113,14 @@ func (h *StatementHandler) AzulStatementEntries(w http.ResponseWriter, r *http.R
 			TypeCode:        row.TypeCode,
 			TypeDescription: row.TypeDescription,
 			Points:          row.Points,
-			Locator:         derefString(row.Locator),
+			Locator:         effectiveLocator(row),
 			// Origin/destination arrive as Azul's own city or airport names; show the IATA code
 			// when the city is assigned one, otherwise the raw name (which the operator can assign).
 			Origin:      azul.ResolveCity(cityCodes, derefString(row.Origin)),
 			Destination: azul.ResolveCity(cityCodes, derefString(row.Destination)),
 			PartnerName: derefString(row.PartnerName),
 			Description: derefString(row.Description),
+			Note:        azul.NoteFromComment(derefString(row.Comment)),
 			DayBalance:  row.DayBalance,
 		}
 		if booking, found := resolved[key]; found {
@@ -195,7 +196,7 @@ func (h *StatementHandler) ExportAzulStatement(w http.ResponseWriter, r *http.Re
 			accountNumber,
 			row.OccurredOn.Format("02/01/2006"),
 			azulOperationLabel(row),
-			derefString(row.Locator),
+			effectiveLocator(row),
 			strconv.Itoa(row.Points),
 			azul.ResolveCity(cityCodes, derefString(row.Origin)),
 			azul.ResolveCity(cityCodes, derefString(row.Destination)),
@@ -527,9 +528,20 @@ func statementKind(row data.AzulStatementLine) string {
 // signature of its content instead, which never auto-matches but can be pinned by hand. Two
 // identical locator-less movements on one day share a signature, and so a link; that is rare and
 // preferred over a row id, which the window replacement changes on every sync.
-func statementLineKey(row data.AzulStatementLine) string {
+// effectiveLocator is the row's stored locator, or - for a row synced before the parser learned a
+// comment format - the locator re-derived from the stored comment. This keeps Azul pelo Mundo
+// ("Debit Points Pnr: …") and Azul Viagens ("Juniper Azul Viagens | … - …") redemptions keyed and
+// displayed by their PNR without waiting for a re-sync, the same way the kind is re-derived above.
+func effectiveLocator(row data.AzulStatementLine) string {
 	if row.Locator != nil && *row.Locator != "" {
 		return *row.Locator
+	}
+	return azul.LocatorFromComment(derefString(row.Comment))
+}
+
+func statementLineKey(row data.AzulStatementLine) string {
+	if loc := effectiveLocator(row); loc != "" {
+		return loc
 	}
 	return fmt.Sprintf("sig:%s:%s:%d",
 		row.OccurredOn.Format(batchDateLayout), derefString(row.TypeCode), row.Points)
