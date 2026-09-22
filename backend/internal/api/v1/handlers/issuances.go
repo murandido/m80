@@ -17,6 +17,7 @@ import (
 	"github.com/murandido/m-80-backend/internal/account"
 	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
+	"github.com/murandido/m-80-backend/internal/booking"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/events"
 	"github.com/murandido/m-80-backend/internal/export"
@@ -56,18 +57,20 @@ type IssuanceHandler struct {
 	DB        *gorm.DB
 	Validator *validator.Validate
 	Broker    *events.Broker
-	// Traveos is nil when the process started without vendor credentials. Layer 3
-	// is opt-in per airline, so that is a supported state, not a fatal one - the
-	// routes that need it answer 503 and everything else works untouched.
-	Traveos *traveos.Client
+	// Bookings is where the itinerary comes from: which provider serves which
+	// airline, and what catches the ones that could not be reached. It is nil or
+	// empty when the process started without vendor credentials and no direct
+	// integration is wired - a supported state, not a fatal one, in which the
+	// routes that need an itinerary answer 503 and everything else works untouched.
+	Bookings *booking.Registry
 }
 
-func NewIssuanceHandler(db *gorm.DB, broker *events.Broker, traveosClient *traveos.Client) *IssuanceHandler {
+func NewIssuanceHandler(db *gorm.DB, broker *events.Broker, bookings *booking.Registry) *IssuanceHandler {
 	return &IssuanceHandler{
-		Traveos:   traveosClient,
 		DB:        db,
 		Validator: validator.New(),
 		Broker:    broker,
+		Bookings:  bookings,
 	}
 }
 
@@ -1346,7 +1349,7 @@ const traveosSyncTimeout = 3 * time.Minute
 // @Failure      503  {object}  schemas.ErrorResponse "Integração com a Traveos não configurada neste servidor"
 // @Router       /issuances/{id}/traveos-sync [post]
 func (h *IssuanceHandler) SyncIssuanceWithTraveos(w http.ResponseWriter, r *http.Request) {
-	if h.Traveos == nil {
+	if h.Bookings == nil || h.Bookings.Empty() {
 		// 503 and not 401: the panel deletes the session cookie on a 401, so a
 		// misconfigured integration would log every operator out (see
 		// middleware.RequireAuth for the same reasoning about database hiccups).
@@ -1376,7 +1379,7 @@ func (h *IssuanceHandler) SyncIssuanceWithTraveos(w http.ResponseWriter, r *http
 		h.broadcastIssuance(eventIssuanceUpdated, id)
 	}
 
-	if err := issuancesvc.Sync(ctx, h.DB, h.Traveos, id, true); err != nil {
+	if err := issuancesvc.Sync(ctx, h.DB, h.Bookings, id, true); err != nil {
 		// Sync only unmarks what it marked, and it marks late - after the airline
 		// gates. A refusal before that (airline not integrated, no locator) would
 		// otherwise leave the row locked on every screen until the marker went stale.

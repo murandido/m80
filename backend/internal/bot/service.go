@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	issuancesvc "github.com/murandido/m-80-backend/internal/issuance"
+	"github.com/murandido/m-80-backend/internal/booking"
 	"github.com/murandido/m-80-backend/internal/promotion"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
@@ -120,7 +120,7 @@ type Bot struct {
 	// nil is a supported state, not a bug: it is what cmd/bot leaves behind when
 	// TRAVEOS_EMAIL/TRAVEOS_PASSWORD are missing, and the bot has to keep
 	// registering issuances without them. See syncTraveos.
-	Traveos issuancesvc.TraveosClient
+	Bookings *booking.Registry
 
 	// Promo drives the headless browser that enrols CPFs in transfer-bonus
 	// promotions. Built once in cmd/bot: the client is stateless and holds only a
@@ -229,7 +229,7 @@ func (n Notifiers) withDefaults() Notifiers {
 	return n
 }
 
-func New(client *whatsmeow.Client, logger waLog.Logger, newDeviceClient func(ctx context.Context) (ClientBase, SessionClient, func() *types.JID, error), db *gorm.DB, traveosClient issuancesvc.TraveosClient, notifiers Notifiers) *Bot {
+func New(client *whatsmeow.Client, logger waLog.Logger, newDeviceClient func(ctx context.Context) (ClientBase, SessionClient, func() *types.JID, error), db *gorm.DB, bookings *booking.Registry, notifiers Notifiers) *Bot {
 	notifiers = notifiers.withDefaults()
 
 	return &Bot{
@@ -238,7 +238,7 @@ func New(client *whatsmeow.Client, logger waLog.Logger, newDeviceClient func(ctx
 		Status:                  NewStatusStore(notifiers.StatusChanged),
 		session:                 sessionFor(client),
 		DB:                      db,
-		Traveos:                 traveosClient,
+		Bookings:                bookings,
 		notifyChatRequested:     notifiers.ChatRequested,
 		notifyIssuanceCreated:   notifiers.IssuanceCreated,
 		notifyIssuanceUpdated:   notifiers.IssuanceUpdated,

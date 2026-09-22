@@ -24,6 +24,11 @@ export const dependencyStatusSchema = z.object({
 export const systemStatusSchema = z.object({
   bot: dependencyStatusSchema,
   traveos: dependencyStatusSchema,
+  // One entry per airline the panel reads directly, keyed by the integration's
+  // name ("azul", "gol"). Empty until the first carrier is migrated off the
+  // vendor, and defaulted rather than required so a panel deployed ahead of the
+  // backend that adds it does not fail validation and blank the whole header.
+  providers: z.record(z.string(), dependencyStatusSchema).default({}),
 })
 
 export type DependencyState = z.infer<typeof dependencyStateSchema>

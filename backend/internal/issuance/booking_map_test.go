@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/murandido/m-80-backend/internal/booking"
 	"github.com/murandido/m-80-backend/internal/data"
-	"github.com/murandido/m-80-backend/internal/traveos"
 	"gorm.io/gorm"
 )
 
@@ -76,13 +76,13 @@ func TestInsertPassengerFlightsKeepsOneRowPerBaggageClass(t *testing.T) {
 		passenger, flights := seedItinerary(t, tx)
 
 		seat := "12A"
-		source := traveos.Passenger{}
-		source.Seats.Outbound = []*string{&seat, nil}
-		source.Baggage.Outbound = []traveos.BaggageAllowance{
+		source := booking.Passenger{}
+		source.SeatsOutbound = []*string{&seat, nil}
+		source.BaggageOutbound = []booking.Allowance{
 			{Quantity: 1, Weight: "10kg"},
 			{Quantity: 0, Weight: "23kg"},
 		}
-		source.Baggage.Inbound = []traveos.BaggageAllowance{{Quantity: 1, Weight: "10kg"}}
+		source.BaggageInbound = []booking.Allowance{{Quantity: 1, Weight: "10kg"}}
 
 		if err := insertPassengerFlights(tx, passenger, source, flights); err != nil {
 			t.Fatalf("insertPassengerFlights: %v", err)
@@ -126,8 +126,8 @@ func TestInsertPassengerFlightsStoresACountWithNoWeight(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		passenger, flights := seedItinerary(t, tx)
 
-		source := traveos.Passenger{}
-		source.Baggage.Outbound = []traveos.BaggageAllowance{{Quantity: 1}, {Quantity: 0}}
+		source := booking.Passenger{}
+		source.BaggageOutbound = []booking.Allowance{{Quantity: 1}, {Quantity: 0}}
 
 		if err := insertPassengerFlights(tx, passenger, source, flights); err != nil {
 			t.Fatalf("insertPassengerFlights: %v", err)
@@ -182,66 +182,6 @@ func seedItinerary(t *testing.T, tx *gorm.DB) (data.IssuancePassenger, insertedF
 	return passenger, flights
 }
 
-func TestDeriveTripTypeMapsTheVendorVocabulary(t *testing.T) {
-	tests := []struct {
-		name     string
-		tripType string
-		inbound  int
-		multiLeg bool
-		want     string
-	}{
-		{"one way", "somente_ida", 0, false, "one_way"},
-		{"round trip by tripType", "ida_e_volta", 1, false, "round_trip"},
-		{
-			// Belt and braces: a return leg present without tripType saying so still
-			// means round trip, because issuance_flights would carry an inbound row.
-			name: "round trip inferred from an inbound leg", tripType: "", inbound: 1, want: "round_trip",
-		},
-		{
-			// Multi-leg is not a trip type at Traveos - tripType only knows one-way
-			// and round-trip, and a multi-leg journey shows up in arguments instead.
-			name:     "multi leg wins over one way",
-			tripType: "somente_ida", multiLeg: true, want: "multi_leg",
-		},
-		{
-			// More specific than round trip, so it wins there too.
-			name:     "multi leg wins over round trip",
-			tripType: "ida_e_volta", inbound: 1, multiLeg: true, want: "multi_leg",
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			details := &traveos.TicketData{}
-			details.Emission.TripType = tc.tripType
-			details.Emission.Arguments.MultiLeg = traveos.FlexibleBool(tc.multiLeg)
-			details.Flights.Inbound = make([]traveos.Flight, tc.inbound)
-
-			if got := deriveTripType(details); got != tc.want {
-				t.Errorf("deriveTripType() = %q, want %q", got, tc.want)
-			}
-		})
-	}
-}
-
-func TestDeriveTripTypeIgnoresPopulatedBaggageOnAOneWayTicket(t *testing.T) {
-	// GOL returns a populated bagagens.volta on a one-way ticket, whose flights
-	// object has no volta at all. Only flights.volta proves a return leg exists, so
-	// a passenger carrying inbound baggage data must not flip the trip type.
-	var details traveos.TicketData
-	details.Emission.TripType = "somente_ida"
-	details.Emission.Passengers = []traveos.Passenger{{
-		Baggage: traveos.Baggage{
-			Outbound: []traveos.BaggageAllowance{{Quantity: 1}, {Quantity: 0}},
-			Inbound:  []traveos.BaggageAllowance{{Quantity: 1}, {Quantity: 0}},
-		},
-	}}
-
-	if got := deriveTripType(&details); got != "one_way" {
-		t.Fatalf("deriveTripType() = %q, want one_way", got)
-	}
-}
-
 func TestNormalisePassengerTypeStaysInsideTheEnum(t *testing.T) {
 	// passenger_type is a Postgres enum; a value outside it aborts the insert. The
 	// vendor uses the same three codes but as free text.
@@ -261,7 +201,7 @@ func TestNormalisePassengerTypeStaysInsideTheEnum(t *testing.T) {
 	}
 }
 
-func TestTraveosLocatorPrefersTheAirlinePNR(t *testing.T) {
+func TestBookingLocatorPrefersTheAirlinePNR(t *testing.T) {
 	// Traveos scrapes the airline, so the airline's own PNR is the one that
 	// identifies the booking there. The program locator is the loyalty program's
 	// reference and is only a fallback.
@@ -286,8 +226,8 @@ func TestTraveosLocatorPrefersTheAirlinePNR(t *testing.T) {
 				ProgramLocator: tc.programLocator,
 				AirlineLocator: tc.airlineLocator,
 			}
-			if got := traveosLocator(issuance); got != tc.want {
-				t.Errorf("traveosLocator() = %q, want %q", got, tc.want)
+			if got := bookingLocator(issuance); got != tc.want {
+				t.Errorf("bookingLocator() = %q, want %q", got, tc.want)
 			}
 		})
 	}
@@ -377,9 +317,9 @@ func TestApplyIssuanceFieldsUsesTheOutboundArrivalAsTheDestination(t *testing.T)
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			var issuance data.Issuance
-			var details traveos.TicketData
+			var fetched booking.Booking
 
-			applyIssuanceFields(nil, &issuance, &details, tc.flights)
+			applyIssuanceFields(&issuance, &fetched, tc.flights, "traveos")
 
 			if issuance.OriginIATACode == nil || *issuance.OriginIATACode != tc.wantFrom {
 				t.Errorf("origin = %v, want %q", issuance.OriginIATACode, tc.wantFrom)

@@ -91,10 +91,18 @@ type Issuance struct {
 	// and it is not there" is the other half - without it the panel would ask again
 	// on every page load, which for an imported day is hundreds of calls a refresh.
 	TraveosAttemptedAt *time.Time `gorm:"column:traveos_attempted_at" json:"traveos_attempted_at"`
+	// BookingSource names the provider whose answer produced the itinerary on this
+	// row - "traveos", "azul", and so on. Nil on every row written before the
+	// providers existed, which is not the same as "unknown provider".
+	//
+	// It is what the migration off Traveos is judged on: an airline whose direct
+	// integration is quietly falling back to the vendor on every lookup looks
+	// exactly like one that is working, until this column is counted.
+	BookingSource *string `gorm:"column:booking_source" json:"booking_source"`
 	// Imported marks an issuance that came from the pre-panel spreadsheet
 	// (internal/legacyimport). The booking was made outside the system and long
 	// before the row existed, so Traveos may be searched for it but must never be
-	// asked to issue it - see findOrEmit. The importer goes away after the
+	// asked to issue it - see fetchOrImport. The importer goes away after the
 	// migration; this column does not, because the rows it describes stay.
 	Imported           bool                `gorm:"not null;default:false" json:"imported"`
 	Flights            []IssuanceFlight    `gorm:"foreignKey:IssuanceID;references:ID" json:"flights,omitempty"`

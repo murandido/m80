@@ -12,6 +12,7 @@ import (
 	"github.com/murandido/m-80-backend/internal/api"
 	"github.com/murandido/m-80-backend/internal/azul"
 	"github.com/murandido/m-80-backend/internal/azulsync"
+	"github.com/murandido/m-80-backend/internal/booking"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/events"
 	"github.com/murandido/m-80-backend/internal/health"
@@ -131,6 +132,20 @@ func main() {
 		traveosClient = nil
 	}
 
+	// Who answers when an itinerary is needed. Traveos is the fallback rather than
+	// the only option: each airline's own integration registers here as it is
+	// built, and which one is actually tried for a carrier is decided per row by
+	// airlines.direct_booking_enabled - see internal/issuance.resolveProviders.
+	//
+	// The provider is built inside the branch so that "no client" stays a real nil:
+	// a nil *traveos.Client stored in an interface is not nil, and the registry
+	// would then believe it has a fallback.
+	var fallback booking.Provider
+	if traveosClient != nil {
+		fallback = traveos.NewProvider(traveosClient)
+	}
+	bookings := booking.NewRegistry(fallback)
+
 	// The dependency lights the panel shows. The probes run here, on their own
 	// tickers, rather than inside the request that reads them: a vendor call
 	// takes seconds, and one probe per browser refresh would be both slow and
@@ -147,6 +162,24 @@ func main() {
 	// is a real request to somebody else's production, so it goes slower.
 	go monitor.Run(monitorCtx, health.DependencyBot, time.Minute, health.BotProbe(os.Getenv("BOT_INTERNAL_URL")))
 	go monitor.Run(monitorCtx, health.DependencyTraveos, 2*time.Minute, health.TraveosProbe(traveosClient))
+
+	// Every real lookup reports whether the carrier answered, which is a fresher and
+	// far cheaper signal than any ticker for an airline that is actually being used.
+	bookings.Watch(monitor.Observe)
+
+	// And a slow synthetic probe underneath it, for the carriers nobody happened to
+	// look anything up on today. It asks about a booking that cannot exist and reads
+	// the refusal; ten minutes rather than two, because unlike the vendor these are
+	// requests to an airline's public edge that this integration depends on not being
+	// noticed by.
+	for _, code := range bookings.Codes() {
+		provider, _ := bookings.Direct(code)
+		prober, ok := provider.(booking.Prober)
+		if !ok {
+			continue
+		}
+		go monitor.RunProvider(monitorCtx, provider.Name(), 10*time.Minute, health.BookingProviderProbe(prober))
+	}
 
 	// The Azul statement sync polls the connected inventory accounts on a ticker and stores
 	// their statements for reconciliation. Off by default and never even constructed unless
@@ -185,7 +218,7 @@ func main() {
 	}
 
 	// config router
-	r := api.NewRouter(data.DB, broker, traveosClient, monitor, smilesGuard)
+	r := api.NewRouter(data.DB, broker, bookings, monitor, smilesGuard)
 
 	port := os.Getenv("PORT")
 	if port == "" {

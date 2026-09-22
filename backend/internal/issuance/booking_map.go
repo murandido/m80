@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/murandido/m-80-backend/internal/account"
+	"github.com/murandido/m-80-backend/internal/booking"
 	"github.com/murandido/m-80-backend/internal/data"
-	"github.com/murandido/m-80-backend/internal/traveos"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
@@ -21,28 +21,35 @@ var courtesyTitles = map[string]bool{
 	"DR": true, "DRA": true, "SR": true, "SRA": true, "SRTA": true,
 }
 
-// applyTraveosData writes the fetched itinerary over whatever the issuance had.
+// applyBooking writes the fetched itinerary over whatever the issuance had.
 //
 // Replace rather than merge, and in one transaction: a resync has to converge on
 // what the airline says now, so a leg that no longer exists in the booking must
 // disappear from our copy instead of lingering next to its replacement.
-func applyTraveosData(
+//
+// It takes internal/booking's vendor-neutral shape rather than any provider's
+// own: this is the only place the itinerary becomes rows, and it must read the
+// same whether the answer came from Traveos or from the airline itself.
+// source names the provider whose answer this is, and is written to the row so the
+// migration off Traveos can be judged on what actually answered rather than on
+// which integration exists.
+func applyBooking(
 	tx *gorm.DB,
 	issuance *data.Issuance,
 	airline *data.Airline,
-	ticket *traveos.TicketItem,
-	details *traveos.TicketData,
+	fetched *booking.Booking,
+	source string,
 ) error {
 	if err := deleteExistingItinerary(tx, issuance.ID); err != nil {
 		return err
 	}
 
-	flights, err := insertFlights(tx, issuance.ID, details)
+	flights, err := insertFlights(tx, issuance.ID, fetched)
 	if err != nil {
 		return err
 	}
 
-	if err := insertPassengers(tx, issuance.ID, details, flights); err != nil {
+	if err := insertPassengers(tx, issuance.ID, fetched, flights); err != nil {
 		return err
 	}
 
@@ -53,17 +60,17 @@ func applyTraveosData(
 	// Idempotent by design, which matters here more than anywhere: the block above deletes
 	// and reinserts the passengers on every resync, and a resync must not consume the
 	// account's slots a second time.
-	if err := registerBeneficiaries(tx, issuance, details); err != nil {
+	if err := registerBeneficiaries(tx, issuance, fetched); err != nil {
 		return err
 	}
 
-	applyIssuanceFields(tx, issuance, details, flights)
+	applyIssuanceFields(issuance, fetched, flights, source)
 
 	// Backfill the brand colour from the ticket when the airline has none yet. The
 	// catalog is the tidier source, but this arrives free with data we already
 	// fetched, and a ticket with no colour renders in a generic blue nobody chose.
-	if airline.BrandColor == nil && ticket.Airline.PrimaryColor != "" {
-		colour := strings.ToUpper(strings.TrimSpace(ticket.Airline.PrimaryColor))
+	if airline.BrandColor == nil && fetched.BrandColor != "" {
+		colour := strings.ToUpper(strings.TrimSpace(fetched.BrandColor))
 		if isHexColour(colour) {
 			airline.BrandColor = &colour
 			if err := tx.Model(airline).Update("brand_color", colour).Error; err != nil {
@@ -113,16 +120,16 @@ func (f insertedFlights) all() []data.IssuanceFlight {
 	return append(append([]data.IssuanceFlight{}, f.outbound...), f.inbound...)
 }
 
-func insertFlights(tx *gorm.DB, issuanceID string, details *traveos.TicketData) (insertedFlights, error) {
+func insertFlights(tx *gorm.DB, issuanceID string, fetched *booking.Booking) (insertedFlights, error) {
 	var inserted insertedFlights
 
 	for _, spec := range []struct {
 		direction string
-		legs      []traveos.Flight
+		legs      []booking.Flight
 		target    *[]data.IssuanceFlight
 	}{
-		{"outbound", details.Flights.Outbound, &inserted.outbound},
-		{"inbound", details.Flights.Inbound, &inserted.inbound},
+		{"outbound", fetched.Outbound, &inserted.outbound},
+		{"inbound", fetched.Inbound, &inserted.inbound},
 	} {
 		for index, leg := range spec.legs {
 			// departure_at is NOT NULL, and a zero time would write a ticket dated
@@ -136,7 +143,7 @@ func insertFlights(tx *gorm.DB, issuanceID string, details *traveos.TicketData) 
 				IssuanceID:  issuanceID,
 				Direction:   spec.direction,
 				LegOrder:    index + 1,
-				DepartureAt: leg.DepartureAt.Time,
+				DepartureAt: leg.DepartureAt,
 			}
 			if number := strings.TrimSpace(leg.Number); number != "" {
 				flight.FlightNumber = &number
@@ -146,16 +153,16 @@ func insertFlights(tx *gorm.DB, issuanceID string, details *traveos.TicketData) 
 				// ("Econu00f4mica"). Rewriting it would be inventing data.
 				flight.Cabin = &cabin
 			}
-			if !leg.ArrivalAt.IsZero() {
-				arrival := leg.ArrivalAt.Time
+			if leg.ArrivalAt != nil {
+				arrival := *leg.ArrivalAt
 				flight.ArrivalAt = &arrival
 			}
-			if leg.Duration > 0 {
-				duration := int(leg.Duration)
+			if leg.DurationMin != nil && *leg.DurationMin > 0 {
+				duration := *leg.DurationMin
 				flight.DurationMin = &duration
 			}
-			flight.OriginIATACode = resolveAirportCode(tx, firstNonEmpty(leg.OriginDetails.IATA, leg.OriginIATA))
-			flight.DestinationIATACode = resolveAirportCode(tx, firstNonEmpty(leg.DestinationDetails.IATA, leg.DestinationIATA))
+			flight.OriginIATACode = resolveAirportCode(tx, leg.OriginIATA)
+			flight.DestinationIATACode = resolveAirportCode(tx, leg.DestinationIATA)
 
 			if err := tx.Create(&flight).Error; err != nil {
 				return insertedFlights{}, err
@@ -185,10 +192,10 @@ func resolveAirportCode(tx *gorm.DB, code string) *string {
 	err := tx.Select("iata_code").First(&airport, "iata_code = ?", code).Error
 	if err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			slog.Error("traveos: failed to look up an airport", "iata", code, "err", err)
+			slog.Error("booking: failed to look up an airport", "iata", code, "err", err)
 			return nil
 		}
-		slog.Warn("traveos: airport is not in the airports table, leaving the leg without it",
+		slog.Warn("booking: airport is not in the airports table, leaving the leg without it",
 			"iata", code)
 		return nil
 	}
@@ -197,19 +204,19 @@ func resolveAirportCode(tx *gorm.DB, code string) *string {
 
 // registerBeneficiaries charges this issuance's passengers against the account's cap.
 //
-// Traveos is authoritative about who was on the booking, so this replaces whatever the
+// The provider is authoritative about who was on the booking, so this replaces whatever the
 // issuance had consumed rather than adding to it - see account.ReplaceIssuanceUses for why
 // appending would double-count the main passenger on the bot path.
 //
 // Every passenger, not only the main one: the cap counts people on the booking, so a family
 // of four consumes four slots.
 //
-// The documents are read straight off the Traveos payload rather than back from the rows
+// The documents are read straight off the fetched booking rather than back from the rows
 // just written: those are encrypted on save, and reading them back would mean decrypting
 // what we already have in the clear right here.
-func registerBeneficiaries(tx *gorm.DB, issuance *data.Issuance, details *traveos.TicketData) error {
-	passengers := make([]account.Passenger, 0, len(details.Emission.Passengers))
-	for _, source := range details.Emission.Passengers {
+func registerBeneficiaries(tx *gorm.DB, issuance *data.Issuance, fetched *booking.Booking) error {
+	passengers := make([]account.Passenger, 0, len(fetched.Passengers))
+	for _, source := range fetched.Passengers {
 		name := strings.TrimSpace(cleanGivenName(source.FirstName) + " " + strings.TrimSpace(source.LastName))
 		passengers = append(passengers, account.Passenger{Name: name, CPF: source.Document})
 	}
@@ -223,16 +230,16 @@ func registerBeneficiaries(tx *gorm.DB, issuance *data.Issuance, details *traveo
 func insertPassengers(
 	tx *gorm.DB,
 	issuanceID string,
-	details *traveos.TicketData,
+	fetched *booking.Booking,
 	flights insertedFlights,
 ) error {
-	for index, source := range details.Emission.Passengers {
+	for index, source := range fetched.Passengers {
 		passenger := data.IssuancePassenger{
 			IssuanceID: issuanceID,
 			FirstName:  cleanGivenName(source.FirstName),
 			LastName:   strings.TrimSpace(source.LastName),
 			Type:       normalisePassengerType(source.Type),
-			// Position 0 is the main passenger, in the order Traveos listed them.
+			// Position 0 is the main passenger, in the order the provider listed them.
 			Position: index,
 		}
 
@@ -241,7 +248,7 @@ func insertPassengers(
 		// (some airlines return an empty surname) that a placeholder beats
 		// refusing the whole ticket.
 		if passenger.FirstName == "" && passenger.LastName == "" {
-			slog.Warn("traveos: skipping a passenger with no name at all",
+			slog.Warn("booking: skipping a passenger with no name at all",
 				"issuance_id", issuanceID, "position", index)
 			continue
 		}
@@ -292,17 +299,17 @@ func insertPassengers(
 func insertPassengerFlights(
 	tx *gorm.DB,
 	passenger data.IssuancePassenger,
-	source traveos.Passenger,
+	source booking.Passenger,
 	flights insertedFlights,
 ) error {
 	for _, spec := range []struct {
 		direction string
 		legs      []data.IssuanceFlight
 		seats     []*string
-		baggage   []traveos.BaggageAllowance
+		baggage   []booking.Allowance
 	}{
-		{"outbound", flights.outbound, source.Seats.Outbound, source.Baggage.Outbound},
-		{"inbound", flights.inbound, source.Seats.Inbound, source.Baggage.Inbound},
+		{"outbound", flights.outbound, source.SeatsOutbound, source.BaggageOutbound},
+		{"inbound", flights.inbound, source.SeatsInbound, source.BaggageInbound},
 	} {
 		for index, leg := range spec.legs {
 			link := data.IssuancePassengerFlight{
@@ -346,12 +353,12 @@ func insertPassengerFlights(
 // carries. Errors here are not fatal: every field it touches is nullable, and a
 // missing route is a smaller loss than a rejected itinerary.
 func applyIssuanceFields(
-	tx *gorm.DB,
 	issuance *data.Issuance,
-	details *traveos.TicketData,
+	fetched *booking.Booking,
 	flights insertedFlights,
+	source string,
 ) {
-	tripType := deriveTripType(details)
+	tripType := fetched.TripType
 	issuance.TripType = &tripType
 
 	legs := flights.all()
@@ -376,45 +383,32 @@ func applyIssuanceFields(
 		}
 	}
 
-	if len(details.Emission.Passengers) > 0 {
-		main := details.Emission.Passengers[0]
+	if len(fetched.Passengers) > 0 {
+		main := fetched.Passengers[0]
 		if name := strings.TrimSpace(cleanGivenName(main.FirstName) + " " + strings.TrimSpace(main.LastName)); name != "" {
 			issuance.MainPassengerName = &name
 		}
 	}
 
-	if number := strings.TrimSpace(details.Emission.PurchaseNumber); number != "" {
+	if number := strings.TrimSpace(fetched.PurchaseNumber); number != "" {
 		issuance.LatamPurchaseNumber = &number
 	}
 
 	// Stored verbatim: three mutually incompatible shapes across airlines
 	// (assistance slots, paid extras, an empty array) and nothing on our side
 	// reads it structurally, so normalising it would be invented work.
-	if len(details.Emission.AdditionalServices) > 0 {
-		issuance.AdditionalServices = datatypes.JSON(details.Emission.AdditionalServices)
+	if len(fetched.AdditionalServices) > 0 {
+		issuance.AdditionalServices = datatypes.JSON(fetched.AdditionalServices)
+	}
+
+	if source != "" {
+		issuance.BookingSource = &source
 	}
 
 	now := time.Now()
 	issuance.TraveosSyncedAt = &now
 	// The airline confirmed the itinerary - that is exactly what complete means.
 	issuance.Complete = true
-}
-
-// deriveTripType maps the vendor's vocabulary onto our trip_type enum.
-//
-// Note that multi-leg is not a trip type at Traveos: tripType only distinguishes
-// one-way from round-trip, and a multi-leg itinerary shows up as
-// arguments.multitrechos instead. Our enum has all three, so the flag has to be
-// checked separately - and it is checked first, because a multi-leg journey is
-// more specific than "one way".
-func deriveTripType(details *traveos.TicketData) string {
-	if bool(details.Emission.Arguments.MultiLeg) {
-		return "multi_leg"
-	}
-	if len(details.Flights.Inbound) > 0 || details.Emission.TripType == "ida_e_volta" {
-		return "round_trip"
-	}
-	return "one_way"
 }
 
 // cleanGivenName strips a trailing courtesy title from the given name.
@@ -435,9 +429,9 @@ func cleanGivenName(name string) string {
 	return strings.Join(tokens, " ")
 }
 
-// normalisePassengerType keeps the value inside the passenger_type enum. The
-// vendor uses the same three codes, but it is free text on their side and a
-// value outside the enum would abort the insert.
+// normalisePassengerType keeps the value inside the passenger_type enum. Every
+// source observed uses the same three codes, but it is free text on their side
+// and a value outside the enum would abort the insert.
 func normalisePassengerType(value string) string {
 	switch strings.ToUpper(strings.TrimSpace(value)) {
 	case "CHD":
@@ -447,15 +441,6 @@ func normalisePassengerType(value string) string {
 	default:
 		return "ADT"
 	}
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 func isHexColour(value string) bool {

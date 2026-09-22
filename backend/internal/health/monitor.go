@@ -55,9 +55,18 @@ type Check struct {
 }
 
 // Snapshot is every dependency at once, which is what the status route returns.
+//
+// Bot and Traveos are fields while the airlines are a map, and the asymmetry is
+// deliberate: those two are wired by name in cmd/api, so a typo should be a
+// compile error, while the airline integrations are registered at boot from a
+// list that grows with each carrier and cannot be named here in advance.
 type Snapshot struct {
 	Bot     Check `json:"bot"`
 	Traveos Check `json:"traveos"`
+	// Providers is one entry per booking provider that reads an airline directly,
+	// keyed by the provider's own name. Empty on a server with none wired, which is
+	// every server until the first carrier is migrated off the vendor.
+	Providers map[string]Check `json:"providers"`
 }
 
 // Dependency names the field a probe writes into. They are constants rather
@@ -85,8 +94,9 @@ func NewMonitor(notify func()) *Monitor {
 	now := time.Now()
 	return &Monitor{
 		snapshot: Snapshot{
-			Bot:     Check{State: StateUnknown, CheckedAt: now},
-			Traveos: Check{State: StateUnknown, CheckedAt: now},
+			Bot:       Check{State: StateUnknown, CheckedAt: now},
+			Traveos:   Check{State: StateUnknown, CheckedAt: now},
+			Providers: map[string]Check{},
 		},
 		notify: notify,
 	}
@@ -95,11 +105,20 @@ func NewMonitor(notify func()) *Monitor {
 // Get returns the current snapshot. It never blocks on a probe: the HTTP
 // handler reads whatever the last tick left behind, so a vendor taking twenty
 // seconds to answer is never a request that takes twenty seconds.
+//
+// The providers map is copied rather than shared. Returning the live map would
+// hand every HTTP request a reference the probes keep writing to, and the lock
+// released on the way out would be protecting nothing.
 func (m *Monitor) Get() Snapshot {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	return m.snapshot
+	snapshot := m.snapshot
+	snapshot.Providers = make(map[string]Check, len(m.snapshot.Providers))
+	for name, check := range m.snapshot.Providers {
+		snapshot.Providers[name] = check
+	}
+	return snapshot
 }
 
 // Run probes one dependency immediately and then on every tick, until ctx is
@@ -122,6 +141,87 @@ func (m *Monitor) Run(ctx context.Context, dependency Dependency, interval time.
 			m.probeOnce(ctx, dependency, probe)
 		}
 	}
+}
+
+// RunProvider is Run for a booking provider, which is named at boot from the
+// registry rather than by a constant here.
+//
+// The interval is the caller's to choose and is expected to be far longer than
+// the vendor's: a synthetic probe against an airline is a real request to a real
+// carrier for a booking that does not exist, and doing it often is both rude and
+// a good way to be noticed by the edge that this whole integration depends on.
+func (m *Monitor) RunProvider(ctx context.Context, name string, interval time.Duration, probe Probe) {
+	m.probeProviderOnce(ctx, name, probe)
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			m.probeProviderOnce(ctx, name, probe)
+		}
+	}
+}
+
+// Observe records the outcome of a *real* lookup, as opposed to a probe.
+//
+// It exists because the synthetic probe is the weaker of the two signals: it runs
+// on a slow ticker and asks a question nobody cares about, while a carrier that
+// is being used all day is answering real questions every few minutes. Feeding
+// those back means a busy airline has a fresh light for free, and the probe is
+// left doing the only job it is really needed for - saying something about the
+// quiet ones.
+//
+// reached is the caller's judgement of whether the provider's application
+// answered at all, which is not the same as whether it found the booking. This
+// package deliberately does not know how to tell those apart; see
+// internal/booking.Reached.
+func (m *Monitor) Observe(name string, reached bool) {
+	check := Check{State: StateUp, CheckedAt: time.Now()}
+	if !reached {
+		check.State = StateDown
+	}
+	m.recordProvider(name, check)
+}
+
+func (m *Monitor) probeProviderOnce(ctx context.Context, name string, probe Probe) {
+	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+
+	detail, err := probe(probeCtx)
+
+	check := Check{State: StateUp, Detail: detail, CheckedAt: time.Now()}
+	switch {
+	case errors.Is(err, ErrNotConfigured):
+		check.State = StateNotConfigured
+	case err != nil:
+		check.State = StateDown
+		slog.Warn("booking provider probe failed", "provider", name, "err", err)
+	}
+
+	m.recordProvider(name, check)
+}
+
+func (m *Monitor) recordProvider(name string, check Check) {
+	m.mu.Lock()
+
+	previous, known := m.snapshot.Providers[name]
+	m.snapshot.Providers[name] = check
+
+	changed := !known || previous.State != check.State || previous.Detail != check.Detail
+	m.mu.Unlock()
+
+	if !changed {
+		return
+	}
+
+	slog.Info("booking provider state changed",
+		"provider", name, "from", previous.State, "to", check.State)
+
+	m.notify()
 }
 
 // probeTimeout caps a single check. A probe that hangs must not still be

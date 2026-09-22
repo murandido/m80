@@ -5,14 +5,14 @@ import (
 	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/handlers"
 	"github.com/murandido/m-80-backend/internal/api/v1/routes"
+	"github.com/murandido/m-80-backend/internal/booking"
 	"github.com/murandido/m-80-backend/internal/events"
 	"github.com/murandido/m-80-backend/internal/health"
 	"github.com/murandido/m-80-backend/internal/smilessync"
-	"github.com/murandido/m-80-backend/internal/traveos"
 	"gorm.io/gorm"
 )
 
-func NewRouter(db *gorm.DB, broker *events.Broker, traveosClient *traveos.Client, monitor *health.Monitor, smilesGuard *smilessync.SessionGuard) chi.Router {
+func NewRouter(db *gorm.DB, broker *events.Broker, bookings *booking.Registry, monitor *health.Monitor, smilesGuard *smilessync.SessionGuard) chi.Router {
 	r := chi.NewRouter()
 
 	authHandler := handlers.NewAuthHandler(db)
@@ -43,7 +43,7 @@ func NewRouter(db *gorm.DB, broker *events.Broker, traveosClient *traveos.Client
 		routes.RegisterObservationPresetRoutes(r, db)
 		routes.RegisterAgencyRoutes(r, db)
 		routes.RegisterClientRoutes(r, db)
-		routes.RegisterIssuanceRoutes(r, db, broker, traveosClient)
+		routes.RegisterIssuanceRoutes(r, db, broker, bookings)
 		routes.RegisterSaleRoutes(r, db, broker)
 		routes.RegisterDashboardRoutes(r, db)
 		routes.RegisterAirportRoutes(r, db)
