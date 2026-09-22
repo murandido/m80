@@ -146,6 +146,25 @@ func main() {
 	}
 	bookings := booking.NewRegistry(fallback)
 
+	// The Azul client reads both the account statement and, now, the booking behind
+	// an issuance. It is built once here rather than inside the sync block because
+	// the two are independent: the booking lookup is anonymous and has nothing to do
+	// with AZUL_SYNC_ENABLED, which only governs the statement ticker.
+	//
+	// A missing Firebase config disables the carrier with a warning instead of
+	// stopping the panel from booting - the same tolerance Traveos gets, and the
+	// same reason: an issuance is still worth registering without its itinerary.
+	azulClient, err := azul.New()
+	if err != nil {
+		slog.Warn("azul integration is disabled", "err", err)
+		azulClient = nil
+	}
+	if azulClient != nil {
+		// Registered, not switched on: airlines.direct_booking_enabled decides
+		// whether an issuance actually goes here, and it defaults to false.
+		bookings.Register("AZUL", azul.NewProvider(azulClient))
+	}
+
 	// The dependency lights the panel shows. The probes run here, on their own
 	// tickers, rather than inside the request that reads them: a vendor call
 	// takes seconds, and one probe per browser refresh would be both slow and
@@ -187,9 +206,8 @@ func main() {
 	// after a account is connected and watched. A missing Firebase config disables it with a
 	// warning rather than stopping the panel from booting, exactly like Traveos above.
 	if os.Getenv("AZUL_SYNC_ENABLED") == "true" {
-		azulClient, err := azul.New()
-		if err != nil {
-			slog.Warn("azul statement sync is disabled", "err", err)
+		if azulClient == nil {
+			slog.Warn("azul statement sync is disabled", "err", azul.ErrMissingConfig)
 		} else {
 			interval := azulSyncInterval()
 			go azulsync.NewLoop(data.DB, azulClient, interval).Run(context.Background())

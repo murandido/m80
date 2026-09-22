@@ -32,6 +32,7 @@ func toAirlineResponse(airline data.Airline) schemas.AirlineResponse {
 		Name:                   airline.Name,
 		Code:                   airline.Code,
 		TraveosSupported:       airline.TraveosSupported,
+		DirectBookingEnabled:   airline.DirectBookingEnabled,
 		RequiresLastName:       airline.RequiresLastName,
 		RequiresPurchaseNumber: airline.RequiresPurchaseNumber,
 		TraveosAirlineID:       airline.TraveosAirlineID,
@@ -74,6 +75,9 @@ func (h *AirlineHandler) CreateAirline(w http.ResponseWriter, r *http.Request) {
 		Code: req.Code,
 	}
 
+	if req.DirectBookingEnabled != nil {
+		airline.DirectBookingEnabled = *req.DirectBookingEnabled
+	}
 	if req.TraveosSupported != nil {
 		airline.TraveosSupported = *req.TraveosSupported
 	}
@@ -226,6 +230,9 @@ func (h *AirlineHandler) UpdateAirline(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Code != nil {
 		airline.Code = *req.Code
+	}
+	if req.DirectBookingEnabled != nil {
+		airline.DirectBookingEnabled = *req.DirectBookingEnabled
 	}
 	if req.TraveosSupported != nil {
 		airline.TraveosSupported = *req.TraveosSupported

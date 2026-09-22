@@ -330,3 +330,41 @@ func TestApplyIssuanceFieldsUsesTheOutboundArrivalAsTheDestination(t *testing.T)
 		})
 	}
 }
+
+func TestNormaliseForStorageUpperCasesNamesAndCabins(t *testing.T) {
+	// Azul answers with mixed case, and disagrees with itself inside one booking -
+	// both spellings would otherwise land on the same ticket. Traveos already sends
+	// capitals, so this is a no-op there.
+	fetched := &booking.Booking{
+		Outbound: []booking.Flight{{Cabin: "Economy"}},
+		Inbound:  []booking.Flight{{Cabin: "Economy"}},
+		Passengers: []booking.Passenger{
+			{FirstName: "Lia Regina", LastName: "de Brito Moura"},
+			{FirstName: "DEUSDEDIT CASTELO BRANCO DE", LastName: "ANDRADE"},
+		},
+	}
+
+	normaliseForStorage(fetched)
+
+	if fetched.Outbound[0].Cabin != "ECONOMY" || fetched.Inbound[0].Cabin != "ECONOMY" {
+		t.Errorf("cabins = %q / %q", fetched.Outbound[0].Cabin, fetched.Inbound[0].Cabin)
+	}
+	if fetched.Passengers[0].FirstName != "LIA REGINA" || fetched.Passengers[0].LastName != "DE BRITO MOURA" {
+		t.Errorf("first passenger = %q %q", fetched.Passengers[0].FirstName, fetched.Passengers[0].LastName)
+	}
+	if fetched.Passengers[1].LastName != "ANDRADE" {
+		t.Errorf("second passenger was changed: %q", fetched.Passengers[1].LastName)
+	}
+}
+
+func TestNormaliseForStorageChangesCaseOnly(t *testing.T) {
+	// The spelling is the airline's, including Traveos' own broken unicode escape.
+	// Rewriting that would be inventing data; the ticket fixes it at display time.
+	fetched := &booking.Booking{Outbound: []booking.Flight{{Cabin: "Econu00f4mica"}}}
+
+	normaliseForStorage(fetched)
+
+	if fetched.Outbound[0].Cabin != "ECONU00F4MICA" {
+		t.Errorf("cabin = %q, want the same word in capitals", fetched.Outbound[0].Cabin)
+	}
+}

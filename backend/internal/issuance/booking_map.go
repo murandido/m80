@@ -40,6 +40,8 @@ func applyBooking(
 	fetched *booking.Booking,
 	source string,
 ) error {
+	normaliseForStorage(fetched)
+
 	if err := deleteExistingItinerary(tx, issuance.ID); err != nil {
 		return err
 	}
@@ -88,6 +90,38 @@ func applyBooking(
 	// landed - and the recalculation re-reads the issuance, so traveos_synced_at has to
 	// already be in the database for it to agree there is enough information to compute.
 	return RecalculateRedemptionFee(tx, issuance.ID)
+}
+
+// normaliseForStorage upper-cases the two fields whose case is the provider's
+// habit rather than a fact about the booking.
+//
+// It runs here, once, rather than in each adapter, because "what the row looks
+// like" is a property of our storage and not of any one carrier - and because the
+// alternative is remembering to do it again for every airline added.
+//
+// The airlines disagree, and one of them disagrees with itself: Azul answers with
+// "Lia Regina de Brito Moura" on one passenger of a booking and
+// "DEUSDEDIT CASTELO BRANCO DE ANDRADE" on another, which puts both spellings on
+// the same ticket. Traveos happens to send capitals already, so this is a no-op
+// there until a resync.
+//
+// Note this is case only, never spelling: the cabin keeps whatever word the
+// airline used, including Traveos' own broken escape ("ECONU00F4MICA"), because
+// rewriting that would be inventing data. The ticket translates the label at
+// display time anyway (internal/ticket/cabin.go), on a key that already ignores
+// case - so what changes here is what the database and the exports agree on, not
+// what the passenger reads.
+func normaliseForStorage(fetched *booking.Booking) {
+	for index := range fetched.Outbound {
+		fetched.Outbound[index].Cabin = strings.ToUpper(fetched.Outbound[index].Cabin)
+	}
+	for index := range fetched.Inbound {
+		fetched.Inbound[index].Cabin = strings.ToUpper(fetched.Inbound[index].Cabin)
+	}
+	for index := range fetched.Passengers {
+		fetched.Passengers[index].FirstName = strings.ToUpper(fetched.Passengers[index].FirstName)
+		fetched.Passengers[index].LastName = strings.ToUpper(fetched.Passengers[index].LastName)
+	}
 }
 
 // deleteExistingItinerary clears the itinerary tables for this issuance,
