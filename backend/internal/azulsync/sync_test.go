@@ -105,7 +105,7 @@ func seedAccount(t *testing.T, tx *gorm.DB, customerKey string) data.Account {
 	holder := data.Person{Name: "Titular " + suffix}
 	mustCreate(t, tx, &holder)
 
-	account := data.Account{LoyaltyProgramID: program.ID, HolderID: &holder.ID, OwnsPointInventory: true}
+	account := data.Account{LoyaltyProgramID: program.ID, HolderID: &holder.ID, OwnsPointInventory: true, TracksStatement: true}
 	if customerKey != "" {
 		account.AzulCustomerKey = &customerKey
 	}

@@ -103,6 +103,7 @@ func seedSmilesAccount(t *testing.T, tx *gorm.DB) (data.Account, data.User) {
 	account := data.Account{
 		LoyaltyProgramID:   program.ID,
 		OwnsPointInventory: true,
+		TracksStatement:    true,
 		Login:              &login,
 		Password:           &password,
 	}
@@ -269,7 +270,27 @@ func TestAnAccountWithoutCredentialsCannotConnect(t *testing.T) {
 	})
 }
 
-func TestAnAccountWithoutItsOwnInventoryIsRefused(t *testing.T) {
+func TestAnAccountThatDoesNotTrackItsStatementIsRefused(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		account, user := seedSmilesAccount(t, tx)
+		if err := tx.Model(&data.Account{}).Where("id = ?", account.ID).
+			Update("tracks_statement", false).Error; err != nil {
+			t.Fatalf("updating the account: %v", err)
+		}
+		handler := newSmilesHandler(tx, mfaRequiredTenant(t, http.StatusOK, sessionBody(t)))
+
+		rec := httptest.NewRecorder()
+		handler.ConnectSmilesAccount(rec, smilesRequest(http.MethodPost, account.ID, user.ID, ""))
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("status = %d, want 422 (body: %s)", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+// Connecting asks whether the account is tracked, NOT whether its points are ours to price.
+// Before migration 64 one flag answered both, and an account administered for someone else -
+// whose redemptions are our own issuances - could not have its statement read at all.
+func TestAnAccountWithoutItsOwnInventoryCanStillConnect(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		account, user := seedSmilesAccount(t, tx)
 		if err := tx.Model(&data.Account{}).Where("id = ?", account.ID).
@@ -280,8 +301,8 @@ func TestAnAccountWithoutItsOwnInventoryIsRefused(t *testing.T) {
 
 		rec := httptest.NewRecorder()
 		handler.ConnectSmilesAccount(rec, smilesRequest(http.MethodPost, account.ID, user.ID, ""))
-		if rec.Code != http.StatusUnprocessableEntity {
-			t.Fatalf("status = %d, want 422 (body: %s)", rec.Code, rec.Body.String())
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
 		}
 	})
 }

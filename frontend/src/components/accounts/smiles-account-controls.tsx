@@ -33,8 +33,8 @@ interface SmilesAccountControlsProps {
 }
 
 // The Smiles strip on the account card: connect the account, or show the synced balance with
-// "atualizado há…" and a link to the statement page. Rendered only for Smiles accounts that own
-// their point inventory - every other account has no sync to offer.
+// "atualizado há…" and a link to the statement page. Rendered only for Smiles accounts that are
+// set to track their statement - every other account has no sync to offer.
 //
 // Unlike the Azul strip there is no "conectando" to wait on: every step of a Smiles connect
 // answers within its own request, and what takes time is the operator reading a code off their
@@ -50,8 +50,9 @@ export function SmilesAccountControls({ account }: SmilesAccountControlsProps) {
   const [awaitingFirstSync, setAwaitingFirstSync] = useState(false)
   const pollingSince = useRef<number | null>(null)
 
+  // Tracking, not ownership - the same question the backend asks. See migration 64.
   const enabled =
-    account.loyalty_program.code === SMILES_PROGRAM_CODE && account.owns_point_inventory
+    account.loyalty_program.code === SMILES_PROGRAM_CODE && account.tracks_statement
 
   const fetchStatus = useCallback(async () => {
     try {

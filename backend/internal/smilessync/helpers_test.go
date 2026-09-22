@@ -76,7 +76,7 @@ func seedAccount(t *testing.T, tx *gorm.DB, refreshToken string) data.Account {
 	holder := data.Person{Name: "Titular " + suffix}
 	mustCreate(t, tx, &holder)
 
-	account := data.Account{LoyaltyProgramID: program.ID, HolderID: &holder.ID, OwnsPointInventory: true}
+	account := data.Account{LoyaltyProgramID: program.ID, HolderID: &holder.ID, OwnsPointInventory: true, TracksStatement: true}
 	if refreshToken != "" {
 		account.SmilesRefreshToken = &refreshToken
 	}

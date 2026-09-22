@@ -50,7 +50,7 @@ func NewAzulConnectHandler(db *gorm.DB, tracker *azulsync.ConnectTracker) *AzulC
 // @Failure      403  {object}  schemas.ErrorResponse "Requer admin"
 // @Failure      404  {object}  schemas.ErrorResponse "Conta não encontrada"
 // @Failure      409  {object}  schemas.ErrorResponse "Já existe um login em andamento para esta conta"
-// @Failure      422  {object}  schemas.ErrorResponse "Conta sem estoque próprio ou sem login/senha"
+// @Failure      422  {object}  schemas.ErrorResponse "Conta que não acompanha extrato, ou sem login/senha"
 // @Router       /accounts/{id}/azul-connect [post]
 func (h *AzulConnectHandler) ConnectAzulAccount(w http.ResponseWriter, r *http.Request) {
 	var account data.Account
@@ -62,9 +62,9 @@ func (h *AzulConnectHandler) ConnectAzulAccount(w http.ResponseWriter, r *http.R
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch account: "+err.Error())
 		return
 	}
-	if !account.OwnsPointInventory {
+	if !account.TracksStatement {
 		utils.SendError(w, r, http.StatusUnprocessableEntity,
-			"Esta conta não controla estoque próprio de pontos")
+			"Esta conta não acompanha extrato. Ligue \"Acompanhar extrato\" no cadastro dela.")
 		return
 	}
 	if account.Login == nil || *account.Login == "" || account.Password == nil || *account.Password == "" {

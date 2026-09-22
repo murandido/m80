@@ -28,7 +28,7 @@ func seedAzulStatementTarget(t *testing.T, tx *gorm.DB) (data.Account, data.User
 	agency := data.Agency{Name: "Test Agency " + suffix}
 	create(t, tx, &agency)
 	user := createUser(t, tx, "Operador "+suffix)
-	account := data.Account{LoyaltyProgramID: program.ID, OwnsPointInventory: true}
+	account := data.Account{LoyaltyProgramID: program.ID, OwnsPointInventory: true, TracksStatement: true}
 	create(t, tx, &account)
 
 	return account, user

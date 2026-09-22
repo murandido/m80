@@ -40,6 +40,7 @@ export async function createAccountAction(
     nicknames,
     waives_redemption_fee,
     owns_point_inventory,
+    tracks_statement,
     default_profit_share_percent,
     ...rest
   } = data
@@ -47,6 +48,7 @@ export async function createAccountAction(
     loyalty_program_id,
     waives_redemption_fee: waives_redemption_fee ?? false,
     owns_point_inventory: owns_point_inventory ?? false,
+    tracks_statement: tracks_statement ?? false,
     ...(default_profit_share_percent === undefined
       ? {}
       : { default_profit_share_percent }),
@@ -113,6 +115,7 @@ export async function updateAccountAction(
   const {
     waives_redemption_fee,
     owns_point_inventory,
+    tracks_statement,
     default_profit_share_percent,
     ...rest
   } = data
@@ -120,6 +123,7 @@ export async function updateAccountAction(
     ...stripEmptyFields(rest),
     ...(waives_redemption_fee === undefined ? {} : { waives_redemption_fee }),
     ...(owns_point_inventory === undefined ? {} : { owns_point_inventory }),
+    ...(tracks_statement === undefined ? {} : { tracks_statement }),
     ...(default_profit_share_percent === undefined ? {} : { default_profit_share_percent }),
   }
 

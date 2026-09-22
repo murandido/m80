@@ -133,13 +133,14 @@ func growBackoff(current, interval time.Duration) time.Duration {
 	return next
 }
 
-// eligibleAccounts are the connected inventory accounts: they own their miles inventory and
-// have a session to renew. An account without one stays pending until it is connected, and is
-// not worth a round.
+// eligibleAccounts are the connected accounts that are tracked: they have "Acompanhar extrato"
+// on and a session to renew. Owning the miles is no longer the question - an account
+// administered for someone else still has a statement worth reading. An account without a
+// session stays pending until it is connected, and is not worth a round.
 func eligibleAccounts(db *gorm.DB) ([]data.Account, error) {
 	var accounts []data.Account
 	err := db.
-		Where("owns_point_inventory = ? AND smiles_refresh_token IS NOT NULL", true).
+		Where("tracks_statement = ? AND smiles_refresh_token IS NOT NULL", true).
 		Find(&accounts).Error
 	return accounts, err
 }

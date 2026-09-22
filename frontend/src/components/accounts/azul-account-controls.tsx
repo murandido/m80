@@ -33,8 +33,8 @@ interface AzulAccountControlsProps {
 
 // The Azul strip on the account card: connect the account (when it has no customerKey yet) or,
 // once connected, show the synced balance with "atualizado há…" and a link to the statement
-// page. Rendered only for Azul accounts that own their point inventory - every other account
-// has no sync to offer.
+// page. Rendered only for Azul accounts that are set to track their statement - every other
+// account has no sync to offer.
 //
 // The "conectando" state is owned by the server (the in-flight connect tracker), not by this
 // component: the card reads it back from GET /api/accounts/{id}/azul-status, so leaving the page,
@@ -53,8 +53,9 @@ export function AzulAccountControls({ account }: AzulAccountControlsProps) {
   const wasConnecting = useRef(false)
 
   const isAzul = account.loyalty_program.code === AZUL_PROGRAM_CODE
-  const isInventory = account.owns_point_inventory
-  const enabled = isAzul && isInventory
+  // Tracking, not ownership: an account administered for someone else has a statement worth
+  // watching and no inventory to cost. See migration 64.
+  const enabled = isAzul && account.tracks_statement
 
   const fetchStatus = useCallback(async () => {
     try {

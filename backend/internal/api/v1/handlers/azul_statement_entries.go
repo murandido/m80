@@ -40,7 +40,7 @@ import (
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao carregar o extrato"
 // @Router       /accounts/{id}/azul-statement/entries [get]
 func (h *StatementHandler) AzulStatementEntries(w http.ResponseWriter, r *http.Request) {
-	account, ok := h.inventoryAccount(w, r)
+	account, ok := h.statementAccount(w, r)
 	if !ok {
 		return
 	}
@@ -159,7 +159,7 @@ func (h *StatementHandler) AzulStatementEntries(w http.ResponseWriter, r *http.R
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao gerar o CSV"
 // @Router       /accounts/{id}/azul-statement/export [get]
 func (h *StatementHandler) ExportAzulStatement(w http.ResponseWriter, r *http.Request) {
-	account, ok := h.inventoryAccount(w, r)
+	account, ok := h.statementAccount(w, r)
 	if !ok {
 		return
 	}
@@ -293,7 +293,7 @@ func (h *StatementHandler) AssignAzulCityCode(w http.ResponseWriter, r *http.Req
 // @Router       /accounts/{id}/azul-statement/links [post]
 // @Router       /accounts/{id}/smiles-statement/links [post]
 func (h *StatementHandler) LinkStatementBooking(w http.ResponseWriter, r *http.Request) {
-	account, ok := h.inventoryAccount(w, r)
+	account, ok := h.statementAccount(w, r)
 	if !ok {
 		return
 	}
@@ -354,7 +354,7 @@ func (h *StatementHandler) LinkStatementBooking(w http.ResponseWriter, r *http.R
 // @Router       /accounts/{id}/azul-statement/links [delete]
 // @Router       /accounts/{id}/smiles-statement/links [delete]
 func (h *StatementHandler) UnlinkStatementBooking(w http.ResponseWriter, r *http.Request) {
-	account, ok := h.inventoryAccount(w, r)
+	account, ok := h.statementAccount(w, r)
 	if !ok {
 		return
 	}

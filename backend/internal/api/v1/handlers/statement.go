@@ -146,10 +146,9 @@ func (h *StatementHandler) CommitAzulStatement(w http.ResponseWriter, r *http.Re
 	utils.SendJSON(w, r, http.StatusOK, "Lotes lançados a partir do extrato", result)
 }
 
-// inventoryAccount loads the account named in the URL and checks it owns its own inventory,
-// answering the client itself on failure. Shared by both programmes' statement routes: which
-// airline an account belongs to changes what is read, never who may read it.
-func (h *StatementHandler) inventoryAccount(w http.ResponseWriter, r *http.Request) (data.Account, bool) {
+// loadAccount fetches the account named in the URL, answering the client itself when it is not
+// there. The two guards below add the question each route actually asks.
+func (h *StatementHandler) loadAccount(w http.ResponseWriter, r *http.Request) (data.Account, bool) {
 	var account data.Account
 	if err := h.DB.First(&account, "id = ?", chi.URLParam(r, "id")).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -157,6 +156,33 @@ func (h *StatementHandler) inventoryAccount(w http.ResponseWriter, r *http.Reque
 			return account, false
 		}
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch account: "+err.Error())
+		return account, false
+	}
+	return account, true
+}
+
+// statementAccount is the guard for reading a statement: connecting the account, the badge, the
+// lines, the export and the issuance links. It asks whether the account is tracked at all, which
+// is a different question from whether its points are ours to price.
+func (h *StatementHandler) statementAccount(w http.ResponseWriter, r *http.Request) (data.Account, bool) {
+	account, ok := h.loadAccount(w, r)
+	if !ok {
+		return account, false
+	}
+	if !account.TracksStatement {
+		utils.SendError(w, r, http.StatusUnprocessableEntity,
+			"Esta conta não acompanha extrato. Ligue \"Acompanhar extrato\" no cadastro dela.")
+		return account, false
+	}
+	return account, true
+}
+
+// inventoryAccount is the guard for anything that prices points: the reconciliation panel, the
+// batch commit and the batch links. Tracking a statement is not enough - a batch on an account
+// whose points are not ours would be costing somebody else's acquisition.
+func (h *StatementHandler) inventoryAccount(w http.ResponseWriter, r *http.Request) (data.Account, bool) {
+	account, ok := h.loadAccount(w, r)
+	if !ok {
 		return account, false
 	}
 	if !account.OwnsPointInventory {

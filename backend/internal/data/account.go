@@ -67,6 +67,15 @@ type Account struct {
 	// today: the category answers whether the beneficiary cap applies, this one answers
 	// who paid for the points. See migration 48.
 	OwnsPointInventory bool `gorm:"column:owns_point_inventory;not null;default:false" json:"owns_point_inventory"`
+	// TracksStatement says the account's statement is read from the airline: it governs
+	// connecting the account, the periodic sync and the statement screens.
+	//
+	// Deliberately NOT the same question as OwnsPointInventory, even though one rule used to
+	// answer both. That one asks whether these points are ours to price; this one asks whether
+	// we want to see what happened in the account. An account administered for someone else has
+	// a statement worth watching - its redemptions are our own issuances - and no inventory to
+	// cost. Anything that prices points still asks OwnsPointInventory. See migration 64.
+	TracksStatement bool `gorm:"column:tracks_statement;not null;default:false" json:"tracks_statement"`
 	// DefaultProfitSharePercent seeds the split of a new batch on this account. Only a
 	// default: each batch freezes its own copy, so changing this never rewrites a month
 	// that was already settled. Zero means the profit stays whole with whoever funded

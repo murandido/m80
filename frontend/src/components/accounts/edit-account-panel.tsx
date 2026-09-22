@@ -55,6 +55,7 @@ function toFormValues(account: Account): FormData {
     category: account.category,
     waives_redemption_fee: account.waives_redemption_fee,
     owns_point_inventory: account.owns_point_inventory,
+    tracks_statement: account.tracks_statement,
     default_profit_share_percent: account.default_profit_share_percent,
   }
 }
@@ -363,6 +364,36 @@ export function EditAccountPanel({
                   )}
                 />
               </div>
+
+              {/* tracks_statement */}
+              <div className="flex flex-col gap-1 text-sm">
+                <Controller
+                  name="tracks_statement"
+                  control={form.control}
+                  render={({ field }) => (
+                    <>
+                      <div className="flex items-center justify-between gap-3">
+                        <FieldLabel htmlFor="edit-account-tracks-statement">
+                          Acompanhar extrato
+                        </FieldLabel>
+                        <Switch
+                          id="edit-account-tracks-statement"
+                          checked={field.value ?? false}
+                          onCheckedChange={field.onChange}
+                          disabled={isPending}
+                        />
+                      </div>
+                      <p className="text-xs text-slate-500">
+                        Ligue para ler o extrato desta conta direto da companhia. Vale para Azul e
+                        Smiles, e não depende de estoque próprio — uma conta administrada para
+                        outra pessoa também tem extrato que interessa. Desligar interrompe a
+                        sincronização sem desconectar a conta.
+                      </p>
+                    </>
+                  )}
+                />
+              </div>
+
 
               {/* saldo previsto x saldo real (read-only: the sync owns the real balance) */}
               <div className="flex flex-col gap-2 rounded-md border border-slate-200 p-3 text-sm">

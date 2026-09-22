@@ -24,13 +24,21 @@ func TestGrowBackoff(t *testing.T) {
 	}
 }
 
-func TestEligibleAccountsFiltersByOwnershipAndKey(t *testing.T) {
+func TestEligibleAccountsFiltersByTrackingAndKey(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
-		connected := seedAccount(t, tx, "cust-key-1") // owns inventory + has a key
-		noKey := seedAccount(t, tx, "")               // owns inventory, no key yet
+		connected := seedAccount(t, tx, "cust-key-1") // tracked + has a key
+		noKey := seedAccount(t, tx, "")               // tracked, no key yet
 
-		// An account that does not own its inventory, even with a key, is not eligible.
-		notOwned := seedAccount(t, tx, "cust-key-2")
+		// An account nobody asked to track, even with a key, is not read. Turning the flag off
+		// is how an operator stops a sync without disconnecting the account.
+		notTracked := seedAccount(t, tx, "cust-key-2")
+		if err := tx.Model(&notTracked).Update("tracks_statement", false).Error; err != nil {
+			t.Fatalf("flipping tracking: %v", err)
+		}
+
+		// Whereas an account whose points are not ours to price IS read: its statement is worth
+		// watching even though it has no inventory to cost. See migration 64.
+		notOwned := seedAccount(t, tx, "cust-key-3")
 		if err := tx.Model(&notOwned).Update("owns_point_inventory", false).Error; err != nil {
 			t.Fatalf("flipping ownership: %v", err)
 		}
@@ -50,8 +58,11 @@ func TestEligibleAccountsFiltersByOwnershipAndKey(t *testing.T) {
 		if got[noKey.ID] {
 			t.Error("an account with no customerKey was eligible")
 		}
-		if got[notOwned.ID] {
-			t.Error("an account that does not own its inventory was eligible")
+		if got[notTracked.ID] {
+			t.Error("an account that does not track its statement was eligible")
+		}
+		if !got[notOwned.ID] {
+			t.Error("a tracked account was skipped because its points are not ours to cost")
 		}
 
 		// The eligible account's key comes back decrypted, ready for the reader.

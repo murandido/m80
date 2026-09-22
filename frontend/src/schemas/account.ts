@@ -68,6 +68,13 @@ export const accountSchema = z.object({
     .boolean()
     .nullish()
     .transform((value) => value ?? false),
+  // Whether this account's statement is read from the airline. A different question from the
+  // flag above: an account administered for someone else has a statement worth watching and no
+  // inventory to cost. Defaulted the same way.
+  tracks_statement: z
+    .boolean()
+    .nullish()
+    .transform((value) => value ?? false),
   default_profit_share_percent: z
     .number()
     .nullish()
@@ -139,6 +146,10 @@ export const accountOptionSchema = z.object({
   // Absent means false, the same contract as the flag above: the API omits it on every
   // ordinary account, which is nearly all of them.
   owns_point_inventory: z
+    .boolean()
+    .nullish()
+    .transform((value) => value ?? false),
+  tracks_statement: z
     .boolean()
     .nullish()
     .transform((value) => value ?? false),
@@ -221,6 +232,7 @@ export const createAccountSchema = {
     category: accountCategorySchema.optional(),
     waives_redemption_fee: z.boolean().optional(),
     owns_point_inventory: z.boolean().optional(),
+    tracks_statement: z.boolean().optional(),
     default_profit_share_percent: z.number().min(0).max(100).optional(),
     nicknames: z.array(z.string().min(1)).optional(),
   }),
@@ -241,6 +253,7 @@ export const updateAccountSchema = {
     category: accountCategorySchema.optional(),
     waives_redemption_fee: z.boolean().optional(),
     owns_point_inventory: z.boolean().optional(),
+    tracks_statement: z.boolean().optional(),
     default_profit_share_percent: z.number().min(0).max(100).optional(),
     // The real balance is no longer editable here: the Azul statement sync owns it.
   }),

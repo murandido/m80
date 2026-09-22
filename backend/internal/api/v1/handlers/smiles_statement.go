@@ -36,7 +36,7 @@ import (
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao carregar o estado"
 // @Router       /accounts/{id}/smiles-statement/status [get]
 func (h *StatementHandler) SmilesConnectStatus(w http.ResponseWriter, r *http.Request) {
-	account, ok := h.inventoryAccount(w, r)
+	account, ok := h.statementAccount(w, r)
 	if !ok {
 		return
 	}
@@ -180,7 +180,7 @@ func (h *StatementHandler) CommitSmilesStatement(w http.ResponseWriter, r *http.
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao carregar o extrato"
 // @Router       /accounts/{id}/smiles-statement/entries [get]
 func (h *StatementHandler) SmilesStatementEntries(w http.ResponseWriter, r *http.Request) {
-	account, ok := h.inventoryAccount(w, r)
+	account, ok := h.statementAccount(w, r)
 	if !ok {
 		return
 	}
@@ -286,7 +286,7 @@ func (h *StatementHandler) SmilesStatementEntries(w http.ResponseWriter, r *http
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao gerar o CSV"
 // @Router       /accounts/{id}/smiles-statement/export [get]
 func (h *StatementHandler) ExportSmilesStatement(w http.ResponseWriter, r *http.Request) {
-	account, ok := h.inventoryAccount(w, r)
+	account, ok := h.statementAccount(w, r)
 	if !ok {
 		return
 	}

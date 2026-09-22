@@ -120,13 +120,14 @@ func growBackoff(current, interval time.Duration) time.Duration {
 	return next
 }
 
-// eligibleAccounts are the connected inventory accounts: they own their point inventory and
-// have a customerKey to read. Accounts without a key stay pending until login (C7) fills it,
-// and are not worth a round.
+// eligibleAccounts are the connected accounts that are tracked: they have "Acompanhar extrato"
+// on and a customerKey to read. Owning the point inventory is no longer the question - an
+// account administered for someone else still has a statement worth reading. Accounts without a
+// key stay pending until a connect fills it, and are not worth a round.
 func eligibleAccounts(db *gorm.DB) ([]data.Account, error) {
 	var accounts []data.Account
 	err := db.
-		Where("owns_point_inventory = ? AND azul_customer_key IS NOT NULL", true).
+		Where("tracks_statement = ? AND azul_customer_key IS NOT NULL", true).
 		Find(&accounts).Error
 	return accounts, err
 }

@@ -187,6 +187,7 @@ func toAccountResponseWithUsage(account data.Account, usage *acct.Usage) schemas
 		RealBalanceCheckedOn:      checkedOn,
 		WaivesRedemptionFee:       account.WaivesRedemptionFee,
 		OwnsPointInventory:        account.OwnsPointInventory,
+		TracksStatement:           account.TracksStatement,
 		DefaultProfitSharePercent: account.DefaultProfitSharePercent,
 		CPFUsage:                  usage,
 		LoyaltyProgramID:          account.LoyaltyProgramID,
@@ -223,6 +224,7 @@ func toAccountPickerResponse(account data.Account) schemas.AccountPickerResponse
 		Nicknames:           nicknames,
 		WaivesRedemptionFee: account.WaivesRedemptionFee,
 		OwnsPointInventory:  account.OwnsPointInventory,
+		TracksStatement:     account.TracksStatement,
 		DeletedAt:           archivedAt(account.DeletedAt),
 	}
 }
@@ -266,6 +268,9 @@ func (h *AccountHandler) CreateAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.OwnsPointInventory != nil {
 		account.OwnsPointInventory = *req.OwnsPointInventory
+	}
+	if req.TracksStatement != nil {
+		account.TracksStatement = *req.TracksStatement
 	}
 	if req.DefaultProfitSharePercent != nil {
 		account.DefaultProfitSharePercent = *req.DefaultProfitSharePercent
@@ -620,6 +625,9 @@ func (h *AccountHandler) UpdateAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.OwnsPointInventory != nil {
 		account.OwnsPointInventory = *req.OwnsPointInventory
+	}
+	if req.TracksStatement != nil {
+		account.TracksStatement = *req.TracksStatement
 	}
 	if req.DefaultProfitSharePercent != nil {
 		account.DefaultProfitSharePercent = *req.DefaultProfitSharePercent

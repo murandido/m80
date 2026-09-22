@@ -24,6 +24,11 @@ type CreateAccountRequest struct {
 	// /sales/suppliers. Omitted means false, which is every account that existed before
 	// this - and what keeps the costing dormant until an account is deliberately marked.
 	OwnsPointInventory *bool `json:"owns_point_inventory" validate:"omitempty"`
+	// TracksStatement turns on reading this account's statement from the airline: connecting
+	// it, the periodic sync and the statement screens. A different question from the flag
+	// above - an account administered for someone else has a statement worth watching and no
+	// inventory to cost. Omitted means false.
+	TracksStatement *bool `json:"tracks_statement" validate:"omitempty"`
 	// DefaultProfitSharePercent seeds the split on new batches of this account. Each batch
 	// freezes its own copy, so changing this never revises a month already settled.
 	DefaultProfitSharePercent *int `json:"default_profit_share_percent" validate:"omitempty,min=0,max=100"`
@@ -50,6 +55,11 @@ type UpdateAccountRequest struct {
 	// /sales/suppliers. Omitted means false, which is every account that existed before
 	// this - and what keeps the costing dormant until an account is deliberately marked.
 	OwnsPointInventory *bool `json:"owns_point_inventory" validate:"omitempty"`
+	// TracksStatement turns on reading this account's statement from the airline: connecting
+	// it, the periodic sync and the statement screens. A different question from the flag
+	// above - an account administered for someone else has a statement worth watching and no
+	// inventory to cost. Omitted means false.
+	TracksStatement *bool `json:"tracks_statement" validate:"omitempty"`
 	// DefaultProfitSharePercent seeds the split on new batches of this account. Each batch
 	// freezes its own copy, so changing this never revises a month already settled.
 	DefaultProfitSharePercent *int `json:"default_profit_share_percent" validate:"omitempty,min=0,max=100"`
@@ -84,6 +94,9 @@ type AccountResponse struct {
 	// OwnsPointInventory is true on an account whose points cost is derived from its own
 	// batches. The suppliers screen reads it to know the rate is not editable there.
 	OwnsPointInventory bool `json:"owns_point_inventory"`
+	// TracksStatement is true on an account whose statement is read from the airline. The
+	// account card reads it to know whether to offer "Conectar".
+	TracksStatement bool `json:"tracks_statement"`
 	// DefaultProfitSharePercent is the split a new batch of this account starts with.
 	DefaultProfitSharePercent int `json:"default_profit_share_percent"`
 	// RealBalancePoints is the last balance read off the airline's page, and
@@ -159,8 +172,10 @@ type AccountPickerResponse struct {
 	// costing applies to - an ordinary account has no batches and never will, and listing
 	// it would produce an empty screen with no way to tell why. Omitted when false for the
 	// same reason as the flag above: on an unpaginated feed that is nearly every row.
-	OwnsPointInventory bool       `json:"owns_point_inventory,omitempty"`
-	DeletedAt          *time.Time `json:"deleted_at,omitempty"`
+	OwnsPointInventory bool `json:"owns_point_inventory,omitempty"`
+	// TracksStatement is omitted when false for the same reason.
+	TracksStatement bool       `json:"tracks_statement,omitempty"`
+	DeletedAt       *time.Time `json:"deleted_at,omitempty"`
 }
 
 // MergeAccountRequest names the account to absorb into the one in the URL.
