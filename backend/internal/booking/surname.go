@@ -39,3 +39,27 @@ func SurnameCandidates(name string) []string {
 }
 
 var surnameParticles = map[string]bool{"DA": true, "DE": true, "DO": true, "DAS": true, "DOS": true, "E": true}
+
+// WholeSurnameCandidates lists what to send as the surname to a carrier that matches the
+// field against a passenger's whole surname, ignoring spaces - "DE OLIVEIRA RODRIGUES"
+// and "DEOLIVEIRARODRIGUES" both work - but refuses a single word of it ("RODRIGUES") and
+// a given name in front of it. American and Avianca both do; GOL and LATAM do not, which
+// is what SurnameCandidates is for.
+//
+// The name as stored goes first: before the first sync it is the surname the operator
+// typed. After the sync the issuance holds the full name, "MARCO ANTONIO DE OLIVEIRA",
+// so the trailing runs of words follow, shortest first, until one is the whole surname.
+func WholeSurnameCandidates(name string, limit int) []string {
+	words := strings.Fields(strings.ToUpper(name))
+	if len(words) == 0 {
+		return nil
+	}
+	candidates := []string{strings.Join(words, " ")}
+	for start := len(words) - 1; start > 0 && len(candidates) < limit; start-- {
+		run := strings.Join(words[start:], " ")
+		if !slices.Contains(candidates, run) {
+			candidates = append(candidates, run)
+		}
+	}
+	return candidates
+}

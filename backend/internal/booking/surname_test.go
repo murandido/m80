@@ -23,3 +23,18 @@ func TestSurnameCandidates(t *testing.T) {
 		}
 	}
 }
+
+func TestWholeSurnameCandidates(t *testing.T) {
+	tests := map[string][]string{
+		"DE OLIVEIRA RODRIGUES":               {"DE OLIVEIRA RODRIGUES", "RODRIGUES", "OLIVEIRA RODRIGUES"},
+		"MARCO ANTONIO DEOLIVEIRARODRIGUES":   {"MARCO ANTONIO DEOLIVEIRARODRIGUES", "DEOLIVEIRARODRIGUES", "ANTONIO DEOLIVEIRARODRIGUES"},
+		"marco antonio de oliveira rodrigues": {"MARCO ANTONIO DE OLIVEIRA RODRIGUES", "RODRIGUES", "OLIVEIRA RODRIGUES", "DE OLIVEIRA RODRIGUES"},
+		"GIESE":                               {"GIESE"},
+		"":                                    nil,
+	}
+	for name, want := range tests {
+		if got := WholeSurnameCandidates(name, 4); !slices.Equal(got, want) {
+			t.Errorf("WholeSurnameCandidates(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
