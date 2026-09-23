@@ -10,10 +10,12 @@ import (
 // "the airline answered, and the answer is no" or "we never reached the
 // airline", and the two mean opposite things everywhere downstream.
 //
-//   - ErrNotFound is an answer. The provider is healthy, the locator is wrong or
-//     the booking is gone. Falling back to another provider would only ask a
-//     second vendor the same bad question, and marking the carrier down over it
-//     would paint the panel red every time somebody typos a PNR.
+//   - ErrNotFound is an answer. The provider is healthy; the locator is wrong,
+//     the booking is gone, or - for an airline that also checks the origin and
+//     the surname - one of those does not match. The next provider may still
+//     search for it, but never import it (see issuance.attemptProviders), and
+//     marking the carrier down over it would paint the panel red every time
+//     somebody typos a PNR.
 //
 //   - ErrUnavailable is the absence of an answer: an edge block, a refused
 //     token, a timeout, a body that did not parse. Here a fallback is exactly

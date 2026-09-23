@@ -478,10 +478,11 @@ func TestAnUnreachableAirlineFallsBackToTheVendor(t *testing.T) {
 	}
 }
 
-func TestAnAbsentBookingDoesNotReachTheVendor(t *testing.T) {
+func TestAnAbsentBookingIsOnlySearchedAtTheVendor(t *testing.T) {
 	// The one that guards real money. "The airline says there is no such booking"
-	// handed to Traveos is not a second opinion - it is an import, and the import
-	// creates a real, non-idempotent ticket for a locator that does not exist.
+	// may be a typo in the origin or surname, so the vendor, which searches by
+	// locator alone, is asked - but only asked. An import after that answer would
+	// create a real, non-idempotent ticket for a locator the airline disowned.
 	direct := &readOnlyProvider{}
 	fallback := &fakeProvider{}
 
@@ -490,9 +491,44 @@ func TestAnAbsentBookingDoesNotReachTheVendor(t *testing.T) {
 	if !errors.Is(err, booking.ErrNotFound) {
 		t.Fatalf("err = %v, want booking.ErrNotFound", err)
 	}
-	if fallback.fetchCalls != 0 || fallback.importCalls != 0 {
-		t.Errorf("the vendor was reached after the airline said the booking does not exist: %d fetches, %d imports",
-			fallback.fetchCalls, fallback.importCalls)
+	if fallback.importCalls != 0 {
+		t.Errorf("the vendor imported %d times after the airline said the booking does not exist", fallback.importCalls)
+	}
+	if fallback.fetchCalls != 1 {
+		t.Errorf("the vendor was searched %d times, want 1", fallback.fetchCalls)
+	}
+}
+
+func TestTheVendorAnswersWhenTheAirlineDoesNotFindTheBooking(t *testing.T) {
+	// A wrong origin or surname on the issuance: the airline refuses the lookup,
+	// the vendor finds the booking by its locator, and the issuance still syncs -
+	// exactly as it did before the carrier had a direct integration.
+	direct := &readOnlyProvider{}
+	fallback := &fakeProvider{fetchResults: []*booking.Booking{existingBooking()}}
+
+	fetched, source, err := attemptProviders(context.Background(), booking.NewRegistry(fallback),
+		[]booking.Provider{direct, fallback}, testIssuance(), testAirline(), false)
+	if err != nil {
+		t.Fatalf("attemptProviders: %v", err)
+	}
+	if fetched.Locator != "ABC123" || source != "fake" {
+		t.Errorf("got %q from %q, want the vendor's booking", fetched.Locator, source)
+	}
+	if fallback.importCalls != 0 {
+		t.Errorf("imported %d times, want 0", fallback.importCalls)
+	}
+}
+
+func TestTheAirlinesAbsenceWinsOverAnUnreachableVendor(t *testing.T) {
+	// The airline answered; the vendor did not. Its "no such booking" is the one
+	// that tells the operator what to check.
+	direct := &readOnlyProvider{}
+	fallback := &fakeProvider{fetchErr: booking.Unavailable(nil, "vendor down")}
+
+	_, _, err := attemptProviders(context.Background(), booking.NewRegistry(fallback),
+		[]booking.Provider{direct, fallback}, testIssuance(), testAirline(), false)
+	if !errors.Is(err, booking.ErrNotFound) {
+		t.Fatalf("err = %v, want the airline's booking.ErrNotFound", err)
 	}
 }
 

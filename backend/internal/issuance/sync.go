@@ -173,13 +173,20 @@ func resolveProviders(registry *booking.Registry, airline data.Airline) []bookin
 // attemptProviders asks each provider in turn and returns the first booking, plus
 // the name of whoever gave it up.
 //
-// Only ErrUnavailable moves on to the next one, and that restriction is the whole
-// safety of the fallback. ErrNotFound means the airline itself answered that the
-// booking is not there; handing that to Traveos would not be a second opinion, it
-// would be an *import* - a real, non-idempotent ticket created at the vendor for a
-// locator that does not exist. Anything else is a refusal this layer already made
-// on purpose, like an imported row or a missing required field, and repeating it
-// against another provider would only produce the same refusal twice.
+// ErrUnavailable moves on to the next provider with everything allowed. ErrNotFound
+// moves on too, but from then on the later providers may only *search*: a direct
+// integration identifies the booking by more than the locator - GOL wants the origin
+// and a surname that match - so its "no such booking" is often a typo in one of those,
+// and the vendor, which searches by locator alone, may well have it. What must never
+// follow that answer is an *import*: a real, non-idempotent ticket created at the
+// vendor for a locator the airline just said does not exist.
+//
+// Anything else is a refusal this layer already made on purpose, like an imported row
+// or a missing required field, and repeating it against another provider would only
+// produce the same refusal twice.
+//
+// When nobody finds the booking, the first "no such booking" is what is returned: it
+// came from the airline and names what to check, which the vendor's does not.
 func attemptProviders(
 	ctx context.Context,
 	registry *booking.Registry,
@@ -188,30 +195,68 @@ func attemptProviders(
 	airline data.Airline,
 	force bool,
 ) (*booking.Booking, string, error) {
-	var lastErr error
+	var lastErr, absent error
 
 	for _, provider := range providers {
-		fetched, err := fetchOrImport(ctx, provider, issuance, airline, force)
+		var (
+			fetched *booking.Booking
+			err     error
+		)
+		if absent == nil {
+			fetched, err = fetchOrImport(ctx, provider, issuance, airline, force)
+		} else {
+			fetched, err = searchOnly(ctx, provider, issuance, airline, force)
+		}
 
 		// Reported before the error is even classified: this is the panel's freshest
 		// evidence about whether a carrier is answering, and it is worth having from
 		// the lookups that are happening anyway rather than only from a slow probe.
 		registry.Observed(provider.Name(), err)
 
-		if err == nil {
+		switch {
+		case err == nil:
+			if absent != nil {
+				slog.Warn("the airline did not find the booking but the vendor did - check the origin and surname on the issuance",
+					"issuance_id", issuance.ID, "airline", airline.Code, "provider", provider.Name(), "airline_err", absent)
+			}
 			return fetched, provider.Name(), nil
-		}
 
-		lastErr = err
-		if !errors.Is(err, booking.ErrUnavailable) {
-			break
-		}
+		case errors.Is(err, booking.ErrUnavailable):
+			lastErr = err
+			slog.Warn("booking provider could not be reached, trying the next one",
+				"issuance_id", issuance.ID, "airline", airline.Code, "provider", provider.Name(), "err", err)
 
-		slog.Warn("booking provider could not be reached, trying the next one",
-			"issuance_id", issuance.ID, "airline", airline.Code, "provider", provider.Name(), "err", err)
+		case errors.Is(err, booking.ErrNotFound):
+			if absent == nil {
+				absent = err
+			}
+
+		default:
+			return nil, "", err
+		}
 	}
 
+	if absent != nil {
+		return nil, "", absent
+	}
 	return nil, "", lastErr
+}
+
+// searchOnly reads the booking from a provider without ever importing it. It is what
+// a provider is allowed to do once an earlier one has answered that the booking does
+// not exist - see attemptProviders.
+func searchOnly(
+	ctx context.Context,
+	provider booking.Provider,
+	issuance data.Issuance,
+	airline data.Airline,
+	force bool,
+) (*booking.Booking, error) {
+	request, err := bookingRequest(issuance, airline, force)
+	if err != nil {
+		return nil, err
+	}
+	return provider.Fetch(ctx, request)
 }
 
 // fetchOrImport returns the booking for this issuance, importing it into the
@@ -237,26 +282,9 @@ func fetchOrImport(
 	airline data.Airline,
 	force bool,
 ) (*booking.Booking, error) {
-	locator := bookingLocator(issuance)
-	if locator == "" {
-		return nil, ErrLocatorMissing
-	}
-
-	request := booking.Request{
-		AirlineCode: airline.Code,
-		Locator:     locator,
-		OriginIATA:  derefOrEmpty(issuance.OriginIATACode),
-		// The surname only - a given name in this field makes the Traveos scrape
-		// fail with the same opaque 500 as everything else, and several airline
-		// endpoints reject it outright. The bot's EMISSAO line 2 already carries
-		// just the surname, so it is passed through verbatim rather than guessed
-		// at: there is no way to tell a compound surname from a given name plus
-		// surname, and stripping the wrong token is worse than sending what the
-		// operator typed.
-		LastName:        derefOrEmpty(issuance.MainPassengerName),
-		PurchaseNumber:  derefOrEmpty(issuance.LatamPurchaseNumber),
-		VendorAirlineID: airline.TraveosAirlineID,
-		Force:           force,
+	request, err := bookingRequest(issuance, airline, force)
+	if err != nil {
+		return nil, err
 	}
 
 	fetched, err := provider.Fetch(ctx, request)
@@ -267,8 +295,9 @@ func fetchOrImport(
 		return nil, err
 	}
 
-	// No import to attempt: the airline itself says there is no such booking, and
-	// that is the final answer rather than the start of a second attempt.
+	// No import to attempt: the airline itself says there is no such booking. Whether
+	// another provider may still search for it is attemptProviders' call, and it never
+	// lets one import after this answer.
 	importer, ok := provider.(booking.Importer)
 	if !ok {
 		return nil, err
@@ -306,11 +335,36 @@ func fetchOrImport(
 			// The provider said the import succeeded but the booking is not there.
 			// Worth its own error: unlike a failed import, a record may well exist on
 			// the vendor's side, so a blind retry could duplicate it.
-			return nil, fmt.Errorf("%w: %s", ErrTicketNotFoundAfterEmission, locator)
+			return nil, fmt.Errorf("%w: %s", ErrTicketNotFoundAfterEmission, request.Locator)
 		}
 		return nil, err
 	}
 	return fetched, nil
+}
+
+// bookingRequest is what every provider is asked, built from the issuance.
+func bookingRequest(issuance data.Issuance, airline data.Airline, force bool) (booking.Request, error) {
+	locator := bookingLocator(issuance)
+	if locator == "" {
+		return booking.Request{}, ErrLocatorMissing
+	}
+
+	return booking.Request{
+		AirlineCode: airline.Code,
+		Locator:     locator,
+		OriginIATA:  derefOrEmpty(issuance.OriginIATACode),
+		// The surname only - a given name in this field makes the Traveos scrape
+		// fail with the same opaque 500 as everything else, and several airline
+		// endpoints reject it outright. The bot's EMISSAO line 2 already carries
+		// just the surname, so it is passed through verbatim rather than guessed
+		// at: there is no way to tell a compound surname from a given name plus
+		// surname, and stripping the wrong token is worse than sending what the
+		// operator typed.
+		LastName:        derefOrEmpty(issuance.MainPassengerName),
+		PurchaseNumber:  derefOrEmpty(issuance.LatamPurchaseNumber),
+		VendorAirlineID: airline.TraveosAirlineID,
+		Force:           force,
+	}, nil
 }
 
 // bookingLocator picks which of our two locators identifies the booking at the

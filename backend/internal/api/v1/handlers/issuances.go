@@ -1344,7 +1344,7 @@ const traveosSyncTimeout = 3 * time.Minute
 // @Success      200  {object}  schemas.IssuanceSingleResponse
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      404  {object}  schemas.ErrorResponse "Emissão não encontrada"
-// @Failure      422  {object}  schemas.ErrorResponse "A cia aérea não usa Traveos, não tem o id da Traveos configurado, ou a emissão não tem um campo que a cia exige"
+// @Failure      422  {object}  schemas.ErrorResponse "A cia aérea não usa Traveos, não tem o id da Traveos configurado, a emissão não tem um campo que a cia exige, ou nenhum provedor encontrou a reserva"
 // @Failure      502  {object}  schemas.ErrorResponse "A Traveos recusou ou falhou"
 // @Failure      503  {object}  schemas.ErrorResponse "Integração com a Traveos não configurada neste servidor"
 // @Router       /issuances/{id}/traveos-sync [post]
@@ -1464,6 +1464,15 @@ func (h *IssuanceHandler) respondToTraveosSyncError(w http.ResponseWriter, r *ht
 			"issuance_id", id, "err", err)
 		utils.SendError(w, r, http.StatusBadGateway,
 			"A Traveos confirmou a emissão mas não devolveu o bilhete. Confira lá antes de tentar de novo")
+
+	// An answer, not an outage: the airline looked and found nothing, and so did the
+	// vendor when it was asked. For a carrier read directly that almost always means
+	// the origin or the surname on the row does not match the booking, which the
+	// operator can fix - the generic 502 below read as "the system is down" instead.
+	case errors.Is(err, booking.ErrNotFound):
+		slog.Warn("no provider found the booking", "issuance_id", id, "err", err)
+		utils.SendError(w, r, http.StatusUnprocessableEntity,
+			"A companhia aérea não encontrou essa reserva. Confira o localizador, a origem e o sobrenome do passageiro")
 
 	default:
 		slog.Error("failed to sync an issuance with traveos", "issuance_id", id, "err", err)
