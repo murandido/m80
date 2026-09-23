@@ -15,6 +15,7 @@ import (
 	"github.com/murandido/m-80-backend/internal/booking"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/events"
+	"github.com/murandido/m-80-backend/internal/gol"
 	"github.com/murandido/m-80-backend/internal/health"
 	"github.com/murandido/m-80-backend/internal/smiles"
 	"github.com/murandido/m-80-backend/internal/smilessync"
@@ -163,6 +164,11 @@ func main() {
 		// Registered, not switched on: airlines.direct_booking_enabled decides
 		// whether an issuance actually goes here, and it defaults to false.
 		bookings.Register("AZUL", azul.NewProvider(azulClient))
+	}
+	if golClient, err := gol.New(gol.SiteConfigSource()); err != nil {
+		slog.Warn("gol integration is disabled", "err", err)
+	} else {
+		bookings.Register("GOL", gol.NewProvider(golClient))
 	}
 
 	// The dependency lights the panel shows. The probes run here, on their own
