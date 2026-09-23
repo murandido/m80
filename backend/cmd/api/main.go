@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/murandido/m-80-backend/internal/american"
 	"github.com/murandido/m-80-backend/internal/api"
 	"github.com/murandido/m-80-backend/internal/azul"
 	"github.com/murandido/m-80-backend/internal/azulsync"
@@ -171,8 +172,10 @@ func main() {
 	} else {
 		bookings.Register("GOL", gol.NewProvider(golClient))
 	}
-	// LATAM needs no configuration: both routes it reads are public and self-contained.
+	// LATAM and American need no configuration: the routes they read are public and
+	// self-contained.
 	bookings.Register("LATAM", latam.NewProvider(latam.New()))
+	bookings.Register("AA", american.NewProvider(american.New()))
 
 	// The dependency lights the panel shows. The probes run here, on their own
 	// tickers, rather than inside the request that reads them: a vendor call
