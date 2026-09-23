@@ -78,6 +78,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   american: "American",
   copa: "Copa",
   avianca: "Avianca",
+  airfrance: "Air France",
   iberia: "Iberia",
   tap: "TAP",
 }

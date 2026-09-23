@@ -125,5 +125,16 @@
     "aliases": [
       "QR"
     ]
+  },
+  {
+    "code": "AIRFRANCE",
+    "name": "AIR FRANCE",
+    "traveos_airline_id": 137,
+    "brand_color": "#0040FF",
+    "traveos_supported": true,
+    "requires_last_name": true,
+    "aliases": [
+      "AF"
+    ]
   }
 ]
