@@ -17,6 +17,7 @@ import (
 	"github.com/murandido/m-80-backend/internal/events"
 	"github.com/murandido/m-80-backend/internal/gol"
 	"github.com/murandido/m-80-backend/internal/health"
+	"github.com/murandido/m-80-backend/internal/latam"
 	"github.com/murandido/m-80-backend/internal/smiles"
 	"github.com/murandido/m-80-backend/internal/smilessync"
 	"github.com/murandido/m-80-backend/internal/traveos"
@@ -170,6 +171,8 @@ func main() {
 	} else {
 		bookings.Register("GOL", gol.NewProvider(golClient))
 	}
+	// LATAM needs no configuration: both routes it reads are public and self-contained.
+	bookings.Register("LATAM", latam.NewProvider(latam.New()))
 
 	// The dependency lights the panel shows. The probes run here, on their own
 	// tickers, rather than inside the request that reads them: a vendor call
