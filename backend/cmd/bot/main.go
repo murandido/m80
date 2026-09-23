@@ -11,7 +11,9 @@ import (
 	"time"
 
 	_ "github.com/lib/pq"
+	"github.com/murandido/m-80-backend/internal/azul"
 	"github.com/murandido/m-80-backend/internal/booking"
+	"github.com/murandido/m-80-backend/internal/bookingproviders"
 	"github.com/murandido/m-80-backend/internal/bot"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/traveos"
@@ -110,6 +112,17 @@ func main() {
 		fallback = traveos.NewProvider(built)
 	}
 	bookings := booking.NewRegistry(fallback)
+
+	// The airlines' own integrations, the same ones the API registers: without them an
+	// issuance that came in over WhatsApp would go through Traveos even for a carrier
+	// switched on in the airline CRUD. A missing Azul Firebase config only leaves Azul
+	// out, as it does in the API.
+	azulClient, err := azul.New()
+	if err != nil {
+		clientLog.Warnf("azul integration is disabled: %v", err)
+		azulClient = nil
+	}
+	bookingproviders.RegisterDirect(bookings, azulClient)
 
 	// instance the bot struct - pairing is now admin-triggered on demand via
 	// the internal HTTP API below, not auto-started here.
