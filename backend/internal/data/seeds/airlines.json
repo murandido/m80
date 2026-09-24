@@ -93,6 +93,8 @@
     "name": "IBERIA",
     "traveos_airline_id": 49,
     "brand_color": "#ED1C24",
+    "traveos_supported": true,
+    "requires_last_name": true,
     "aliases": [
       "IB"
     ]

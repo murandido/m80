@@ -129,7 +129,7 @@ func TestSeedAirlinesPopulatesAnEmptyCatalog(t *testing.T) {
 		// side is not a promise, and turning the gate on for a carrier we have never
 		// read would turn a 🚀 into a ⚠️ for a group doing nothing wrong. TAP and
 		// COPA are on because there is a real ticket for each on the account.
-		for _, code := range []string{"AIREUROPA", "AZULVIAGENS", "IBERIA", "UNITED", "QATAR"} {
+		for _, code := range []string{"AIREUROPA", "AZULVIAGENS", "UNITED", "QATAR"} {
 			if airline := airlineByCode(t, tx, code); airline.TraveosSupported {
 				t.Errorf("%s seeded as traveos_supported; nothing has been read from it", code)
 			}
@@ -139,21 +139,24 @@ func TestSeedAirlinesPopulatesAnEmptyCatalog(t *testing.T) {
 				t.Errorf("%s is off, but there is a ticket for it on the account", code)
 			}
 		}
-		// Air France is "homologada" at 137 and issues through Traveos today.
-		if airfrance := airlineByCode(t, tx, "AIRFRANCE"); !airfrance.TraveosSupported ||
-			airfrance.TraveosAirlineID == nil || *airfrance.TraveosAirlineID != 137 {
-			t.Errorf("AIRFRANCE = supported %v, id %v, want supported at 137", airfrance.TraveosSupported, airfrance.TraveosAirlineID)
+		// Air France is "homologada" at 137 and issues through Traveos today; Iberia at 49
+		// reads through it too.
+		for code, wantID := range map[string]int{"AIRFRANCE": 137, "IBERIA": 49} {
+			if airline := airlineByCode(t, tx, code); !airline.TraveosSupported ||
+				airline.TraveosAirlineID == nil || *airline.TraveosAirlineID != wantID {
+				t.Errorf("%s = supported %v, id %v, want supported at %d", code, airline.TraveosSupported, airline.TraveosAirlineID, wantID)
+			}
 		}
 
 		if latam := airlineByCode(t, tx, "LATAM"); !latam.RequiresPurchaseNumber {
 			t.Error("LATAM seeded without requires_purchase_number")
 		}
 
-		// Seven of the eight carriers Traveos reaches need the surname to scrape the
+		// Eight of the nine carriers Traveos reaches need the surname to scrape the
 		// airline's site; AZUL is the one that does not. Seeding this wrong is
 		// expensive in both directions - too strict refuses an EMISSAO that was
 		// fine, too loose spends a real emission the vendor cannot answer.
-		for _, code := range []string{"GOL", "LATAM", "AA", "AVIANCA", "TAP", "COPA", "AIRFRANCE"} {
+		for _, code := range []string{"GOL", "LATAM", "AA", "AVIANCA", "TAP", "COPA", "AIRFRANCE", "IBERIA"} {
 			if airline := airlineByCode(t, tx, code); !airline.RequiresLastName {
 				t.Errorf("%s seeded without requires_last_name", code)
 			}
