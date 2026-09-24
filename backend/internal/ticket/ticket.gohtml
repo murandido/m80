@@ -105,7 +105,7 @@ guess from the weight.
     padding: 4px 0 10px;
   }
   .headerCell { display: table-cell; vertical-align: middle; }
-  .headerCell.logo { width: 150px; }
+  .headerCell.logo { width: 170px; }
   .headerCell.info { text-align: right; }
 
   /* The airline's colour has to appear somewhere on a document that carries its
@@ -114,7 +114,12 @@ guess from the weight.
      under the header instead. */
   .brandRule { height: 2px; background: var(--brand); border-radius: 2px; margin-bottom: 14px; }
 
-  .airlineLogoImage { height: 30px; max-width: 150px; }
+  /* Every logo gets the same height, whatever its own file says - some carry
+     width/height attributes, some a class, some neither, and WeasyPrint would
+     otherwise draw each at its own size (TAP and Aerolíneas at half the page,
+     LATAM at a third of that). The width follows the viewBox, capped so a long
+     wordmark shrinks instead of pushing the locator aside. */
+  .headerCell.logo svg { display: block; height: 28px; width: auto; max-width: 170px; }
   .airlineNameFallback { font-size: 15px; font-weight: bold; color: var(--brand-900); }
 
   .infoItem { display: inline-block; padding: 0 18px; text-align: center; }
