@@ -138,5 +138,15 @@
     "aliases": [
       "AF"
     ]
+  },
+  {
+    "code": "AEROLINEAS",
+    "name": "AEROLÍNEAS ARGENTINAS",
+    "brand_color": "#0078BE",
+    "requires_last_name": true,
+    "aliases": [
+      "AR",
+      "AEROLINEAS ARGENTINAS"
+    ]
   }
 ]

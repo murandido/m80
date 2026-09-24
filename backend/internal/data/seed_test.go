@@ -106,8 +106,8 @@ func TestSeedAirlinesPopulatesAnEmptyCatalog(t *testing.T) {
 			t.Fatalf("SeedAirlines: %v", err)
 		}
 
-		if got := countAirlines(t, tx); got != 13 {
-			t.Errorf("seeded %d airlines, want 13", got)
+		if got := countAirlines(t, tx); got != 14 {
+			t.Errorf("seeded %d airlines, want 14", got)
 		}
 
 		// The five that have emitted for real, and the ids every emission is sent
@@ -146,6 +146,15 @@ func TestSeedAirlinesPopulatesAnEmptyCatalog(t *testing.T) {
 				airline.TraveosAirlineID == nil || *airline.TraveosAirlineID != wantID {
 				t.Errorf("%s = supported %v, id %v, want supported at %d", code, airline.TraveosSupported, airline.TraveosAirlineID, wantID)
 			}
+		}
+
+		// Traveos does not serve Aerolíneas at all: it is read from the airline alone, so
+		// it has no catalog id and the vendor is never asked about it.
+		if aerolineas := airlineByCode(t, tx, "AEROLINEAS"); aerolineas.TraveosAirlineID != nil ||
+			aerolineas.TraveosSupported || !aerolineas.RequiresLastName ||
+			aerolineas.BrandColor == nil || *aerolineas.BrandColor != "#0078BE" {
+			t.Errorf("AEROLINEAS = id %v, supported %v, requires surname %v, colour %v; want no id, off, surname, #0078BE",
+				aerolineas.TraveosAirlineID, aerolineas.TraveosSupported, aerolineas.RequiresLastName, aerolineas.BrandColor)
 		}
 
 		if latam := airlineByCode(t, tx, "LATAM"); !latam.RequiresPurchaseNumber {
@@ -211,8 +220,8 @@ func TestSeedAirlinesIsIdempotent(t *testing.T) {
 			t.Fatalf("second SeedAirlines: %v", err)
 		}
 
-		if got := countAirlines(t, tx); got != 13 {
-			t.Errorf("after seeding twice there are %d airlines, want 13", got)
+		if got := countAirlines(t, tx); got != 14 {
+			t.Errorf("after seeding twice there are %d airlines, want 14", got)
 		}
 		if second := airlineByCode(t, tx, "GOL"); second.ID != first.ID {
 			t.Error("re-seeding replaced the row instead of leaving it alone")
@@ -233,8 +242,8 @@ func TestSeedAirlinesCorrectsAnExistingRowInPlace(t *testing.T) {
 			t.Fatalf("SeedAirlines: %v", err)
 		}
 
-		if got := countAirlines(t, tx); got != 13 {
-			t.Errorf("got %d airlines, want 13 - the existing GOL was duplicated", got)
+		if got := countAirlines(t, tx); got != 14 {
+			t.Errorf("got %d airlines, want 14 - the existing GOL was duplicated", got)
 		}
 
 		gol := airlineByCode(t, tx, "GOL")

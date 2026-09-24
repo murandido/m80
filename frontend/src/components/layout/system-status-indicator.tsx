@@ -81,6 +81,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   airfrance: "Air France",
   iberia: "Iberia",
   tap: "TAP",
+  aerolineas: "Aerolíneas Argentinas",
 }
 
 function providerLabel(name: string): string {
