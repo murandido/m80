@@ -168,7 +168,11 @@ export function SystemStatusIndicator({
   // change, at most once per tick. "bot.status" is the bot itself announcing a
   // session change the instant it happens - without it, an admin logging the
   // bot out would leave a green light on everyone's screen for up to a minute.
-  useSSE("/api/events", { "system.status": refresh, "bot.status": refresh })
+  useSSE(
+    "/api/events",
+    { "system.status": refresh, "bot.status": refresh },
+    { onReconnect: refresh },
+  )
 
   const bot = botLight(status?.bot)
   const traveos = traveosLight(status?.traveos)

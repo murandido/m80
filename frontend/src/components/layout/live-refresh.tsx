@@ -52,13 +52,17 @@ export function LiveRefresh() {
     [],
   )
 
-  useSSE("/api/events", {
-    "issuance.created": scheduleRefresh,
-    "issuance.updated": scheduleRefresh,
-    "issuance.cancelled": scheduleRefresh,
-    "issuance.deleted": scheduleRefresh,
-    "sale.updated": scheduleRefresh,
-  })
+  useSSE(
+    "/api/events",
+    {
+      "issuance.created": scheduleRefresh,
+      "issuance.updated": scheduleRefresh,
+      "issuance.cancelled": scheduleRefresh,
+      "issuance.deleted": scheduleRefresh,
+      "sale.updated": scheduleRefresh,
+    },
+    { onReconnect: scheduleRefresh },
+  )
 
   return null
 }

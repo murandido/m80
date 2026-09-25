@@ -7,7 +7,7 @@ package events
 import "sync"
 
 // clientBuffer is how many events a single connection may fall behind before
-// the broker starts dropping its events. A browser reading the stream drains
+// the broker starts dropping its oldest events. A browser reading the stream drains
 // this in microseconds; a stalled one is not allowed to slow anybody else down.
 const clientBuffer = 16
 
@@ -57,13 +57,31 @@ func (b *Broker) Unsubscribe(ch chan Event) {
 }
 
 // Broadcast delivers an event to every connected client. The send is
-// non-blocking: a client whose buffer is full loses this event rather than
-// stalling the HTTP handler that published it.
+// non-blocking: a client whose buffer is full never stalls the HTTP handler
+// that published it.
+//
+// When the buffer is full, the oldest queued event is the one lost, not this
+// one. Every screen treats an event as "refetch now", so the only event that
+// must survive a burst is the last: dropping the newest let a screen refetch
+// in the middle of a burst and then hear nothing about the rest of it, and it
+// stayed stale until a reload.
 func (b *Broker) Broadcast(event Event) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
 	for ch := range b.clients {
+		select {
+		case ch <- event:
+			continue
+		default:
+		}
+
+		// Both steps stay non-blocking: the reader may drain the channel, or
+		// another Broadcast may refill it, between them.
+		select {
+		case <-ch:
+		default:
+		}
 		select {
 		case ch <- event:
 		default:

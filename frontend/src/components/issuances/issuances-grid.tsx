@@ -640,12 +640,16 @@ export function IssuancesGrid({
     [],
   )
 
-  useSSE("/api/events", {
-    "issuance.created": scheduleRefresh,
-    "issuance.updated": scheduleRefresh,
-    "issuance.cancelled": scheduleRefresh,
-    "issuance.deleted": scheduleRefresh,
-  })
+  useSSE(
+    "/api/events",
+    {
+      "issuance.created": scheduleRefresh,
+      "issuance.updated": scheduleRefresh,
+      "issuance.cancelled": scheduleRefresh,
+      "issuance.deleted": scheduleRefresh,
+    },
+    { onReconnect: scheduleRefresh },
+  )
 
   // The redemption fee column measures an exemption an ordinary account does not have, so
   // every path that would write into it is closed there: click-to-edit, F2, type-to-replace,

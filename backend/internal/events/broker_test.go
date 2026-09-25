@@ -123,3 +123,27 @@ func TestBroker_ConcurrentSubscribeBroadcastUnsubscribe(t *testing.T) {
 		t.Errorf("client count after all clients left: got %d, want 0", got)
 	}
 }
+
+func TestBroker_FullBufferKeepsTheNewestEvent(t *testing.T) {
+	broker := NewBroker()
+	ch := broker.Subscribe()
+	defer broker.Unsubscribe(ch)
+
+	// Nobody reads while the burst goes out, so the buffer overflows.
+	for i := range clientBuffer + 5 {
+		broker.Broadcast(Event{Type: "issuance.updated", Payload: i})
+	}
+
+	var last Event
+	for range clientBuffer {
+		select {
+		case last = <-ch:
+		case <-time.After(time.Second):
+			t.Fatal("buffer drained early: fewer events than the buffer holds")
+		}
+	}
+
+	if got, want := last.Payload, clientBuffer+4; got != want {
+		t.Errorf("last event payload: got %v, want %v (the newest must survive the burst)", got, want)
+	}
+}
