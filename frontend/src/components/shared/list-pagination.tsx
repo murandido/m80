@@ -1,6 +1,6 @@
 "use client"
 
-import { usePathname, useRouter, useSearchParams } from "next/navigation"
+import { useUrlQuery } from "@/hooks/use-url-query"
 import { ChevronLeft, ChevronRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 
@@ -14,28 +14,29 @@ interface ListPaginationProps {
 
 export function ListPagination({
   total,
-  page,
+  page: landedPage,
   limit,
   noun,
 }: ListPaginationProps) {
-  const router = useRouter()
-  const pathname = usePathname()
-  const searchParams = useSearchParams()
+  const { params: urlParams, isPending, update } = useUrlQuery()
+  // Clicking "next" twice before the first page arrives has to mean page 3, not page 2
+  // twice - so the page shown and counted from is the one already asked for.
+  const page = isPending ? Math.max(1, Number(urlParams.get("page")) || 1) : landedPage
 
   const totalPages = Math.max(1, Math.ceil(total / limit))
   const hasPrev = page > 1
   const hasNext = page < totalPages
 
   function goToPage(target: number) {
-    const params = new URLSearchParams(searchParams.toString())
-    if (target <= 1) {
-      // Keeps the URL canonical: page 1 is the bare path, so a bookmark of the
-      // first page is the same string as a fresh arrival.
-      params.delete("page")
-    } else {
-      params.set("page", String(target))
-    }
-    router.replace(`${pathname}?${params.toString()}`)
+    update((params) => {
+      if (target <= 1) {
+        // Keeps the URL canonical: page 1 is the bare path, so a bookmark of the
+        // first page is the same string as a fresh arrival.
+        params.delete("page")
+      } else {
+        params.set("page", String(target))
+      }
+    })
   }
 
   return (

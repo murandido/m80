@@ -1,7 +1,7 @@
 "use client"
 
 import { useId } from "react"
-import { usePathname, useRouter, useSearchParams } from "next/navigation"
+import { useUrlQuery } from "@/hooks/use-url-query"
 import {
   Select,
   SelectContent,
@@ -29,17 +29,16 @@ interface ListSortSelectProps {
 }
 
 export function ListSortSelect({ order, options }: ListSortSelectProps) {
-  const router = useRouter()
-  const pathname = usePathname()
-  const searchParams = useSearchParams()
+  const { params: urlParams, isPending, update } = useUrlQuery()
   const selectId = useId()
+  const shownOrder = isPending ? (urlParams.get("order") ?? order) : order
 
   function apply(next: string) {
-    const params = new URLSearchParams(searchParams.toString())
-    params.set("order", next)
-    // Row 21 of the old order is not row 21 of the new one.
-    params.delete("page")
-    router.replace(`${pathname}?${params.toString()}`)
+    update((params) => {
+      params.set("order", next)
+      // Row 21 of the old order is not row 21 of the new one.
+      params.delete("page")
+    })
   }
 
   return (
@@ -47,7 +46,7 @@ export function ListSortSelect({ order, options }: ListSortSelectProps) {
       <Label htmlFor={selectId} className="text-xs text-muted-foreground">
         Ordenar por
       </Label>
-      <Select value={order} onValueChange={apply}>
+      <Select value={shownOrder} onValueChange={apply}>
         <SelectTrigger id={selectId} className="w-44">
           <SelectValue />
         </SelectTrigger>

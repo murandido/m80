@@ -1,7 +1,7 @@
 "use client"
 
 import { useId } from "react"
-import { usePathname, useRouter, useSearchParams } from "next/navigation"
+import { useUrlQuery } from "@/hooks/use-url-query"
 import {
   Select,
   SelectContent,
@@ -35,21 +35,22 @@ export function ListFilterSelect({
   value,
   className,
 }: ListFilterSelectProps) {
-  const router = useRouter()
-  const pathname = usePathname()
-  const searchParams = useSearchParams()
+  const { params: urlParams, isPending, update } = useUrlQuery()
   const selectId = useId()
+  // While a change is travelling, show what was picked rather than snapping back to
+  // the server's value until the new page arrives.
+  const shownValue = isPending ? (urlParams.get(name) ?? "") : value
 
   function apply(next: string) {
-    const params = new URLSearchParams(searchParams.toString())
-    if (next === ALL) {
-      params.delete(name)
-    } else {
-      params.set(name, next)
-    }
-    // Narrowing the set invalidates the current page number.
-    params.delete("page")
-    router.replace(`${pathname}?${params.toString()}`)
+    update((params) => {
+      if (next === ALL) {
+        params.delete(name)
+      } else {
+        params.set(name, next)
+      }
+      // Narrowing the set invalidates the current page number.
+      params.delete("page")
+    })
   }
 
   return (
@@ -57,7 +58,7 @@ export function ListFilterSelect({
       <Label htmlFor={selectId} className="text-xs text-muted-foreground">
         {label}
       </Label>
-      <Select value={value || ALL} onValueChange={apply}>
+      <Select value={shownValue || ALL} onValueChange={apply}>
         <SelectTrigger id={selectId} className={className ?? "w-44"}>
           <SelectValue />
         </SelectTrigger>

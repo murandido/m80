@@ -127,18 +127,20 @@ export default async function IssuancesPage({
   // A bare URL (every sidebar link is one) falls back to the filters this browser session
   // last used here, so the screen is already filtered on the first paint.
   const requested = await searchParams
+  const remembered = readStickyFilters(cookieStore, "/dashboard/issuances")
   const filters = resolveFilters(
-    stickySearchParams(
-      requested,
-      readStickyFilters(cookieStore, "/dashboard/issuances"),
-      FILTER_KEYS,
-    ),
+    stickySearchParams(requested, remembered, FILTER_KEYS),
     currentUserId,
   )
   // Read straight off the request: stickySearchParams only ever returns the keys it
   // was asked about, so routing `q` through it would drop the search on exactly the
-  // URL that carries nothing else.
-  const search = (requested.q ?? "").trim()
+  // URL that carries nothing else. A bare URL is the exception - useStickyFilters puts
+  // the remembered search back into it on the client, and taking it from the cookie
+  // here too keeps the first paint from showing the unsearched list for a moment.
+  const isBareUrl = Object.values(requested).every((value) => value === undefined)
+  const search = (
+    requested.q ?? (isBareUrl ? (remembered?.get("q") ?? "") : "")
+  ).trim()
   const issuanceQuery = new URLSearchParams()
   for (const key of FILTER_KEYS) {
     if (filters[key]) issuanceQuery.set(key, filters[key])

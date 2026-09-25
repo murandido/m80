@@ -1,7 +1,7 @@
 "use client"
 
 import { useRef, useState } from "react"
-import { usePathname, useRouter, useSearchParams } from "next/navigation"
+import { usePathname } from "next/navigation"
 import { CalendarDays, Info, RotateCcw } from "lucide-react"
 import type { DateRange } from "react-day-picker"
 import { Button } from "@/components/ui/button"
@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils"
 import { clearStickyFilters } from "@/lib/sticky-filters"
 import { useAutocompletePreference } from "@/hooks/use-autocomplete-preference"
 import { useStickyFilters } from "@/hooks/use-sticky-filters"
+import { useUrlQuery } from "@/hooks/use-url-query"
 import {
   addDays,
   dateRangeLabel,
@@ -95,9 +96,8 @@ export function IssuancesFilterBar({
   initialFilters,
   hasSearch,
 }: IssuancesFilterBarProps) {
-  const router = useRouter()
   const pathname = usePathname()
-  const searchParams = useSearchParams()
+  const { replace, update: updateUrl } = useUrlQuery()
   useStickyFilters()
 
   const [filters, setFilters] = useState<FilterState>(initialFilters)
@@ -116,15 +116,13 @@ export function IssuancesFilterBar({
   // new effective filters - e.g. after "Limpar filtros" or browser back/forward.
 
   // Writes ALL the keys (empty when cleared) so clearing one dimension never
-  // drops the URL back to "no keys" and re-triggers the defaults. The search term
-  // is carried over by hand: this builds a fresh URLSearchParams, so anything not
-  // written here is erased - and erasing it would clear the box mid-search.
+  // drops the URL back to "no keys" and re-triggers the defaults. Merged into the
+  // query the screen is heading to, so a search typed a moment ago - still on its
+  // way to the server - is carried along instead of erased.
   function pushFilters(next: FilterState) {
-    const params = new URLSearchParams()
-    for (const key of FILTER_KEYS) params.set(key, next[key])
-    const search = searchParams.get("q")
-    if (search) params.set("q", search)
-    router.replace(`${pathname}?${params.toString()}`)
+    updateUrl((params) => {
+      for (const key of FILTER_KEYS) params.set(key, next[key])
+    })
   }
 
   function update(partial: Partial<FilterState>) {
@@ -350,7 +348,7 @@ export function IssuancesFilterBar({
           // repopulated from the cookie the operator just asked to drop.
           onClick={() => {
             clearStickyFilters(pathname)
-            router.replace(pathname)
+            replace(new URLSearchParams())
           }}
         >
           <RotateCcw className="h-4 w-4" />

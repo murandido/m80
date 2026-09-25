@@ -1,13 +1,14 @@
 "use client"
 
 import { Suspense } from "react"
-import { usePathname, useRouter, useSearchParams } from "next/navigation"
+import { usePathname } from "next/navigation"
 import { RotateCcw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ListSearchBar } from "@/components/shared/list-search-bar"
 import { ListSortSelect } from "@/components/shared/list-sort-select"
 import { useStickyFilters } from "@/hooks/use-sticky-filters"
 import { clearStickyFilters } from "@/lib/sticky-filters"
+import { useUrlQuery } from "@/hooks/use-url-query"
 
 interface ListFilterBarProps {
   searchPlaceholder: string
@@ -38,15 +39,14 @@ function FilterBar({
   orderOptions,
   children,
 }: ListFilterBarProps) {
-  const router = useRouter()
   const pathname = usePathname()
-  const searchParams = useSearchParams()
+  const { params, replace } = useUrlQuery()
 
   // One call per screen, here rather than in each page: this is what writes the
   // per-route cookie that brings the filters back when the operator returns.
   useStickyFilters()
 
-  const hasAnyFilter = searchParams.toString() !== ""
+  const hasAnyFilter = params.size > 0
 
   function clearAll() {
     // useStickyFilters also drops the cookie when the URL goes bare on a screen the
@@ -54,7 +54,7 @@ function FilterBar({
     // rather than on the next effect pass, and it says out loud that "Limpar
     // filtros" is meant to be forgotten, not just navigated away from.
     clearStickyFilters(pathname)
-    router.replace(pathname)
+    replace(new URLSearchParams())
   }
 
   return (
