@@ -217,6 +217,43 @@ function isUntouchedDraft(row: IssuanceRow): boolean {
   )
 }
 
+// Whether the operator typed anything into a draft - any cell, not only the five a POST
+// needs. isUntouchedDraft answers a narrower question ("can this row be reused for Nova
+// emissão?"), and a draft holding only a passenger and a route counts as untouched there,
+// yet losing it still throws away work.
+function draftHasTypedContent(row: IssuanceRow): boolean {
+  return (
+    row.program_locator.trim() !== "" ||
+    [
+      row.loyalty_program_id,
+      row.airline_id,
+      row.airline_locator,
+      row.latam_purchase_number,
+      row.flight_date,
+      row.main_passenger_name,
+      row.origin_iata_code,
+      row.destination_iata_code,
+      row.points,
+      row.value_of_the_thousand,
+      row.taxes,
+      row.account_id,
+      row.observation,
+    ].some((value) => value !== null && value !== "")
+  )
+}
+
+// Where a freshly mounted grid finds the unsaved drafts of the one before it. The page
+// keys the grid on its filters, so every filter change remounts it - and a half-typed
+// issuance (not yet the five fields a POST needs) lived only in that instance's state and
+// vanished without a word.
+//
+// A getter rather than a list, because of the order React does things in: on a key
+// change it renders the new instance - running its useState initializer - before it runs
+// the old instance's cleanup. So the old instance publishes a live view of its rows while
+// mounted, which the new one reads during that render, and freezes it into a snapshot on
+// unmount for a grid mounted later (leaving the screen and coming back).
+let readCarriedDrafts: () => IssuanceRow[] = () => []
+
 export function IssuancesGrid({
   initialIssuances,
   currentUserId,
@@ -232,9 +269,11 @@ export function IssuancesGrid({
   // result is a legitimate filtered outcome and gets an explicit empty-state below
   // (a lone editable draft row here reads as a stray/phantom line). "Nova emissão"
   // (handleAddRow / Ctrl+Enter) creates the first row on demand.
-  const [rows, setRows] = useState<IssuanceRow[]>(() =>
-    initialIssuances.map(issuanceToRow),
-  )
+  const [rows, setRows] = useState<IssuanceRow[]>(() => [
+    ...initialIssuances.map(issuanceToRow),
+    // Drafts are always the tail, same as reconcileRows keeps them.
+    ...readCarriedDrafts(),
+  ])
   const [interaction, dispatch] = useReducer(interactionReducer, initialInteractionState)
   // The day new rows are recorded on. Normally today; set to another day to enter a
   // batch of bookings that happened then - the ones a statement reconciliation turned up.
@@ -377,6 +416,42 @@ export function IssuancesGrid({
   useEffect(() => {
     rowsRef.current = rows
   }, [rows])
+
+  // Publishes this grid's unsaved drafts for the next instance (see readCarriedDrafts).
+  // A draft whose POST is in flight is left out on purpose: its create is already on the
+  // way, and carrying it would let the next instance create the same issuance twice. The
+  // snapshot is taken at unmount for the same reason - read later, the live rows would
+  // still show a draft whose POST landed after this grid was gone.
+  useEffect(() => {
+    const unsavedDrafts = () =>
+      rowsRef.current.filter(
+        (row) =>
+          row.isDraft && draftHasTypedContent(row) && !creatingKeysRef.current.has(row.key),
+      )
+    readCarriedDrafts = unsavedDrafts
+    return () => {
+      const snapshot = unsavedDrafts()
+      readCarriedDrafts = () => snapshot
+    }
+  }, [])
+
+  // F5 or closing the tab is the one exit a draft cannot survive, so ask first - the
+  // same goes for a save still travelling, whose outcome would never be seen.
+  useEffect(() => {
+    function warnAboutUnsavedWork(event: BeforeUnloadEvent) {
+      const hasUnsavedWork = rowsRef.current.some(
+        (row) =>
+          (row.isDraft && draftHasTypedContent(row)) || row.saveStatus === "saving",
+      )
+      if (!hasUnsavedWork) return
+      event.preventDefault()
+      // Still required by some browsers for the prompt to appear at all.
+      event.returnValue = ""
+    }
+
+    window.addEventListener("beforeunload", warnAboutUnsavedWork)
+    return () => window.removeEventListener("beforeunload", warnAboutUnsavedWork)
+  }, [])
 
   useEffect(() => {
     interactionRef.current = interaction
