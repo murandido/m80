@@ -17,11 +17,15 @@ interface ListSearchBarProps {
   placeholder: string
   /** Visible label; the placeholder alone disappears the moment you start typing. */
   label?: string
+  /** Shortest term worth sending. A list that is not paginated sends every match to
+      the browser, and one letter matches most of it. */
+  minLength?: number
 }
 
 export function ListSearchBar({
   placeholder,
   label = "Buscar",
+  minLength = 1,
 }: ListSearchBarProps) {
   const pathname = usePathname()
   // The query the screen is heading to, not the one that last landed: another control
@@ -57,6 +61,9 @@ export function ListSearchBar({
     // timeout forever.
     const desired = value.trim()
     if (desired === urlQuery) return
+    // Too short to search on: leave the URL as it is rather than clear it, so going
+    // from "abc" back to "ab" while retyping does not flash the unsearched list.
+    if (desired !== "" && desired.length < minLength) return
 
     const timeout = setTimeout(() => {
       update((params) => {
@@ -79,13 +86,24 @@ export function ListSearchBar({
     }, 350)
 
     return () => clearTimeout(timeout)
-  }, [value, pathname, update, urlQuery])
+  }, [value, pathname, update, urlQuery, minLength])
+
+  const trimmedLength = value.trim().length
+  const isTooShort = trimmedLength > 0 && trimmedLength < minLength
 
   return (
     <div className="flex flex-col gap-1.5">
-      <Label htmlFor={inputId} className="text-xs text-muted-foreground">
-        {label}
-      </Label>
+      <div className="flex items-baseline justify-between gap-2">
+        <Label htmlFor={inputId} className="text-xs text-muted-foreground">
+          {label}
+        </Label>
+        {/* In the label row, not under the input, so it never shifts the list down. */}
+        {isTooShort && (
+          <span role="status" className="text-xs text-amber-700">
+            Digite ao menos {minLength} caracteres
+          </span>
+        )}
+      </div>
       <InputGroup>
         <InputGroupInput
           id={inputId}

@@ -180,7 +180,10 @@ export default async function IssuancesPage({
           <h1 className="text-lg font-semibold text-slate-800">Emissões</h1>
           <div className="w-full sm:w-96">
             <Suspense fallback={<div className="h-14" />}>
-              <ListSearchBar placeholder="PNR, passageiro, origem ou destino" />
+              {/* This list is not paginated - a search returns every match, with
+                  its preloads, straight into the grid. Three characters is an IATA
+                  code; one letter matched most of the table. */}
+              <ListSearchBar placeholder="PNR, passageiro, origem ou destino" minLength={3} />
             </Suspense>
           </div>
         </div>
