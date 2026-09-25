@@ -77,12 +77,15 @@ export function EditAccountPanel({
     defaultValues: toFormValues(account),
   })
 
-  // Reset form whenever the panel closes, discarding unsaved edits.
+  // Re-seeded whenever the panel closes, and whenever the record itself changes
+  // while closed. The second half matters after a save or a merge: the panel closes
+  // before router.refresh() lands, so resetting only on close would reopen showing
+  // the pre-save values - and saving that form again would write them back.
   useEffect(() => {
     if (!isOpen) {
       form.reset(toFormValues(account))
     }
-  }, [isOpen]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isOpen, account]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Both are read-only here now: the sync owns the real balance, and the expected one is derived.
   const realBalance = account.real_balance_points ?? null

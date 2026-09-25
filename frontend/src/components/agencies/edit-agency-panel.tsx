@@ -43,15 +43,15 @@ export function EditAgencyPanel({ agency, isOpen, onSaved }: EditAgencyPanelProp
     defaultValues,
   })
 
-  // Reset form whenever the panel closes. Also depends on agency.is_default:
-  // setting another agency as default auto-swaps this one back to false on
-  // the server, and that prop change must resync this form even though
-  // isOpen itself never toggled.
+  // Reset form whenever the panel closes, and whenever the agency changes while
+  // closed: a save closes the panel before router.refresh() lands, and setting
+  // another agency as default flips this one's is_default on the server without
+  // isOpen ever toggling.
   useEffect(() => {
     if (!isOpen) {
       form.reset(defaultValues)
     }
-  }, [isOpen, agency.is_default]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isOpen, agency]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function onSubmit(data: FormData) {
     startTransition(async () => {

@@ -52,13 +52,16 @@ export function EditUserPanel({ user, isOpen, onSaved }: EditUserPanelProps) {
     },
   })
 
-  // Reset form and password visibility whenever the panel closes
+  // Re-seeded whenever the panel closes, and whenever the record itself changes
+  // while closed. The second half matters after a save or a merge: the panel closes
+  // before router.refresh() lands, so resetting only on close would reopen showing
+  // the pre-save values - and saving that form again would write them back.
   useEffect(() => {
     if (!isOpen) {
       form.reset({ name: user.name, phone: user.phone, password: "", role: user.role })
       setShowPassword(false)
     }
-  }, [isOpen]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isOpen, user]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function onSubmit(data: FormData) {
     startTransition(async () => {
