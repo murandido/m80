@@ -1,5 +1,6 @@
 "use client"
 
+import { useEffect } from "react"
 import { useUrlQuery } from "@/hooks/use-url-query"
 import { ChevronLeft, ChevronRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -26,6 +27,18 @@ export function ListPagination({
   const totalPages = Math.max(1, Math.ceil(total / limit))
   const hasPrev = page > 1
   const hasNext = page < totalPages
+
+  // A page past the end - the last record on it was deleted, or the sticky cookie
+  // brought back a page number from a longer list - rendered "nada encontrado" beside
+  // "página 3 de 2", reading as if the list were empty. Step back to the last real page.
+  const isPastTheEnd = !isPending && total > 0 && landedPage > totalPages
+  useEffect(() => {
+    if (!isPastTheEnd) return
+    update((params) => {
+      if (totalPages <= 1) params.delete("page")
+      else params.set("page", String(totalPages))
+    })
+  }, [isPastTheEnd, totalPages, update])
 
   function goToPage(target: number) {
     update((params) => {
