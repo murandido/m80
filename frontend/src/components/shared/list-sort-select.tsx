@@ -33,6 +33,9 @@ export function ListSortSelect({ order, options }: ListSortSelectProps) {
   const selectId = useId()
   const shownOrder = isPending ? (urlParams.get("order") ?? order) : order
 
+  const sortOptions =
+    options ?? LIST_ORDER_KEYS.map((key) => ({ value: key, label: ORDER_LABELS[key] }))
+
   function apply(next: string) {
     update((params) => {
       params.set("order", next)
@@ -48,13 +51,12 @@ export function ListSortSelect({ order, options }: ListSortSelectProps) {
       </Label>
       <Select value={shownOrder} onValueChange={apply}>
         <SelectTrigger id={selectId} className="w-44">
-          <SelectValue />
+          {/* Children, not the default: see ListFilterSelect - the trigger is otherwise
+              empty until hydration. */}
+          <SelectValue>{sortOptions.find((option) => option.value === shownOrder)?.label}</SelectValue>
         </SelectTrigger>
         <SelectContent>
-          {(
-            options ??
-            LIST_ORDER_KEYS.map((key) => ({ value: key, label: ORDER_LABELS[key] }))
-          ).map((option) => (
+          {sortOptions.map((option) => (
             <SelectItem key={option.value} value={option.value}>
               {option.label}
             </SelectItem>

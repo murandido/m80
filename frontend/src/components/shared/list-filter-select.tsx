@@ -40,6 +40,10 @@ export function ListFilterSelect({
   // While a change is travelling, show what was picked rather than snapping back to
   // the server's value until the new page arrives.
   const shownValue = isPending ? (urlParams.get(name) ?? "") : value
+  // Handed to SelectValue as children: on its own it fills the trigger only after
+  // hydration, so the server HTML - the first paint - showed every filter empty.
+  const shownLabel =
+    options.find((option) => option.value === shownValue)?.label ?? allLabel
 
   function apply(next: string) {
     update((params) => {
@@ -60,7 +64,7 @@ export function ListFilterSelect({
       </Label>
       <Select value={shownValue || ALL} onValueChange={apply}>
         <SelectTrigger id={selectId} className={className ?? "w-44"}>
-          <SelectValue />
+          <SelectValue>{shownLabel}</SelectValue>
         </SelectTrigger>
         <SelectContent>
           <SelectItem value={ALL}>{allLabel}</SelectItem>
