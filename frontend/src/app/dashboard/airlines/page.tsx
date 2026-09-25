@@ -1,5 +1,8 @@
 import type { Metadata } from "next"
 import { cookies } from "next/headers"
+import Link from "next/link"
+import { Activity } from "lucide-react"
+import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { requireDev } from "@/lib/session"
 import { env } from "@/lib/env"
@@ -66,6 +69,15 @@ export default async function AirlinesPage({
         </h1>
 
         <LoyaltyProgramsAirlinesToggle active="airlines" />
+
+        <div className="flex justify-end">
+          <Button asChild size="sm" variant="outline">
+            <Link href="/dashboard/airlines/direct-lookups">
+              <Activity className="h-4 w-4" />
+              Conexões diretas
+            </Link>
+          </Button>
+        </div>
 
         <CreateAirlineForm />
         <ListFilterBar

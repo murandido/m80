@@ -1,4 +1,5 @@
 import {
+  Activity,
   Tags,
   Award,
   Bot,
@@ -132,6 +133,15 @@ export const extraDestinations: (NavLink & { sectionLabel: string })[] = [
     url: "/dashboard/people",
     icon: Users,
     sectionLabel: "Gestão",
+  },
+  // Temporary, reached from the airline screen: how each airline's own integration fares
+  // against the Traveos fallback. Goes away with the vendor.
+  {
+    title: "Conexões diretas",
+    url: "/dashboard/airlines/direct-lookups",
+    icon: Activity,
+    roles: [],
+    sectionLabel: "Dev Mode",
   },
 ]
 

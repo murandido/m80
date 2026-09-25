@@ -21,6 +21,7 @@ const nestedSegmentLabels: Record<string, string> = {
   "point-batch-origins": "Origens de lote",
   ticket: "Bilhete",
   statement: "Extrato",
+  "direct-lookups": "Conexões diretas",
 }
 
 interface Crumb {

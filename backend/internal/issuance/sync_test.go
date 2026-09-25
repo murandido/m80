@@ -3,6 +3,7 @@ package issuance
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -463,7 +464,7 @@ func TestAnUnreachableAirlineFallsBackToTheVendor(t *testing.T) {
 
 	registry := booking.NewRegistry(fallback)
 	fetched, source, err := attemptProviders(context.Background(), registry,
-		[]booking.Provider{direct, fallback}, testIssuance(), testAirline(), false)
+		[]booking.Provider{direct, fallback}, testIssuance(), testAirline(), false, nil)
 	if err != nil {
 		t.Fatalf("attemptProviders: %v", err)
 	}
@@ -487,7 +488,7 @@ func TestAnAbsentBookingIsOnlySearchedAtTheVendor(t *testing.T) {
 	fallback := &fakeProvider{}
 
 	_, _, err := attemptProviders(context.Background(), booking.NewRegistry(fallback),
-		[]booking.Provider{direct, fallback}, testIssuance(), testAirline(), false)
+		[]booking.Provider{direct, fallback}, testIssuance(), testAirline(), false, nil)
 	if !errors.Is(err, booking.ErrNotFound) {
 		t.Fatalf("err = %v, want booking.ErrNotFound", err)
 	}
@@ -507,7 +508,7 @@ func TestTheVendorAnswersWhenTheAirlineDoesNotFindTheBooking(t *testing.T) {
 	fallback := &fakeProvider{fetchResults: []*booking.Booking{existingBooking()}}
 
 	fetched, source, err := attemptProviders(context.Background(), booking.NewRegistry(fallback),
-		[]booking.Provider{direct, fallback}, testIssuance(), testAirline(), false)
+		[]booking.Provider{direct, fallback}, testIssuance(), testAirline(), false, nil)
 	if err != nil {
 		t.Fatalf("attemptProviders: %v", err)
 	}
@@ -526,7 +527,7 @@ func TestTheAirlinesAbsenceWinsOverAnUnreachableVendor(t *testing.T) {
 	fallback := &fakeProvider{fetchErr: booking.Unavailable(nil, "vendor down")}
 
 	_, _, err := attemptProviders(context.Background(), booking.NewRegistry(fallback),
-		[]booking.Provider{direct, fallback}, testIssuance(), testAirline(), false)
+		[]booking.Provider{direct, fallback}, testIssuance(), testAirline(), false, nil)
 	if !errors.Is(err, booking.ErrNotFound) {
 		t.Fatalf("err = %v, want the airline's booking.ErrNotFound", err)
 	}
@@ -541,7 +542,7 @@ func TestARefusalIsNotRetriedAgainstTheNextProvider(t *testing.T) {
 	issuance.Imported = true
 
 	_, _, err := attemptProviders(context.Background(), booking.NewRegistry(fallback),
-		[]booking.Provider{direct, fallback}, issuance, testAirline(), false)
+		[]booking.Provider{direct, fallback}, issuance, testAirline(), false, nil)
 	if !errors.Is(err, ErrImportedNotAtVendor) {
 		t.Fatalf("err = %v, want ErrImportedNotAtVendor", err)
 	}
@@ -576,6 +577,59 @@ func TestSyncRecordsWhichProviderAnswered(t *testing.T) {
 	})
 }
 
+// The fallback is what booking_lookup_attempts exists to count: the airline's failure
+// and the vendor's answer both have to land, each with its own outcome.
+func TestEveryAttemptIsRecordedWithItsOutcome(t *testing.T) {
+	direct := &namedProvider{name: "azul", inner: &fakeProvider{fetchErr: booking.Unavailable(nil, "edge returned 403")}}
+	fallback := &fakeProvider{fetchResults: []*booking.Booking{existingBooking()}}
+	registry := booking.NewRegistry(fallback)
+	registry.Register("AZUL", direct)
+
+	var recorded []data.BookingLookupAttempt
+	if _, _, err := attemptProviders(context.Background(), registry, []booking.Provider{direct, fallback},
+		testIssuance(), testAirline(), false, func(a data.BookingLookupAttempt) { recorded = append(recorded, a) }); err != nil {
+		t.Fatalf("attemptProviders: %v", err)
+	}
+
+	if len(recorded) != 2 {
+		t.Fatalf("recorded %d attempts, want one per provider asked", len(recorded))
+	}
+	if got := recorded[0]; got.Provider != "azul" || got.Outcome != data.LookupUnavailable ||
+		got.Error == nil || !strings.Contains(*got.Error, "403") {
+		t.Errorf("direct attempt = %+v, want azul unavailable with its error", got)
+	}
+	if got := recorded[1]; got.Provider != "fake" || got.Outcome != data.LookupFound || got.Error != nil {
+		t.Errorf("fallback attempt = %+v, want fake found without an error", got)
+	}
+}
+
+func TestSyncWritesItsAttempts(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		traveosID := 90
+		f := seedFixture(t, tx, data.Airline{TraveosSupported: true, TraveosAirlineID: &traveosID})
+		created, err := Create(tx, f.input(), f.User.ID)
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+
+		// Read-only, so the absence is the whole answer: fakeProvider would go on to import,
+		// and that step's refusal is what would be recorded.
+		provider := &readOnlyProvider{}
+		if err := Sync(context.Background(), tx, booking.NewRegistry(provider), created.ID, true); err == nil {
+			t.Fatal("Sync: expected the absence to be reported")
+		}
+
+		var attempts []data.BookingLookupAttempt
+		if err := tx.Where("issuance_id = ?", created.ID).Find(&attempts).Error; err != nil {
+			t.Fatalf("reading the attempts: %v", err)
+		}
+		if len(attempts) != 1 || attempts[0].Outcome != data.LookupNotFound || attempts[0].AirlineID != f.Airline.ID ||
+			attempts[0].SyncID == "" {
+			t.Errorf("attempts = %+v, want one not_found for the issuance's airline", attempts)
+		}
+	})
+}
+
 func TestEveryRealLookupIsReportedToTheWatcher(t *testing.T) {
 	// The panel's freshest evidence. Both outcomes are reported, and an airline that
 	// answered "no such booking" counts as reached: it is the edge blocking us, not
@@ -593,7 +647,7 @@ func TestEveryRealLookupIsReportedToTheWatcher(t *testing.T) {
 	registry.Register("AZUL", azul)
 
 	if _, _, err := attemptProviders(context.Background(), registry,
-		[]booking.Provider{azul, fallback}, testIssuance(), testAirline(), false); err != nil {
+		[]booking.Provider{azul, fallback}, testIssuance(), testAirline(), false, nil); err != nil {
 		t.Fatalf("attemptProviders: %v", err)
 	}
 
@@ -619,7 +673,7 @@ func TestAReachedDirectProviderIsReportedAsHealthy(t *testing.T) {
 	registry.Watch(func(name string, reached bool) { observed[name] = reached })
 
 	if _, _, err := attemptProviders(context.Background(), registry,
-		[]booking.Provider{azul}, testIssuance(), testAirline(), false); err != nil {
+		[]booking.Provider{azul}, testIssuance(), testAirline(), false, nil); err != nil {
 		t.Fatalf("attemptProviders: %v", err)
 	}
 

@@ -73,6 +73,9 @@ func NewRouter(db *gorm.DB, broker *events.Broker, bookings *booking.Registry, m
 		// "/bot/chats" child, never shadowed by RegisterBotRoutes' "/bot/*"
 		// catch-all proxy above (see RegisterListenedChatRoutes doc comment).
 		routes.RegisterListenedChatRoutes(r, db)
+		// Temporary: how each airline's own integration fares against the Traveos fallback,
+		// dev-gated inside. Delete with the rest of migration 66 once Traveos is gone.
+		routes.RegisterBookingLookupRoutes(r, db, bookings)
 		// Temporary: the screen that imports the pre-panel spreadsheet, admin-gated
 		// inside RegisterLegacyImportRoutes. Delete this line along with the rest of
 		// the importer once the migration off the spreadsheets is done.

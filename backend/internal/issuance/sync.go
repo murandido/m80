@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/murandido/m-80-backend/internal/booking"
 	"github.com/murandido/m-80-backend/internal/data"
 	"gorm.io/gorm"
@@ -82,7 +83,10 @@ func Sync(ctx context.Context, db *gorm.DB, registry *booking.Registry, issuance
 	if err := MarkTraveosSyncing(db.WithContext(ctx), issuanceID); err != nil {
 		return err
 	}
+	var attempts []data.BookingLookupAttempt
+	syncID := uuid.New().String()
 	defer func() {
+		recordLookupAttempts(db, attempts)
 		if err := ClearTraveosSyncing(db, issuanceID); err != nil {
 			slog.Error("failed to clear the traveos syncing marker",
 				"issuance_id", issuanceID, "err", err)
@@ -96,7 +100,11 @@ func Sync(ctx context.Context, db *gorm.DB, registry *booking.Registry, issuance
 		}
 	}()
 
-	fetched, source, err := attemptProviders(ctx, registry, providers, issuance, airline, force)
+	fetched, source, err := attemptProviders(ctx, registry, providers, issuance, airline, force,
+		func(attempt data.BookingLookupAttempt) {
+			attempt.SyncID = syncID
+			attempts = append(attempts, attempt)
+		})
 	if err != nil {
 		return err
 	}
@@ -194,6 +202,7 @@ func attemptProviders(
 	issuance data.Issuance,
 	airline data.Airline,
 	force bool,
+	record func(data.BookingLookupAttempt),
 ) (*booking.Booking, string, error) {
 	var lastErr, absent error
 
@@ -202,10 +211,14 @@ func attemptProviders(
 			fetched *booking.Booking
 			err     error
 		)
+		started := time.Now()
 		if absent == nil {
 			fetched, err = fetchOrImport(ctx, provider, issuance, airline, force)
 		} else {
 			fetched, err = searchOnly(ctx, provider, issuance, airline, force)
+		}
+		if record != nil {
+			record(lookupAttempt(issuance, airline, provider.Name(), err, time.Since(started)))
 		}
 
 		// Reported before the error is even classified: this is the panel's freshest
@@ -382,4 +395,49 @@ func derefOrEmpty(value *string) string {
 		return ""
 	}
 	return strings.TrimSpace(*value)
+}
+
+// maxAttemptErrorLength keeps a vendor's HTML error page from landing whole in a
+// diagnostic row; the start of the message is what names the cause.
+const maxAttemptErrorLength = 500
+
+// lookupAttempt describes one provider's answer for booking_lookup_attempts - temporary
+// scaffolding for the move off Traveos, see migration 66.
+func lookupAttempt(issuance data.Issuance, airline data.Airline, provider string, err error, took time.Duration) data.BookingLookupAttempt {
+	attempt := data.BookingLookupAttempt{
+		IssuanceID: issuance.ID,
+		AirlineID:  airline.ID,
+		Provider:   provider,
+		Outcome:    data.LookupFound,
+		DurationMS: int(took.Milliseconds()),
+	}
+	switch {
+	case err == nil:
+		return attempt
+	case errors.Is(err, booking.ErrUnavailable):
+		attempt.Outcome = data.LookupUnavailable
+	case errors.Is(err, booking.ErrNotFound):
+		attempt.Outcome = data.LookupNotFound
+	default:
+		attempt.Outcome = data.LookupRefused
+	}
+	message := err.Error()
+	if len(message) > maxAttemptErrorLength {
+		message = message[:maxAttemptErrorLength]
+	}
+	attempt.Error = &message
+	return attempt
+}
+
+// recordLookupAttempts writes what the providers answered. Best-effort and without ctx,
+// like the other bookkeeping on Sync's way out: it is evidence for deciding when an
+// airline can drop Traveos, and losing a row of it must never fail the sync it describes.
+func recordLookupAttempts(db *gorm.DB, attempts []data.BookingLookupAttempt) {
+	if len(attempts) == 0 {
+		return
+	}
+	if err := db.Create(&attempts).Error; err != nil {
+		slog.Error("failed to record the booking lookup attempts",
+			"issuance_id", attempts[0].IssuanceID, "err", err)
+	}
 }
