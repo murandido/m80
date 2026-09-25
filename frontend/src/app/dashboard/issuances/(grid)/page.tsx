@@ -4,17 +4,11 @@ import { cookies } from "next/headers"
 import { AlertTriangle } from "lucide-react"
 import { env } from "@/lib/env"
 import { fetchList } from "@/lib/fetch-list"
+import { getSessionUser } from "@/lib/session"
 import { readStickyFilters, stickySearchParams } from "@/lib/sticky-filters"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { getIssuancesSchema } from "@/schemas/issuance"
-import { getLoyaltyProgramsSchema } from "@/schemas/loyalty-program"
-import { getAirlinesSchema } from "@/schemas/airline"
-import { getAccountOptionsSchema } from "@/schemas/account"
-import { getAgenciesSchema } from "@/schemas/agency"
-import { getUsersSchema, getMeSchema } from "@/schemas/user"
-import { getPeopleOptionsSchema } from "@/schemas/person"
-import { IssuancesGrid } from "@/components/issuances/issuances-grid"
-import { IssuancesFilterBar } from "@/components/issuances/issuances-filter-bar"
+import { IssuancesScreen } from "@/components/issuances/issuances-screen"
 import { ListSearchBar } from "@/components/shared/list-search-bar"
 
 export const metadata: Metadata = {
@@ -43,17 +37,6 @@ type FilterState = Record<(typeof FILTER_KEYS)[number], string>
 // while a search is active anyway.
 type IssuancesSearchParams = Partial<Record<(typeof FILTER_KEYS)[number], string>> & {
   q?: string
-}
-
-async function fetchCurrentUserId(authHeader: Record<string, string>): Promise<string | null> {
-  try {
-    const res = await fetch(`${env.BACKEND_URL}/api/v1/auth/me`, { headers: authHeader })
-    const parsed = getMeSchema.response.safeParse(await res.json())
-    if (!res.ok || !parsed.success || !parsed.data.data) return null
-    return parsed.data.data.id
-  } catch {
-    return null
-  }
 }
 
 // created_at is compared in America/Sao_Paulo on the backend, so "today" must be the
@@ -110,20 +93,12 @@ export default async function IssuancesPage({
   const authHeader = { Authorization: `Bearer ${token}` }
   const api = `${env.BACKEND_URL}/api/v1`
 
-  // First wave: everything that does not depend on the resolved filters. Each
-  // promise resolves (never rejects), so a single failure degrades only its own list.
-  const [currentUserId, loyaltyPrograms, airlines, accounts, agencies, users, people] =
-    await Promise.all([
-      fetchCurrentUserId(authHeader),
-      fetchList(`${api}/loyalty-programs`, getLoyaltyProgramsSchema.response, authHeader),
-      fetchList(`${api}/airlines`, getAirlinesSchema.response, authHeader),
-      fetchList(`${api}/accounts?view=picker`, getAccountOptionsSchema.response, authHeader),
-      fetchList(`${api}/agencies`, getAgenciesSchema.response, authHeader),
-      fetchList(`${api}/users`, getUsersSchema.response, authHeader),
-      fetchList(`${api}/people?view=picker`, getPeopleOptionsSchema.response, authHeader),
-    ])
+  // Only the issuances are fetched here - the pickers' reference lists come from the
+  // layout, which a filter change does not re-render (see (grid)/layout.tsx). The session
+  // is the render-wide cached one, not a second /auth/me.
+  const currentUserId = (await getSessionUser())?.id ?? null
 
-  // Second wave: the filtered issuance list, which needs currentUserId to build the defaults.
+  // The filtered issuance list, which needs currentUserId to build the defaults.
   // A bare URL (every sidebar link is one) falls back to the filters this browser session
   // last used here, so the screen is already filtered on the first paint.
   const requested = await searchParams
@@ -160,15 +135,6 @@ export default async function IssuancesPage({
     "no-store",
   )
 
-  const referenceDataFailed = [
-    loyaltyPrograms,
-    airlines,
-    accounts,
-    agencies,
-    users,
-    people,
-  ].some((list) => list === null)
-
   return (
     <div className="p-6 sm:p-8">
       <div className="flex flex-col gap-2 sm:gap-6">
@@ -200,47 +166,18 @@ export default async function IssuancesPage({
             </AlertDescription>
           </Alert>
         ) : (
-          <>
-            {referenceDataFailed && (
-              <Alert>
-                <AlertTriangle />
-                <AlertTitle>Algumas listas não carregaram</AlertTitle>
-                <AlertDescription>
-                  Companhias, contas, agências ou emissores podem aparecer incompletos nos campos de
-                  seleção. Recarregue a página para tentar de novo.
-                </AlertDescription>
-              </Alert>
-            )}
-
-            <IssuancesGrid
-              // Keyed on the resolved filters so a client-side filter change (router.replace,
-              // which re-renders this Server Component but does not remount the grid) forces a
-              // remount. Without it the grid seeds `rows` from initialIssuances only on first
-              // mount and keeps showing the previous filter's issuances until a full reload.
-              key={[...FILTER_KEYS.map((key) => filters[key]), search].join("|")}
-              filters={
-                <IssuancesFilterBar
-                  loyaltyPrograms={loyaltyPrograms ?? []}
-                  airlines={airlines ?? []}
-                  accounts={accounts ?? []}
-                  people={people ?? []}
-                  agencies={agencies ?? []}
-                  users={users ?? []}
-                  initialFilters={filters}
-                  hasSearch={search !== ""}
-                />
-              }
-              initialIssuances={issuances}
-              filterQuery={issuanceQuery.toString()}
-              loyaltyPrograms={loyaltyPrograms ?? []}
-              airlines={airlines ?? []}
-              accounts={accounts ?? []}
-              agencies={agencies ?? []}
-              users={users ?? []}
-              people={people ?? []}
-              currentUserId={currentUserId}
-            />
-          </>
+          <IssuancesScreen
+            // Keyed on the resolved filters so a client-side filter change (router.replace,
+            // which re-renders this Server Component but does not remount the grid) forces a
+            // remount. Without it the grid seeds `rows` from initialIssuances only on first
+            // mount and keeps showing the previous filter's issuances until a full reload.
+            key={[...FILTER_KEYS.map((key) => filters[key]), search].join("|")}
+            initialIssuances={issuances}
+            filterQuery={issuanceQuery.toString()}
+            initialFilters={filters}
+            hasSearch={search !== ""}
+            currentUserId={currentUserId}
+          />
         )}
       </div>
     </div>

@@ -75,11 +75,15 @@ planilha (Excel/Sheets), não como um formulário.
   em cada chamada (via server actions em `src/actions/`).
 
 ## Dados de referência
-Carregados no `page.tsx` em paralelo (cada lista tolera falha isolada): programas de
-fidelidade, cias aéreas, contas (+apelidos), agências, usuários, pessoas, aeroportos e o
-`currentUserId`. Alimentam os comboboxes. Se as **emissões** falharem, a grade não é
-renderizada (evita recadastro duplicado); se só listas de referência falharem, um alerta
-avisa que campos de seleção podem vir incompletos.
+As listas dos comboboxes (programas de fidelidade, cias aéreas, contas (+apelidos),
+agências, usuários, pessoas) são carregadas em paralelo no **layout** do route group
+`(grid)/layout.tsx` e chegam à grade por contexto (`IssuancesReferenceProvider`, em
+`components/issuances/issuances-screen.tsx`). O `page.tsx` só busca as **emissões** e o
+`currentUserId`: layout não re-renderiza quando só os search params mudam, então uma troca
+de filtro custa uma consulta, não sete. Aeroportos vêm à parte, de `/api/airports`.
+Cada lista tolera falha isolada. Se as **emissões** falharem, a grade não é renderizada
+(evita recadastro duplicado); se só listas de referência falharem, um alerta avisa que
+campos de seleção podem vir incompletos.
 
 ## Comportamentos especiais (fáceis de perder num redesign)
 - **`/` na Cia aérea:** programa antes da barra, cia (override do default) depois. A cia
@@ -143,5 +147,6 @@ eventualmente virtualizar linhas. Um redesign **não deve piorar** isso.
 - `components/issuances/column-fields.ts` — patch de limpeza por coluna (tecla Delete).
 - `components/issuances/types.ts` — shape da linha (`IssuanceRow`) e helpers de rascunho.
 - `components/issuances/grid-context.tsx` — contexto compartilhado.
-- `app/dashboard/issuances/page.tsx` — busca de dados (server component).
+- `app/dashboard/issuances/(grid)/page.tsx` — busca das emissões e resolução dos filtros.
+- `app/dashboard/issuances/(grid)/layout.tsx` — listas de referência dos comboboxes.
 - `actions/issuance.ts`, `actions/account.ts` — mutações (POST/PATCH/DELETE).
