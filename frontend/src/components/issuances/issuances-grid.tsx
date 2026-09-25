@@ -528,13 +528,23 @@ export function IssuancesGrid({
   // re-hydrated from the response instead of being patched with just the new id. The
   // draft's key is kept - issuanceToRow would swap in the backend id, remounting the row
   // and dropping the user's cell selection mid-typing.
-  const reconcileCreatedRow = useCallback((key: string, issuance: Issuance) => {
-    setRows((prev) =>
-      prev.map((row) =>
-        row.key === key ? { ...issuanceToRow(issuance), key, saveStatus: row.saveStatus } : row,
-      ),
-    )
-  }, [])
+  //
+  // `pending` is whatever the operator typed while the POST was in flight. Those edits are
+  // already on screen and about to be sent as a PATCH, but the response predates them -
+  // re-hydrating from it alone put the old values back in those cells, and nothing but a
+  // later SSE refresh would ever correct the display.
+  const reconcileCreatedRow = useCallback(
+    (key: string, issuance: Issuance, pending?: Partial<IssuanceRow>) => {
+      setRows((prev) =>
+        prev.map((row) =>
+          row.key === key
+            ? { ...issuanceToRow(issuance), ...pending, key, saveStatus: row.saveStatus }
+            : row,
+        ),
+      )
+    },
+    [],
+  )
 
   // persistRef holds the latest persist so the recursive replay (queued patch after a
   // create resolves) can call it without persist listing itself as a dependency.
@@ -593,7 +603,7 @@ export function IssuancesGrid({
           return
         }
 
-        reconcileCreatedRow(row.key, result.issuance)
+        reconcileCreatedRow(row.key, result.issuance, queued)
         flashSaveStatus(row.key, "success")
 
         if (queued) {
