@@ -6,11 +6,9 @@ import { formatDistanceToNow } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { toast } from "sonner"
 import {
-  AlertTriangle,
   ArrowDownCircle,
   ArrowUpCircle,
   Boxes,
-  CheckCircle2,
   ChevronLeft,
   ChevronRight,
   CircleSlash,
@@ -161,14 +159,6 @@ function routeOf(origin: string, destination: string): string | null {
 // client-side), but a long history would be an unreadable wall of rows, so it is paged here.
 const STATEMENT_PAGE_SIZE = 100
 
-// Whether a day's listed movements account for its whole balance change. The airline caps a
-// statement query at 100 entries, so a busy day pulled inside a month window can arrive truncated;
-// this is how the operator sees which days are trustworthy.
-//   complete     - previous day's closing + this day's movements == this day's closing.
-//   incomplete   - they do not add up, so a movement is missing (nothing to do but flag it).
-//   unverifiable - the first day in the window has no previous day here to check against.
-type DayCompleteness = "complete" | "incomplete" | "unverifiable"
-
 interface AccountStatementViewProps {
   accountId: string
   accountName: string
@@ -203,7 +193,7 @@ export function AccountStatementView({
   const [dateFrom, setDateFrom] = useState("")
   const [dateTo, setDateTo] = useState("")
   const [kindFilter, setKindFilter] = useState<StatementLineKind | "all">("all")
-  // Newest day first by default, which is how a statement is normally read; the operator can flip
+  // Newest first by default, which is how a statement is normally read; the operator can flip
   // it to oldest-first.
   const [sortOrder, setSortOrder] = useState<"desc" | "asc">("desc")
   // 1-based page over the filtered movements. Any filter or sort change resets it to the first page
@@ -241,46 +231,6 @@ export function AccountStatementView({
     ? formatDistanceToNow(new Date(syncState.last_synced_at), { addSuffix: true, locale: ptBR })
     : "nunca"
 
-  // Per-day completeness, computed over the WHOLE window (never the filtered or paged view - a kind
-  // filter would drop movements and make the sums lie). Walk days oldest-first: each day's closing
-  // must equal the previous day's closing plus the day's movements. day_balance is the airline's
-  // own end-of-day balance and points are signed, so this is exact-integer arithmetic. The first
-  // day has no predecessor here, and any day whose balance did not survive breaks the chain for the
-  // next one, so both are left unverifiable rather than falsely flagged.
-  const dayCompleteness = useMemo(() => {
-    const status = new Map<string, DayCompleteness>()
-    const perDay: { day: string; movements: number; closing: number | null }[] = []
-    for (const line of lines) {
-      const last = perDay[perDay.length - 1]
-      if (last && last.day === line.occurred_on) {
-        last.movements += line.points
-        if (last.closing == null && line.day_balance != null) last.closing = line.day_balance
-      } else {
-        perDay.push({
-          day: line.occurred_on,
-          movements: line.points,
-          closing: line.day_balance ?? null,
-        })
-      }
-    }
-    let previousClosing: number | null = null
-    for (let i = 0; i < perDay.length; i++) {
-      const { day, movements, closing } = perDay[i]
-      if (closing == null) {
-        status.set(day, "unverifiable")
-        previousClosing = null
-        continue
-      }
-      if (i === 0 || previousClosing == null) {
-        status.set(day, "unverifiable")
-      } else {
-        status.set(day, previousClosing + movements === closing ? "complete" : "incomplete")
-      }
-      previousClosing = closing
-    }
-    return status
-  }, [lines])
-
   // The lines that pass the filters. occurred_on is an ISO day, so string comparison is date
   // comparison. An empty bound is open on that side.
   const filteredLines = useMemo(() => {
@@ -292,20 +242,13 @@ export function AccountStatementView({
     })
   }, [lines, dateFrom, dateTo, kindFilter])
 
-  // The filtered lines in display order: the server sends them oldest-first; flipping to the
-  // newest-first default reverses whole days, never the movements within a day (a day is always
-  // read top-to-bottom). Grouping by day first, reversing the day order, then flattening keeps
-  // that, and gives a flat list to page over.
-  const orderedLines = useMemo(() => {
-    const byDay: StatementEntry[][] = []
-    for (const line of filteredLines) {
-      const last = byDay[byDay.length - 1]
-      if (last && last[0].occurred_on === line.occurred_on) last.push(line)
-      else byDay.push([line])
-    }
-    if (sortOrder === "desc") byDay.reverse()
-    return byDay.flat()
-  }, [filteredLines, sortOrder])
+  // The filtered lines in display order. The server sends them oldest-first, down to the order
+  // within each day for Azul (its position in the day); the newest-first default reverses the
+  // whole list, so a day also reads latest movement first, the way the airline's app shows it.
+  const orderedLines = useMemo(
+    () => (sortOrder === "desc" ? [...filteredLines].reverse() : filteredLines),
+    [filteredLines, sortOrder],
+  )
 
   const totalPages = Math.max(1, Math.ceil(orderedLines.length / STATEMENT_PAGE_SIZE))
   // Clamp rather than trust `page`: a filter that shrinks the list could otherwise leave it past
@@ -498,13 +441,6 @@ export function AccountStatementView({
                   <h2 className="text-xs font-semibold tracking-wide text-slate-400 uppercase">
                     {formatDay(group.day)}
                   </h2>
-                  {/* Both programmes show a closing balance, but only Azul's comes from the
-                      airline, so only Azul's can disagree with the day's movements. The Smiles
-                      one is derived from them and always adds up, so a badge there would be a
-                      green tick that means nothing - worse than none. */}
-                  {syncedProgram === "azul" && (
-                    <DayCompletenessBadge status={dayCompleteness.get(group.day)} />
-                  )}
                 </div>
                 {group.balance != null && (
                   <span className="text-xs text-slate-400 tabular-nums">
@@ -566,42 +502,6 @@ export function AccountStatementView({
         </div>
       )}
     </div>
-  )
-}
-
-// The per-day trust marker in the day header. "completo" is kept quiet (it is the usual case);
-// "incompleto" is the one that needs the operator's eye, so it carries a background. The title
-// spells out the why on hover, which is where the 100-per-query cap is explained.
-function DayCompletenessBadge({ status }: { status: DayCompleteness | undefined }) {
-  if (status === "complete") {
-    return (
-      <span
-        className="flex items-center gap-1 text-[11px] font-medium text-emerald-600"
-        title="As movimentações do dia fecham com o saldo do dia."
-      >
-        <CheckCircle2 className="h-3 w-3" />
-        dia completo
-      </span>
-    )
-  }
-  if (status === "incomplete") {
-    return (
-      <span
-        className="flex items-center gap-1 rounded bg-amber-100 px-1.5 text-[11px] font-medium text-amber-800"
-        title="As movimentações listadas não fecham com o saldo do dia — pode faltar lançamento (a Azul limita a 100 por consulta)."
-      >
-        <AlertTriangle className="h-3 w-3" />
-        dia incompleto
-      </span>
-    )
-  }
-  return (
-    <span
-      className="text-[11px] text-slate-400"
-      title="Sem dia anterior no período para conferir o fechamento."
-    >
-      não verificável
-    </span>
   )
 }
 

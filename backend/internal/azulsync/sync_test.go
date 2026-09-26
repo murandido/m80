@@ -35,6 +35,26 @@ func TestLastDayBalanceTakesTheLatestDay(t *testing.T) {
 	}
 }
 
+func TestToStatementLinesNumbersEachDayOldestFirst(t *testing.T) {
+	t.Parallel()
+	// The legacy endpoint's own order: days newest first, and each day's movements newest first.
+	txs := []azul.Transaction{
+		{Date: day("2026-09-26"), TypeCode: "AN", Points: -8000},  // 12:17
+		{Date: day("2026-09-26"), TypeCode: "AN", Points: -32000}, // 10:52
+		{Date: day("2026-09-26"), TypeCode: "AN", Points: -60000}, // 10:07, the day's oldest
+		{Date: day("2026-09-25"), TypeCode: "AN", Points: -22000},
+		{Date: day("2026-09-25"), TypeCode: "ER", Points: 675000}, // the day's oldest
+	}
+	lines := toStatementLines("acc", txs)
+
+	want := []int{2, 1, 0, 1, 0}
+	for i, line := range lines {
+		if line.PositionInDay == nil || *line.PositionInDay != want[i] {
+			t.Errorf("line %d (%d pts) position = %v, want %d", i, line.Points, line.PositionInDay, want[i])
+		}
+	}
+}
+
 // --- DB integration ---
 
 var (

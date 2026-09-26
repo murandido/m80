@@ -22,7 +22,7 @@ import (
 func LoadAzulStatement(db *gorm.DB, accountID string) (Statement, error) {
 	var rows []data.AzulStatementLine
 	if err := db.Where("account_id = ?", accountID).
-		Order("occurred_on ASC, id ASC").
+		Order(data.AzulStatementLineOrder).
 		Find(&rows).Error; err != nil {
 		return Statement{}, fmt.Errorf("statement.LoadAzulStatement: %w", err)
 	}

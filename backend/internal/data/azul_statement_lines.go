@@ -103,6 +103,11 @@ func mentionsClubOrCard(context string) bool {
 	return false
 }
 
+// AzulStatementLineOrder is how stored lines are read back: by day, then by where each sat within
+// its day. Rows synced before migration 67 have no position; Postgres sorts those NULLs last and
+// they tie-break on id, the old (arbitrary) order, until a sync rewrites them.
+const AzulStatementLineOrder = "occurred_on ASC, position_in_day ASC, id ASC"
+
 // AzulStatementLine is one synced movement of an account's Azul statement. See migration 55.
 // Unlike internal/statement (which reads a file and drops it), these rows persist: the API is
 // polled on a ticker and the panel reads the last stored window between polls.
@@ -135,9 +140,16 @@ type AzulStatementLine struct {
 	// entry from an ordinary one. Nil on rows synced before migration 60.
 	Comment *string `gorm:"column:comment" json:"comment"`
 
-	// DayBalance is the end-of-day balance the airline reported for OccurredOn. The last day's
-	// value is what the sync validates against points/resume before storing the window.
+	// DayBalance is the balance the airline reported for OccurredOn, kept verbatim. It is only
+	// consistent within the response it came in (see azul.Transaction.DayBalance), so the page
+	// derives its balances instead (azulsync.ClosingBalances); the latest day's value is the
+	// absolute one the sync validates against points/resume before storing the window.
 	DayBalance *int `gorm:"column:day_balance" json:"day_balance"`
+
+	// PositionInDay is where the movement sat within its day, 0 being the day's oldest. The
+	// airline gives no clock, but returns each day newest first, so that position is the only
+	// real order within a day. Nil on rows synced before migration 67.
+	PositionInDay *int `gorm:"column:position_in_day" json:"position_in_day"`
 
 	CreatedAt time.Time `gorm:"column:created_at" json:"created_at"`
 }

@@ -190,3 +190,39 @@ func TestReplaceAzulStatementWindow_EmptyClearsWindow(t *testing.T) {
 		}
 	})
 }
+
+func TestAzulStatementLineOrder_KeepsTheDayInPosition(t *testing.T) {
+	runInAzulTx(t, func(tx *gorm.DB) {
+		account := seedAzulAccount(t, tx)
+
+		positioned := func(day string, points, position int) AzulStatementLine {
+			l := line(day, points, AzulLineRedemption)
+			l.PositionInDay = &position
+			return l
+		}
+		// Inserted in an order that neither the uuid nor the points would reproduce.
+		lines := []AzulStatementLine{
+			positioned("2026-09-26", -8000, 2),
+			positioned("2026-09-26", -60000, 0),
+			positioned("2026-09-25", -22000, 0),
+			positioned("2026-09-26", -32000, 1),
+		}
+		if err := ReplaceAzulStatementWindow(tx, account.ID, azulDay("2026-08-26"), lines); err != nil {
+			t.Fatalf("ReplaceAzulStatementWindow: %v", err)
+		}
+
+		var got []AzulStatementLine
+		if err := tx.Where("account_id = ?", account.ID).Order(AzulStatementLineOrder).Find(&got).Error; err != nil {
+			t.Fatalf("reading back lines: %v", err)
+		}
+		want := []int{-22000, -60000, -32000, -8000}
+		if len(got) != len(want) {
+			t.Fatalf("read %d lines, want %d", len(got), len(want))
+		}
+		for i, l := range got {
+			if l.Points != want[i] {
+				t.Errorf("line %d = %d pts, want %d", i, l.Points, want[i])
+			}
+		}
+	})
+}

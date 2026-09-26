@@ -107,9 +107,10 @@ func windowStart(now time.Time) time.Time {
 	return time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, time.UTC)
 }
 
-// lastDayBalance returns the end-of-day balance of the most recent day in the statement, which
-// is the figure that must equal points/resume. Every line of a day carries that day's balance,
-// so the latest-dated line's DayBalance is the whole account balance as of the statement.
+// lastDayBalance returns the balance of the most recent day in the statement, which is the
+// figure that must equal points/resume. Every line of a day carries that day's balance, and the
+// latest day's is the one figure the airline reports as an absolute (earlier days are relative
+// to their own response), so the latest-dated line's DayBalance is the whole account balance.
 func lastDayBalance(txs []azul.Transaction) (int, bool) {
 	if len(txs) == 0 {
 		return 0, false
@@ -125,9 +126,22 @@ func lastDayBalance(txs []azul.Transaction) (int, bool) {
 
 // toStatementLines maps the read transactions onto storable rows, deriving the panel-terms kind
 // from the airline's type code.
+//
+// It also numbers each line within its day. The airline gives no clock, but it returns every day
+// newest first (checked against the issuances' own creation times), so a line's position is the
+// only real order there is: the day's last line is its oldest and gets 0. A day always arrives
+// whole in one response, because LegacyStatement splits a window on day boundaries.
 func toStatementLines(accountID string, txs []azul.Transaction) []data.AzulStatementLine {
+	perDay := make(map[time.Time]int, len(txs))
+	for _, t := range txs {
+		perDay[t.Date]++
+	}
+	seenInDay := make(map[time.Time]int, len(perDay))
+
 	lines := make([]data.AzulStatementLine, 0, len(txs))
 	for _, t := range txs {
+		position := perDay[t.Date] - 1 - seenInDay[t.Date]
+		seenInDay[t.Date]++
 		lines = append(lines, data.AzulStatementLine{
 			AccountID:       accountID,
 			OccurredOn:      t.Date,
@@ -142,6 +156,7 @@ func toStatementLines(accountID string, txs []azul.Transaction) []data.AzulState
 			Description:     ptrOrNil(firstNonEmpty(t.PartnerName, t.TypeDescription)),
 			Comment:         ptrOrNil(t.Comments),
 			DayBalance:      intPtr(t.DayBalance),
+			PositionInDay:   intPtr(position),
 		})
 	}
 	return lines

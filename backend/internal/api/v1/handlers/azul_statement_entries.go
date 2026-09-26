@@ -47,7 +47,7 @@ func (h *StatementHandler) AzulStatementEntries(w http.ResponseWriter, r *http.R
 
 	var rows []data.AzulStatementLine
 	if err := h.DB.Where("account_id = ?", account.ID).
-		Order("occurred_on ASC, id ASC").
+		Order(data.AzulStatementLineOrder).
 		Find(&rows).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Não consegui ler o extrato: "+err.Error())
 		return
@@ -92,6 +92,10 @@ func (h *StatementHandler) AzulStatementEntries(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	// The airline's per-day balance is only consistent within one response, so the page shows
+	// balances derived from the movements instead (see azulsync.ClosingBalances).
+	closings := azulsync.ClosingBalances(rows)
+
 	entries := make([]schemas.AzulStatementEntry, 0, len(rows))
 	var from, to string
 	for i, row := range rows {
@@ -121,7 +125,9 @@ func (h *StatementHandler) AzulStatementEntries(w http.ResponseWriter, r *http.R
 			PartnerName: derefString(row.PartnerName),
 			Description: derefString(row.Description),
 			Note:        azul.NoteFromComment(derefString(row.Comment)),
-			DayBalance:  row.DayBalance,
+		}
+		if closing, found := closings[day]; found {
+			entry.DayBalance = &closing
 		}
 		if booking, found := resolved[key]; found {
 			entry.LinkedIssuance = toLinkedIssuance(booking)
@@ -166,7 +172,7 @@ func (h *StatementHandler) ExportAzulStatement(w http.ResponseWriter, r *http.Re
 
 	var rows []data.AzulStatementLine
 	if err := h.DB.Where("account_id = ?", account.ID).
-		Order("occurred_on ASC, id ASC").
+		Order(data.AzulStatementLineOrder).
 		Find(&rows).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Não consegui ler o extrato: "+err.Error())
 		return
