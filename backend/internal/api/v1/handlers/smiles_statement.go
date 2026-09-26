@@ -14,6 +14,7 @@ import (
 	"github.com/murandido/m-80-backend/internal/smilessync"
 	"github.com/murandido/m-80-backend/internal/statement"
 	"github.com/murandido/m-80-backend/internal/utils"
+	"gorm.io/gorm"
 )
 
 // SmilesConnectStatus handles GET /accounts/{id}/smiles-statement/status
@@ -277,7 +278,9 @@ func (h *StatementHandler) SmilesStatementEntries(w http.ResponseWriter, r *http
 // @Tags         Estoque de pontos
 // @Produce      text/csv
 // @Security     BearerAuth
-// @Param        id   path  string  true  "Conta"
+// @Param        id         path   string  true   "Conta"
+// @Param        date_from  query  string  false  "Primeiro dia (YYYY-MM-DD, dia de Brasília)"
+// @Param        date_to    query  string  false  "Último dia, inclusive (YYYY-MM-DD, dia de Brasília)"
 // @Success      200  {string}  string  "CSV do extrato"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      403  {object}  schemas.ErrorResponse "Requer admin"
@@ -291,7 +294,8 @@ func (h *StatementHandler) ExportSmilesStatement(w http.ResponseWriter, r *http.
 		return
 	}
 
-	rows, err := h.smilesRows(account.ID)
+	period := parseStatementExportPeriod(r)
+	rows, err := h.smilesRows(account.ID, period.scope)
 	if err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Não consegui ler o extrato: "+err.Error())
 		return
@@ -300,7 +304,7 @@ func (h *StatementHandler) ExportSmilesStatement(w http.ResponseWriter, r *http.
 	// Not utils.SendJSON: this route answers with a file, so the envelope has no meaning here.
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition",
-		fmt.Sprintf("attachment; filename=%q", fmt.Sprintf("extrato-smiles-%s.csv", account.ID)))
+		fmt.Sprintf("attachment; filename=%q", fmt.Sprintf("extrato-smiles-%s%s.csv", account.ID, period.filenameSuffix())))
 	// The byte-order mark is what makes Excel open a UTF-8 CSV with the accents intact.
 	if _, err := w.Write([]byte{0xEF, 0xBB, 0xBF}); err != nil {
 		return
@@ -333,9 +337,10 @@ func (h *StatementHandler) ExportSmilesStatement(w http.ResponseWriter, r *http.
 // --- shared pieces ---
 
 // smilesRows reads the whole stored window in day order.
-func (h *StatementHandler) smilesRows(accountID string) ([]data.SmilesStatementLine, error) {
+func (h *StatementHandler) smilesRows(accountID string, scopes ...func(*gorm.DB) *gorm.DB) ([]data.SmilesStatementLine, error) {
 	var rows []data.SmilesStatementLine
 	err := h.DB.Where("account_id = ?", accountID).
+		Scopes(scopes...).
 		Order("occurred_on ASC, id ASC").
 		Find(&rows).Error
 	return rows, err

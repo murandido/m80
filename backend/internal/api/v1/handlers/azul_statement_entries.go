@@ -94,7 +94,7 @@ func (h *StatementHandler) AzulStatementEntries(w http.ResponseWriter, r *http.R
 
 	// The airline's per-day balance is only consistent within one response, so the page shows
 	// balances derived from the movements instead (see azulsync.ClosingBalances).
-	closings := azulsync.ClosingBalances(rows)
+	closings := azulsync.ClosingBalances(rows, state.LastBalancePoints)
 
 	entries := make([]schemas.AzulStatementEntry, 0, len(rows))
 	var from, to string
@@ -113,6 +113,7 @@ func (h *StatementHandler) AzulStatementEntries(w http.ResponseWriter, r *http.R
 		entry := schemas.AzulStatementEntry{
 			Key:             key,
 			OccurredOn:      day,
+			OccurredAt:      brazilInstant(row.OccurredAt),
 			Kind:            kind,
 			TypeCode:        row.TypeCode,
 			TypeDescription: row.TypeDescription,
@@ -143,6 +144,7 @@ func (h *StatementHandler) AzulStatementEntries(w http.ResponseWriter, r *http.R
 		From:      from,
 		To:        to,
 		Lines:     entries,
+		Groups:    groupStatementEntries(rows, entries, resolved),
 	})
 }
 
@@ -156,7 +158,9 @@ func (h *StatementHandler) AzulStatementEntries(w http.ResponseWriter, r *http.R
 // @Tags         Estoque de pontos
 // @Produce      text/csv
 // @Security     BearerAuth
-// @Param        id   path  string  true  "Conta"
+// @Param        id         path   string  true   "Conta"
+// @Param        date_from  query  string  false  "Primeiro dia (YYYY-MM-DD, dia de Brasília)"
+// @Param        date_to    query  string  false  "Último dia, inclusive (YYYY-MM-DD, dia de Brasília)"
 // @Success      200  {string}  string  "CSV do extrato"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      403  {object}  schemas.ErrorResponse "Requer admin"
@@ -170,8 +174,10 @@ func (h *StatementHandler) ExportAzulStatement(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	period := parseStatementExportPeriod(r)
 	var rows []data.AzulStatementLine
 	if err := h.DB.Where("account_id = ?", account.ID).
+		Scopes(period.scope).
 		Order(data.AzulStatementLineOrder).
 		Find(&rows).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Não consegui ler o extrato: "+err.Error())
@@ -185,7 +191,7 @@ func (h *StatementHandler) ExportAzulStatement(w http.ResponseWriter, r *http.Re
 	}
 
 	accountNumber := derefString(account.Login)
-	filename := fmt.Sprintf("extrato-azul-%s.csv", account.ID)
+	filename := fmt.Sprintf("extrato-azul-%s%s.csv", account.ID, period.filenameSuffix())
 
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))

@@ -6,9 +6,11 @@ import { formatDistanceToNow } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { toast } from "sonner"
 import {
+  AlertTriangle,
   ArrowDownCircle,
   ArrowUpCircle,
   Boxes,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   CircleSlash,
@@ -41,6 +43,7 @@ import {
   type StatementEntries,
   type SyncedProgram,
   type StatementEntry,
+  type StatementGroup,
   type StatementLineKind,
   type StatementLinkedBatch,
   type StatementLinkedIssuance,
@@ -150,6 +153,32 @@ function formatDay(day: string): string {
   return `${dayOfMonth}/${month}/${year}`
 }
 
+// A Smiles movement as an item of its own: its statement is not grouped, but the page lists
+// operations either way.
+function lineAsGroup(line: StatementEntry): StatementGroup {
+  return {
+    key: line.key,
+    occurred_on: line.occurred_on,
+    occurred_at: line.occurred_at,
+    kind: line.kind,
+    locator: line.locator,
+    points: line.points,
+    line_count: 1,
+    routes: [],
+    day_balance: line.day_balance,
+    points_mismatch: false,
+    linked_issuance: line.linked_issuance,
+    linked_batch: line.linked_batch,
+    lines: [line],
+  }
+}
+
+// The instant already arrives in São Paulo time ("2026-09-26T10:52:07-03:00"), so the clock is read
+// straight off the string rather than through the browser's own zone.
+function formatTime(instant: string): string {
+  return instant.slice(11, 16)
+}
+
 function routeOf(origin: string, destination: string): string | null {
   if (origin && destination) return `${origin} → ${destination}`
   return origin || destination || null
@@ -208,6 +237,11 @@ export function AccountStatementView({
 
   const { sync_state: syncState, from, to, lines } = entries
 
+  // The unit the page lists: an operation. Azul's statement comes grouped (a round trip for four is
+  // eight movements, one item); Smiles' does not, so each of its movements is an item of its own.
+  const items = useMemo(() => entries.groups ?? lines.map(lineAsGroup), [entries.groups, lines])
+  const itemNoun = entries.groups ? ["operação", "operações"] : ["movimentação", "movimentações"]
+
   function linkedFor(entry: StatementEntry): StatementLinkedIssuance | null {
     if (entry.key in overrides) {
       return overrides[entry.key]
@@ -231,31 +265,35 @@ export function AccountStatementView({
     ? formatDistanceToNow(new Date(syncState.last_synced_at), { addSuffix: true, locale: ptBR })
     : "nunca"
 
-  // The lines that pass the filters. occurred_on is an ISO day, so string comparison is date
+  // The items that pass the filters. occurred_on is an ISO day, so string comparison is date
   // comparison. An empty bound is open on that side.
-  const filteredLines = useMemo(() => {
-    return lines.filter((line) => {
-      if (dateFrom && line.occurred_on < dateFrom) return false
-      if (dateTo && line.occurred_on > dateTo) return false
-      if (kindFilter !== "all" && line.kind !== kindFilter) return false
+  const filteredItems = useMemo(() => {
+    return items.filter((item) => {
+      if (dateFrom && item.occurred_on < dateFrom) return false
+      if (dateTo && item.occurred_on > dateTo) return false
+      if (kindFilter !== "all" && item.kind !== kindFilter) return false
       return true
     })
-  }, [lines, dateFrom, dateTo, kindFilter])
+  }, [items, dateFrom, dateTo, kindFilter])
 
-  // The filtered lines in display order. The server sends them oldest-first, down to the order
-  // within each day for Azul (its position in the day); the newest-first default reverses the
-  // whole list, so a day also reads latest movement first, the way the airline's app shows it.
-  const orderedLines = useMemo(
-    () => (sortOrder === "desc" ? [...filteredLines].reverse() : filteredLines),
-    [filteredLines, sortOrder],
+  // The filtered items in display order. The server sends them oldest-first, down to the order
+  // within each day (Azul's own clock); the newest-first default reverses the whole list, and the
+  // movements inside each operation with it, so everything reads latest first, the way the
+  // airline's app shows it.
+  const orderedItems = useMemo(
+    () =>
+      sortOrder === "desc"
+        ? [...filteredItems].reverse().map((item) => ({ ...item, lines: [...item.lines].reverse() }))
+        : filteredItems,
+    [filteredItems, sortOrder],
   )
 
-  const totalPages = Math.max(1, Math.ceil(orderedLines.length / STATEMENT_PAGE_SIZE))
+  const totalPages = Math.max(1, Math.ceil(orderedItems.length / STATEMENT_PAGE_SIZE))
   // Clamp rather than trust `page`: a filter that shrinks the list could otherwise leave it past
   // the end for a render before a handler resets it.
   const currentPage = Math.min(page, totalPages)
   const pageStart = (currentPage - 1) * STATEMENT_PAGE_SIZE
-  const pageLines = orderedLines.slice(pageStart, pageStart + STATEMENT_PAGE_SIZE)
+  const pageItems = orderedItems.slice(pageStart, pageStart + STATEMENT_PAGE_SIZE)
 
   // After a page change has rendered, jump the list top into view - otherwise a click on the pager
   // (which sits at the bottom) leaves the operator stranded in the middle of the new page. Runs
@@ -268,28 +306,35 @@ export function AccountStatementView({
     listTopRef.current?.scrollIntoView({ block: "start" })
   }, [currentPage])
 
-  // The current page's lines grouped by day for rendering. They are already in display order, so a
-  // day split across two pages simply shows its header again on each - every line carries the same
+  // The current page's items grouped by day for rendering. They are already in display order, so a
+  // day split across two pages simply shows its header again on each - every item carries the same
   // day balance, so the partial day still reports it.
   const days = useMemo(() => {
-    const groups: { day: string; balance: number | null; lines: StatementEntry[] }[] = []
-    for (const line of pageLines) {
+    const groups: { day: string; balance: number | null; items: StatementGroup[] }[] = []
+    for (const item of pageItems) {
       const last = groups[groups.length - 1]
-      if (last && last.day === line.occurred_on) {
-        last.lines.push(line)
-        if (last.balance == null && line.day_balance != null) last.balance = line.day_balance
+      if (last && last.day === item.occurred_on) {
+        last.items.push(item)
+        if (last.balance == null && item.day_balance != null) last.balance = item.day_balance
       } else {
         groups.push({
-          day: line.occurred_on,
-          balance: line.day_balance ?? null,
-          lines: [line],
+          day: item.occurred_on,
+          balance: item.day_balance ?? null,
+          items: [item],
         })
       }
     }
     return groups
-  }, [pageLines])
+  }, [pageItems])
 
   const hasFilters = dateFrom !== "" || dateTo !== "" || kindFilter !== "all"
+
+  // The CSV covers the days the date filter shows (all of them when it is empty). The kind filter
+  // is not carried: the file keeps every movement of the period, as a statement does.
+  const exportParams = new URLSearchParams({ program: syncedProgram })
+  if (dateFrom) exportParams.set("date_from", dateFrom)
+  if (dateTo) exportParams.set("date_to", dateTo)
+  const exportHref = `/api/accounts/${accountId}/statement-export?${exportParams.toString()}`
 
   return (
     <div className="flex flex-col gap-4">
@@ -313,7 +358,7 @@ export function AccountStatementView({
               title="Exportar CSV"
               className="h-7 gap-1 px-2 text-xs text-slate-600 hover:border-emerald-600 hover:bg-emerald-600 hover:text-white"
             >
-              <a href={`/api/accounts/${accountId}/statement-export?program=${syncedProgram}`}>
+              <a href={exportHref}>
                 <Download className="h-3.5 w-3.5" />
                 CSV
               </a>
@@ -413,13 +458,13 @@ export function AccountStatementView({
       </div>
 
       <span ref={listTopRef} className="text-sm text-slate-500">
-        {filteredLines.length}
-        {hasFilters ? ` de ${lines.length}` : ""}{" "}
-        {filteredLines.length === 1 ? "movimentação" : "movimentações"}
+        {filteredItems.length}
+        {hasFilters ? ` de ${items.length}` : ""}{" "}
+        {filteredItems.length === 1 ? itemNoun[0] : itemNoun[1]}
         {totalPages > 1 &&
           ` · mostrando ${pageStart + 1}–${Math.min(
             pageStart + STATEMENT_PAGE_SIZE,
-            orderedLines.length,
+            orderedItems.length,
           )}`}
       </span>
 
@@ -428,7 +473,7 @@ export function AccountStatementView({
           Nenhuma movimentação sincronizada ainda. Conecte a conta e aguarde a primeira
           sincronização.
         </div>
-      ) : filteredLines.length === 0 ? (
+      ) : filteredItems.length === 0 ? (
         <div className="rounded-md border border-dashed border-slate-200 p-8 text-center text-sm text-slate-500">
           Nenhuma movimentação no filtro escolhido.
         </div>
@@ -449,23 +494,29 @@ export function AccountStatementView({
                 )}
               </div>
               <div className="flex flex-col divide-y divide-slate-100 rounded-md border border-slate-200">
-                {group.lines.map((entry, index) => (
-                  <StatementLine
-                    key={`${group.day}-${index}`}
-                    accountId={accountId}
-                    syncedProgram={syncedProgram}
-                    entry={entry}
-                    linked={linkedFor(entry)}
-                    linkedBatch={linkedBatchFor(entry)}
-                    editMode={editMode}
-                    onLinkedChange={(lineKey, linked) =>
-                      setOverrides((prev) => ({ ...prev, [lineKey]: linked }))
-                    }
-                    onBatchLinkedChange={(lineKey, linked) =>
-                      setBatchOverrides((prev) => ({ ...prev, [lineKey]: linked }))
-                    }
-                  />
-                ))}
+                {group.items.map((item, index) => {
+                  const linkProps = {
+                    accountId,
+                    syncedProgram,
+                    linked: linkedFor(item.lines[0]),
+                    linkedBatch: linkedBatchFor(item.lines[0]),
+                    editMode,
+                    onLinkedChange: (lineKey: string, linked: StatementLinkedIssuance | null) =>
+                      setOverrides((prev) => ({ ...prev, [lineKey]: linked })),
+                    onBatchLinkedChange: (lineKey: string, linked: StatementLinkedBatch | null) =>
+                      setBatchOverrides((prev) => ({ ...prev, [lineKey]: linked })),
+                  }
+                  return item.line_count > 1 ? (
+                    <StatementGroupRow key={`${group.day}-${index}`} group={item} {...linkProps} />
+                  ) : (
+                    <StatementLine
+                      key={`${group.day}-${index}`}
+                      entry={item.lines[0]}
+                      pointsMismatch={item.points_mismatch}
+                      {...linkProps}
+                    />
+                  )
+                })}
               </div>
             </div>
           ))}
@@ -509,6 +560,7 @@ interface StatementLineProps {
   accountId: string
   syncedProgram: SyncedProgram
   entry: StatementEntry
+  pointsMismatch?: boolean
   linked: StatementLinkedIssuance | null
   linkedBatch: StatementLinkedBatch | null
   editMode: boolean
@@ -520,6 +572,7 @@ function StatementLine({
   accountId,
   syncedProgram,
   entry,
+  pointsMismatch = false,
   linked,
   linkedBatch,
   editMode,
@@ -568,8 +621,13 @@ function StatementLine({
           <span className={cn("text-sm font-semibold tabular-nums", meta.className)}>
             {formatPoints(entry.points)}
           </span>
+          {entry.occurred_at && (
+            <span className="text-xs text-slate-400 tabular-nums">{formatTime(entry.occurred_at)}</span>
+          )}
         </div>
       </div>
+
+      {pointsMismatch && <PointsMismatchNote />}
 
       {linkable && (
         <BookingLink
@@ -594,6 +652,128 @@ function StatementLine({
           onLinkedChange={onBatchLinkedChange}
         />
       )}
+    </div>
+  )
+}
+
+interface StatementGroupRowProps extends Omit<StatementLineProps, "entry" | "pointsMismatch"> {
+  group: StatementGroup
+}
+
+// One operation of several movements - a round trip, several passengers - as a single row: the
+// total, the legs and the issuance it maps to, with the movements themselves one click away. The
+// link belongs to the operation: every movement in it shares the locator the link is keyed by.
+function StatementGroupRow({
+  accountId,
+  syncedProgram,
+  group,
+  linked,
+  linkedBatch,
+  editMode,
+  onLinkedChange,
+  onBatchLinkedChange,
+}: StatementGroupRowProps) {
+  const [expanded, setExpanded] = useState(false)
+  const meta = KIND_META[group.kind]
+  const Icon = meta.icon
+  const first = group.lines[0]
+  const routes = group.routes ?? []
+
+  return (
+    <div className="flex flex-col gap-2 px-4 py-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 items-start gap-2">
+          <Icon className={cn("mt-0.5 h-4 w-4 shrink-0", meta.className)} />
+          <div className="flex min-w-0 flex-col">
+            <span className="text-sm font-medium text-slate-800">
+              {meta.label}
+              {group.locator && (
+                <span className="ml-2 font-mono text-xs text-slate-500">{group.locator}</span>
+              )}
+            </span>
+            <button
+              type="button"
+              className="flex items-center gap-1 text-left text-xs text-slate-500 hover:text-slate-700"
+              onClick={() => setExpanded((open) => !open)}
+            >
+              <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", !expanded && "-rotate-90")} />
+              {group.line_count} lançamentos
+              {routes.length > 0 && <span className="font-mono"> · {routes.join(", ")}</span>}
+            </button>
+          </div>
+        </div>
+        <div className="flex flex-col items-end">
+          <span className={cn("text-sm font-semibold tabular-nums", meta.className)}>
+            {formatPoints(group.points)}
+          </span>
+          {group.occurred_at && (
+            <span className="text-xs text-slate-400 tabular-nums">{formatTime(group.occurred_at)}</span>
+          )}
+        </div>
+      </div>
+
+      {expanded && (
+        <div className="ml-6 flex flex-col divide-y divide-slate-100 rounded-md border border-slate-100">
+          {group.lines.map((line, index) => (
+            <div key={index} className="flex items-center justify-between gap-3 px-3 py-1.5 text-xs">
+              <span className="flex min-w-0 items-center gap-1 text-slate-500">
+                {syncedProgram === "azul" ? (
+                  <>
+                    <CityChip accountId={accountId} value={line.origin} editMode={editMode} />
+                    {line.origin && line.destination && <span>→</span>}
+                    <CityChip accountId={accountId} value={line.destination} editMode={editMode} />
+                  </>
+                ) : (
+                  <span className="font-mono">{routeOf(line.origin, line.destination)}</span>
+                )}
+                {line.occurred_at && (
+                  <span className="ml-2 tabular-nums text-slate-400">{formatTime(line.occurred_at)}</span>
+                )}
+              </span>
+              <span className={cn("font-medium tabular-nums", meta.className)}>
+                {formatPoints(line.points)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {group.points_mismatch && <PointsMismatchNote />}
+
+      {isLinkable(group.kind) && (
+        <BookingLink
+          accountId={accountId}
+          syncedProgram={syncedProgram}
+          linkKey={group.key}
+          linked={linked}
+          editMode={editMode}
+          onLinkedChange={onLinkedChange}
+        />
+      )}
+
+      {isBatchLinkable(group.kind) && (
+        <BatchLink
+          accountId={accountId}
+          syncedProgram={syncedProgram}
+          linkKey={group.key}
+          occurredOn={first.occurred_on}
+          points={group.points}
+          linked={linkedBatch}
+          editMode={editMode}
+          onLinkedChange={onBatchLinkedChange}
+        />
+      )}
+    </div>
+  )
+}
+
+// Shown when the linked issuance does not add up to the statement: the locator's redemptions
+// against the issuance's points, or its refunds against its refunded points.
+function PointsMismatchNote() {
+  return (
+    <div className="ml-6 flex items-center gap-1.5 rounded-md bg-amber-50 px-3 py-1.5 text-xs text-amber-800">
+      <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+      Os pontos do extrato não batem com os da emissão vinculada.
     </div>
   )
 }

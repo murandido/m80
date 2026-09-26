@@ -210,3 +210,49 @@ func TestAzulBookingLinkRejectsForeignIssuance(t *testing.T) {
 		}
 	})
 }
+
+// The CSV follows the page's date filter: only the lines of the chosen days, both bounds
+// inclusive, and the period in the file name. Without a filter it is everything, as before.
+func TestExportAzulStatementCoversOnlyThePeriod(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		account, user := seedAzulStatementTarget(t, tx)
+		seedAzulLine(t, tx, account.ID, "2026-09-01", data.AzulLineAccrual, 1000, nil)
+		seedAzulLine(t, tx, account.ID, "2026-09-10", data.AzulLineAccrual, 2000, nil)
+		seedAzulLine(t, tx, account.ID, "2026-09-20", data.AzulLineAccrual, 3000, nil)
+		seedAzulLine(t, tx, account.ID, "2026-09-30", data.AzulLineAccrual, 4000, nil)
+
+		handler := NewStatementHandler(tx)
+		export := func(query string) *httptest.ResponseRecorder {
+			req := azulStatementRequest(http.MethodGet, account.ID, user.ID, "")
+			req.URL.RawQuery = query
+			rec := httptest.NewRecorder()
+			handler.ExportAzulStatement(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status: got %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+			}
+			return rec
+		}
+		dataRows := func(rec *httptest.ResponseRecorder) int {
+			// One header row; the BOM sits on it.
+			return strings.Count(strings.TrimSpace(rec.Body.String()), "\n")
+		}
+
+		rec := export("date_from=2026-09-10&date_to=2026-09-20")
+		if got := dataRows(rec); got != 2 {
+			t.Errorf("filtered export has %d rows, want 2 (the 10th and the 20th, inclusive)", got)
+		}
+		if disposition := rec.Header().Get("Content-Disposition"); !strings.Contains(disposition, "-2026-09-10_2026-09-20.csv") {
+			t.Errorf("file name = %q, want the period in it", disposition)
+		}
+
+		if got := dataRows(export("date_from=2026-09-15")); got != 2 {
+			t.Errorf("open-ended export has %d rows, want 2 (the 20th and the 30th)", got)
+		}
+		if got := dataRows(export("")); got != 4 {
+			t.Errorf("unfiltered export has %d rows, want all 4", got)
+		}
+		if got := dataRows(export("date_from=not-a-day")); got != 4 {
+			t.Errorf("an unparseable bound gave %d rows, want it ignored (all 4)", got)
+		}
+	})
+}

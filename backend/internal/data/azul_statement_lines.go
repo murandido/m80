@@ -103,10 +103,10 @@ func mentionsClubOrCard(context string) bool {
 	return false
 }
 
-// AzulStatementLineOrder is how stored lines are read back: by day, then by where each sat within
-// its day. Rows synced before migration 67 have no position; Postgres sorts those NULLs last and
-// they tie-break on id, the old (arbitrary) order, until a sync rewrites them.
-const AzulStatementLineOrder = "occurred_on ASC, position_in_day ASC, id ASC"
+// AzulStatementLineOrder is how stored lines are read back: by day, then by instant, then by
+// where each sat in the response (movements stamped with the same second). Rows synced before the
+// clock was kept have neither; Postgres sorts those NULLs last and they tie-break on id.
+const AzulStatementLineOrder = "occurred_on ASC, occurred_at ASC, position_in_day ASC, id ASC"
 
 // AzulStatementLine is one synced movement of an account's Azul statement. See migration 55.
 // Unlike internal/statement (which reads a file and drops it), these rows persist: the API is
@@ -116,9 +116,10 @@ type AzulStatementLine struct {
 	AccountID string   `gorm:"column:account_id;type:uuid;not null" json:"account_id"`
 	Account   *Account `gorm:"foreignKey:AccountID;references:ID" json:"account,omitempty"`
 
-	// OccurredOn is the day the movement happened - the grain the window is keyed and replaced
-	// on. OccurredAt is left nil until a source with a real clock exists (the legacy endpoint
-	// gives day precision only).
+	// OccurredAt is the movement's instant, as the airline stamped it (to the second, in UTC).
+	// OccurredOn is its Brazilian calendar day - the grain the window is keyed and replaced on,
+	// and the day the panel shows it under. Rows synced before the clock was kept have no
+	// OccurredAt and a UTC day.
 	OccurredOn time.Time  `gorm:"column:occurred_on;type:date;not null" json:"occurred_on"`
 	OccurredAt *time.Time `gorm:"column:occurred_at" json:"occurred_at"`
 
@@ -146,9 +147,10 @@ type AzulStatementLine struct {
 	// absolute one the sync validates against points/resume before storing the window.
 	DayBalance *int `gorm:"column:day_balance" json:"day_balance"`
 
-	// PositionInDay is where the movement sat within its day, 0 being the day's oldest. The
-	// airline gives no clock, but returns each day newest first, so that position is the only
-	// real order within a day. Nil on rows synced before migration 67.
+	// PositionInDay is where the movement sat within the airline's (UTC) day in the response, 0
+	// being the day's oldest - the airline returns each day newest first. With OccurredAt kept it
+	// only breaks ties between movements stamped with the same second. Nil on rows synced before
+	// migration 67.
 	PositionInDay *int `gorm:"column:position_in_day" json:"position_in_day"`
 
 	CreatedAt time.Time `gorm:"column:created_at" json:"created_at"`
@@ -191,4 +193,19 @@ func ReplaceAzulStatementWindow(db *gorm.DB, accountID string, windowStart time.
 		}
 		return tx.Create(&lines).Error
 	})
+}
+
+// InsertAzulStatementLines adds new movements to an account's stored statement without touching
+// the ones already there - the incremental round's write, where the sync has already worked out
+// which fetched movements are new. As in ReplaceAzulStatementWindow, the account id and a fresh
+// row id are forced.
+func InsertAzulStatementLines(db *gorm.DB, accountID string, lines []AzulStatementLine) error {
+	if len(lines) == 0 {
+		return nil
+	}
+	for i := range lines {
+		lines[i].AccountID = accountID
+		lines[i].ID = ""
+	}
+	return db.Create(&lines).Error
 }

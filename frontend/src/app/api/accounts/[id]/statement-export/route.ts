@@ -15,12 +15,22 @@ export async function GET(
 
   // Which programme's export to fetch. Validated against the two that exist rather than
   // interpolated as given: this segment goes straight into a backend URL.
-  const requested = new URL(request.url).searchParams.get("program")
+  const searchParams = new URL(request.url).searchParams
+  const requested = searchParams.get("program")
   const program = requested === "smiles" ? "smiles" : "azul"
+
+  // The page's date filter, forwarded only when it is a plain YYYY-MM-DD day: anything else is
+  // dropped rather than passed through to the backend URL.
+  const period = new URLSearchParams()
+  for (const name of ["date_from", "date_to"]) {
+    const value = searchParams.get(name)
+    if (value && /^\d{4}-\d{2}-\d{2}$/.test(value)) period.set(name, value)
+  }
+  const query = period.size > 0 ? `?${period.toString()}` : ""
 
   const backendUrl = `${env.BACKEND_URL}/api/v1/accounts/${encodeURIComponent(
     id,
-  )}/${program}-statement/export`
+  )}/${program}-statement/export${query}`
 
   const res = await fetch(backendUrl, {
     headers: { Authorization: `Bearer ${token}` },

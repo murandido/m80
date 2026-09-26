@@ -124,6 +124,9 @@ type AzulStatementEntry struct {
 	// content signature. The page sends it back to link or unlink this line.
 	Key        string `json:"key" example:"MJF6HC"`
 	OccurredOn string `json:"occurred_on" example:"2026-08-27"`
+	// OccurredAt is the movement's instant in São Paulo time (RFC 3339), or null on lines synced
+	// before the airline's clock was kept.
+	OccurredAt *string `json:"occurred_at" example:"2026-08-27T11:07:06-03:00"`
 	// Kind is the movement in the panel's terms: redemption|refund|accrual|purchase|expiration|other.
 	Kind            string  `json:"kind" example:"redemption"`
 	TypeCode        *string `json:"type_code" example:"AN"`
@@ -147,13 +150,39 @@ type AzulStatementEntry struct {
 	LinkedBatch    *AzulStatementLinkedBatch    `json:"linked_batch"`
 }
 
+// AzulStatementGroup is one operation on the statement page: the movements of one locator and
+// kind within a minute of each other (a round trip for four is eight movements, one group), or a
+// single movement without a locator. A redemption and its refund are always separate groups.
+type AzulStatementGroup struct {
+	// Key is the first line's link key (the locator), what a manual link is stored under.
+	Key        string  `json:"key" example:"RQR7HK"`
+	OccurredOn string  `json:"occurred_on" example:"2026-09-26"`
+	OccurredAt *string `json:"occurred_at" example:"2026-09-26T10:52:07-03:00"`
+	Kind       string  `json:"kind" example:"redemption"`
+	Locator    string  `json:"locator" example:"RQR7HK"`
+	// Points is the group's signed total; LineCount how many movements it folds.
+	Points    int `json:"points" example:"-60000"`
+	LineCount int `json:"line_count" example:"2"`
+	// Routes are the legs in the order they were flown ("CNF→SSA", "SSA→CNF").
+	Routes     []string `json:"routes"`
+	DayBalance *int     `json:"day_balance" example:"518217"`
+	// PointsMismatch is true when the linked issuance does not add up: the locator's redemptions
+	// against its points, or its refunds against its refunded points.
+	PointsMismatch bool                         `json:"points_mismatch" example:"false"`
+	LinkedIssuance *AzulStatementLinkedIssuance `json:"linked_issuance"`
+	LinkedBatch    *AzulStatementLinkedBatch    `json:"linked_batch"`
+	Lines          []AzulStatementEntry         `json:"lines"`
+}
+
 // AzulStatementEntriesResponse is the statement page's payload: the sync state (for the header),
-// the synced window's span, and the lines in day order.
+// the synced window's span, the lines in day order, and the same lines folded into operations.
+// Lines is kept alongside Groups for a panel tab still running an older bundle.
 type AzulStatementEntriesResponse struct {
 	SyncState AzulSyncStateResponse `json:"sync_state"`
 	From      string                `json:"from" example:"2026-08-18"`
 	To        string                `json:"to" example:"2026-09-17"`
 	Lines     []AzulStatementEntry  `json:"lines"`
+	Groups    []AzulStatementGroup  `json:"groups"`
 }
 
 // AzulStatementEntriesSingleResponse is the statement-entries route's envelope.

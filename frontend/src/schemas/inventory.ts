@@ -374,6 +374,9 @@ export const statementEntrySchema = z.object({
   // has none. Sent back to link or unlink the line.
   key: z.string(),
   occurred_on: z.string(),
+  // Azul only: the movement's instant in São Paulo time (RFC 3339), null on lines synced before
+  // the airline's clock was kept.
+  occurred_at: z.string().nullish(),
   kind: statementLineKindSchema.catch("other"),
   type_code: z.string().nullish(),
   type_description: z.string().nullish(),
@@ -385,11 +388,9 @@ export const statementEntrySchema = z.object({
   description: z.string(),
   // Azul only: free-text detail of a non-flight redemption (the Azul Viagens hotel/product).
   note: z.string().nullish(),
-  // What the account held at the end of the day. The two programmes mean different things by
-  // it, and the page has to keep them apart: on Azul it is the airline's own figure, which is
-  // why a day that does not add up to it is worth flagging. On Smiles the airline reports none,
-  // so the sync derives it from these very movements - it always adds up, so it is shown and
-  // never checked.
+  // What the account held at the end of the day. On both programmes it is derived from these
+  // very movements (Azul's own per-day figure is only consistent within one query), so it always
+  // adds up: shown, never checked.
   day_balance: z.number().nullish(),
   // Smiles only: the airline's own sub-classification ("Cancellation" on a credit is an estorno)
   // and where the movement was made ("Web", "APP", "MSR").
@@ -401,11 +402,37 @@ export const statementEntrySchema = z.object({
 
 export type StatementEntry = z.infer<typeof statementEntrySchema>
 
+// Azul only: one operation - the movements of one locator and kind within a minute of each other
+// (a round trip for four is eight movements), or a single movement without a locator. A
+// redemption and its refund are always separate groups.
+export const statementGroupSchema = z.object({
+  key: z.string(),
+  occurred_on: z.string(),
+  occurred_at: z.string().nullish(),
+  kind: statementLineKindSchema.catch("other"),
+  locator: z.string(),
+  points: z.number(),
+  line_count: z.number(),
+  // Legs in the order they were flown ("CNF→SSA").
+  routes: z.array(z.string()).nullish(),
+  day_balance: z.number().nullish(),
+  // The linked issuance does not add up: the locator's redemptions against its points, or its
+  // refunds against its refunded points.
+  points_mismatch: z.boolean(),
+  linked_issuance: statementLinkedIssuanceSchema.nullish(),
+  linked_batch: statementLinkedBatchSchema.nullish(),
+  lines: z.array(statementEntrySchema),
+})
+
+export type StatementGroup = z.infer<typeof statementGroupSchema>
+
 export const statementEntriesSchema = z.object({
   sync_state: statementSyncStateSchema,
   from: z.string(),
   to: z.string(),
   lines: z.array(statementEntrySchema),
+  // Azul only; the Smiles statement is not grouped.
+  groups: z.array(statementGroupSchema).nullish(),
 })
 
 export type StatementEntries = z.infer<typeof statementEntriesSchema>
