@@ -14,8 +14,11 @@ type Sale struct {
 	ClientID   *string   `gorm:"column:client_id;type:uuid" json:"client_id"`
 	Client     *Client   `gorm:"foreignKey:ClientID;references:ID" json:"client,omitempty"`
 	Paid       bool      `gorm:"not null;default:false" json:"paid"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	// Note is the payments screen's free-text line about this sale's money. Nil is
+	// "nobody wrote anything"; the handler stores an emptied note as nil too.
+	Note      *string   `gorm:"type:text" json:"note"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 func (s *Sale) BeforeCreate(tx *gorm.DB) error {

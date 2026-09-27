@@ -50,5 +50,13 @@ func RegisterSaleRoutes(r chi.Router, db *gorm.DB, broker *events.Broker) {
 		r.Get("/{id}/payments", saleHandler.GetSalePayments)
 		r.Post("/{id}/payments", saleHandler.CreateSalePayment)
 		r.Delete("/{id}/payments/{paymentID}", saleHandler.DeleteSalePayment)
+
+		// A lump sum from a client, spread over their open sales oldest first; what no sale
+		// takes is the client's credit. Same audience as the statement above.
+		r.Post("/client-payments", saleHandler.CreateClientPayment)
+		// The client's payments, undone ones included, and undoing one: the way back from
+		// a wrong amount, which would otherwise sit in the client's credit for good.
+		r.Get("/client-payments", saleHandler.GetClientPayments)
+		r.Delete("/client-payments/{paymentID}", saleHandler.DeleteClientPayment)
 	})
 }

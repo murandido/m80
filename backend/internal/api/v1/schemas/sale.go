@@ -8,11 +8,14 @@ import "time"
 // "absent" from "null".
 type UpdateSaleRequest struct {
 	ClientID *string `json:"client_id" validate:"omitempty,uuid"`
-	// Paid is the old switch, kept working for a panel that has not been published yet -
-	// the two sides deploy by independent labels. It is translated into the statement:
-	// true records a payment for whatever is missing, false clears the statement. The
-	// current panel settles a sale through /sales/{id}/payments instead.
+	// Paid is the one-click switch. It is translated into the statement: true records a
+	// payment for whatever is missing, false clears the statement. Partial amounts go
+	// through /sales/{id}/payments or, for a lump sum over several sales,
+	// /sales/client-payments.
 	Paid *bool `json:"paid" validate:"omitempty"`
+	// Note follows client_id's rules: absent leaves it alone, and an explicit null - or an
+	// empty string - clears it.
+	Note *string `json:"note" validate:"omitempty,max=1000"`
 }
 
 // CreateSalePaymentRequest is the payload for POST /sales/{id}/payments.
@@ -23,6 +26,74 @@ type CreateSalePaymentRequest struct {
 	// PaidOn (YYYY-MM-DD) is the day the money moved, which is what the operator knows.
 	PaidOn string  `json:"paid_on" validate:"required,datetime=2006-01-02" example:"2026-08-14"`
 	Note   *string `json:"note" validate:"omitempty"`
+}
+
+// CreateClientPaymentRequest is the payload for POST /sales/client-payments: a lump sum
+// received from a client, spread over their open sales oldest first.
+type CreateClientPaymentRequest struct {
+	ClientID string `json:"client_id" validate:"required,uuid"`
+	// AmountCents is in centavos and must be positive: money handed back is recorded on
+	// the sale it belongs to, not spread over a client.
+	AmountCents int `json:"amount_cents" validate:"required,gt=0" example:"120000"`
+	// PaidOn (YYYY-MM-DD) is the day the money moved.
+	PaidOn string `json:"paid_on" validate:"required,datetime=2006-01-02" example:"2026-09-14"`
+}
+
+// ClientPaymentResponse says what a lump sum did.
+type ClientPaymentResponse struct {
+	// ClientPaymentID is the payment just recorded - what the panel's undo deletes.
+	ClientPaymentID string `json:"client_payment_id"`
+	// SaleIDs are the sales whose lines changed.
+	SaleIDs []string `json:"sale_ids"`
+	// AppliedCents is how much of the amount went into sales; the rest became credit.
+	AppliedCents int `json:"applied_cents" example:"100000"`
+	// SettledSales counts the sales left with nothing to pay.
+	SettledSales int `json:"settled_sales" example:"2"`
+	// CreditCents is the client's credit after the payment, kept for their next sales.
+	CreditCents int `json:"credit_cents" example:"20000"`
+}
+
+// ClientPaymentSingleResponse is the envelope returned by POST /sales/client-payments.
+type ClientPaymentSingleResponse struct {
+	Success bool                  `json:"success"`
+	Message string                `json:"message"`
+	Data    ClientPaymentResponse `json:"data"`
+}
+
+// ClientPaymentHistoryResponse is a client's payments, undone ones included, and the
+// credit they leave - what GET /sales/client-payments returns.
+type ClientPaymentHistoryResponse struct {
+	// CreditCents is what the active payments brought in and no sale took.
+	CreditCents int                        `json:"credit_cents" example:"20000"`
+	Payments    []ClientPaymentHistoryItem `json:"payments"`
+}
+
+// ClientPaymentHistoryItem is one lump sum and where its money is now.
+type ClientPaymentHistoryItem struct {
+	ID            string    `json:"id"`
+	AmountCents   int       `json:"amount_cents" example:"120000"`
+	PaidOn        string    `json:"paid_on" example:"2026-09-14"`
+	CreatedByName string    `json:"created_by_name"`
+	CreatedAt     time.Time `json:"created_at"`
+	// DeletedAt is set on an undone payment, which keeps no allocations.
+	DeletedAt     *time.Time `json:"deleted_at"`
+	DeletedByName *string    `json:"deleted_by_name"`
+	// Allocations are the sales this payment covers, oldest first. What they do not add
+	// up to is part of the credit.
+	Allocations []ClientPaymentAllocation `json:"allocations"`
+}
+
+// ClientPaymentAllocation is the part of a lump sum that sits on one sale.
+type ClientPaymentAllocation struct {
+	SaleID         string `json:"sale_id"`
+	ProgramLocator string `json:"program_locator" example:"ABC123"`
+	AmountCents    int    `json:"amount_cents" example:"50000"`
+}
+
+// ClientPaymentUndoResponse says what undoing a payment moved.
+type ClientPaymentUndoResponse struct {
+	SaleIDs     []string `json:"sale_ids"`
+	CreditCents int      `json:"credit_cents" example:"0"`
 }
 
 // SalePaymentResponse is one line of a sale's statement.
@@ -48,6 +119,12 @@ type SaleResponse struct {
 	ClientID   *string `json:"client_id"`
 	ClientName *string `json:"client_name"`
 	Paid       bool    `json:"paid"`
+	Note       *string `json:"note"`
+	// ClientPaymentCents is the part of PaidCents that came from the client's lump-sum
+	// payments. Such a sale cannot be switched back to unpaid; the payment is undone in
+	// the client's history instead. ClientPaymentPaidOn (YYYY-MM-DD) is the latest of them.
+	ClientPaymentCents  int     `json:"client_payment_cents"`
+	ClientPaymentPaidOn *string `json:"client_payment_paid_on"`
 
 	ProgramLocator    string    `json:"program_locator"`
 	MainPassengerName *string   `json:"main_passenger_name"`

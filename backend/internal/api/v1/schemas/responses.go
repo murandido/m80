@@ -414,3 +414,17 @@ type PromoEnrollmentListResponse struct {
 	Message string                       `json:"message" example:"Histórico listado com sucesso"`
 	Data    PromoEnrollmentPaginatedData `json:"data"`
 }
+
+// ClientPaymentHistorySingleResponse is the GET /sales/client-payments route response
+type ClientPaymentHistorySingleResponse struct {
+	Success bool                         `json:"success" example:"true"`
+	Message string                       `json:"message" example:"Pagamentos do cliente listados com sucesso"`
+	Data    ClientPaymentHistoryResponse `json:"data"`
+}
+
+// ClientPaymentUndoSingleResponse is the DELETE /sales/client-payments/{id} route response
+type ClientPaymentUndoSingleResponse struct {
+	Success bool                      `json:"success" example:"true"`
+	Message string                    `json:"message" example:"Pagamento desfeito"`
+	Data    ClientPaymentUndoResponse `json:"data"`
+}

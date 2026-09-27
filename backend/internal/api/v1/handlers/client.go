@@ -268,12 +268,20 @@ func (h *ClientHandler) UpdateClient(w http.ResponseWriter, r *http.Request) {
 // @Param        id  path  string  true  "UUID do cliente"
 // @Success      200  {object}  schemas.ErrorResponse "Cliente deletado com sucesso"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      422  {object}  schemas.ErrorResponse "Cliente tem pagamentos registrados"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao deletar cliente"
 // @Router       /clients/{id} [delete]
 func (h *ClientHandler) DeleteClient(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
 	if err := h.DB.Delete(&data.Client{}, "id = ?", id).Error; err != nil {
+		// client_payments holds on to the client: deleting it would take the payments'
+		// spread lines with it and leave sales marked paid for money nobody received.
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == postgresForeignKeyViolation {
+			utils.SendError(w, r, http.StatusUnprocessableEntity, "Não é possível excluir cliente com pagamentos registrados")
+			return
+		}
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to delete client: "+err.Error())
 		return
 	}

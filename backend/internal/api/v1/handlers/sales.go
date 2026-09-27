@@ -78,6 +78,7 @@ type saleRow struct {
 	ClientID   *string
 	ClientName *string
 	Paid       bool
+	Note       *string
 
 	ProgramLocator    string
 	MainPassengerName *string
@@ -89,6 +90,9 @@ type saleRow struct {
 	Taxes              *int
 	PaidCents          int
 	CancelledAt        *time.Time
+
+	ClientPaymentCents  int
+	ClientPaymentPaidOn *time.Time
 
 	AccountID           string
 	AccountNickname     *string
@@ -106,6 +110,7 @@ func saleListQuery(db *gorm.DB) *gorm.DB {
 			sales.issuance_id,
 			sales.client_id,
 			sales.paid,
+			sales.note,
 			clients.name AS client_name,
 			issuances.program_locator,
 			issuances.main_passenger_name,
@@ -114,6 +119,8 @@ func saleListQuery(db *gorm.DB) *gorm.DB {
 			issuances.value_of_the_thousand,
 			issuances.taxes,
 			COALESCE(payments.paid_cents, 0) AS paid_cents,
+			COALESCE(payments.client_payment_cents, 0) AS client_payment_cents,
+			payments.client_payment_paid_on,
 			issuances.cancelled_at,
 			issuances.account_id,
 			users.name AS issuer_name,
@@ -132,7 +139,10 @@ func saleListQuery(db *gorm.DB) *gorm.DB {
 		// Aggregated in the join rather than per row: the statement of every sale on the
 		// screen in one pass, instead of one query per line.
 		Joins(`LEFT JOIN (
-			SELECT sale_id, SUM(amount_cents) AS paid_cents
+			SELECT sale_id,
+				SUM(amount_cents) AS paid_cents,
+				SUM(amount_cents) FILTER (WHERE client_payment_id IS NOT NULL) AS client_payment_cents,
+				MAX(paid_on) FILTER (WHERE client_payment_id IS NOT NULL) AS client_payment_paid_on
 			FROM sale_payments
 			GROUP BY sale_id
 		) AS payments ON payments.sale_id = sales.id`).
@@ -163,15 +173,24 @@ func toSaleResponse(row saleRow) schemas.SaleResponse {
 		amount += *row.Taxes
 	}
 
+	var clientPaymentPaidOn *string
+	if row.ClientPaymentPaidOn != nil {
+		day := row.ClientPaymentPaidOn.Format("2006-01-02")
+		clientPaymentPaidOn = &day
+	}
+
 	return schemas.SaleResponse{
-		ID:        row.ID,
-		PaidCents: row.PaidCents,
+		ID:                  row.ID,
+		PaidCents:           row.PaidCents,
+		ClientPaymentCents:  row.ClientPaymentCents,
+		ClientPaymentPaidOn: clientPaymentPaidOn,
 		BalanceCents: sale.BalanceCents(
 			sale.Amount{Cents: amount, Cancelled: row.CancelledAt != nil}, row.PaidCents),
 		IssuanceID:          row.IssuanceID,
 		ClientID:            row.ClientID,
 		ClientName:          row.ClientName,
 		Paid:                row.Paid,
+		Note:                row.Note,
 		ProgramLocator:      row.ProgramLocator,
 		MainPassengerName:   row.MainPassengerName,
 		IssuedAt:            row.IssuedAt,
@@ -319,8 +338,11 @@ func (h *SaleHandler) GetSales(w http.ResponseWriter, r *http.Request) {
 		r,
 	)
 
+	// Oldest first, like the spreadsheet the screen replaced: it is read top to bottom in
+	// the order the tickets were issued, which is also the order a client's payments are
+	// spread in - the partly paid row sits right below the settled ones.
 	var rows []saleRow
-	if err := query.Order("issuances.created_at desc").Scan(&rows).Error; err != nil {
+	if err := query.Order("issuances.created_at asc, sales.id").Scan(&rows).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch sales")
 		return
 	}
@@ -358,8 +380,8 @@ func (h *SaleHandler) GetSalesExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Same filters as the listing, but ascending: the screen shows the newest sale first,
-	// while a spreadsheet is read top to bottom in chronological order.
+	// Same filters and the same chronological order as the listing, so the spreadsheet
+	// reads like the screen it was exported from.
 	query := applySaleListFilters(
 		saleListQuery(h.DB).Where("issuances.agency_id = ?", agencyID),
 		r,
@@ -406,7 +428,7 @@ func (h *SaleHandler) GetSalesExport(w http.ResponseWriter, r *http.Request) {
 
 // UpdateSale handles the PATCH /sales/{id} route.
 // @Summary      Atualizar venda
-// @Description  Vincula ou desvincula o cliente e/ou marca a venda como paga. Campos ausentes ficam inalterados; client_id explicitamente null desvincula o cliente.
+// @Description  Vincula ou desvincula o cliente, grava a observação e/ou marca a venda como paga. Campos ausentes ficam inalterados; client_id ou note explicitamente null limpam o campo.
 // @Tags         Vendas
 // @Accept       json
 // @Produce      json
@@ -417,6 +439,7 @@ func (h *SaleHandler) GetSalesExport(w http.ResponseWriter, r *http.Request) {
 // @Failure      400  {object}  schemas.ErrorResponse "Payload inválido ou nenhum campo informado"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      404  {object}  schemas.ErrorResponse "Venda não encontrada"
+// @Failure      409  {object}  schemas.ErrorResponse "paid=false numa venda paga por pagamento do cliente"
 // @Failure      422  {object}  schemas.ErrorResponse "Cliente não encontrado"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao atualizar venda"
 // @Router       /sales/{id} [patch]
@@ -474,25 +497,94 @@ func (h *SaleHandler) UpdateSale(w http.ResponseWriter, r *http.Request) {
 		}
 		updates["client_id"] = req.ClientID
 	}
+	if _, ok := present["note"]; ok {
+		// An emptied field and an explicit null are the same fact - nothing written - so
+		// both are stored as NULL rather than leaving two spellings of "no note".
+		if req.Note != nil && strings.TrimSpace(*req.Note) != "" {
+			updates["note"] = strings.TrimSpace(*req.Note)
+		} else {
+			updates["note"] = nil
+		}
+	}
 
 	if len(updates) == 0 && req.Paid == nil {
 		utils.SendError(w, r, http.StatusBadRequest, "No fields to update")
 		return
 	}
 
+	// The switch only takes back what the switch (or the old per-sale statement) put on the
+	// sale. Money a client's payment put here is taken back by undoing that payment:
+	// clearing its lines would last until the next replay put them back. So a sale covered
+	// only by client payments has nothing the switch can undo, and says so.
+	if req.Paid != nil && !*req.Paid {
+		var lines struct {
+			Own    int64
+			Spread int64
+		}
+		if err := h.DB.Model(&data.SalePayment{}).
+			Select(`COUNT(*) FILTER (WHERE client_payment_id IS NULL) AS own,
+				COUNT(*) FILTER (WHERE client_payment_id IS NOT NULL) AS spread`).
+			Where("sale_id = ?", sale.ID).
+			Scan(&lines).Error; err != nil {
+			utils.SendError(w, r, http.StatusInternalServerError, "Failed to update sale: "+err.Error())
+			return
+		}
+		if lines.Own == 0 && lines.Spread > 0 {
+			utils.SendError(w, r, http.StatusConflict, "Essa venda foi paga por um pagamento do cliente; desfaça o pagamento no histórico")
+			return
+		}
+	}
+
+	// Who the sale belonged to before and after, for the replay below. Both, because the
+	// money of a client's payments follows the client, not the sale: moving a paid sale
+	// takes the old client's money off it (back to their other sales, or their credit)
+	// and lets the new client's credit reach it.
+	var clientsToRebalance []string
+	if _, ok := present["client_id"]; ok {
+		if sale.ClientID != nil {
+			clientsToRebalance = append(clientsToRebalance, *sale.ClientID)
+		}
+		if req.ClientID != nil && (sale.ClientID == nil || *sale.ClientID != *req.ClientID) {
+			clientsToRebalance = append(clientsToRebalance, *req.ClientID)
+		}
+	}
+
+	// Sales the replay changed besides this one, so their rows refresh too.
+	var rebalancedSaleIDs []string
 	err = h.DB.Transaction(func(tx *gorm.DB) error {
 		if len(updates) > 0 {
 			if err := tx.Model(&sale).Updates(updates).Error; err != nil {
 				return err
 			}
 		}
+		for _, clientID := range clientsToRebalance {
+			changed, err := rebalanceClient(tx, clientID)
+			if err != nil {
+				return err
+			}
+			rebalancedSaleIDs = append(rebalancedSaleIDs, changed...)
+		}
 		// paid is no longer a column an operator sets: it is the sum of the sale's
 		// payments. A client still sending it gets that intent translated into the
 		// statement - see settleSaleFromLegacyFlag for why this exists and when it goes.
-		if req.Paid != nil {
-			return settleSaleFromLegacyFlag(tx, sale.ID, *req.Paid, userCtx.ID)
+		if req.Paid == nil {
+			return nil
 		}
-		return nil
+		if err := settleSaleFromLegacyFlag(tx, sale.ID, *req.Paid, userCtx.ID); err != nil {
+			return err
+		}
+		// Clearing the sale's own lines leaves room the client's credit can fill, and
+		// settling it by hand frees what a client payment had put there for the next sale.
+		var owner data.Sale
+		if err := tx.Select("client_id").First(&owner, "id = ?", sale.ID).Error; err != nil {
+			return err
+		}
+		if owner.ClientID == nil {
+			return nil
+		}
+		changed, err := rebalanceClient(tx, *owner.ClientID)
+		rebalancedSaleIDs = append(rebalancedSaleIDs, changed...)
+		return err
 	})
 	if err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to update sale: "+err.Error())
@@ -513,6 +605,11 @@ func (h *SaleHandler) UpdateSale(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.broadcastSaleUpdated(sale.ID)
+	for _, saleID := range rebalancedSaleIDs {
+		if saleID != sale.ID {
+			h.broadcastSaleUpdated(saleID)
+		}
+	}
 
 	utils.SendJSON(w, r, http.StatusOK, "Sale updated successfully", toSaleResponse(row))
 }

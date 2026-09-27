@@ -24,11 +24,14 @@ type SalePayment struct {
 	AmountCents int `gorm:"column:amount_cents;not null" json:"amount_cents"`
 	// PaidOn is the day the money moved - what the operator knows and what the statement is
 	// read by. CreatedAt is when the line was typed, which can be another day entirely.
-	PaidOn      time.Time `gorm:"column:paid_on;type:date;not null" json:"paid_on"`
-	Note        *string   `gorm:"type:text" json:"note"`
-	CreatedByID string    `gorm:"column:created_by_id;type:uuid;not null" json:"created_by_id"`
-	CreatedBy   *User     `gorm:"foreignKey:CreatedByID;references:ID" json:"created_by,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
+	PaidOn time.Time `gorm:"column:paid_on;type:date;not null" json:"paid_on"`
+	Note   *string   `gorm:"type:text" json:"note"`
+	// ClientPaymentID is the lump sum this line was spread from, nil when it was recorded
+	// on the sale itself. Lines with it set are derived and get rebuilt, never edited.
+	ClientPaymentID *string   `gorm:"column:client_payment_id;type:uuid" json:"client_payment_id"`
+	CreatedByID     string    `gorm:"column:created_by_id;type:uuid;not null" json:"created_by_id"`
+	CreatedBy       *User     `gorm:"foreignKey:CreatedByID;references:ID" json:"created_by,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
 }
 
 func (sp *SalePayment) BeforeCreate(tx *gorm.DB) error {

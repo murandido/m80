@@ -120,14 +120,27 @@ func Recalculate(tx *gorm.DB, saleID string) error {
 // RecalculateByIssuance is the same, for the callers that hold an issuance rather than a
 // sale - the cancellation flow, which changes what is owed without touching the ledger.
 // A missing sale is not an error: an issuance whose sale was deleted has nothing to update.
+//
+// A sale with a client also has the client's payments replayed (see RebalanceClient):
+// what a lump sum had put on a ticket that is now cancelled is the client's money again,
+// and goes to their next open sale or to their credit instead of waiting to be handed
+// back; a restored ticket is a debt again and takes its turn in the queue. The ledger
+// lines recorded on the sale itself are still left alone.
 func RecalculateByIssuance(tx *gorm.DB, issuanceID string) error {
-	var saleID string
-	err := tx.Model(&data.Sale{}).
+	var found data.Sale
+	err := tx.Select("id", "client_id").
 		Where("issuance_id = ?", issuanceID).
 		Limit(1).
-		Pluck("id", &saleID).Error
-	if err != nil || saleID == "" {
+		Find(&found).Error
+	if err != nil || found.ID == "" {
 		return err
 	}
-	return Recalculate(tx, saleID)
+	if err := Recalculate(tx, found.ID); err != nil {
+		return err
+	}
+	if found.ClientID == nil {
+		return nil
+	}
+	_, err = RebalanceClient(tx, *found.ClientID)
+	return err
 }
