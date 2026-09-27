@@ -28,6 +28,7 @@ func NewRouter(db *gorm.DB, broker *events.Broker, bookings *booking.Registry, m
 			r.Use(middleware.RequireAuth(db))
 
 			r.Get("/me", authHandler.Me)
+			r.Put("/me", authHandler.UpdateMe)
 		})
 	})
 

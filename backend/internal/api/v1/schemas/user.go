@@ -28,3 +28,14 @@ type UpdateUserRequest struct {
 	Password string `json:"password" validate:"omitempty,min=6,max=20"`
 	Role     string `json:"role" validate:"omitempty,oneof=user admin dev"`
 }
+
+// UpdateMeRequest is what a user may change about themselves. There is no role
+// field on purpose: without one, a "role" key in the payload has nowhere to land.
+// CurrentPassword is only required when the change touches the login - a new
+// password or a new phone - which the handler enforces, not the tags.
+type UpdateMeRequest struct {
+	Name            string `json:"name" validate:"omitempty"`
+	Phone           string `json:"phone" validate:"omitempty"`
+	NewPassword     string `json:"new_password" validate:"omitempty,min=6,max=20"`
+	CurrentPassword string `json:"current_password" validate:"omitempty"`
+}

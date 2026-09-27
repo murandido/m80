@@ -29,7 +29,21 @@ interface Crumb {
   href?: string
 }
 
+// Pages reached from the user menu rather than the sidebar, so findNavLocation
+// does not know them.
+const userMenuPageLabels: Record<string, string> = {
+  "/dashboard/profile": "Meu perfil",
+}
+
 function buildCrumbs(pathname: string): Crumb[] {
+  const userMenuLabel = userMenuPageLabels[pathname]
+  if (userMenuLabel) {
+    return [
+      { label: dashboardHome.title, href: dashboardHome.url },
+      { label: userMenuLabel },
+    ]
+  }
+
   const location = findNavLocation(pathname)
   if (!location) {
     return [{ label: dashboardHome.title }]
