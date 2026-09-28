@@ -17,3 +17,21 @@ export function LogoSVG(props: ComponentProps<"svg">) {
     </svg>
   )
 }
+
+// The square "M" from app/icon.svg, for places where the full wordmark does not
+// fit (the collapsed sidebar rail). The square takes currentColor and the letter
+// the page background, so it inverts with the theme instead of hardcoding the
+// favicon's slate.
+export function LogoMarkSVG(props: ComponentProps<"svg">) {
+  return (
+    <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" {...props}>
+      <rect width="64" height="64" rx="12" fill="currentColor" />
+      <g
+        transform="translate(12 14.09) scale(0.821)"
+        className="fill-background"
+      >
+        <path d="M0 0h13.04l11.063 27.017h.51L35.675 0h13.041v43.636H38.462V16.832h-.361L27.634 43.36h-6.552L10.615 16.683h-.361v26.953H0z" />
+      </g>
+    </svg>
+  )
+}

@@ -14,7 +14,12 @@ export default function Home() {
     <main className="flex h-screen w-screen items-center justify-center bg-white">
       <Card className="z-20 m-8 sm:m-38 lg:absolute lg:left-1/4 lg:m-0 lg:w-110 lg:-translate-x-1/2">
         <CardContent className="flex flex-col items-center justify-center">
-          <LogoSVG className="my-20 h-11 w-26 fill-slate-700" />
+          <div className="my-20 flex flex-col items-center gap-3">
+            <LogoSVG className="h-11 w-26 fill-slate-700" />
+            <p className="text-center text-sm text-slate-500">
+              Pré-visualização de teste (beta)
+            </p>
+          </div>
           <div className="mx-6 flex flex-col items-center justify-center gap-6 text-slate-700">
             <LoginForm />
           </div>

@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { LogoSVG } from "@/components/icons/logo"
+import { LogoMarkSVG, LogoSVG } from "@/components/icons/logo"
 import { CommandPaletteTrigger } from "@/components/layout/command-palette"
 import { UserMenu } from "@/components/layout/user-menu"
 import {
@@ -45,7 +45,7 @@ function NavMenuItem({ link, pathname }: { link: NavLink; pathname: string }) {
           <span
             aria-hidden
             className={cn(
-              "absolute inset-y-1 left-0 w-[3px] rounded-full bg-sidebar-primary transition-opacity group-data-[collapsible=icon]:hidden",
+              "bg-sidebar-primary absolute inset-y-1 left-0 w-[3px] rounded-full transition-opacity group-data-[collapsible=icon]:hidden",
               isActive ? "opacity-100" : "opacity-0",
             )}
           />
@@ -74,13 +74,25 @@ export function AppSidebar({
         <div className="flex h-8 items-center justify-between gap-2 px-2 py-1 group-data-[collapsible=icon]:hidden">
           <Link
             href={dashboardHome.url}
-            className="rounded-md focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
+            className="focus-visible:ring-ring/50 flex items-center gap-1.5 rounded-md focus-visible:ring-[3px] focus-visible:outline-none"
           >
-            <LogoSVG className="h-6 w-15 fill-sidebar-foreground" />
-            <span className="sr-only">M-80 — ir para o dashboard</span>
+            <LogoSVG className="fill-sidebar-foreground h-6 w-15" />
+            <span aria-hidden className="text-muted-foreground text-xs">
+              (beta)
+            </span>
+            <span className="sr-only">M-80 (beta) — ir para o dashboard</span>
           </Link>
           <CommandPaletteTrigger />
         </div>
+        {/* The rail still needs a brand mark, otherwise collapsing the sidebar
+            leaves no M-80 anywhere on the screen. */}
+        <Link
+          href={dashboardHome.url}
+          className="text-sidebar-foreground focus-visible:ring-ring/50 hidden size-8 items-center justify-center rounded-md group-data-[collapsible=icon]:flex focus-visible:ring-[3px] focus-visible:outline-none"
+        >
+          <LogoMarkSVG className="size-7" />
+          <span className="sr-only">M-80 (beta) — ir para o dashboard</span>
+        </Link>
       </SidebarHeader>
 
       <SidebarContent>
