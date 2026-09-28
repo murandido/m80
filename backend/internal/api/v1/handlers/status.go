@@ -26,7 +26,7 @@ func NewStatusHandler(monitor *health.Monitor) *StatusHandler {
 
 // GetSystemStatus handles the GET /status route.
 // @Summary      Status das dependências
-// @Description  Diz se o bot do WhatsApp e a Traveos estão no ar, a partir de sondas que rodam em background (bot a cada 60s, Traveos a cada 120s). Aberta a qualquer usuário autenticado, de propósito: quem trabalha na grid de emissões é quem precisa saber que a vendor caiu. Não devolve o código de pareamento nem o JID do bot — esses continuam só no proxy dev `/bot/*`.
+// @Description  Diz se o bot do WhatsApp, a Traveos e cada integração direta com companhia aérea estão no ar, a partir de sondas que rodam em background (bot a cada 60s, Traveos a cada 120s, cada companhia a cada 10min) somadas ao resultado das buscas reais. Aberta a qualquer usuário autenticado, de propósito: quem trabalha na grid de emissões é quem precisa saber que a vendor caiu. Não devolve o código de pareamento nem o JID do bot — esses continuam só no proxy dev `/bot/*`.
 // @Tags         Status
 // @Produce      json
 // @Security     BearerAuth
@@ -48,6 +48,17 @@ func (h *StatusHandler) GetSystemStatus(w http.ResponseWriter, r *http.Request) 
 			State:     string(snapshot.Traveos.State),
 			CheckedAt: snapshot.Traveos.CheckedAt.UTC().Format(time.RFC3339),
 		},
+		Providers: make(map[string]schemas.DependencyStatus, len(snapshot.Providers)),
+	}
+
+	// No Detail is carried across, for the same reason the vendor's is not: an
+	// airline's edge answers a block with HTML nobody wrote for us to read, and a
+	// reason on screen would be invented. It goes to the log.
+	for name, check := range snapshot.Providers {
+		response.Providers[name] = schemas.DependencyStatus{
+			State:     string(check.State),
+			CheckedAt: check.CheckedAt.UTC().Format(time.RFC3339),
+		}
 	}
 
 	utils.SendJSON(w, r, http.StatusOK, "System status", response)

@@ -6,7 +6,6 @@ import {
   cancelIssuanceSchema,
   createIssuanceSchema,
   deleteIssuanceSchema,
-  lookupTraveosSchema,
   syncIssuanceWithTraveosSchema,
   uncancelIssuanceSchema,
   updateIssuanceSchema,
@@ -165,37 +164,6 @@ export async function syncIssuanceWithTraveosAction(issuanceId: string) {
     }
 
     return { success: true as const, issuance: parsed.data?.data }
-  } catch {
-    return { error: "Erro de conexão com o servidor." }
-  }
-}
-
-// Looks a booking up at Traveos before the issuance exists, so the grid can fill the
-// itinerary while the operator is still typing prices. Same timeout reasoning as the sync
-// above: the vendor may issue the ticket first, which takes tens of seconds.
-export async function lookupTraveosAction(data: z.infer<typeof lookupTraveosSchema.request>) {
-  const cookieStore = await cookies()
-  const token = cookieStore.get("auth_token")?.value
-
-  try {
-    const res = await fetch(`${env.BACKEND_URL}/api/v1/issuances/traveos-lookup`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify(data),
-      cache: "no-store",
-    })
-
-    const json = await res.json()
-    const parsed = lookupTraveosSchema.response.safeParse(json)
-
-    if (!res.ok || !parsed.data?.data) {
-      return { error: parsed.data?.message || "Erro ao consultar a Traveos." }
-    }
-
-    return { success: true as const, lookup: parsed.data.data }
   } catch {
     return { error: "Erro de conexão com o servidor." }
   }

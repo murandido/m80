@@ -20,6 +20,11 @@ const feeTimezone = "America/Sao_Paulo"
 // international one for a trip between two Brazilian cities.
 const domesticCountry = "BR"
 
+// infantPassengerType is the passenger_type enum value for a lap infant. Infants fly on an
+// adult's lap and the airline does not charge them the redemption fee, so they are left out
+// of the per-passenger multiplier - see the count in RecalculateRedemptionFee.
+const infantPassengerType = "INF"
+
 // RecalculateRedemptionFee brings an issuance's saved redemption fee back in line with its
 // itinerary, its passengers and its account.
 //
@@ -29,6 +34,11 @@ const domesticCountry = "BR"
 // is the number that prices issuing there rather than on an ordinary account. An ordinary
 // account records nothing: what it paid the airline is settled outside this system and has no
 // reader here. See data.Issuance.RedemptionFeeSavedCents.
+//
+// On an exempt account the computed fee is also folded into the issuance's Taxes, so it becomes
+// part of what the client owes without the operator retyping it. It is added exactly once: the
+// amount already inside Taxes is the previously saved fee, so a recalculation moves Taxes by the
+// delta and leaves any taxes the operator typed on top untouched.
 //
 // Callers pass the transaction they are already in, like sale.Recalculate: the amount and the
 // itinerary it is derived from must never be observed disagreeing. It has to run *after* the
@@ -63,7 +73,7 @@ func RecalculateRedemptionFee(tx *gorm.DB, issuanceID string) error {
 	// the API, or left behind by an account that used to be exempt - is a mistake rather
 	// than an override, and the flag must not protect it.
 	if !issuance.Account.WaivesRedemptionFee {
-		return clearRedemptionFeeSaved(tx, issuanceID)
+		return clearRedemptionFeeSaved(tx, issuance)
 	}
 
 	// An operator already corrected this by hand. The rule got it wrong once here - it does
@@ -104,32 +114,66 @@ func RecalculateRedemptionFee(tx *gorm.DB, issuanceID string) error {
 		perTrecho = *program.RedemptionFeeInternationalCents
 	}
 
-	// Floor of one: a synced itinerary with no passenger rows is not a booking for nobody.
-	passengers := len(issuance.Passengers)
+	// Lap infants (INF) fly on an adult's lap and are not charged the redemption fee, so they
+	// are left out of the per-passenger multiplier. Floor of one: a synced itinerary with no
+	// chargeable passenger rows is not a booking for nobody.
+	passengers := 0
+	for _, passenger := range issuance.Passengers {
+		if passenger.Type == infantPassengerType {
+			continue
+		}
+		passengers++
+	}
 	if passengers < 1 {
 		passengers = 1
 	}
 
 	saved := perTrecho * chargeable * passengers
 
-	// UpdateColumn, not Save: this is bookkeeping derived from the itinerary, and bumping
+	// Fold the fee into Taxes so it is part of what the client owes, added exactly once. The
+	// amount already baked into Taxes is the previously saved fee (reliable here: this path
+	// only runs when the value is not a manual override), so moving Taxes by the delta never
+	// re-adds the whole fee and preserves any taxes the operator typed on top.
+	updates := map[string]any{"redemption_fee_saved_cents": saved}
+	if delta := saved - intOrZero(issuance.RedemptionFeeSavedCents); delta != 0 {
+		updates["taxes"] = intOrZero(issuance.Taxes) + delta
+	}
+
+	// UpdateColumns, not Save: this is bookkeeping derived from the itinerary, and bumping
 	// updated_at would make it look like somebody edited the issuance. Same reasoning as
 	// sale.Recalculate.
 	return tx.Model(&data.Issuance{}).Where("id = ?", issuanceID).
-		UpdateColumn("redemption_fee_saved_cents", saved).Error
+		UpdateColumns(updates).Error
+}
+
+// intOrZero reads an optional cents column, treating "not set" as zero for arithmetic.
+func intOrZero(value *int) int {
+	if value == nil {
+		return 0
+	}
+	return *value
 }
 
 // clearRedemptionFeeSaved puts the column back to "nothing saved here", which is nil rather
 // than zero for the same reason everywhere else: zero would read as a computed result.
-func clearRedemptionFeeSaved(tx *gorm.DB, issuanceID string) error {
+func clearRedemptionFeeSaved(tx *gorm.DB, issuance data.Issuance) error {
 	// The manual flag goes with the amount: it means "an operator corrected this number",
 	// and there is no number left to have been corrected. Leaving it set would pin the row
 	// at NULL, so moving it back onto an exempt account would never recompute.
-	return tx.Model(&data.Issuance{}).Where("id = ?", issuanceID).
-		UpdateColumns(map[string]any{
-			"redemption_fee_saved_cents": nil,
-			"redemption_fee_manual":      false,
-		}).Error
+	updates := map[string]any{
+		"redemption_fee_saved_cents": nil,
+		"redemption_fee_manual":      false,
+	}
+	// If an auto-computed fee had been folded into Taxes, take it back out: the account is no
+	// longer exempt, so it no longer carries that saving, and leaving the amount in would keep
+	// charging the client a fee the issuance no longer earns. A manual value is left alone - it
+	// was typed against the API or left behind and was never folded into Taxes here, so
+	// subtracting it would corrupt the taxes actually owed.
+	if !issuance.RedemptionFeeManual && issuance.RedemptionFeeSavedCents != nil {
+		updates["taxes"] = intOrZero(issuance.Taxes) - *issuance.RedemptionFeeSavedCents
+	}
+	return tx.Model(&data.Issuance{}).Where("id = ?", issuance.ID).
+		UpdateColumns(updates).Error
 }
 
 // chargeableDirections counts the trechos this issuance owes the fee on: one per direction

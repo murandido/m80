@@ -84,34 +84,68 @@ func fillExpectedBalances(db *gorm.DB, responses []schemas.AccountResponse) {
 	}
 }
 
-// applyBalanceReading records what somebody read off the airline's page.
-//
-// The day defaults to today when only the number arrives: a reading always happened on some
-// day, and one without a date cannot be held against a panel that keeps moving - which is
-// the whole point of storing it.
-func applyBalanceReading(account *data.Account, points *int, checkedOn *string) error {
-	if checkedOn != nil {
-		day, err := time.Parse(balanceDateLayout, *checkedOn)
-		if err != nil {
-			return fmt.Errorf("data da conferência inválida, use AAAA-MM-DD")
-		}
-		account.RealBalanceCheckedOn = &day
-	}
-	if points == nil {
-		return nil
+// fillLastSynced writes each connected account's last successful sync time onto its
+// response, for the card's "atualizado há…". One query per programme for the whole page, like
+// fillExpectedBalances, and best-effort for the same reason: a failed read leaves the field null
+// rather than failing the listing. The Connected bits are already set by the response builder.
+func fillLastSynced(db *gorm.DB, responses []schemas.AccountResponse) {
+	if len(responses) == 0 {
+		return
 	}
 
-	account.RealBalancePoints = points
-	if checkedOn == nil {
-		loc, err := time.LoadLocation(listTimezone)
-		if err != nil {
-			loc = time.UTC
+	azulIDs := make([]string, 0, len(responses))
+	smilesIDs := make([]string, 0, len(responses))
+	for _, response := range responses {
+		if response.AzulConnected {
+			azulIDs = append(azulIDs, response.ID)
 		}
-		now := time.Now().In(loc)
-		today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-		account.RealBalanceCheckedOn = &today
+		if response.SmilesConnected {
+			smilesIDs = append(smilesIDs, response.ID)
+		}
 	}
-	return nil
+
+	if len(azulIDs) > 0 {
+		var states []data.AzulSyncState
+		if err := db.Where("account_id IN ? AND last_synced_at IS NOT NULL", azulIDs).
+			Find(&states).Error; err != nil {
+			slog.Error("could not load the azul sync states", "err", err)
+		} else {
+			lastSynced := make(map[string]time.Time, len(states))
+			for _, state := range states {
+				if state.LastSyncedAt != nil {
+					lastSynced[state.AccountID] = *state.LastSyncedAt
+				}
+			}
+			for i := range responses {
+				if at, ok := lastSynced[responses[i].ID]; ok {
+					synced := at
+					responses[i].AzulLastSyncedAt = &synced
+				}
+			}
+		}
+	}
+
+	if len(smilesIDs) == 0 {
+		return
+	}
+	var smilesStates []data.SmilesSyncState
+	if err := db.Where("account_id IN ? AND last_synced_at IS NOT NULL", smilesIDs).
+		Find(&smilesStates).Error; err != nil {
+		slog.Error("could not load the smiles sync states", "err", err)
+		return
+	}
+	smilesSynced := make(map[string]time.Time, len(smilesStates))
+	for _, state := range smilesStates {
+		if state.LastSyncedAt != nil {
+			smilesSynced[state.AccountID] = *state.LastSyncedAt
+		}
+	}
+	for i := range responses {
+		if at, ok := smilesSynced[responses[i].ID]; ok {
+			synced := at
+			responses[i].SmilesLastSyncedAt = &synced
+		}
+	}
 }
 
 func toAccountResponse(account data.Account) schemas.AccountResponse {
@@ -147,10 +181,13 @@ func toAccountResponseWithUsage(account data.Account, usage *acct.Usage) schemas
 	return schemas.AccountResponse{
 		ID:                        account.ID,
 		Category:                  account.Category,
+		AzulConnected:             account.AzulCustomerKey != nil && *account.AzulCustomerKey != "",
+		SmilesConnected:           account.SmilesRefreshToken != nil && *account.SmilesRefreshToken != "",
 		RealBalancePoints:         account.RealBalancePoints,
 		RealBalanceCheckedOn:      checkedOn,
 		WaivesRedemptionFee:       account.WaivesRedemptionFee,
 		OwnsPointInventory:        account.OwnsPointInventory,
+		TracksStatement:           account.TracksStatement,
 		DefaultProfitSharePercent: account.DefaultProfitSharePercent,
 		CPFUsage:                  usage,
 		LoyaltyProgramID:          account.LoyaltyProgramID,
@@ -187,6 +224,7 @@ func toAccountPickerResponse(account data.Account) schemas.AccountPickerResponse
 		Nicknames:           nicknames,
 		WaivesRedemptionFee: account.WaivesRedemptionFee,
 		OwnsPointInventory:  account.OwnsPointInventory,
+		TracksStatement:     account.TracksStatement,
 		DeletedAt:           archivedAt(account.DeletedAt),
 	}
 }
@@ -230,6 +268,9 @@ func (h *AccountHandler) CreateAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.OwnsPointInventory != nil {
 		account.OwnsPointInventory = *req.OwnsPointInventory
+	}
+	if req.TracksStatement != nil {
+		account.TracksStatement = *req.TracksStatement
 	}
 	if req.DefaultProfitSharePercent != nil {
 		account.DefaultProfitSharePercent = *req.DefaultProfitSharePercent
@@ -412,6 +453,7 @@ func (h *AccountHandler) GetAccounts(w http.ResponseWriter, r *http.Request) {
 		resp = append(resp, toAccountResponseWithUsage(acc, usage[acc.ID]))
 	}
 	fillExpectedBalances(h.DB, resp)
+	fillLastSynced(h.DB, resp)
 
 	utils.SendJSON(w, r, http.StatusOK, "Accounts fetched successfully", resp)
 }
@@ -473,6 +515,7 @@ func (h *AccountHandler) ListAccounts(w http.ResponseWriter, r *http.Request) {
 		items = append(items, toAccountResponseWithUsage(account, usage[account.ID]))
 	}
 	fillExpectedBalances(h.DB, items)
+	fillLastSynced(h.DB, items)
 
 	utils.SendJSON(w, r, http.StatusOK, "Accounts fetched successfully", schemas.AccountPaginatedData{
 		Accounts: items,
@@ -526,6 +569,7 @@ func (h *AccountHandler) GetAccount(w http.ResponseWriter, r *http.Request) {
 
 	fetched := []schemas.AccountResponse{toAccountResponseWithUsage(account, usage[account.ID])}
 	fillExpectedBalances(h.DB, fetched)
+	fillLastSynced(h.DB, fetched)
 
 	utils.SendJSON(w, r, http.StatusOK, "Account fetched successfully", fetched[0])
 }
@@ -582,16 +626,16 @@ func (h *AccountHandler) UpdateAccount(w http.ResponseWriter, r *http.Request) {
 	if req.OwnsPointInventory != nil {
 		account.OwnsPointInventory = *req.OwnsPointInventory
 	}
+	if req.TracksStatement != nil {
+		account.TracksStatement = *req.TracksStatement
+	}
 	if req.DefaultProfitSharePercent != nil {
 		account.DefaultProfitSharePercent = *req.DefaultProfitSharePercent
 	}
 	if req.Category != nil {
 		account.Category = *req.Category
 	}
-	if err := applyBalanceReading(&account, req.RealBalancePoints, req.RealBalanceCheckedOn); err != nil {
-		utils.SendError(w, r, http.StatusBadRequest, err.Error())
-		return
-	}
+	// The real balance is not written from here anymore - the Azul statement sync owns it.
 
 	if req.Complete != nil {
 		account.Complete = *req.Complete
@@ -619,6 +663,7 @@ func (h *AccountHandler) UpdateAccount(w http.ResponseWriter, r *http.Request) {
 
 	updated := []schemas.AccountResponse{toAccountResponse(account)}
 	fillExpectedBalances(h.DB, updated)
+	fillLastSynced(h.DB, updated)
 
 	utils.SendJSON(w, r, http.StatusOK, "Account updated successfully", updated[0])
 }

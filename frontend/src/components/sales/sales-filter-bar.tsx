@@ -1,12 +1,12 @@
 "use client"
 
-import { useState } from "react"
-import { usePathname, useRouter, useSearchParams } from "next/navigation"
+import { usePathname } from "next/navigation"
 import { RotateCcw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { clearStickyFilters } from "@/lib/sticky-filters"
 import { useStickyFilters } from "@/hooks/use-sticky-filters"
+import { useServerSeededState, useUrlQuery } from "@/hooks/use-url-query"
 import { AgencyCombobox } from "@/components/agencies/agency-combobox"
 import { AgencyMultiCombobox } from "@/components/agencies/agency-multi-combobox"
 import { PersonCombobox } from "@/components/people/person-combobox"
@@ -48,11 +48,13 @@ export function SalesFilterBar({
   children,
   variant,
 }: SalesFilterBarProps) {
-  const router = useRouter()
   const pathname = usePathname()
-  const searchParams = useSearchParams()
+  const { isPending, replace, update: updateUrl } = useUrlQuery()
   useStickyFilters()
-  const [filters, setFilters] = useState<SalesFilterState>(initialFilters)
+  const [filters, setFilters] = useServerSeededState<SalesFilterState>(
+    initialFilters,
+    isPending,
+  )
 
   // Writes only the keys that changed, merged into the URL that is already there: the
   // period control and the clients table's column filters own other keys on the same page,
@@ -62,13 +64,13 @@ export function SalesFilterBar({
   function update(partial: Partial<SalesFilterState>) {
     setFilters({ ...filters, ...partial })
 
-    const params = new URLSearchParams(searchParams.toString())
-    for (const key of SALES_FILTER_KEYS) {
-      if (!(key in partial)) continue
-      if (partial[key]) params.set(key, partial[key])
-      else params.delete(key)
-    }
-    router.replace(`${pathname}?${params.toString()}`)
+    updateUrl((params) => {
+      for (const key of SALES_FILTER_KEYS) {
+        if (!(key in partial)) continue
+        if (partial[key]) params.set(key, partial[key])
+        else params.delete(key)
+      }
+    })
   }
 
   const isClients = variant === "clients"
@@ -145,7 +147,7 @@ export function SalesFilterBar({
           // repopulated from the cookie the operator just asked to drop.
           onClick={() => {
             clearStickyFilters(pathname)
-            router.replace(pathname)
+            replace(new URLSearchParams())
           }}
           className="text-slate-500"
         >

@@ -1,7 +1,6 @@
 "use client"
 
-import { useState } from "react"
-import { usePathname, useRouter, useSearchParams } from "next/navigation"
+import { usePathname } from "next/navigation"
 import { RotateCcw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
@@ -15,6 +14,7 @@ import type { Airline } from "@/schemas/airline"
 import type { User } from "@/schemas/user"
 import { clearStickyFilters } from "@/lib/sticky-filters"
 import { useStickyFilters } from "@/hooks/use-sticky-filters"
+import { useServerSeededState, useUrlQuery } from "@/hooks/use-url-query"
 import {
   DASHBOARD_FILTER_KEYS,
   type DashboardFilterState,
@@ -43,13 +43,15 @@ export function DashboardFilterBar({
   initialFilters,
   children,
 }: DashboardFilterBarProps) {
-  const router = useRouter()
   const pathname = usePathname()
-  const searchParams = useSearchParams()
+  const { isPending, replace, update: updateUrl } = useUrlQuery()
   useStickyFilters()
   // A mirror of the server-resolved filters, for instant feedback on the controls. The URL
   // stays the source of truth.
-  const [filters, setFilters] = useState<DashboardFilterState>(initialFilters)
+  const [filters, setFilters] = useServerSeededState<DashboardFilterState>(
+    initialFilters,
+    isPending,
+  )
 
   // Merges into the URL that is already there instead of rewriting it, because the period
   // control and the metric toggle own their own keys on the same page - a full rewrite
@@ -58,12 +60,12 @@ export function DashboardFilterBar({
     const next = { ...filters, ...partial }
     setFilters(next)
 
-    const params = new URLSearchParams(searchParams.toString())
-    for (const key of DASHBOARD_FILTER_KEYS) {
-      if (next[key]) params.set(key, next[key])
-      else params.delete(key)
-    }
-    router.replace(`${pathname}?${params.toString()}`)
+    updateUrl((params) => {
+      for (const key of DASHBOARD_FILTER_KEYS) {
+        if (next[key]) params.set(key, next[key])
+        else params.delete(key)
+      }
+    })
   }
 
   return (
@@ -120,7 +122,7 @@ export function DashboardFilterBar({
           // repopulated from the cookie the operator just asked to drop.
           onClick={() => {
             clearStickyFilters(pathname)
-            router.replace(pathname)
+            replace(new URLSearchParams())
           }}
           className="text-slate-500"
         >

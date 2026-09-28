@@ -2,6 +2,7 @@ package sale
 
 import (
 	"errors"
+	"sort"
 	"time"
 
 	"github.com/murandido/m-80-backend/internal/data"
@@ -9,31 +10,38 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// A client pays the agency in lump sums, not per ticket. The payments screen takes the sum
-// and spreads it over the client's open sales, oldest first, so at any moment a client has
-// a run of settled sales, at most one partly paid, and the rest open. What no open sale is
-// left to absorb becomes the client's credit (data.ClientCredit) and is spent on the next
-// sale linked to them.
+// A client pays the agency in lump sums, not per ticket. Each lump sum is a
+// data.ClientPayment, and how they cover the client's sales is not stored as a decision:
+// RebalanceClient derives it every time, replaying the active payments in the order they
+// came in over the open sales, oldest first. The sale_payments it writes carry the lump
+// sum's id and are the only lines it ever touches - a payment recorded on the sale itself
+// (the Pago switch) is left alone and simply counts as already paid.
 //
-// Everything below writes ordinary sale payments, so the balance of each sale - and
-// sales.paid, through Recalculate - is still the one rule in balance.go.
+// Deriving instead of recording is what makes a wrong amount undoable: undoing the
+// payment, or moving a sale to another client, is one more replay, and every sale ends
+// up where it would have been had the mistake never happened. What no open sale absorbs
+// is the client's credit, which is therefore a difference and never a stored balance.
 
 // ErrClientNotFound is returned when the client being paid for does not exist.
 var ErrClientNotFound = errors.New("client not found")
 
-const (
-	notePaidByClient     = "Pagamento do cliente"
-	noteSpentFromBalance = "Abatido do crédito do cliente"
-	noteSurplusKept      = "Excedente de pagamento do cliente"
-)
+// ErrClientPaymentNotFound is returned when undoing a payment that does not exist or was
+// already undone.
+var ErrClientPaymentNotFound = errors.New("client payment not found")
 
-// ClientPaymentResult is what a lump sum did, for the operator's confirmation.
+const notePaidByClient = "Pagamento do cliente"
+
+// ClientPaymentResult is what a change to a client's payments did, for the confirmation
+// and for refreshing the rows on screen.
 type ClientPaymentResult struct {
-	// SaleIDs are every sale that received money, credit included - the rows to refresh.
+	// ClientPaymentID is the payment just recorded, empty for anything else.
+	ClientPaymentID string
+	// SaleIDs are every sale whose spread lines changed - the rows to refresh.
 	SaleIDs []string
-	// AppliedCents is how much of the new money went into sales; the rest became credit.
+	// AppliedCents is how much of the payment just recorded went into sales; the rest
+	// became credit.
 	AppliedCents int
-	// SettledSales counts the sales left with nothing to pay.
+	// SettledSales counts the sales that payment left with nothing to pay.
 	SettledSales int
 	// CreditCents is the client's credit once everything was spread.
 	CreditCents int
@@ -58,14 +66,9 @@ func AllocateFIFO(balances []int, pool int) (takes []int, leftover int) {
 	return takes, pool
 }
 
-type openSale struct {
-	ID      string
-	Balance int
-}
-
 // lockClient serializes everything that spreads money for one client: two operators
-// registering a payment for the same client at once would otherwise both read the same
-// open sales and pay the oldest one twice.
+// changing the same client's payments at once would otherwise both replay from the same
+// picture and write the spread twice.
 func lockClient(tx *gorm.DB, clientID string) error {
 	var client data.Client
 	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
@@ -77,9 +80,15 @@ func lockClient(tx *gorm.DB, clientID string) error {
 	return err
 }
 
-// openSalesOf lists the client's sales that still owe money, oldest issuance first - the
-// order the money is spent in. Cancelled issuances are left out: a cancelled ticket is not
-// a debt (see BalanceCents), and whatever it holds is for returning, not for moving along.
+type openSale struct {
+	ID      string
+	Balance int
+}
+
+// openSalesOf lists the client's sales that still owe money once the spread lines are set
+// aside, oldest issuance first - the order the money is spent in. Cancelled issuances are
+// left out: a cancelled ticket is not a debt (see BalanceCents), so a replay takes back
+// whatever a lump sum had put on it and it goes on to the next sale, or to credit.
 func openSalesOf(tx *gorm.DB, clientID string) ([]openSale, error) {
 	var rows []struct {
 		ID                 string
@@ -90,7 +99,8 @@ func openSalesOf(tx *gorm.DB, clientID string) ([]openSale, error) {
 	}
 	err := tx.Table("sales").
 		Select(`sales.id, issuances.points, issuances.value_of_the_thousand, issuances.taxes,
-			COALESCE((SELECT SUM(amount_cents) FROM sale_payments WHERE sale_id = sales.id), 0) AS paid_cents`).
+			COALESCE((SELECT SUM(amount_cents) FROM sale_payments
+				WHERE sale_id = sales.id AND client_payment_id IS NULL), 0) AS paid_cents`).
 		Joins("JOIN issuances ON issuances.id = sales.issuance_id").
 		Where("sales.client_id = ?", clientID).
 		Where("issuances.deleted_at IS NULL AND issuances.cancelled_at IS NULL").
@@ -113,153 +123,215 @@ func openSalesOf(tx *gorm.DB, clientID string) ([]openSale, error) {
 	return open, nil
 }
 
-// CreditOf is the client's credit balance.
-func CreditOf(tx *gorm.DB, clientID string) (int, error) {
-	var total *int
-	err := tx.Model(&data.ClientCredit{}).
-		Where("client_id = ?", clientID).
-		Select("SUM(amount_cents)").
-		Scan(&total).Error
-	if err != nil || total == nil {
-		return 0, err
-	}
-	return *total, nil
+func activePaymentsOf(tx *gorm.DB, clientID string) ([]data.ClientPayment, error) {
+	var payments []data.ClientPayment
+	err := tx.Where("client_id = ? AND deleted_at IS NULL", clientID).
+		Order("paid_on, created_at, id").
+		Find(&payments).Error
+	return payments, err
 }
 
-// spread pays the open sales from pool, oldest first, and returns what was left. onPaid
-// runs for each payment written, inside the same transaction.
-func spread(tx *gorm.DB, open []openSale, pool int, paidOn time.Time, note, actorID string,
-	onPaid func(saleID string, cents int) error,
-) (result ClientPaymentResult, leftover int, err error) {
+// CreditOf is the client's credit: what their active payments brought in minus what was
+// spread over sales. Right after a RebalanceClient it is exactly what no open sale took.
+func CreditOf(tx *gorm.DB, clientID string) (int, error) {
+	var credit int
+	err := tx.Raw(`
+		SELECT
+			COALESCE((SELECT SUM(amount_cents) FROM client_payments
+				WHERE client_id = ? AND deleted_at IS NULL), 0)
+			- COALESCE((SELECT SUM(sp.amount_cents) FROM sale_payments sp
+				JOIN client_payments cp ON cp.id = sp.client_payment_id
+				WHERE cp.client_id = ? AND cp.deleted_at IS NULL), 0)`,
+		clientID, clientID).Scan(&credit).Error
+	return credit, err
+}
+
+type spreadKey struct {
+	clientPaymentID string
+	saleID          string
+}
+
+// RebalanceClient replays the client's active payments over their open sales and writes
+// only what changed, so an action that moves nothing (linking a sale to a client with no
+// payments) costs a few reads and touches no row. It returns the sales whose lines changed.
+//
+// Lines of undone payments are always removed: they are spread lines like any other, only
+// with nothing left to replay them from.
+func RebalanceClient(tx *gorm.DB, clientID string) ([]string, error) {
+	if err := lockClient(tx, clientID); err != nil {
+		return nil, err
+	}
+
+	payments, err := activePaymentsOf(tx, clientID)
+	if err != nil {
+		return nil, err
+	}
+	open, err := openSalesOf(tx, clientID)
+	if err != nil {
+		return nil, err
+	}
+
+	// What the lines should be: each payment, in the order it came in, takes from what the
+	// sales still miss after the payments before it.
 	balances := make([]int, len(open))
 	for i, s := range open {
 		balances[i] = s.Balance
 	}
-	takes, leftover := AllocateFIFO(balances, pool)
+	want := map[spreadKey]int{}
+	for _, payment := range payments {
+		takes, _ := AllocateFIFO(balances, payment.AmountCents)
+		for i, take := range takes {
+			if take == 0 {
+				continue
+			}
+			balances[i] -= take
+			want[spreadKey{payment.ID, open[i].ID}] = take
+		}
+	}
 
-	for i, take := range takes {
-		if take == 0 {
+	// What the lines are, across every payment of this client (undone ones included) - a
+	// sale that left the client still has its lines here, and loses them below.
+	var existing []data.SalePayment
+	err = tx.Joins("JOIN client_payments cp ON cp.id = sale_payments.client_payment_id").
+		Where("cp.client_id = ?", clientID).
+		Find(&existing).Error
+	if err != nil {
+		return nil, err
+	}
+
+	touched := map[string]bool{}
+	for _, line := range existing {
+		key := spreadKey{*line.ClientPaymentID, line.SaleID}
+		if cents, ok := want[key]; ok && cents == line.AmountCents {
+			delete(want, key)
 			continue
 		}
-		payment := data.SalePayment{
-			SaleID:      open[i].ID,
-			AmountCents: take,
-			PaidOn:      paidOn,
-			Note:        &note,
-			CreatedByID: actorID,
+		if err := tx.Delete(&line).Error; err != nil {
+			return nil, err
 		}
-		if err := tx.Create(&payment).Error; err != nil {
-			return result, 0, err
+		touched[line.SaleID] = true
+	}
+
+	byID := make(map[string]data.ClientPayment, len(payments))
+	for _, payment := range payments {
+		byID[payment.ID] = payment
+	}
+	note := notePaidByClient
+	for key, cents := range want {
+		payment := byID[key.clientPaymentID]
+		// The line is the client's payment seen from one sale, so it carries that payment's
+		// day and author - not whoever's action happened to trigger this replay.
+		line := data.SalePayment{
+			SaleID:          key.saleID,
+			AmountCents:     cents,
+			PaidOn:          payment.PaidOn,
+			Note:            &note,
+			ClientPaymentID: &payment.ID,
+			CreatedByID:     payment.CreatedByID,
 		}
-		if err := Recalculate(tx, open[i].ID); err != nil {
-			return result, 0, err
+		if err := tx.Create(&line).Error; err != nil {
+			return nil, err
 		}
-		if onPaid != nil {
-			if err := onPaid(open[i].ID, take); err != nil {
-				return result, 0, err
-			}
-		}
-		result.SaleIDs = append(result.SaleIDs, open[i].ID)
-		result.AppliedCents += take
-		if take == open[i].Balance {
-			result.SettledSales++
+		touched[key.saleID] = true
+	}
+
+	saleIDs := make([]string, 0, len(touched))
+	for saleID := range touched {
+		saleIDs = append(saleIDs, saleID)
+	}
+	// Map order is random; sorted, the result - and the order of the broadcasts - is stable.
+	sort.Strings(saleIDs)
+	for _, saleID := range saleIDs {
+		if err := Recalculate(tx, saleID); err != nil {
+			return nil, err
 		}
 	}
-	return result, leftover, nil
+	return saleIDs, nil
 }
 
-// ApplyClientCredit spends the client's credit on their open sales, oldest first. It is
-// what makes a surplus "come off the next issuance": sales are born without a client, so
-// linking one is the moment it can take the credit. A client with no credit costs one query.
-func ApplyClientCredit(tx *gorm.DB, clientID, actorID string) (ClientPaymentResult, error) {
-	credit, err := CreditOf(tx, clientID)
-	if err != nil || credit <= 0 {
-		return ClientPaymentResult{CreditCents: credit}, err
-	}
-	if err := lockClient(tx, clientID); err != nil {
-		return ClientPaymentResult{}, err
-	}
-	// Read again under the lock: a concurrent spend may have used it up in between.
-	if credit, err = CreditOf(tx, clientID); err != nil || credit <= 0 {
-		return ClientPaymentResult{CreditCents: credit}, err
-	}
-
-	open, err := openSalesOf(tx, clientID)
-	if err != nil {
-		return ClientPaymentResult{}, err
-	}
-
-	result, leftover, err := spread(tx, open, credit, time.Now(), noteSpentFromBalance, actorID,
-		func(saleID string, cents int) error {
-			id := saleID
-			note := noteSpentFromBalance
-			return tx.Create(&data.ClientCredit{
-				ClientID:    clientID,
-				AmountCents: -cents,
-				SaleID:      &id,
-				Note:        &note,
-				CreatedByID: actorID,
-			}).Error
-		})
-	result.CreditCents = leftover
-	return result, err
-}
-
-// ReceiveClientPayment takes a lump sum from a client and spreads it over their open sales,
-// oldest first; what is left over becomes credit.
-//
-// Credit already held is spent first. It normally only exists when nothing is open, but an
-// older sale switched back to unpaid breaks that, and spending new money around old credit
-// would leave both sitting side by side.
+// ReceiveClientPayment records a lump sum from a client and spreads it.
 func ReceiveClientPayment(tx *gorm.DB, clientID string, amountCents int, paidOn time.Time, actorID string) (ClientPaymentResult, error) {
 	if err := lockClient(tx, clientID); err != nil {
 		return ClientPaymentResult{}, err
 	}
 
-	fromCredit, err := ApplyClientCredit(tx, clientID, actorID)
-	if err != nil {
+	payment := data.ClientPayment{
+		ClientID:    clientID,
+		AmountCents: amountCents,
+		PaidOn:      paidOn,
+		CreatedByID: actorID,
+	}
+	if err := tx.Create(&payment).Error; err != nil {
 		return ClientPaymentResult{}, err
 	}
 
-	open, err := openSalesOf(tx, clientID)
+	saleIDs, err := RebalanceClient(tx, clientID)
 	if err != nil {
 		return ClientPaymentResult{}, err
 	}
-	result, leftover, err := spread(tx, open, amountCents, paidOn, notePaidByClient, actorID, nil)
-	if err != nil {
-		return ClientPaymentResult{}, err
-	}
+	result := ClientPaymentResult{ClientPaymentID: payment.ID, SaleIDs: saleIDs}
 
-	if leftover > 0 {
-		note := noteSurplusKept
-		if err := tx.Create(&data.ClientCredit{
-			ClientID:    clientID,
-			AmountCents: leftover,
-			Note:        &note,
-			CreatedByID: actorID,
-		}).Error; err != nil {
-			return ClientPaymentResult{}, err
+	// What this payment did, read back from the lines the replay left for it. A payment
+	// dated before older ones can also shift money between other sales; those are in
+	// SaleIDs, but only this payment's own lines are "abatido" in the confirmation.
+	var lines []struct {
+		AmountCents int
+		Paid        bool
+	}
+	err = tx.Table("sale_payments").
+		Select("sale_payments.amount_cents, sales.paid").
+		Joins("JOIN sales ON sales.id = sale_payments.sale_id").
+		Where("sale_payments.client_payment_id = ?", payment.ID).
+		Scan(&lines).Error
+	if err != nil {
+		return ClientPaymentResult{}, err
+	}
+	for _, line := range lines {
+		result.AppliedCents += line.AmountCents
+		if line.Paid {
+			result.SettledSales++
 		}
 	}
 
-	result.SaleIDs = mergeIDs(fromCredit.SaleIDs, result.SaleIDs)
-	result.SettledSales += fromCredit.SettledSales
 	if result.CreditCents, err = CreditOf(tx, clientID); err != nil {
 		return ClientPaymentResult{}, err
 	}
 	return result, nil
 }
 
-// mergeIDs joins two lists of sale ids without repeating one: the sale left partly paid by
-// the credit is the first one the new money reaches.
-func mergeIDs(first, second []string) []string {
-	seen := make(map[string]bool, len(first)+len(second))
-	merged := make([]string, 0, len(first)+len(second))
-	for _, id := range append(append([]string{}, first...), second...) {
-		if !seen[id] {
-			seen[id] = true
-			merged = append(merged, id)
-		}
+// UndoClientPayment marks a lump sum as undone and replays the rest. The row stays, so the
+// history still shows what was typed and who took it back.
+func UndoClientPayment(tx *gorm.DB, paymentID, actorID string) (ClientPaymentResult, error) {
+	var payment data.ClientPayment
+	err := tx.First(&payment, "id = ? AND deleted_at IS NULL", paymentID).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return ClientPaymentResult{}, ErrClientPaymentNotFound
 	}
-	return merged
+	if err != nil {
+		return ClientPaymentResult{}, err
+	}
+
+	if err := lockClient(tx, payment.ClientID); err != nil {
+		return ClientPaymentResult{}, err
+	}
+	// Under the lock, so two operators undoing the same payment cannot both succeed.
+	res := tx.Model(&data.ClientPayment{}).
+		Where("id = ? AND deleted_at IS NULL", paymentID).
+		Updates(map[string]any{"deleted_at": time.Now(), "deleted_by_id": actorID})
+	if res.Error != nil {
+		return ClientPaymentResult{}, res.Error
+	}
+	if res.RowsAffected == 0 {
+		return ClientPaymentResult{}, ErrClientPaymentNotFound
+	}
+
+	saleIDs, err := RebalanceClient(tx, payment.ClientID)
+	if err != nil {
+		return ClientPaymentResult{}, err
+	}
+	credit, err := CreditOf(tx, payment.ClientID)
+	if err != nil {
+		return ClientPaymentResult{}, err
+	}
+	return ClientPaymentResult{SaleIDs: saleIDs, CreditCents: credit}, nil
 }

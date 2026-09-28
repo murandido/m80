@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState, useTransition } from "react"
+import { useEffect, useMemo, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import {
   Check,
@@ -44,8 +44,14 @@ import {
   supplierLineAmount,
 } from "@/components/sales/supplier-amount"
 import { updateSupplierIssuancesAction } from "@/actions/supplier-issuances"
+import {
+  bulkIncrementSupplierExportCounterAction,
+  incrementSupplierExportCounterAction,
+  setSupplierExportCounterAction,
+} from "@/actions/supplier-export-counter"
 import { formatCurrencyBRL, parseCurrencyBRLInput } from "@/lib/currency"
 import { formatPoints } from "@/lib/format"
+import { normalizeSearch } from "@/lib/search"
 import {
   GROUP_BY_ADMINISTRATOR,
   NO_ADMINISTRATOR_KEY,
@@ -162,6 +168,208 @@ function ReportButton({
   )
 }
 
+// The PDF file name suggested to the browser as a fallback. The authoritative name is the
+// backend's Content-Disposition (which wins over the download attribute), built from the `seq`
+// query param - see withSeq. This just keeps a sensible name if that header is ever absent.
+function reportFileName(label: string, counter: number): string {
+  const slug =
+    normalizeSearch(label)
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "fornecedor"
+  return `resumo-${slug}-${String(counter).padStart(4, "0")}.pdf`
+}
+
+// withSeq appends the just-incremented counter so the backend names the file with it.
+function withSeq(href: string, seq: number): string {
+  return `${href}${href.includes("?") ? "&" : "?"}seq=${seq}`
+}
+
+// triggerDownload navigates a hidden anchor to a same-origin route that responds with a PDF
+// attachment. filename is only a fallback: the backend's Content-Disposition is authoritative.
+function triggerDownload(url: string, filename: string) {
+  const anchor = document.createElement("a")
+  anchor.href = url
+  anchor.download = filename
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+}
+
+// The "all suppliers" export: one combined PDF covering every visible administrator. It carries
+// no single sequence number - the backend dates the file - so pressing it bumps the counter of
+// each administrator it includes, keeping their individual sequences moving.
+function AllSuppliersExport({
+  href,
+  missingCost,
+  administratorIds,
+}: {
+  href: string
+  missingCost: number
+  administratorIds: string[]
+}) {
+  const router = useRouter()
+  const [exporting, setExporting] = useState(false)
+  const blocked = missingCost > 0
+
+  async function handleExport() {
+    if (blocked || exporting) return
+    setExporting(true)
+    const result = await bulkIncrementSupplierExportCounterAction(administratorIds)
+    setExporting(false)
+    if ("error" in result) {
+      toast.error(result.error)
+      return
+    }
+    triggerDownload(href, "resumo-fornecedores.pdf")
+    // Refetch so the per-administrator counters on screen reflect the bump.
+    router.refresh()
+  }
+
+  const button = (
+    <Button
+      type="button"
+      size="sm"
+      variant="outline"
+      disabled={blocked || exporting}
+      aria-label="Gerar PDF de todas"
+      onClick={handleExport}
+    >
+      <FileText className="h-4 w-4" />
+      <span className="ml-1.5">Gerar PDF de todas</span>
+    </Button>
+  )
+
+  if (!blocked) return button
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="inline-flex cursor-not-allowed">{button}</span>
+      </TooltipTrigger>
+      <TooltipContent>
+        {missingCost === 1
+          ? "1 emissão está sem milheiro de custo."
+          : `${missingCost} emissões estão sem milheiro de custo.`}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
+// The per-administrator export: an editable counter and the PDF button beside it. Pressing the
+// button bumps the counter (server-side, atomically) and downloads the report named with the new
+// number; the input lets the operator correct the count or start a fresh sequence by hand.
+function AdministratorExport({
+  administratorId,
+  label,
+  href,
+  missingCost,
+  initialCounter,
+}: {
+  administratorId: string
+  label: string
+  href: string
+  missingCost: number
+  initialCounter: number
+}) {
+  const [counter, setCounter] = useState(initialCounter)
+  const [text, setText] = useState(String(initialCounter))
+  const [exporting, setExporting] = useState(false)
+  const [, startTransition] = useTransition()
+
+  // Follow the server value when it changes underneath us - e.g. after "Gerar PDF de todas"
+  // bumps this administrator among others and the page refetches.
+  useEffect(() => {
+    setCounter(initialCounter)
+    setText(String(initialCounter))
+  }, [initialCounter])
+  const blocked = missingCost > 0
+
+  async function handleExport() {
+    if (blocked || exporting) return
+    setExporting(true)
+    const result = await incrementSupplierExportCounterAction(administratorId)
+    setExporting(false)
+    if ("error" in result) {
+      toast.error(result.error)
+      return
+    }
+    setCounter(result.counter)
+    setText(String(result.counter))
+
+    // The number is passed to the backend as `seq` rather than only set on the download
+    // attribute: browsers give the server's Content-Disposition filename precedence over the
+    // download attribute, so the backend is the only place that can put the number in the name.
+    triggerDownload(withSeq(href, result.counter), reportFileName(label, result.counter))
+  }
+
+  function commitCounter() {
+    const value = Number(text)
+    if (!Number.isInteger(value) || value < 0) {
+      setText(String(counter))
+      return
+    }
+    if (value === counter) return
+    startTransition(async () => {
+      const result = await setSupplierExportCounterAction(administratorId, value)
+      if ("error" in result) {
+        toast.error(result.error)
+        setText(String(counter))
+        return
+      }
+      setCounter(result.counter)
+      setText(String(result.counter))
+    })
+  }
+
+  const button = (
+    <Button
+      type="button"
+      size="icon"
+      variant="outline"
+      className="h-7 w-7"
+      disabled={blocked || exporting}
+      aria-label={`Gerar PDF de ${label}`}
+      onClick={handleExport}
+    >
+      <FileText className="h-4 w-4" />
+    </Button>
+  )
+
+  return (
+    <span className="flex items-center gap-1">
+      <Input
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={commitCounter}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault()
+            ;(e.target as HTMLInputElement).blur()
+          }
+        }}
+        inputMode="numeric"
+        aria-label={`Contador de exportação de ${label}`}
+        title="Número que vai no nome do PDF; sobe a cada exportação"
+        className="h-7 w-12 text-center text-xs"
+      />
+      {blocked ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="inline-flex cursor-not-allowed">{button}</span>
+          </TooltipTrigger>
+          <TooltipContent>
+            {missingCost === 1
+              ? "1 emissão está sem milheiro de custo."
+              : `${missingCost} emissões estão sem milheiro de custo.`}
+          </TooltipContent>
+        </Tooltip>
+      ) : (
+        button
+      )}
+    </span>
+  )
+}
+
 // A row is an account or an administrator depending on the grouping, and the fields that
 // identify it are new. Falling back to the account ones keeps the screen working against an
 // API published before this - which is a normal state here, not an edge case.
@@ -210,6 +418,19 @@ export function SalesSuppliersTable({ balances, query, groupBy }: SalesSuppliers
     [balances, hidden],
   )
   const hiddenCount = balances.length - visible.length
+
+  // The administrators the "all suppliers" PDF covers - every distinct administrator across the
+  // visible rows. Their counters are bumped together when that PDF is generated.
+  const includedAdministratorIds = useMemo(
+    () => [
+      ...new Set(
+        visible
+          .map((balance) => balance.administrator_id)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ],
+    [visible],
+  )
 
   // Summed in the browser rather than asked of the API: the table does not paginate, so
   // these are exactly the rows on screen - which is what "total do que está aparecendo"
@@ -304,10 +525,10 @@ export function SalesSuppliersTable({ balances, query, groupBy }: SalesSuppliers
             </Button>
           </span>
         )}
-        <ReportButton
+        <AllSuppliersExport
           href={reportHref(query, excludedAccountIds)}
           missingCost={totals.missingCost}
-          label="Gerar PDF de todas"
+          administratorIds={includedAdministratorIds}
         />
       </div>
 
@@ -570,14 +791,26 @@ function SupplierAccountRows({
               {/* The bucket for accounts nobody administers is not an administrator id, so
                   there is no filter that would reproduce this row in a document. Better no
                   button than one that generates the wrong PDF. */}
-              {groupKeyOf(balance) !== NO_ADMINISTRATOR_KEY && (
-                <ReportButton
-                  href={reportHref}
-                  missingCost={lines.missingCost}
-                  label={`Gerar PDF de ${groupLabelOf(balance)}`}
-                  iconOnly
-                />
-              )}
+              {groupKeyOf(balance) !== NO_ADMINISTRATOR_KEY &&
+                (byAdministrator ? (
+                  // Per administrator: the export is numbered, so it goes through the counter
+                  // flow (increment, then download named with the new number) instead of a
+                  // plain link.
+                  <AdministratorExport
+                    administratorId={balance.administrator_id ?? groupKeyOf(balance)}
+                    label={groupLabelOf(balance)}
+                    href={reportHref}
+                    missingCost={lines.missingCost}
+                    initialCounter={balance.export_counter ?? 0}
+                  />
+                ) : (
+                  <ReportButton
+                    href={reportHref}
+                    missingCost={lines.missingCost}
+                    label={`Gerar PDF de ${groupLabelOf(balance)}`}
+                    iconOnly
+                  />
+                ))}
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button

@@ -10,9 +10,15 @@ import (
 	"time"
 
 	"github.com/murandido/m-80-backend/internal/api"
+	"github.com/murandido/m-80-backend/internal/azul"
+	"github.com/murandido/m-80-backend/internal/azulsync"
+	"github.com/murandido/m-80-backend/internal/booking"
+	"github.com/murandido/m-80-backend/internal/bookingproviders"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/events"
 	"github.com/murandido/m-80-backend/internal/health"
+	"github.com/murandido/m-80-backend/internal/smiles"
+	"github.com/murandido/m-80-backend/internal/smilessync"
 	"github.com/murandido/m-80-backend/internal/traveos"
 )
 
@@ -99,6 +105,12 @@ func main() {
 		log.Fatal("❌ Failed to seed point batch origins: ", err)
 	}
 
+	// Fills the Azul city-to-IATA table from the Go default the first time; never overwrites a
+	// code the operator assigned by hand.
+	if err := data.SeedAzulCityCodes(data.DB); err != nil {
+		log.Fatal("❌ Failed to seed azul city codes: ", err)
+	}
+
 	// Encrypts whatever CPFs migration 38 left in plain text. Not fatal on purpose: it reports
 	// the rows it could not rewrite and lets the API come up, because a single duplicate
 	// document is not a reason to leave the panel down.
@@ -121,6 +133,35 @@ func main() {
 		traveosClient = nil
 	}
 
+	// Who answers when an itinerary is needed. Traveos is the fallback rather than
+	// the only option: each airline's own integration registers here as it is
+	// built, and which one is actually tried for a carrier is decided per row by
+	// airlines.direct_booking_enabled - see internal/issuance.resolveProviders.
+	//
+	// The provider is built inside the branch so that "no client" stays a real nil:
+	// a nil *traveos.Client stored in an interface is not nil, and the registry
+	// would then believe it has a fallback.
+	var fallback booking.Provider
+	if traveosClient != nil {
+		fallback = traveos.NewProvider(traveosClient)
+	}
+	bookings := booking.NewRegistry(fallback)
+
+	// The Azul client reads both the account statement and, now, the booking behind
+	// an issuance. It is built once here rather than inside the sync block because
+	// the two are independent: the booking lookup is anonymous and has nothing to do
+	// with AZUL_SYNC_ENABLED, which only governs the statement ticker.
+	//
+	// A missing Firebase config disables the carrier with a warning instead of
+	// stopping the panel from booting - the same tolerance Traveos gets, and the
+	// same reason: an issuance is still worth registering without its itinerary.
+	azulClient, err := azul.New()
+	if err != nil {
+		slog.Warn("azul integration is disabled", "err", err)
+		azulClient = nil
+	}
+	bookingproviders.RegisterDirect(bookings, azulClient)
+
 	// The dependency lights the panel shows. The probes run here, on their own
 	// tickers, rather than inside the request that reads them: a vendor call
 	// takes seconds, and one probe per browser refresh would be both slow and
@@ -138,8 +179,61 @@ func main() {
 	go monitor.Run(monitorCtx, health.DependencyBot, time.Minute, health.BotProbe(os.Getenv("BOT_INTERNAL_URL")))
 	go monitor.Run(monitorCtx, health.DependencyTraveos, 2*time.Minute, health.TraveosProbe(traveosClient))
 
+	// Every real lookup reports whether the carrier answered, which is a fresher and
+	// far cheaper signal than any ticker for an airline that is actually being used.
+	bookings.Watch(monitor.Observe)
+
+	// And a slow synthetic probe underneath it, for the carriers nobody happened to
+	// look anything up on today. It asks about a booking that cannot exist and reads
+	// the refusal; ten minutes rather than two, because unlike the vendor these are
+	// requests to an airline's public edge that this integration depends on not being
+	// noticed by.
+	for _, code := range bookings.Codes() {
+		provider, _ := bookings.Direct(code)
+		prober, ok := provider.(booking.Prober)
+		if !ok {
+			continue
+		}
+		go monitor.RunProvider(monitorCtx, provider.Name(), 10*time.Minute, health.BookingProviderProbe(prober))
+	}
+
+	// The Azul statement sync polls the connected inventory accounts on a ticker and stores
+	// their statements for reconciliation. Off by default and never even constructed unless
+	// AZUL_SYNC_ENABLED is set: the whole feature ships inert, to be turned on per environment
+	// after a account is connected and watched. A missing Firebase config disables it with a
+	// warning rather than stopping the panel from booting, exactly like Traveos above.
+	if os.Getenv("AZUL_SYNC_ENABLED") == "true" {
+		if azulClient == nil {
+			slog.Warn("azul statement sync is disabled", "err", azul.ErrMissingConfig)
+		} else {
+			interval := azulSyncInterval()
+			go azulsync.NewLoop(data.DB, azulClient, interval).Run(context.Background())
+			slog.Info("azul statement sync enabled", "interval", interval.String())
+		}
+	}
+
+	// One guard for the whole process, created here because two things need the same one: the
+	// connect handlers (via the router) and the Smiles ticker below. The tenant revokes a
+	// session whose refresh token is used twice, so a connect's first sync and a ticker round
+	// must never overlap on one account - and two guards would not know about each other.
+	smilesGuard := smilessync.NewSessionGuard()
+
+	// The Smiles statement sync polls the connected inventory accounts on a ticker and stores
+	// their statements for reconciliation. Off by default, exactly like the Azul one above, and
+	// for the same reason: the feature ships inert and is turned on per environment once an
+	// account has been connected and watched.
+	//
+	// Unlike Azul's, the client needs no configuration to build - what a round needs is the
+	// account's own stored session - so there is nothing here that can disable it with a
+	// warning.
+	if os.Getenv("SMILES_SYNC_ENABLED") == "true" {
+		interval := smilesSyncInterval()
+		go smilessync.NewLoop(data.DB, smiles.New(), smilesGuard, interval).Run(context.Background())
+		slog.Info("smiles statement sync enabled", "interval", interval.String())
+	}
+
 	// config router
-	r := api.NewRouter(data.DB, broker, traveosClient, monitor)
+	r := api.NewRouter(data.DB, broker, bookings, monitor, smilesGuard)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -173,4 +267,38 @@ func main() {
 		panic(err)
 	}
 
+}
+
+// smilesSyncInterval reads SMILES_SYNC_INTERVAL as a Go duration (e.g. "10m"), falling back to
+// the package default when it is unset or unparseable - a typo in the env should slow the sync
+// to the safe default, not crash the boot.
+func smilesSyncInterval() time.Duration {
+	raw := os.Getenv("SMILES_SYNC_INTERVAL")
+	if raw == "" {
+		return smilessync.DefaultInterval
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		slog.Warn("SMILES_SYNC_INTERVAL is not a valid duration; using the default",
+			"value", raw, "default", smilessync.DefaultInterval.String())
+		return smilessync.DefaultInterval
+	}
+	return d
+}
+
+// azulSyncInterval reads AZUL_SYNC_INTERVAL as a Go duration (e.g. "10m"), falling back to the
+// package default when it is unset or unparseable - a typo in the env should slow the sync to
+// the safe default, not crash the boot.
+func azulSyncInterval() time.Duration {
+	raw := os.Getenv("AZUL_SYNC_INTERVAL")
+	if raw == "" {
+		return azulsync.DefaultInterval
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		slog.Warn("AZUL_SYNC_INTERVAL is not a valid duration; using the default",
+			"value", raw, "default", azulsync.DefaultInterval.String())
+		return azulsync.DefaultInterval
+	}
+	return d
 }

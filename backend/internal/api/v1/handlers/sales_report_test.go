@@ -226,11 +226,13 @@ func TestSupplierPeriodLabel_SingleDayIsNotARange(t *testing.T) {
 // The label goes into a Content-Disposition header, so anything that could close the quoted
 // string has to be gone before it gets there.
 func TestSupplierReportFilename_IsSafeInAHeader(t *testing.T) {
+	now := spTime(t, "2026-08-12")
+
 	model := supplierreport.ViewModel{Groups: []supplierreport.Group{
 		{Sections: []supplierreport.Section{{AccountLabel: `João "Zé" da Silva; rm -rf`}}},
 	}}
 
-	got := supplierReportFilename(model)
+	got := supplierReportFilename(model, 0, now)
 	if strings.ContainsAny(got, `";`) {
 		t.Errorf("filename must not carry quotes or semicolons, got %q", got)
 	}
@@ -241,8 +243,26 @@ func TestSupplierReportFilename_IsSafeInAHeader(t *testing.T) {
 	many := supplierreport.ViewModel{Groups: []supplierreport.Group{
 		{Sections: []supplierreport.Section{{}, {}}},
 	}}
-	if got := supplierReportFilename(many); got != "resumo-fornecedores.pdf" {
+	// Several administrators: no single sequence, so the "all suppliers" file is dated.
+	if got := supplierReportFilename(many, 0, now); got != "resumo-fornecedores-2026-08-12.pdf" {
 		t.Errorf("multi-account filename: got %q", got)
+	}
+}
+
+// A per-administrator export carries its sequence number, so a stack of one administrator's
+// summaries stays ordered.
+func TestSupplierReportFilename_CarriesTheSequenceNumber(t *testing.T) {
+	now := spTime(t, "2026-08-12")
+	model := supplierreport.ViewModel{Groups: []supplierreport.Group{
+		{Label: "Wilmara", Sections: []supplierreport.Section{{}}},
+	}}
+
+	if got := supplierReportFilename(model, 7, now); got != "resumo-wilmara-0007.pdf" {
+		t.Errorf("numbered filename: got %q", got)
+	}
+	// seq 0 means "not numbered" - the plain name.
+	if got := supplierReportFilename(model, 0, now); got != "resumo-wilmara.pdf" {
+		t.Errorf("unnumbered filename: got %q", got)
 	}
 }
 
@@ -382,7 +402,7 @@ func TestSupplierReportFilename_UsesTheGroupWhenThereIsOne(t *testing.T) {
 		Sections: []supplierreport.Section{{AccountLabel: "Ambrosina"}, {AccountLabel: "Zulmira"}},
 	}}}
 
-	if got := supplierReportFilename(model); got != "resumo-maria-souza.pdf" {
+	if got := supplierReportFilename(model, 0, spTime(t, "2026-08-12")); got != "resumo-maria-souza.pdf" {
 		t.Errorf("filename: got %q, want %q", got, "resumo-maria-souza.pdf")
 	}
 }

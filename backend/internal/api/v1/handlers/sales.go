@@ -23,6 +23,7 @@ import (
 	"github.com/murandido/m-80-backend/internal/sale"
 	"github.com/murandido/m-80-backend/internal/utils"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // A sale changes through two doors: the issuance behind it, which already announces
@@ -90,6 +91,9 @@ type saleRow struct {
 	PaidCents          int
 	CancelledAt        *time.Time
 
+	ClientPaymentCents  int
+	ClientPaymentPaidOn *time.Time
+
 	AccountID           string
 	AccountNickname     *string
 	AccountLogin        *string
@@ -115,6 +119,8 @@ func saleListQuery(db *gorm.DB) *gorm.DB {
 			issuances.value_of_the_thousand,
 			issuances.taxes,
 			COALESCE(payments.paid_cents, 0) AS paid_cents,
+			COALESCE(payments.client_payment_cents, 0) AS client_payment_cents,
+			payments.client_payment_paid_on,
 			issuances.cancelled_at,
 			issuances.account_id,
 			users.name AS issuer_name,
@@ -133,7 +139,10 @@ func saleListQuery(db *gorm.DB) *gorm.DB {
 		// Aggregated in the join rather than per row: the statement of every sale on the
 		// screen in one pass, instead of one query per line.
 		Joins(`LEFT JOIN (
-			SELECT sale_id, SUM(amount_cents) AS paid_cents
+			SELECT sale_id,
+				SUM(amount_cents) AS paid_cents,
+				SUM(amount_cents) FILTER (WHERE client_payment_id IS NOT NULL) AS client_payment_cents,
+				MAX(paid_on) FILTER (WHERE client_payment_id IS NOT NULL) AS client_payment_paid_on
 			FROM sale_payments
 			GROUP BY sale_id
 		) AS payments ON payments.sale_id = sales.id`).
@@ -164,9 +173,17 @@ func toSaleResponse(row saleRow) schemas.SaleResponse {
 		amount += *row.Taxes
 	}
 
+	var clientPaymentPaidOn *string
+	if row.ClientPaymentPaidOn != nil {
+		day := row.ClientPaymentPaidOn.Format("2006-01-02")
+		clientPaymentPaidOn = &day
+	}
+
 	return schemas.SaleResponse{
-		ID:        row.ID,
-		PaidCents: row.PaidCents,
+		ID:                  row.ID,
+		PaidCents:           row.PaidCents,
+		ClientPaymentCents:  row.ClientPaymentCents,
+		ClientPaymentPaidOn: clientPaymentPaidOn,
 		BalanceCents: sale.BalanceCents(
 			sale.Amount{Cents: amount, Cancelled: row.CancelledAt != nil}, row.PaidCents),
 		IssuanceID:          row.IssuanceID,
@@ -321,8 +338,11 @@ func (h *SaleHandler) GetSales(w http.ResponseWriter, r *http.Request) {
 		r,
 	)
 
+	// Oldest first, like the spreadsheet the screen replaced: it is read top to bottom in
+	// the order the tickets were issued, which is also the order a client's payments are
+	// spread in - the partly paid row sits right below the settled ones.
 	var rows []saleRow
-	if err := query.Order("issuances.created_at desc").Scan(&rows).Error; err != nil {
+	if err := query.Order("issuances.created_at asc, sales.id").Scan(&rows).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch sales")
 		return
 	}
@@ -360,8 +380,8 @@ func (h *SaleHandler) GetSalesExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Same filters as the listing, but ascending: the screen shows the newest sale first,
-	// while a spreadsheet is read top to bottom in chronological order.
+	// Same filters and the same chronological order as the listing, so the spreadsheet
+	// reads like the screen it was exported from.
 	query := applySaleListFilters(
 		saleListQuery(h.DB).Where("issuances.agency_id = ?", agencyID),
 		r,
@@ -419,6 +439,7 @@ func (h *SaleHandler) GetSalesExport(w http.ResponseWriter, r *http.Request) {
 // @Failure      400  {object}  schemas.ErrorResponse "Payload inválido ou nenhum campo informado"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      404  {object}  schemas.ErrorResponse "Venda não encontrada"
+// @Failure      409  {object}  schemas.ErrorResponse "paid=false numa venda paga por pagamento do cliente"
 // @Failure      422  {object}  schemas.ErrorResponse "Cliente não encontrado"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao atualizar venda"
 // @Router       /sales/{id} [patch]
@@ -491,30 +512,79 @@ func (h *SaleHandler) UpdateSale(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Sales the linked client's credit reached besides this one, so their rows refresh too.
-	var creditSaleIDs []string
+	// The switch only takes back what the switch (or the old per-sale statement) put on the
+	// sale. Money a client's payment put here is taken back by undoing that payment:
+	// clearing its lines would last until the next replay put them back. So a sale covered
+	// only by client payments has nothing the switch can undo, and says so.
+	if req.Paid != nil && !*req.Paid {
+		var lines struct {
+			Own    int64
+			Spread int64
+		}
+		if err := h.DB.Model(&data.SalePayment{}).
+			Select(`COUNT(*) FILTER (WHERE client_payment_id IS NULL) AS own,
+				COUNT(*) FILTER (WHERE client_payment_id IS NOT NULL) AS spread`).
+			Where("sale_id = ?", sale.ID).
+			Scan(&lines).Error; err != nil {
+			utils.SendError(w, r, http.StatusInternalServerError, "Failed to update sale: "+err.Error())
+			return
+		}
+		if lines.Own == 0 && lines.Spread > 0 {
+			utils.SendError(w, r, http.StatusConflict, "Essa venda foi paga por um pagamento do cliente; desfaça o pagamento no histórico")
+			return
+		}
+	}
+
+	// Who the sale belonged to before and after, for the replay below. Both, because the
+	// money of a client's payments follows the client, not the sale: moving a paid sale
+	// takes the old client's money off it (back to their other sales, or their credit)
+	// and lets the new client's credit reach it.
+	var clientsToRebalance []string
+	if _, ok := present["client_id"]; ok {
+		if sale.ClientID != nil {
+			clientsToRebalance = append(clientsToRebalance, *sale.ClientID)
+		}
+		if req.ClientID != nil && (sale.ClientID == nil || *sale.ClientID != *req.ClientID) {
+			clientsToRebalance = append(clientsToRebalance, *req.ClientID)
+		}
+	}
+
+	// Sales the replay changed besides this one, so their rows refresh too.
+	var rebalancedSaleIDs []string
 	err = h.DB.Transaction(func(tx *gorm.DB) error {
 		if len(updates) > 0 {
 			if err := tx.Model(&sale).Updates(updates).Error; err != nil {
 				return err
 			}
 		}
-		// Sales are born without a client, so linking one is the moment a surplus the
-		// client left earlier can come off it - see sale.ApplyClientCredit.
-		if req.ClientID != nil {
-			spent, err := applyCreditOnLink(tx, *req.ClientID, userCtx.ID)
+		for _, clientID := range clientsToRebalance {
+			changed, err := rebalanceClient(tx, clientID)
 			if err != nil {
 				return err
 			}
-			creditSaleIDs = spent
+			rebalancedSaleIDs = append(rebalancedSaleIDs, changed...)
 		}
 		// paid is no longer a column an operator sets: it is the sum of the sale's
 		// payments. A client still sending it gets that intent translated into the
 		// statement - see settleSaleFromLegacyFlag for why this exists and when it goes.
-		if req.Paid != nil {
-			return settleSaleFromLegacyFlag(tx, sale.ID, *req.Paid, userCtx.ID)
+		if req.Paid == nil {
+			return nil
 		}
-		return nil
+		if err := settleSaleFromLegacyFlag(tx, sale.ID, *req.Paid, userCtx.ID); err != nil {
+			return err
+		}
+		// Clearing the sale's own lines leaves room the client's credit can fill, and
+		// settling it by hand frees what a client payment had put there for the next sale.
+		var owner data.Sale
+		if err := tx.Select("client_id").First(&owner, "id = ?", sale.ID).Error; err != nil {
+			return err
+		}
+		if owner.ClientID == nil {
+			return nil
+		}
+		changed, err := rebalanceClient(tx, *owner.ClientID)
+		rebalancedSaleIDs = append(rebalancedSaleIDs, changed...)
+		return err
 	})
 	if err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to update sale: "+err.Error())
@@ -535,7 +605,7 @@ func (h *SaleHandler) UpdateSale(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.broadcastSaleUpdated(sale.ID)
-	for _, saleID := range creditSaleIDs {
+	for _, saleID := range rebalancedSaleIDs {
 		if saleID != sale.ID {
 			h.broadcastSaleUpdated(saleID)
 		}
@@ -574,13 +644,16 @@ type supplierIssuanceRow struct {
 	// data.Account.OwnsPointInventory.
 	OwnsPointInventory bool
 
-	AccountLogin        *string
-	AccountNickname     *string
-	HolderName          *string
-	AdministratorID     *string
-	AdministratorName   *string
-	LoyaltyProgramName  string
-	LoyaltyProgramColor string
+	AccountLogin      *string
+	AccountNickname   *string
+	HolderName        *string
+	AdministratorID   *string
+	AdministratorName *string
+	// AdministratorExportCounter is the administrator's supplier-PDF export count. Nil on an
+	// account with no administrator (the LEFT JOIN produces NULL there).
+	AdministratorExportCounter *int
+	LoyaltyProgramName         string
+	LoyaltyProgramColor        string
 	// LoyaltyProgramCode and DefaultAirlineCode resolve the brand mark on the payment
 	// summary, program first and its airline second - TudoAzul and AZUL share artwork,
 	// Smiles and GOL do not. They stay off the JSON response: the panel has no use for
@@ -672,6 +745,7 @@ func (h *SaleHandler) fetchSupplierRows(r *http.Request) ([]supplierIssuanceRow,
 			holders.name AS holder_name,
 			accounts.administrator_id,
 			administrators.name AS administrator_name,
+			administrators.report_export_counter AS administrator_export_counter,
 			loyalty_programs.name AS loyalty_program_name,
 			loyalty_programs.color AS loyalty_program_color,
 			loyalty_programs.code AS loyalty_program_code,
@@ -859,6 +933,11 @@ func aggregateSupplierBalances(
 			NetPoints:           acc.issuedPoints - acc.refundedPoints,
 			Issuances:           acc.statement,
 		}
+		// The export counter belongs to the administrator, so it is only meaningful on an
+		// administrator-grouped row that actually has one (never the "Sem administrador" bucket).
+		if grouping == groupByAdministrator && acc.row.AdministratorID != nil {
+			balance.ExportCounter = acc.row.AdministratorExportCounter
+		}
 		balances = append(balances, balance)
 	}
 
@@ -970,6 +1049,137 @@ func (h *SaleHandler) UpdateSupplierIssuances(w http.ResponseWriter, r *http.Req
 
 	utils.SendJSON(w, r, http.StatusOK, "Payment terms updated successfully",
 		schemas.UpdateSupplierIssuancesResponse{Updated: int(result.RowsAffected)})
+}
+
+// IncrementSupplierExportCounter handles the POST /sales/suppliers/export-counter route.
+// @Summary      Incrementar o contador de exportação do administrador
+// @Description  Soma 1 ao contador de exportação do PDF de pagamento do administrador (people.report_export_counter) e devolve o novo valor, que o painel usa no nome do arquivo. Chamado a cada exportação. Rota restrita a administradores.
+// @Tags         Vendas
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        request  body  schemas.IncrementSupplierExportCounterRequest  true  "Administrador"
+// @Success      200  {object}  schemas.SupplierExportCounterSingleResponse
+// @Failure      400  {object}  schemas.ErrorResponse "Payload inválido"
+// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      403  {object}  schemas.ErrorResponse "Usuário não é administrador"
+// @Failure      404  {object}  schemas.ErrorResponse "Administrador não encontrado"
+// @Failure      500  {object}  schemas.ErrorResponse "Erro ao incrementar o contador"
+// @Router       /sales/suppliers/export-counter [post]
+func (h *SaleHandler) IncrementSupplierExportCounter(w http.ResponseWriter, r *http.Request) {
+	var req schemas.IncrementSupplierExportCounterRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		utils.SendError(w, r, http.StatusBadRequest, "Invalid JSON payload")
+		return
+	}
+	if err := h.Validator.Struct(req); err != nil {
+		utils.SendError(w, r, http.StatusBadRequest, "Validation failed: "+err.Error())
+		return
+	}
+
+	// One atomic statement with RETURNING: the increment and the value read back are the same
+	// row-level operation, so two concurrent exports never hand back the same number.
+	person := data.Person{ID: req.AdministratorID}
+	result := h.DB.Model(&person).
+		Clauses(clause.Returning{Columns: []clause.Column{{Name: "report_export_counter"}}}).
+		Where("id = ?", req.AdministratorID).
+		UpdateColumn("report_export_counter", gorm.Expr("report_export_counter + 1"))
+	if result.Error != nil {
+		slog.Error("failed to increment supplier export counter", "administrator_id", req.AdministratorID, "err", result.Error)
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to increment the export counter")
+		return
+	}
+	if result.RowsAffected == 0 {
+		utils.SendError(w, r, http.StatusNotFound, "Administrator not found")
+		return
+	}
+
+	utils.SendJSON(w, r, http.StatusOK, "Export counter incremented successfully",
+		schemas.SupplierExportCounterResponse{Counter: person.ReportExportCounter})
+}
+
+// SetSupplierExportCounter handles the PUT /sales/suppliers/export-counter route.
+// @Summary      Definir o contador de exportação do administrador
+// @Description  Grava um valor exato no contador de exportação do administrador (people.report_export_counter), para corrigi-lo ou reiniciar a sequência à mão. Rota restrita a administradores.
+// @Tags         Vendas
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        request  body  schemas.SetSupplierExportCounterRequest  true  "Administrador e valor"
+// @Success      200  {object}  schemas.SupplierExportCounterSingleResponse
+// @Failure      400  {object}  schemas.ErrorResponse "Payload inválido"
+// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      403  {object}  schemas.ErrorResponse "Usuário não é administrador"
+// @Failure      404  {object}  schemas.ErrorResponse "Administrador não encontrado"
+// @Failure      500  {object}  schemas.ErrorResponse "Erro ao gravar o contador"
+// @Router       /sales/suppliers/export-counter [put]
+func (h *SaleHandler) SetSupplierExportCounter(w http.ResponseWriter, r *http.Request) {
+	var req schemas.SetSupplierExportCounterRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		utils.SendError(w, r, http.StatusBadRequest, "Invalid JSON payload")
+		return
+	}
+	if err := h.Validator.Struct(req); err != nil {
+		utils.SendError(w, r, http.StatusBadRequest, "Validation failed: "+err.Error())
+		return
+	}
+
+	result := h.DB.Model(&data.Person{}).
+		Where("id = ?", req.AdministratorID).
+		UpdateColumn("report_export_counter", req.Counter)
+	if result.Error != nil {
+		slog.Error("failed to set supplier export counter", "administrator_id", req.AdministratorID, "err", result.Error)
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to set the export counter")
+		return
+	}
+	if result.RowsAffected == 0 {
+		utils.SendError(w, r, http.StatusNotFound, "Administrator not found")
+		return
+	}
+
+	utils.SendJSON(w, r, http.StatusOK, "Export counter updated successfully",
+		schemas.SupplierExportCounterResponse{Counter: req.Counter})
+}
+
+// BulkIncrementSupplierExportCounter handles the POST /sales/suppliers/export-counter/bulk route.
+// @Summary      Incrementar o contador de vários administradores
+// @Description  Soma 1 ao contador de exportação de cada administrador informado, numa única operação. Usado pelo botão "Gerar PDF de todas", que cobre vários administradores de uma vez. Rota restrita a administradores.
+// @Tags         Vendas
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        request  body  schemas.BulkIncrementSupplierExportCounterRequest  true  "Administradores"
+// @Success      200  {object}  schemas.BulkSupplierExportCounterSingleResponse
+// @Failure      400  {object}  schemas.ErrorResponse "Payload inválido"
+// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      403  {object}  schemas.ErrorResponse "Usuário não é administrador"
+// @Failure      500  {object}  schemas.ErrorResponse "Erro ao incrementar os contadores"
+// @Router       /sales/suppliers/export-counter/bulk [post]
+func (h *SaleHandler) BulkIncrementSupplierExportCounter(w http.ResponseWriter, r *http.Request) {
+	var req schemas.BulkIncrementSupplierExportCounterRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		utils.SendError(w, r, http.StatusBadRequest, "Invalid JSON payload")
+		return
+	}
+	if err := h.Validator.Struct(req); err != nil {
+		utils.SendError(w, r, http.StatusBadRequest, "Validation failed: "+err.Error())
+		return
+	}
+
+	// One statement for the whole set, so the "all suppliers" export never bumps half the
+	// administrators and then fails.
+	result := h.DB.Model(&data.Person{}).
+		Where("id IN ?", req.AdministratorIDs).
+		UpdateColumn("report_export_counter", gorm.Expr("report_export_counter + 1"))
+	if result.Error != nil {
+		slog.Error("failed to bulk-increment supplier export counters",
+			"administrator_count", len(req.AdministratorIDs), "err", result.Error)
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to increment the export counters")
+		return
+	}
+
+	utils.SendJSON(w, r, http.StatusOK, "Export counters incremented successfully",
+		schemas.BulkSupplierExportCounterResponse{Updated: int(result.RowsAffected)})
 }
 
 // supplierStatementLine builds one line of an account's statement. Points and taxes are

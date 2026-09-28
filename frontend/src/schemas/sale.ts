@@ -22,6 +22,11 @@ export const saleSchema = z.object({
   paid_cents: z.number().default(0),
   // What is still missing. Zero or less means settled, which is what `paid` reports.
   balance_cents: z.number().default(0),
+  // The part of paid_cents that came from the client's lump-sum payments, and the day of
+  // the latest of them. The Pago switch cannot take that part back - it is undone in the
+  // client's payment history. Defaulted so an older API reads as "none".
+  client_payment_cents: z.number().default(0),
+  client_payment_paid_on: z.string().nullish(),
   account_id: z.string(),
   account_label: z.string(),
   loyalty_program_name: z.string(),
@@ -34,7 +39,8 @@ export const saleSchema = z.object({
 export type Sale = z.infer<typeof saleSchema>
 
 // A lump sum from a client, spread by the backend over their open sales oldest first. What
-// no open sale absorbs is kept as the client's credit for their next sales.
+// no open sale absorbs is the client's credit, taken by their next sales. The payment
+// stays in the client's history and can be undone there.
 export const createClientPaymentSchema = {
   request: z.object({
     client_id: z.string(),
@@ -46,9 +52,61 @@ export const createClientPaymentSchema = {
     message: z.string(),
     data: z
       .object({
+        client_payment_id: z.string(),
         sale_ids: z.array(z.string()),
         applied_cents: z.number(),
         settled_sales: z.number(),
+        credit_cents: z.number(),
+      })
+      .nullish(),
+  }),
+}
+
+export const clientPaymentAllocationSchema = z.object({
+  sale_id: z.string(),
+  program_locator: z.string(),
+  amount_cents: z.number(),
+})
+
+// One lump sum in the client's history. An undone one keeps its row (deleted_at set) and
+// no longer covers any sale.
+export const clientPaymentHistoryItemSchema = z.object({
+  id: z.string(),
+  amount_cents: z.number(),
+  paid_on: z.string(),
+  created_by_name: z.string(),
+  created_at: z.string(),
+  deleted_at: z.string().nullable(),
+  deleted_by_name: z.string().nullable(),
+  allocations: z.array(clientPaymentAllocationSchema),
+})
+
+export type ClientPaymentHistoryItem = z.infer<typeof clientPaymentHistoryItemSchema>
+
+export const getClientPaymentsSchema = {
+  response: z.object({
+    success: z.boolean(),
+    message: z.string(),
+    data: z
+      .object({
+        credit_cents: z.number(),
+        payments: z.array(clientPaymentHistoryItemSchema),
+      })
+      .nullish(),
+  }),
+}
+
+export type ClientPaymentHistory = NonNullable<
+  z.infer<typeof getClientPaymentsSchema.response>["data"]
+>
+
+export const undoClientPaymentSchema = {
+  response: z.object({
+    success: z.boolean(),
+    message: z.string(),
+    data: z
+      .object({
+        sale_ids: z.array(z.string()),
         credit_cents: z.number(),
       })
       .nullish(),
@@ -133,6 +191,9 @@ export const supplierBalanceSchema = z.object({
   loyalty_program_color: z.string(),
   administrator_id: z.string().nullable(),
   administrator_name: z.string().nullable(),
+  // The administrator's supplier-PDF export count. Present only on an administrator-grouped
+  // row; absent otherwise, and on an API published before this field existed.
+  export_counter: z.number().nullish(),
   issued_points: z.number(),
   refunded_points: z.number(),
   net_points: z.number(),

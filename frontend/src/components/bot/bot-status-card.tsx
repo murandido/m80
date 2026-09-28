@@ -61,7 +61,7 @@ export function BotStatusCard({
     })
   }, [])
 
-  useSSE("/api/events", { "bot.status": refresh })
+  useSSE("/api/events", { "bot.status": refresh }, { onReconnect: refresh })
 
   function handleStartPairing(method: "phone" | "qr") {
     if (method === "phone" && phone.trim() === "") {

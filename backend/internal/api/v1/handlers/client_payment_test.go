@@ -10,11 +10,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/events"
+	"github.com/murandido/m-80-backend/internal/sale"
 	"gorm.io/gorm"
 )
 
@@ -82,15 +84,11 @@ func paidCentsOf(t *testing.T, tx *gorm.DB, saleID string) int {
 
 func creditOf(t *testing.T, tx *gorm.DB, clientID string) int {
 	t.Helper()
-	var total *int
-	if err := tx.Model(&data.ClientCredit{}).Where("client_id = ?", clientID).
-		Select("SUM(amount_cents)").Scan(&total).Error; err != nil {
-		t.Fatalf("failed to sum credit: %v", err)
+	credit, err := sale.CreditOf(tx, clientID)
+	if err != nil {
+		t.Fatalf("failed to read credit: %v", err)
 	}
-	if total == nil {
-		return 0
-	}
-	return *total
+	return credit
 }
 
 func TestCreateClientPayment_SpreadsOldestFirst(t *testing.T) {
@@ -134,7 +132,7 @@ func TestCreateClientPayment_SpreadsOldestFirst(t *testing.T) {
 	})
 }
 
-func TestCreateClientPayment_SurplusBecomesCreditSpentOnTheNextLink(t *testing.T) {
+func TestCreateClientPayment_SurplusBecomesCredit(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		client := seedClient(t, tx)
 		only := seedClientSale(t, tx, client.ID, 40000, time.Now().Add(-time.Hour))
@@ -143,53 +141,49 @@ func TestCreateClientPayment_SurplusBecomesCreditSpentOnTheNextLink(t *testing.T
 		if rec.Code != http.StatusCreated {
 			t.Fatalf("status: got %d, want 201 (body: %s)", rec.Code, rec.Body.String())
 		}
+		var resp clientPaymentEnvelope
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
 		if got := paidCentsOf(t, tx, only.ID); got != 40000 {
 			t.Errorf("sale paid: got %d, want 40000 - never more than it is worth", got)
 		}
 		if got := creditOf(t, tx, client.ID); got != 60000 {
-			t.Fatalf("credit: got %d, want 60000", got)
+			t.Errorf("credit: got %d, want 60000", got)
 		}
-
-		// A later sale, born without a client like every sale, picks the credit up when
-		// it is linked.
-		next, _ := seedSaleFixture(t, tx, defaultAgency(t, tx).ID)
-		if err := tx.Model(&next).UpdateColumn("value_of_the_thousand", 25000).Error; err != nil {
-			t.Fatalf("failed to price the issuance: %v", err)
-		}
-		var nextSale data.Sale
-		if err := tx.First(&nextSale, "issuance_id = ?", next.ID).Error; err != nil {
-			t.Fatalf("failed to read the sale: %v", err)
-		}
-		if rec := callUpdateSale(t, tx, nextSale.ID, `{"client_id":"`+client.ID+`"}`); rec.Code != http.StatusOK {
-			t.Fatalf("link status: got %d, want 200 (body: %s)", rec.Code, rec.Body.String())
-		}
-
-		// points 1000 at 25000 per thousand = 25000 cents.
-		if got := paidCentsOf(t, tx, nextSale.ID); got != 25000 {
-			t.Errorf("linked sale paid from credit: got %d, want 25000", got)
-		}
-		if got := creditOf(t, tx, client.ID); got != 35000 {
-			t.Errorf("credit after the link: got %d, want 35000", got)
+		if resp.Data.ClientPaymentID == "" || resp.Data.AppliedCents != 40000 || resp.Data.CreditCents != 60000 {
+			t.Errorf("response: got %+v", resp.Data)
 		}
 	})
 }
 
-func TestCreateClientPayment_ExistingCreditIsSpentFirst(t *testing.T) {
+// A second payment continues where the first stopped, and one dated before it is replayed
+// first: the spread follows when the money came in, not when it was typed.
+func TestCreateClientPayment_ReplaysPaymentsInTheOrderTheyCameIn(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		client := seedClient(t, tx)
-		actor := createUser(t, tx, "Operador "+uuid.New().String()[:8])
-		create(t, tx, &data.ClientCredit{ClientID: client.ID, AmountCents: 10000, CreatedByID: actor.ID})
-		sale := seedClientSale(t, tx, client.ID, 30000, time.Now().Add(-time.Hour))
+		base := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+		first := seedClientSale(t, tx, client.ID, 10000, base)
+		second := seedClientSale(t, tx, client.ID, 10000, base.Add(24*time.Hour))
 
-		rec := callCreateClientPayment(t, tx, clientPaymentBody(client.ID, 5000))
-		if rec.Code != http.StatusCreated {
-			t.Fatalf("status: got %d, want 201 (body: %s)", rec.Code, rec.Body.String())
+		later := `{"client_id":"` + client.ID + `","amount_cents":6000,"paid_on":"2026-09-20"}`
+		earlier := `{"client_id":"` + client.ID + `","amount_cents":8000,"paid_on":"2026-09-10"}`
+		for _, body := range []string{later, earlier} {
+			if rec := callCreateClientPayment(t, tx, body); rec.Code != http.StatusCreated {
+				t.Fatalf("status: got %d, want 201 (body: %s)", rec.Code, rec.Body.String())
+			}
 		}
-		if got := paidCentsOf(t, tx, sale.ID); got != 15000 {
-			t.Errorf("sale paid: got %d, want 10000 of credit + 5000 new", got)
+
+		// Replayed as 8000 (10/09) then 6000 (20/09): the first sale takes 8000 + 2000.
+		var lines []data.SalePayment
+		if err := tx.Where("sale_id = ?", first.ID).Order("paid_on").Find(&lines).Error; err != nil {
+			t.Fatalf("failed to read lines: %v", err)
 		}
-		if got := creditOf(t, tx, client.ID); got != 0 {
-			t.Errorf("credit: got %d, want it spent", got)
+		if len(lines) != 2 || lines[0].AmountCents != 8000 || lines[1].AmountCents != 2000 {
+			t.Errorf("first sale lines: got %+v, want 8000 then 2000", lines)
+		}
+		if got := paidCentsOf(t, tx, second.ID); got != 4000 {
+			t.Errorf("second sale paid: got %d, want 4000", got)
 		}
 	})
 }
@@ -234,6 +228,362 @@ func TestCreateClientPayment_Rejects(t *testing.T) {
 			if rec := callCreateClientPayment(t, tx, tc.body); rec.Code != tc.want {
 				t.Errorf("%s: got %d, want %d (body: %s)", tc.name, rec.Code, tc.want, rec.Body.String())
 			}
+		}
+	})
+}
+
+func callDeleteClientPayment(t *testing.T, tx *gorm.DB, paymentID string) *httptest.ResponseRecorder {
+	t.Helper()
+	handler := NewSaleHandler(tx, events.NewBroker())
+	actor := createUser(t, tx, "Operador "+uuid.New().String()[:8])
+
+	req := httptest.NewRequest(http.MethodDelete, "/sales/client-payments/"+paymentID, nil)
+	routeCtx := chi.NewRouteContext()
+	routeCtx.URLParams.Add("paymentID", paymentID)
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, routeCtx)
+	req = req.WithContext(context.WithValue(ctx, middleware.UserContextKey, actor))
+
+	rec := httptest.NewRecorder()
+	handler.DeleteClientPayment(rec, req)
+	return rec
+}
+
+func recordClientPayment(t *testing.T, tx *gorm.DB, body string) string {
+	t.Helper()
+	rec := callCreateClientPayment(t, tx, body)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status: got %d, want 201 (body: %s)", rec.Code, rec.Body.String())
+	}
+	var resp clientPaymentEnvelope
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	return resp.Data.ClientPaymentID
+}
+
+func isPaid(t *testing.T, tx *gorm.DB, saleID string) bool {
+	t.Helper()
+	var s data.Sale
+	if err := tx.First(&s, "id = ?", saleID).Error; err != nil {
+		t.Fatalf("failed to re-read sale: %v", err)
+	}
+	return s.Paid
+}
+
+// The case that motivated the history: an amount typed with a zero too many. Undoing it
+// must leave no trace in the sales or the credit, and keep the row to explain itself.
+func TestDeleteClientPayment_UndoesAWrongAmount(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		client := seedClient(t, tx)
+		only := seedClientSale(t, tx, client.ID, 40000, time.Now().Add(-time.Hour))
+		paymentID := recordClientPayment(t, tx, clientPaymentBody(client.ID, 4000000))
+
+		if rec := callDeleteClientPayment(t, tx, paymentID); rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+		}
+		if got := paidCentsOf(t, tx, only.ID); got != 0 {
+			t.Errorf("sale paid: got %d, want 0", got)
+		}
+		if isPaid(t, tx, only.ID) {
+			t.Error("expected the sale's paid cache back to false")
+		}
+		if got := creditOf(t, tx, client.ID); got != 0 {
+			t.Errorf("credit: got %d, want 0", got)
+		}
+
+		var payment data.ClientPayment
+		if err := tx.First(&payment, "id = ?", paymentID).Error; err != nil {
+			t.Fatalf("expected the undone payment to stay: %v", err)
+		}
+		if payment.DeletedAt == nil || payment.DeletedByID == nil {
+			t.Errorf("expected deleted_at and deleted_by_id set, got %+v", payment)
+		}
+
+		if rec := callDeleteClientPayment(t, tx, paymentID); rec.Code != http.StatusNotFound {
+			t.Errorf("second undo: got %d, want 404", rec.Code)
+		}
+	})
+}
+
+// Undoing a payment in the middle moves the later ones back to where it was: FIFO is a
+// property of the whole history, not of the order things were typed and undone.
+func TestDeleteClientPayment_LaterPaymentsTakeItsPlace(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		client := seedClient(t, tx)
+		base := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+		first := seedClientSale(t, tx, client.ID, 10000, base)
+		second := seedClientSale(t, tx, client.ID, 10000, base.Add(24*time.Hour))
+		third := seedClientSale(t, tx, client.ID, 10000, base.Add(48*time.Hour))
+
+		body := func(day string) string {
+			return `{"client_id":"` + client.ID + `","amount_cents":10000,"paid_on":"2026-09-` + day + `"}`
+		}
+		recordClientPayment(t, tx, body("10"))
+		middle := recordClientPayment(t, tx, body("11"))
+		recordClientPayment(t, tx, body("12"))
+
+		rec := callDeleteClientPayment(t, tx, middle)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+		}
+		if !isPaid(t, tx, first.ID) || !isPaid(t, tx, second.ID) || isPaid(t, tx, third.ID) {
+			t.Errorf("paid: got %v %v %v, want the two oldest paid and the newest open",
+				isPaid(t, tx, first.ID), isPaid(t, tx, second.ID), isPaid(t, tx, third.ID))
+		}
+		var resp struct {
+			Data schemas.ClientPaymentUndoResponse `json:"data"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+		if len(resp.Data.SaleIDs) != 2 {
+			t.Errorf("changed sales: got %v, want the second and the third", resp.Data.SaleIDs)
+		}
+	})
+}
+
+func TestGetClientPayments_ListsUndoneAndWhereTheMoneyIs(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		client := seedClient(t, tx)
+		seedClientSale(t, tx, client.ID, 10000, time.Now().Add(-time.Hour))
+		undone := recordClientPayment(t, tx, `{"client_id":"`+client.ID+`","amount_cents":99999,"paid_on":"2026-09-10"}`)
+		callDeleteClientPayment(t, tx, undone)
+		kept := recordClientPayment(t, tx, `{"client_id":"`+client.ID+`","amount_cents":15000,"paid_on":"2026-09-11"}`)
+
+		handler := NewSaleHandler(tx, events.NewBroker())
+		req := httptest.NewRequest(http.MethodGet, "/sales/client-payments?client_id="+client.ID, nil)
+		rec := httptest.NewRecorder()
+		handler.GetClientPayments(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+		}
+		var resp struct {
+			Data schemas.ClientPaymentHistoryResponse `json:"data"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+
+		if resp.Data.CreditCents != 5000 || len(resp.Data.Payments) != 2 {
+			t.Fatalf("history: got %+v", resp.Data)
+		}
+		first, second := resp.Data.Payments[0], resp.Data.Payments[1]
+		if first.ID != undone || first.DeletedAt == nil || first.DeletedByName == nil || len(first.Allocations) != 0 {
+			t.Errorf("undone payment: got %+v", first)
+		}
+		if second.ID != kept || len(second.Allocations) != 1 || second.Allocations[0].AmountCents != 10000 {
+			t.Errorf("kept payment: got %+v", second)
+		}
+	})
+}
+
+// A spread line comes back on the next replay, so the per-sale statement may not delete it.
+func TestDeleteSalePayment_RefusesASpreadLine(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		client := seedClient(t, tx)
+		only := seedClientSale(t, tx, client.ID, 10000, time.Now().Add(-time.Hour))
+		recordClientPayment(t, tx, clientPaymentBody(client.ID, 10000))
+
+		var line data.SalePayment
+		if err := tx.First(&line, "sale_id = ?", only.ID).Error; err != nil {
+			t.Fatalf("failed to read the line: %v", err)
+		}
+
+		handler := NewSaleHandler(tx, events.NewBroker())
+		req := httptest.NewRequest(http.MethodDelete, "/", nil)
+		routeCtx := chi.NewRouteContext()
+		routeCtx.URLParams.Add("id", only.ID)
+		routeCtx.URLParams.Add("paymentID", line.ID)
+		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeCtx))
+		rec := httptest.NewRecorder()
+		handler.DeleteSalePayment(rec, req)
+		if rec.Code != http.StatusConflict {
+			t.Errorf("status: got %d, want 409 (body: %s)", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+// Sales are born without a client, so linking one is when the client's credit reaches it.
+func TestUpdateSale_LinkingASaleSpendsTheClientsCredit(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		client := seedClient(t, tx)
+		recordClientPayment(t, tx, clientPaymentBody(client.ID, 60000))
+
+		next, _ := seedSaleFixture(t, tx, defaultAgency(t, tx).ID)
+		if err := tx.Model(&next).UpdateColumn("value_of_the_thousand", 25000).Error; err != nil {
+			t.Fatalf("failed to price the issuance: %v", err)
+		}
+		var nextSale data.Sale
+		if err := tx.First(&nextSale, "issuance_id = ?", next.ID).Error; err != nil {
+			t.Fatalf("failed to read the sale: %v", err)
+		}
+		if rec := callUpdateSale(t, tx, nextSale.ID, `{"client_id":"`+client.ID+`"}`); rec.Code != http.StatusOK {
+			t.Fatalf("link status: got %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+		}
+
+		// points 1000 at 25000 per thousand = 25000 cents.
+		if got := paidCentsOf(t, tx, nextSale.ID); got != 25000 {
+			t.Errorf("linked sale paid from credit: got %d, want 25000", got)
+		}
+		if got := creditOf(t, tx, client.ID); got != 35000 {
+			t.Errorf("credit after the link: got %d, want 35000", got)
+		}
+	})
+}
+
+// A paid sale moved to the wrong client and back: the money belongs to whoever paid it,
+// so it leaves with the sale's old owner and the new owner's credit takes over.
+func TestUpdateSale_MovingAPaidSaleRebalancesBothClients(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		oldOwner := seedClient(t, tx)
+		newOwner := seedClient(t, tx)
+		base := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+		moved := seedClientSale(t, tx, oldOwner.ID, 10000, base)
+		stays := seedClientSale(t, tx, oldOwner.ID, 10000, base.Add(24*time.Hour))
+		recordClientPayment(t, tx, clientPaymentBody(oldOwner.ID, 10000))
+		recordClientPayment(t, tx, clientPaymentBody(newOwner.ID, 4000))
+
+		if !isPaid(t, tx, moved.ID) {
+			t.Fatal("setup: expected the oldest sale paid by its client")
+		}
+
+		if rec := callUpdateSale(t, tx, moved.ID, `{"client_id":"`+newOwner.ID+`"}`); rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+		}
+
+		if got := paidCentsOf(t, tx, moved.ID); got != 4000 {
+			t.Errorf("moved sale: got %d, want only the new owner's 4000", got)
+		}
+		if got := paidCentsOf(t, tx, stays.ID); got != 10000 {
+			t.Errorf("old owner's other sale: got %d, want the 10000 that left the moved one", got)
+		}
+		if got := creditOf(t, tx, newOwner.ID); got != 0 {
+			t.Errorf("new owner's credit: got %d, want it spent", got)
+		}
+
+		// Unlinking gives the new owner's money back to them as credit.
+		if rec := callUpdateSale(t, tx, moved.ID, `{"client_id":null}`); rec.Code != http.StatusOK {
+			t.Fatalf("unlink status: got %d (body: %s)", rec.Code, rec.Body.String())
+		}
+		if got := paidCentsOf(t, tx, moved.ID); got != 0 {
+			t.Errorf("unlinked sale: got %d, want 0", got)
+		}
+		if got := creditOf(t, tx, newOwner.ID); got != 4000 {
+			t.Errorf("new owner's credit after unlink: got %d, want 4000", got)
+		}
+	})
+}
+
+// The switch cannot reopen a sale a client payment covers - the next replay would pay it
+// again - but it still works on the same sale's own lines once the payment is undone.
+func TestUpdateSale_RefusesToReopenASalePaidByAClientPayment(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		client := seedClient(t, tx)
+		covered := seedClientSale(t, tx, client.ID, 10000, time.Now().Add(-time.Hour))
+		paymentID := recordClientPayment(t, tx, `{"client_id":"`+client.ID+`","amount_cents":10000,"paid_on":"2026-09-14"}`)
+
+		rec := callUpdateSale(t, tx, covered.ID, `{"paid":false}`)
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("status: got %d, want 409 (body: %s)", rec.Code, rec.Body.String())
+		}
+		if got := paidCentsOf(t, tx, covered.ID); got != 10000 {
+			t.Errorf("sale paid: got %d, want it untouched", got)
+		}
+
+		var listed saleSingleResponse
+		rec = callUpdateSale(t, tx, covered.ID, `{"note":"x"}`)
+		if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+		if listed.Data.ClientPaymentCents != 10000 || listed.Data.ClientPaymentPaidOn == nil ||
+			*listed.Data.ClientPaymentPaidOn != "2026-09-14" {
+			t.Errorf("response: got cents %d, day %v", listed.Data.ClientPaymentCents, listed.Data.ClientPaymentPaidOn)
+		}
+
+		callDeleteClientPayment(t, tx, paymentID)
+		if rec := callUpdateSale(t, tx, covered.ID, `{"paid":true}`); rec.Code != http.StatusOK {
+			t.Fatalf("paid status: got %d (body: %s)", rec.Code, rec.Body.String())
+		}
+		if rec := callUpdateSale(t, tx, covered.ID, `{"paid":false}`); rec.Code != http.StatusOK {
+			t.Errorf("switch on the sale's own line: got %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+func TestDeleteClient_RefusesAClientWithPayments(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		client := seedClient(t, tx)
+		recordClientPayment(t, tx, clientPaymentBody(client.ID, 1000))
+
+		handler := NewClientHandler(tx)
+		req := httptest.NewRequest(http.MethodDelete, "/clients/"+client.ID, nil)
+		routeCtx := chi.NewRouteContext()
+		routeCtx.URLParams.Add("id", client.ID)
+		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeCtx))
+		rec := httptest.NewRecorder()
+		handler.DeleteClient(rec, req)
+		// The last statement: the refused DELETE aborts the test transaction.
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Errorf("status: got %d, want 422 (body: %s)", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+// A sale partly paid by the client and settled by hand: the switch takes back only the
+// hand-made line, and the sale goes back to what the client payment covers.
+func TestUpdateSale_SwitchTakesBackOnlyItsOwnLine(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		client := seedClient(t, tx)
+		partial := seedClientSale(t, tx, client.ID, 10000, time.Now().Add(-time.Hour))
+		recordClientPayment(t, tx, clientPaymentBody(client.ID, 6000))
+
+		if rec := callUpdateSale(t, tx, partial.ID, `{"paid":true}`); rec.Code != http.StatusOK {
+			t.Fatalf("settle status: got %d (body: %s)", rec.Code, rec.Body.String())
+		}
+		if got := paidCentsOf(t, tx, partial.ID); got != 10000 {
+			t.Fatalf("settled: got %d, want 10000", got)
+		}
+
+		if rec := callUpdateSale(t, tx, partial.ID, `{"paid":false}`); rec.Code != http.StatusOK {
+			t.Fatalf("reopen status: got %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+		}
+		if got := paidCentsOf(t, tx, partial.ID); got != 6000 {
+			t.Errorf("reopened: got %d, want the client's 6000 back where they were", got)
+		}
+		if rec := callUpdateSale(t, tx, partial.ID, `{"paid":false}`); rec.Code != http.StatusConflict {
+			t.Errorf("reopen again: got %d, want 409 - nothing of the switch's left", rec.Code)
+		}
+	})
+}
+
+// Cancelling a ticket a client payment covered gives that money back to the client: it
+// moves to their next open sale instead of sitting on the cancelled one as a refund due.
+func TestCancelIssuance_MovesClientPaymentToTheNextSale(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		client := seedClient(t, tx)
+		base := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+		cancelled := seedClientSale(t, tx, client.ID, 10000, base)
+		next := seedClientSale(t, tx, client.ID, 10000, base.Add(24*time.Hour))
+		recordClientPayment(t, tx, clientPaymentBody(client.ID, 10000))
+
+		var issuance data.Issuance
+		if err := tx.First(&issuance, "id = ?", cancelled.IssuanceID).Error; err != nil {
+			t.Fatalf("failed to read issuance: %v", err)
+		}
+		now := time.Now()
+		issuance.CancelledAt = &now
+		if err := tx.Save(&issuance).Error; err != nil {
+			t.Fatalf("failed to cancel: %v", err)
+		}
+		if err := sale.RecalculateByIssuance(tx, issuance.ID); err != nil {
+			t.Fatalf("recalculate: %v", err)
+		}
+
+		if got := paidCentsOf(t, tx, cancelled.ID); got != 0 {
+			t.Errorf("cancelled sale: got %d, want the client's money gone from it", got)
+		}
+		if got := paidCentsOf(t, tx, next.ID); got != 10000 {
+			t.Errorf("next sale: got %d, want 10000", got)
 		}
 	})
 }

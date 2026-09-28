@@ -33,6 +33,14 @@ const (
 	// is the finding that pays for this whole package, because those points are being
 	// spent at whatever the neighbouring batch cost.
 	KindAccrual Kind = "accrual"
+	// KindExpiration is points the airline expired. It is counted in the statement's net
+	// change (so a balance check still sees it) but deliberately falls through Reconcile's
+	// switch: point expiration is kept OUT of the FIFO costing for now. It only ever comes
+	// from the synced Azul statement; the CSV/HTML parsers never produced it.
+	KindExpiration Kind = "expiration"
+	// KindOther is any synced movement whose airline type code the mapping did not recognise.
+	// Counted in the net so nothing is silently dropped, but not reconciled.
+	KindOther Kind = "other"
 )
 
 // Movement is one line of a statement, normalised.

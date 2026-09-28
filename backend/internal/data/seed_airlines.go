@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 
 	"gorm.io/gorm"
@@ -15,11 +16,14 @@ import (
 var airlinesSeedJSON []byte
 
 type airlineSeedRecord struct {
-	Code             string `json:"code"`
-	Name             string `json:"name"`
-	TraveosAirlineID int    `json:"traveos_airline_id"`
+	Code string `json:"code"`
+	Name string `json:"name"`
+	// TraveosAirlineID is absent for a carrier Traveos does not serve at all
+	// (AEROLINEAS): its row gets no id, and a later run never clears one.
+	TraveosAirlineID *int `json:"traveos_airline_id,omitempty"`
 	// BrandColor is the carrier's own primaryColor, read from Traveos'
-	// GET /airlines/active rather than picked by eye. Seeding it means a ticket
+	// GET /airlines/active rather than picked by eye - or, for a carrier Traveos
+	// does not serve, the fill of the carrier's own logo. Seeding it means a ticket
 	// prints in the airline's colour before that carrier has ever been synced.
 	BrandColor             string `json:"brand_color"`
 	TraveosSupported       bool   `json:"traveos_supported"`
@@ -55,6 +59,8 @@ type airlineSeedRecord struct {
 //     Turning Traveos off for a carrier is a deliberate choice in the CRUD.
 //   - brand_color once it has a value: the vendor is the source (see
 //     issuance/traveos_map.go), and it already answered once.
+//   - traveos_airline_id when the file gives none: a carrier Traveos does not
+//     serve has no id to correct towards.
 //   - any airline the seed file does not mention.
 //
 // The row's uuid is preserved in every case, so no issuance loses its airline.
@@ -116,12 +122,11 @@ func findSeededAirline(tx *gorm.DB, record airlineSeedRecord) (*Airline, error) 
 }
 
 func createSeededAirline(tx *gorm.DB, record airlineSeedRecord) error {
-	traveosID := record.TraveosAirlineID
 	brandColor := record.BrandColor
 	airline := Airline{
 		Code:                   record.Code,
 		Name:                   record.Name,
-		TraveosAirlineID:       &traveosID,
+		TraveosAirlineID:       record.TraveosAirlineID,
 		BrandColor:             &brandColor,
 		TraveosSupported:       record.TraveosSupported,
 		RequiresLastName:       record.RequiresLastName,
@@ -131,7 +136,11 @@ func createSeededAirline(tx *gorm.DB, record airlineSeedRecord) error {
 		return fmt.Errorf("creating airline %s: %w", record.Code, err)
 	}
 
-	log.Printf("🌱 airline %s created (traveos_airline_id=%d)\n", record.Code, traveosID)
+	traveosID := "none"
+	if record.TraveosAirlineID != nil {
+		traveosID = strconv.Itoa(*record.TraveosAirlineID)
+	}
+	log.Printf("🌱 airline %s created (traveos_airline_id=%s)\n", record.Code, traveosID)
 	return nil
 }
 
@@ -151,9 +160,10 @@ func reconcileSeededAirline(tx *gorm.DB, record airlineSeedRecord, existing *Air
 		changes["name"] = record.Name
 		described = append(described, fmt.Sprintf("name %q → %q", existing.Name, record.Name))
 	}
-	if existing.TraveosAirlineID == nil || *existing.TraveosAirlineID != record.TraveosAirlineID {
-		changes["traveos_airline_id"] = record.TraveosAirlineID
-		described = append(described, fmt.Sprintf("traveos_airline_id → %d", record.TraveosAirlineID))
+	if record.TraveosAirlineID != nil &&
+		(existing.TraveosAirlineID == nil || *existing.TraveosAirlineID != *record.TraveosAirlineID) {
+		changes["traveos_airline_id"] = *record.TraveosAirlineID
+		described = append(described, fmt.Sprintf("traveos_airline_id → %d", *record.TraveosAirlineID))
 	}
 	// Fill only, never replace: an existing colour came either from a previous run
 	// of this seeder or from a real ticket the vendor already answered with, and

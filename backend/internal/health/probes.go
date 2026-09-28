@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/murandido/m-80-backend/internal/booking"
 	"github.com/murandido/m-80-backend/internal/traveos"
 )
 
@@ -104,5 +105,29 @@ func closeBody(resp *http.Response) {
 	_, _ = io.Copy(io.Discard, resp.Body)
 	if err := resp.Body.Close(); err != nil {
 		slog.Error("health: failed to close response body", "err", err)
+	}
+}
+
+// BookingProviderProbe checks that an airline's own endpoint is answering.
+//
+// There is no cheap catalog call here the way there is for Traveos, so the probe
+// asks about a booking that cannot exist and reads the shape of the refusal. A
+// carrier that answers "no such locator" is a carrier that is up: the request
+// reached its application. A carrier that answers an HTML block from its edge, or
+// nothing at all, is not. That is the same control every measurement behind these
+// integrations was made with, and it is the one signal available without spending
+// somebody's real lookup.
+//
+// The provider's own Probe returns booking.ErrNotFound for the first case and
+// booking.ErrUnavailable for the second, so this only has to ask which it was.
+func BookingProviderProbe(prober booking.Prober) Probe {
+	return func(ctx context.Context) (string, error) {
+		if prober == nil {
+			return "", ErrNotConfigured
+		}
+		if err := prober.Probe(ctx); !booking.Reached(err) {
+			return "", err
+		}
+		return "", nil
 	}
 }

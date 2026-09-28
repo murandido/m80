@@ -1,7 +1,6 @@
 "use client"
 
-import { useState } from "react"
-import { usePathname, useRouter, useSearchParams } from "next/navigation"
+import { useServerSeededState, useUrlQuery } from "@/hooks/use-url-query"
 import { CalendarDays, Info } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { DateInput } from "@/components/ui/date-input"
@@ -52,15 +51,13 @@ export function PeriodFilter({
   preset,
   reference,
 }: PeriodFilterProps) {
-  const router = useRouter()
-  const pathname = usePathname()
-  const searchParams = useSearchParams()
-  const [pending, setPending] = useState<{
+  const { isPending, update } = useUrlQuery()
+  const [pending, setPending] = useServerSeededState<{
     preset: PeriodPreset
     reference: string
     date_from: string
     date_to: string
-  }>({ preset, reference, date_from: dateFrom, date_to: dateTo })
+  }>({ preset, reference, date_from: dateFrom, date_to: dateTo }, isPending)
 
   function push(
     nextPreset: PeriodPreset,
@@ -71,12 +68,12 @@ export function PeriodFilter({
 
     // Merged into the existing URL so changing the period keeps whatever the filter bar
     // (which owns the other keys on this page) has already selected.
-    const params = new URLSearchParams(searchParams.toString())
-    params.set("period", nextPreset)
-    params.set("reference", nextReference)
-    params.set("date_from", range.date_from)
-    params.set("date_to", range.date_to)
-    router.replace(`${pathname}?${params.toString()}`)
+    update((params) => {
+      params.set("period", nextPreset)
+      params.set("reference", nextReference)
+      params.set("date_from", range.date_from)
+      params.set("date_to", range.date_to)
+    })
   }
 
   function apply(nextPreset: PeriodPreset, nextReference: string) {

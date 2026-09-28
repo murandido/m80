@@ -34,6 +34,7 @@ export function CreateAirlineForm() {
       name: "",
       code: "",
       traveos_supported: false,
+      direct_booking_enabled: false,
       requires_last_name: false,
       requires_purchase_number: false,
       traveos_airline_id: "",
@@ -161,6 +162,47 @@ export function CreateAirlineForm() {
                     render={({ field }) => (
                       <>
                         <FieldLabel>Suporta Traveos</FieldLabel>
+                        <div className="flex gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => field.onChange(true)}
+                            className={cn(
+                              "flex-1 transition-colors duration-150",
+                              field.value
+                                ? "bg-slate-800 text-white hover:bg-slate-900"
+                                : "border border-slate-300 bg-white text-slate-600 hover:bg-slate-100",
+                            )}
+                          >
+                            Sim
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => field.onChange(false)}
+                            className={cn(
+                              "flex-1 transition-colors duration-150",
+                              !field.value
+                                ? "bg-slate-800 text-white hover:bg-slate-900"
+                                : "border border-slate-300 bg-white text-slate-600 hover:bg-slate-100",
+                            )}
+                          >
+                            Não
+                          </Button>
+                        </div>
+                      </>
+                    )}
+                  />
+                </div>
+
+                {/* direct_booking_enabled */}
+                <div className="flex flex-col gap-1 text-sm">
+                  <Controller
+                    name="direct_booking_enabled"
+                    control={form.control}
+                    render={({ field }) => (
+                      <>
+                        <FieldLabel>Integração direta</FieldLabel>
                         <div className="flex gap-2">
                           <Button
                             type="button"

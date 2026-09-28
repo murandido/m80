@@ -68,13 +68,48 @@ func addLeg(t *testing.T, tx *gorm.DB, issuanceID, direction string, legOrder, d
 
 func addPassenger(t *testing.T, tx *gorm.DB, issuanceID string, position int) {
 	t.Helper()
+	addTypedPassenger(t, tx, issuanceID, position, "ADT")
+}
+
+func addTypedPassenger(t *testing.T, tx *gorm.DB, issuanceID string, position int, passengerType string) {
+	t.Helper()
 	passenger := data.IssuancePassenger{
 		IssuanceID: issuanceID,
 		FirstName:  "Passenger",
 		LastName:   uuid.New().String()[:8],
+		Type:       passengerType,
 		Position:   position,
 	}
 	create(t, tx, &passenger)
+}
+
+func readTaxes(t *testing.T, tx *gorm.DB, issuanceID string) *int {
+	t.Helper()
+	var issuance data.Issuance
+	if err := tx.First(&issuance, "id = ?", issuanceID).Error; err != nil {
+		t.Fatalf("failed to re-read the issuance: %v", err)
+	}
+	return issuance.Taxes
+}
+
+func assertTaxes(t *testing.T, tx *gorm.DB, issuanceID string, want int) {
+	t.Helper()
+	taxes := readTaxes(t, tx, issuanceID)
+	if taxes == nil {
+		t.Fatalf("taxes = nil, want %d", want)
+	}
+	if *taxes != want {
+		t.Fatalf("taxes = %d, want %d", *taxes, want)
+	}
+}
+
+func setTaxes(t *testing.T, tx *gorm.DB, issuanceID string, cents int) {
+	t.Helper()
+	err := tx.Model(&data.Issuance{}).Where("id = ?", issuanceID).
+		UpdateColumn("taxes", cents).Error
+	if err != nil {
+		t.Fatalf("failed to set taxes: %v", err)
+	}
 }
 
 // seedAirport registers an airport in a given country, so the domestic/international split
@@ -447,5 +482,106 @@ func TestRedemptionFee_ClearingReleasesTheManualFlag(t *testing.T) {
 		}
 
 		assertSaved(t, tx, f.Issuance.ID, 6990)
+	})
+}
+
+// Lap infants fly free of the redemption fee, so they must not multiply it. One adult and one
+// infant on a single trecho owe one fee, not two.
+func TestRedemptionFee_InfantsAreNotCharged(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		f := seedFeeFixture(t, tx)
+		waive(t, tx, &f)
+		origin := seedAirport(t, tx, "BR")
+		destination := seedAirport(t, tx, "BR")
+		addLeg(t, tx, f.Issuance.ID, "outbound", 1, 30, origin, destination)
+		addTypedPassenger(t, tx, f.Issuance.ID, 0, "ADT")
+		addTypedPassenger(t, tx, f.Issuance.ID, 1, "INF")
+
+		if err := RecalculateRedemptionFee(tx, f.Issuance.ID); err != nil {
+			t.Fatalf("RecalculateRedemptionFee failed: %v", err)
+		}
+
+		// One chargeable passenger, one trecho: the infant is skipped.
+		assertSaved(t, tx, f.Issuance.ID, 6990)
+	})
+}
+
+// The computed fee is folded into Taxes so the client is charged it, and a second recalculation
+// with the same itinerary must not add it again.
+func TestRedemptionFee_FoldsFeeIntoTaxesOnce(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		f := seedFeeFixture(t, tx)
+		waive(t, tx, &f)
+		origin := seedAirport(t, tx, "BR")
+		destination := seedAirport(t, tx, "BR")
+		addLeg(t, tx, f.Issuance.ID, "outbound", 1, 30, origin, destination)
+		addPassenger(t, tx, f.Issuance.ID, 0)
+
+		if err := RecalculateRedemptionFee(tx, f.Issuance.ID); err != nil {
+			t.Fatalf("RecalculateRedemptionFee failed: %v", err)
+		}
+		assertSaved(t, tx, f.Issuance.ID, 6990)
+		assertTaxes(t, tx, f.Issuance.ID, 6990)
+
+		if err := RecalculateRedemptionFee(tx, f.Issuance.ID); err != nil {
+			t.Fatalf("second RecalculateRedemptionFee failed: %v", err)
+		}
+		// Still 6990, not 13980: the delta on an unchanged itinerary is zero.
+		assertTaxes(t, tx, f.Issuance.ID, 6990)
+	})
+}
+
+// Taxes the operator typed on top of the folded fee survive a recalculation: only the fee's own
+// delta moves, never the whole column.
+func TestRedemptionFee_PreservesOperatorTaxesOnRecalc(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		f := seedFeeFixture(t, tx)
+		waive(t, tx, &f)
+		origin := seedAirport(t, tx, "BR")
+		destination := seedAirport(t, tx, "BR")
+		addLeg(t, tx, f.Issuance.ID, "outbound", 1, 30, origin, destination)
+		addPassenger(t, tx, f.Issuance.ID, 0)
+
+		if err := RecalculateRedemptionFee(tx, f.Issuance.ID); err != nil {
+			t.Fatalf("RecalculateRedemptionFee failed: %v", err)
+		}
+		assertTaxes(t, tx, f.Issuance.ID, 6990)
+
+		// Operator adds R$ 50,00 of other taxes on top of the folded fee.
+		setTaxes(t, tx, f.Issuance.ID, 6990+5000)
+
+		if err := RecalculateRedemptionFee(tx, f.Issuance.ID); err != nil {
+			t.Fatalf("second RecalculateRedemptionFee failed: %v", err)
+		}
+		assertTaxes(t, tx, f.Issuance.ID, 6990+5000)
+	})
+}
+
+// Moving an issuance off an exempt account takes the folded fee back out of Taxes: the client no
+// longer owes a fee the account no longer earns.
+func TestRedemptionFee_LeavingExemptAccountUnfoldsTaxes(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		f := seedFeeFixture(t, tx)
+		waive(t, tx, &f)
+		origin := seedAirport(t, tx, "BR")
+		destination := seedAirport(t, tx, "BR")
+		addLeg(t, tx, f.Issuance.ID, "outbound", 1, 30, origin, destination)
+		addPassenger(t, tx, f.Issuance.ID, 0)
+
+		if err := RecalculateRedemptionFee(tx, f.Issuance.ID); err != nil {
+			t.Fatalf("RecalculateRedemptionFee failed: %v", err)
+		}
+		assertTaxes(t, tx, f.Issuance.ID, 6990)
+
+		f.Account.WaivesRedemptionFee = false
+		if err := tx.Save(&f.Account).Error; err != nil {
+			t.Fatalf("failed to drop the exemption: %v", err)
+		}
+		if err := RecalculateRedemptionFee(tx, f.Issuance.ID); err != nil {
+			t.Fatalf("RecalculateRedemptionFee failed: %v", err)
+		}
+
+		assertNotComputed(t, tx, f.Issuance.ID)
+		assertTaxes(t, tx, f.Issuance.ID, 0)
 	})
 }

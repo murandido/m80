@@ -2,8 +2,8 @@ import type { Metadata } from "next"
 import { cookies } from "next/headers"
 import { Separator } from "@/components/ui/separator"
 import { env } from "@/lib/env"
-import { requireAdmin } from "@/lib/session"
-import { getUsersSchema, getMeSchema, User } from "@/schemas/user"
+import { getSessionUser, requireAdmin } from "@/lib/session"
+import { getUsersSchema, User } from "@/schemas/user"
 import { UserCard } from "@/components/users/user-card"
 import { CreateUserForm } from "@/components/users/create-user-form"
 import { ListFilterBar } from "@/components/shared/list-filter-bar"
@@ -41,29 +41,24 @@ export default async function UsersPage({
   let users: User[] = []
   let currentUserId: string | null = null
 
-  try {
-    const [usersRes, meRes] = await Promise.all([
-      fetch(
-        `${env.BACKEND_URL}/api/v1/users?${listQueryString(params, { role })}`,
-        { headers: authHeader, cache: "no-store" },
-      ),
-      fetch(`${env.BACKEND_URL}/api/v1/auth/me`, { headers: authHeader }),
-    ])
+  // The session comes from the render-wide cache the layout already filled, rather than a
+  // second /auth/me of its own - which also means a hiccup on that call can no longer
+  // empty the user list, as it did when both shared one try block.
+  const [usersResult, sessionUser] = await Promise.all([
+    fetch(`${env.BACKEND_URL}/api/v1/users?${listQueryString(params, { role })}`, {
+      headers: authHeader,
+      cache: "no-store",
+    })
+      .then((res) => res.json())
+      .catch(() => null),
+    getSessionUser(),
+  ])
 
-    const [usersJson, meJson] = await Promise.all([usersRes.json(), meRes.json()])
-
-    const parsedUsers = getUsersSchema.response.safeParse(usersJson)
-    if (parsedUsers.success && parsedUsers.data.data) {
-      users = parsedUsers.data.data
-    }
-
-    const parsedMe = getMeSchema.response.safeParse(meJson)
-    if (parsedMe.success && parsedMe.data.data) {
-      currentUserId = parsedMe.data.data.id
-    }
-  } catch {
-    // silently fail — list stays empty
+  const parsedUsers = getUsersSchema.response.safeParse(usersResult)
+  if (parsedUsers.success && parsedUsers.data.data) {
+    users = parsedUsers.data.data
   }
+  currentUserId = sessionUser?.id ?? null
 
   return (
     <div className="p-6 sm:p-8">

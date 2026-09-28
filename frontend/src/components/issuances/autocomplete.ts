@@ -1,54 +1,13 @@
 import type { Airline } from "@/schemas/airline"
 import type { IssuanceRow } from "@/components/issuances/types"
 import {
+  ACCOUNT_COLUMN_INDEX,
   LOCATOR_COLUMN_INDEX,
   ORIGIN_COLUMN_INDEX,
   PASSENGER_COLUMN_INDEX,
+  POINTS_COLUMN_INDEX,
+  VALUE_OF_THE_THOUSAND_COLUMN_INDEX,
 } from "@/lib/grid-navigation"
-
-const CIA_AEREA_COLUMN_INDEX = 0
-const FLIGHT_DATE_COLUMN_INDEX = 2
-const DESTINATION_COLUMN_INDEX = 5
-
-// The columns a Traveos lookup reads or writes. Locked while it runs: what it returns
-// replaces them, so anything typed there in the meantime would vanish without a word.
-export const TRAVEOS_LOOKUP_LOCKED_COLUMNS = new Set([
-  CIA_AEREA_COLUMN_INDEX,
-  LOCATOR_COLUMN_INDEX,
-  FLIGHT_DATE_COLUMN_INDEX,
-  PASSENGER_COLUMN_INDEX,
-  ORIGIN_COLUMN_INDEX,
-  DESTINATION_COLUMN_INDEX,
-])
-
-export function airlineOf(row: IssuanceRow, airlines: Airline[]): Airline | undefined {
-  return airlines.find((candidate) => candidate.id === row.airline_id)
-}
-
-export function isTraveosIntegrated(airline: Airline): boolean {
-  return airline.traveos_supported && airline.traveos_airline_id != null
-}
-
-/**
- * The columns a "collecting" row shows, in on-screen order: the carrier first, and once it
- * is known, whatever that carrier needs Traveos to be asked with. The purchase number has no
- * column - it is typed after a "/" in the Localizador cell, like everywhere else.
- */
-export function lookupColumnsFor(row: IssuanceRow, airlines: Airline[]): number[] {
-  const airline = airlineOf(row, airlines)
-  if (!airline || !isTraveosIntegrated(airline)) return [CIA_AEREA_COLUMN_INDEX]
-
-  const columns = [CIA_AEREA_COLUMN_INDEX, LOCATOR_COLUMN_INDEX]
-  if (airline.requires_last_name) columns.push(PASSENGER_COLUMN_INDEX)
-  columns.push(ORIGIN_COLUMN_INDEX)
-  return columns
-}
-
-/** Whether a "collecting" row has everything the lookup is asked with. */
-export function isReadyForLookup(row: IssuanceRow, airlines: Airline[]): boolean {
-  const airline = airlineOf(row, airlines)
-  return !!airline && isTraveosIntegrated(airline) && hasAirlineMinimumFields(row, airline)
-}
 
 // Whether a row carries everything Traveos is asked with for this airline.
 //
@@ -139,10 +98,6 @@ export function autocompleteHintFor(
   enabled: boolean,
 ): AutocompleteHint {
   if (!enabled || !row) return { kind: "idle" }
-  // A draft on the Traveos-first flow shows only the fields it still needs, so a red
-  // checklist over the header would say the same thing twice. Only the "never going to
-  // autocomplete" warning below still applies to it.
-  const isDraft = row.isDraft
   // Painting a checklist over a row that is already synced, cancelled, or being pulled
   // right now would be pointing at work that does not exist.
   if (row.status === "cancelled" || row.traveos_synced_at || row.traveos_syncing_at) {
@@ -162,7 +117,6 @@ export function autocompleteHintFor(
   if (!airline.traveos_supported || airline.traveos_airline_id == null) {
     return { kind: "unsupported", airlineName: airline.name }
   }
-  if (isDraft) return { kind: "idle" }
 
   const requirements: MissingRequirement[] = []
 
@@ -195,6 +149,20 @@ export function autocompleteHintFor(
       column: ORIGIN_COLUMN_INDEX,
       reason: "A Traveos precisa do aeroporto de origem para localizar o bilhete.",
     })
+  }
+
+  // These three are not Traveos requirements at all: they are what draftIsReadyToCreate
+  // (types.ts) demands before the row is saved, and the autocomplete only ever looks at
+  // saved rows. Change the list there and this has to follow.
+  const notSavedYet = "Sem ela a emissão não é salva, e a Traveos só roda em emissão já salva."
+  if (row.points === null || row.points <= 0) {
+    requirements.push({ column: POINTS_COLUMN_INDEX, reason: notSavedYet })
+  }
+  if (row.value_of_the_thousand === null || row.value_of_the_thousand <= 0) {
+    requirements.push({ column: VALUE_OF_THE_THOUSAND_COLUMN_INDEX, reason: notSavedYet })
+  }
+  if (row.account_id === null) {
+    requirements.push({ column: ACCOUNT_COLUMN_INDEX, reason: notSavedYet })
   }
 
   return { kind: "missing", requirements }

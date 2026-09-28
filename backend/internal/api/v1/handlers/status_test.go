@@ -94,3 +94,44 @@ func TestGetSystemStatusNeverLeaksThePairingCode(t *testing.T) {
 		t.Errorf("expected the session state to survive, got %v", bot["session"])
 	}
 }
+
+func TestGetSystemStatusReportsEachBookingProvider(t *testing.T) {
+	monitor := health.NewMonitor(func() {})
+	monitor.Observe("azul", true)
+	monitor.Observe("gol", false)
+
+	_, data := decodeStatusBody(t, monitor)
+
+	providers, ok := data["providers"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected a providers object, got %v", data["providers"])
+	}
+
+	for name, want := range map[string]health.State{"azul": health.StateUp, "gol": health.StateDown} {
+		check, ok := providers[name].(map[string]any)
+		if !ok {
+			t.Fatalf("expected a %q object under providers, got %v", name, providers[name])
+		}
+		if check["state"] != string(want) {
+			t.Errorf("%s: state = %v, want %q", name, check["state"], want)
+		}
+		if check["checked_at"] == "" || check["checked_at"] == nil {
+			t.Errorf("%s: expected a checked_at, so the panel can say how stale this is", name)
+		}
+	}
+}
+
+func TestGetSystemStatusAlwaysCarriesTheProvidersObject(t *testing.T) {
+	// Present and empty on a server with no direct integration, rather than absent:
+	// the panel decides whether to draw the airlines light from this, and a missing
+	// key and an empty one would have to be handled twice on the other side.
+	_, data := decodeStatusBody(t, health.NewMonitor(func() {}))
+
+	providers, ok := data["providers"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected a providers object, got %v", data["providers"])
+	}
+	if len(providers) != 0 {
+		t.Errorf("providers = %v, want empty on a server with no direct integration", providers)
+	}
+}

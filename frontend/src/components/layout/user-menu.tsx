@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { ChevronsUpDown, LogOut } from "lucide-react"
+import { ChevronsUpDown, LogOut, UserRound } from "lucide-react"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import {
   DropdownMenu,
@@ -17,13 +17,7 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar"
-import type { User } from "@/schemas/user"
-
-const roleLabels: Record<User["role"], string> = {
-  admin: "Administrador",
-  user: "Usuário",
-  dev: "Desenvolvedor",
-}
+import { type User, userRoleLabels } from "@/schemas/user"
 
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/)
@@ -53,7 +47,7 @@ export function UserMenu({ user }: { user: User | null }) {
               <div className="grid flex-1 text-left text-sm leading-tight">
                 <span className="truncate font-medium">{user.name}</span>
                 <span className="truncate text-xs text-sidebar-foreground/70">
-                  {roleLabels[user.role]}
+                  {userRoleLabels[user.role]}
                 </span>
               </div>
               <ChevronsUpDown className="ml-auto size-4" />
@@ -68,10 +62,16 @@ export function UserMenu({ user }: { user: User | null }) {
             <DropdownMenuLabel className="font-normal">
               <span className="block truncate font-medium">{user.name}</span>
               <span className="block text-xs text-muted-foreground">
-                {roleLabels[user.role]}
+                {userRoleLabels[user.role]}
               </span>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
+            <DropdownMenuItem asChild>
+              <Link href="/dashboard/profile">
+                <UserRound />
+                Meu perfil
+              </Link>
+            </DropdownMenuItem>
             <DropdownMenuItem variant="destructive" asChild>
               <Link href="/api/logout">
                 <LogOut />

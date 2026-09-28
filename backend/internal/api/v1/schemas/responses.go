@@ -253,13 +253,6 @@ type IssuanceListResponse struct {
 	Data    []IssuanceResponse `json:"data"`
 }
 
-// TraveosLookupSingleResponse is the response from POST /issuances/traveos-lookup
-type TraveosLookupSingleResponse struct {
-	Success bool                  `json:"success" example:"true"`
-	Message string                `json:"message" example:"Reserva encontrada na Traveos"`
-	Data    TraveosLookupResponse `json:"data"`
-}
-
 // IssuanceSingleResponse is the response from single-issuance routes
 type IssuanceSingleResponse struct {
 	Success bool             `json:"success" example:"true"`
@@ -328,6 +321,20 @@ type UpdateSupplierIssuancesSingleResponse struct {
 	Success bool                            `json:"success" example:"true"`
 	Message string                          `json:"message" example:"Emissões atualizadas com sucesso"`
 	Data    UpdateSupplierIssuancesResponse `json:"data"`
+}
+
+// SupplierExportCounterSingleResponse is the response of the supplier export-counter routes
+type SupplierExportCounterSingleResponse struct {
+	Success bool                          `json:"success" example:"true"`
+	Message string                        `json:"message" example:"Contador atualizado com sucesso"`
+	Data    SupplierExportCounterResponse `json:"data"`
+}
+
+// BulkSupplierExportCounterSingleResponse is the response of the bulk export-counter route
+type BulkSupplierExportCounterSingleResponse struct {
+	Success bool                              `json:"success" example:"true"`
+	Message string                            `json:"message" example:"Contadores atualizados com sucesso"`
+	Data    BulkSupplierExportCounterResponse `json:"data"`
 }
 
 // DashboardSingleResponse is the GET /dashboard route response
@@ -406,4 +413,18 @@ type PromoEnrollmentListResponse struct {
 	Success bool                         `json:"success" example:"true"`
 	Message string                       `json:"message" example:"Histórico listado com sucesso"`
 	Data    PromoEnrollmentPaginatedData `json:"data"`
+}
+
+// ClientPaymentHistorySingleResponse is the GET /sales/client-payments route response
+type ClientPaymentHistorySingleResponse struct {
+	Success bool                         `json:"success" example:"true"`
+	Message string                       `json:"message" example:"Pagamentos do cliente listados com sucesso"`
+	Data    ClientPaymentHistoryResponse `json:"data"`
+}
+
+// ClientPaymentUndoSingleResponse is the DELETE /sales/client-payments/{id} route response
+type ClientPaymentUndoSingleResponse struct {
+	Success bool                      `json:"success" example:"true"`
+	Message string                    `json:"message" example:"Pagamento desfeito"`
+	Data    ClientPaymentUndoResponse `json:"data"`
 }

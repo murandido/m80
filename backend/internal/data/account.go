@@ -24,16 +24,29 @@ const (
 )
 
 type Account struct {
-	ID               string            `gorm:"primaryKey;type:uuid" json:"id"`
-	LoyaltyProgramID string            `gorm:"column:loyalty_program_id;type:uuid;not null" json:"loyalty_program_id"`
-	LoyaltyProgram   *LoyaltyProgram   `gorm:"foreignKey:LoyaltyProgramID;references:ID" json:"loyalty_program,omitempty"`
-	Login            *string           `json:"login"`
-	Password         *string           `json:"password"`
-	HolderID         *string           `gorm:"column:holder_id;type:uuid" json:"holder_id"`
-	Holder           *Person           `gorm:"foreignKey:HolderID;references:ID" json:"holder,omitempty"`
-	AdministratorID  *string           `gorm:"column:administrator_id;type:uuid" json:"administrator_id"`
-	Administrator    *Person           `gorm:"foreignKey:AdministratorID;references:ID" json:"administrator,omitempty"`
-	Nicknames        []AccountNickname `gorm:"foreignKey:AccountID;references:ID" json:"nicknames,omitempty"`
+	ID               string          `gorm:"primaryKey;type:uuid" json:"id"`
+	LoyaltyProgramID string          `gorm:"column:loyalty_program_id;type:uuid;not null" json:"loyalty_program_id"`
+	LoyaltyProgram   *LoyaltyProgram `gorm:"foreignKey:LoyaltyProgramID;references:ID" json:"loyalty_program,omitempty"`
+	Login            *string         `json:"login"`
+	Password         *string         `json:"password"`
+	// AzulCustomerKey is the opaque hash the Azul API uses to select this account, discovered
+	// once by logging the account in. Encrypted at rest by the same hooks as Password, and
+	// json:"-" because, unlike Password (which staff must see to log in by hand), nobody reads
+	// this off the panel - it is machinery for the sync. Nil until the account is connected.
+	// See migration 54 and internal/azul.
+	AzulCustomerKey *string `gorm:"column:azul_customer_key" json:"-"`
+	// SmilesRefreshToken is the session of a connected Smiles account: it renews the access
+	// without a second verification code. Unlike AzulCustomerKey it is a live credential
+	// rather than an identifier, and the tenant rotates it on every renewal - so it is
+	// rewritten on each sync round, and keeping a stale one costs the operator a new code.
+	// Encrypted at rest by the same hooks as Password, and json:"-" because nobody reads it
+	// off the panel. Nil until the account is connected. See migration 63 and internal/smiles.
+	SmilesRefreshToken *string           `gorm:"column:smiles_refresh_token" json:"-"`
+	HolderID           *string           `gorm:"column:holder_id;type:uuid" json:"holder_id"`
+	Holder             *Person           `gorm:"foreignKey:HolderID;references:ID" json:"holder,omitempty"`
+	AdministratorID    *string           `gorm:"column:administrator_id;type:uuid" json:"administrator_id"`
+	Administrator      *Person           `gorm:"foreignKey:AdministratorID;references:ID" json:"administrator,omitempty"`
+	Nicknames          []AccountNickname `gorm:"foreignKey:AccountID;references:ID" json:"nicknames,omitempty"`
 	// Category decides whether the program's beneficiary cap applies at all.
 	// "injunction" is an account under a court order suspending the cap, and
 	// "unidentified" is one nobody has classified yet - only "standard" is counted.
@@ -54,6 +67,15 @@ type Account struct {
 	// today: the category answers whether the beneficiary cap applies, this one answers
 	// who paid for the points. See migration 48.
 	OwnsPointInventory bool `gorm:"column:owns_point_inventory;not null;default:false" json:"owns_point_inventory"`
+	// TracksStatement says the account's statement is read from the airline: it governs
+	// connecting the account, the periodic sync and the statement screens.
+	//
+	// Deliberately NOT the same question as OwnsPointInventory, even though one rule used to
+	// answer both. That one asks whether these points are ours to price; this one asks whether
+	// we want to see what happened in the account. An account administered for someone else has
+	// a statement worth watching - its redemptions are our own issuances - and no inventory to
+	// cost. Anything that prices points still asks OwnsPointInventory. See migration 64.
+	TracksStatement bool `gorm:"column:tracks_statement;not null;default:false" json:"tracks_statement"`
 	// DefaultProfitSharePercent seeds the split of a new batch on this account. Only a
 	// default: each batch freezes its own copy, so changing this never rewrites a month
 	// that was already settled. Zero means the profit stays whole with whoever funded
@@ -99,6 +121,20 @@ func (a *Account) BeforeSave(tx *gorm.DB) error {
 		}
 		a.Password = &encrypted
 	}
+	if a.AzulCustomerKey != nil && !strings.HasPrefix(*a.AzulCustomerKey, "enc:") {
+		encrypted, err := utils.Encrypt(*a.AzulCustomerKey)
+		if err != nil {
+			return err
+		}
+		a.AzulCustomerKey = &encrypted
+	}
+	if a.SmilesRefreshToken != nil && !strings.HasPrefix(*a.SmilesRefreshToken, "enc:") {
+		encrypted, err := utils.Encrypt(*a.SmilesRefreshToken)
+		if err != nil {
+			return err
+		}
+		a.SmilesRefreshToken = &encrypted
+	}
 	return nil
 }
 
@@ -109,6 +145,20 @@ func (a *Account) AfterFind(tx *gorm.DB) error {
 			return err
 		}
 		a.Password = &decrypted
+	}
+	if a.AzulCustomerKey != nil {
+		decrypted, err := utils.Decrypt(*a.AzulCustomerKey)
+		if err != nil {
+			return err
+		}
+		a.AzulCustomerKey = &decrypted
+	}
+	if a.SmilesRefreshToken != nil {
+		decrypted, err := utils.Decrypt(*a.SmilesRefreshToken)
+		if err != nil {
+			return err
+		}
+		a.SmilesRefreshToken = &decrypted
 	}
 	return nil
 }

@@ -20,6 +20,11 @@ Este documento é o runbook: como publicar, como provisionar do zero, e o que fa
 É uma label só desde a migração para a Oracle: painel e API são publicados juntos, no mesmo SHA.
 Antes eram duas independentes, e o preço disso era ficarem fora de sincronia por dias.
 
+**`deploy:ca` não é desta máquina.** Ela publica a branch `ca-mode` no ambiente CA's Mode, uma VPS
+separada com dados anonimizados. O workflow e o runbook (`docs/ca-mode.md`) vivem naquela branch.
+Cada label só dispara com a própria branch como base — `deploy:vps` exige um PR para `main` — então
+trocar uma pela outra não publica nada no lugar errado: o run aparece como *skipped*.
+
 **Para republicar a mesma versão**, tire e recoloque a label: o gatilho é o evento `labeled`, então
 uma label que já está lá não dispara nada.
 
@@ -314,6 +319,32 @@ morre no dump antes de puxar imagem nenhuma.
 ### 9. DNS — antes de subir o Caddy
 
 - `<domínio>` → **IP reservado** da instância
+- `www.<domínio>` → o mesmo IP
+
+O domínio de produção é `emioitenta.com.br`, com a zona hospedada no próprio registro.br
+(**Domínio → DNS → Editar zona**). São dois registros **A**: a raiz e o `www`. O `www` não é
+opcional: o Caddyfile serve `www.{$API_DOMAIN}` só para redirecionar à raiz, e sem o registro o
+Caddy tenta o certificado dele em loop, gastando o rate limit de falhas. **Não crie AAAA** sem a
+instância ter IPv6 de verdade: o Let's Encrypt prefere IPv6, e um AAAA errado faz a emissão falhar
+mesmo com o A correto.
+
+**Trocar o domínio de uma máquina que já está no ar** é só `.env` + Caddy, sem imagem nem schema:
+
+```bash
+cd /opt/m80/backend
+sed -i 's/^API_DOMAIN_PROD=.*/API_DOMAIN_PROD="<domínio>"/' .env
+IMAGE_TAG=latest docker compose --profile prod up -d --force-recreate caddy-prod
+```
+
+O `--force-recreate` é o que faz um **Caddyfile alterado** valer, aqui ou depois de um deploy que o
+mudou. O `up -d` do deploy não recria o Caddy: a config dele no Compose não mudou, e o bind mount de
+um arquivo só segue preso ao inode antigo que o `git checkout` substituiu. Os certificados ficam no
+volume `caddy_data` e sobrevivem ao recreate.
+
+Duas consequências: o cookie de sessão é por hostname, então **todo mundo precisa logar de novo**; e
+`VPS_HOST`/`VPS_KNOWN_HOSTS` (passo 10) guardam o hostname antigo. Mantenha o DNS antigo apontando
+para a máquina até regravar os dois, senão o próximo `deploy:vps` não acha a máquina. O
+`ssh-keyscan -H` grava o hash do *nome*, por isso o `known_hosts` tem que ser regerado junto.
 
 ```bash
 dig +short <domínio>     # tem que devolver o IP antes de qualquer start

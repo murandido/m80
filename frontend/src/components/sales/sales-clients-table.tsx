@@ -1,10 +1,15 @@
 "use client"
 
-import { useMemo, useOptimistic, useState, useTransition } from "react"
+import { useCallback, useEffect, useMemo, useOptimistic, useRef, useState, useTransition } from "react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { toast } from "sonner"
 import { ClientCombobox } from "@/components/clients/client-combobox"
-import { ClientPaymentPopover } from "@/components/sales/client-payment-popover"
+import {
+  ClientPaymentPopover,
+  summarizeClientPayment,
+  type ClientPaymentRecorded,
+} from "@/components/sales/client-payment-popover"
+import { ClientPaymentsHistoryPopover } from "@/components/sales/client-payments-history-popover"
 import { SaleNoteCell } from "@/components/sales/sale-note-cell"
 import {
   SaleStatusButton,
@@ -15,7 +20,7 @@ import {
   ClientColumnFilter,
   StatusColumnFilter,
 } from "@/components/sales/sales-column-filters"
-import { updateSaleAction } from "@/actions/sale"
+import { undoClientPaymentAction, updateSaleAction } from "@/actions/sale"
 import { createClientAction } from "@/actions/client"
 import { formatCurrencyBRL } from "@/lib/currency"
 import { cn } from "@/lib/utils"
@@ -40,6 +45,35 @@ const ROW_GRID = cn(
 )
 // Cells that take the card's full width below the breakpoint and one column above it.
 const WIDE_CELL = "col-span-2 @4xl:col-span-1"
+
+// Long enough to read the toast and reach its button; the sonner default (4s) was not.
+const UNDO_TOAST_MS = 5000
+// How far back Ctrl+Z reaches. The stack lives in the tab, so this only bounds memory.
+const UNDO_LIMIT = 20
+
+interface UndoEntry {
+  id: number
+  run: () => void
+  // Names what the entry undoes when something else can undo it too - a client payment
+  // undone from the history must leave the stack, or Ctrl+Z would undo it a second time.
+  key?: string
+}
+
+// Ctrl+Z belongs to the field being typed in - the note, a combobox search, the amount of
+// a payment. Only outside them does it undo the screen's last change.
+function isEditable(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  return (
+    target.isContentEditable ||
+    target.tagName === "INPUT" ||
+    target.tagName === "TEXTAREA" ||
+    target.tagName === "SELECT"
+  )
+}
+
+function clientPaymentUndoKey(clientPaymentId: string): string {
+  return `client-payment:${clientPaymentId}`
+}
 
 function formatDay(iso: string): string {
   return new Date(iso).toLocaleDateString("pt-BR")
@@ -79,6 +113,45 @@ export function SalesClientsTable({
         sale.id === update.saleId ? { ...sale, ...update.patch } : sale,
       ),
   )
+
+  // Every change made on this screen leaves a way back here: the toast's Desfazer and
+  // Ctrl+Z take the same entry, so an undo never runs twice. Undoing does not push an
+  // entry of its own - there is no redo.
+  const undoStack = useRef<UndoEntry[]>([])
+  const undoSequence = useRef(0)
+
+  const undo = useCallback((id?: number): boolean => {
+    const stack = undoStack.current
+    const entry = id === undefined ? stack[stack.length - 1] : stack.find((e) => e.id === id)
+    if (!entry) return false
+    undoStack.current = stack.filter((e) => e.id !== entry.id)
+    toast.dismiss(`undo-${entry.id}`)
+    entry.run()
+    return true
+  }, [])
+
+  function pushUndo(run: () => void, message?: string, key?: string) {
+    const id = ++undoSequence.current
+    undoStack.current = [...undoStack.current, { id, run, key }].slice(-UNDO_LIMIT)
+    if (message) {
+      toast(message, {
+        id: `undo-${id}`,
+        duration: UNDO_TOAST_MS,
+        action: { label: "Desfazer", onClick: () => undo(id) },
+      })
+    }
+  }
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      const isUndo =
+        (event.ctrlKey || event.metaKey) && !event.shiftKey && event.key.toLowerCase() === "z"
+      if (!isUndo || isEditable(event.target)) return
+      if (undo()) event.preventDefault()
+    }
+    window.addEventListener("keydown", handleKeyDown)
+    return () => window.removeEventListener("keydown", handleKeyDown)
+  }, [undo])
 
   // The URL is authoritative here (useStickyFilters puts remembered filters back into it
   // on arrival), so a column filter only has to change its own key.
@@ -126,13 +199,20 @@ export function SalesClientsTable({
     })
   }
 
+  // Linking back to whoever the sale had before. No toast: linking is the most frequent
+  // gesture here, and a toast on every one would bury the ones that matter.
+  function undoLinkTo(sale: Sale) {
+    const previous = { client_id: sale.client_id, client_name: sale.client_name }
+    return (linked: Sale) => () =>
+      persist(linked, previous, { client_id: previous.client_id }, "Erro ao desfazer.")
+  }
+
   function handleClientChange(sale: Sale, clientId: string) {
     const client = clientOptions.find((c) => c.id === clientId)
-    persist(
-      sale,
-      { client_id: clientId || null, client_name: client?.name ?? null },
-      { client_id: clientId || null },
-      "Erro ao vincular cliente.",
+    const patch = { client_id: clientId || null, client_name: client?.name ?? null }
+    const undoLink = undoLinkTo(sale)
+    persist(sale, patch, { client_id: clientId || null }, "Erro ao vincular cliente.", () =>
+      pushUndo(undoLink({ ...sale, ...patch })),
     )
   }
 
@@ -152,11 +232,15 @@ export function SalesClientsTable({
       }
 
       setCreatedClients((prev) => [...prev, result.client])
+      const patch = { client_id: result.client.id, client_name: result.client.name }
+      const undoLink = undoLinkTo(sale)
       persist(
         sale,
-        { client_id: result.client.id, client_name: result.client.name },
+        patch,
         { client_id: result.client.id },
         "Cliente criado, mas não foi possível vinculá-lo à venda.",
+        // Undo unlinks; the client just created stays in the register.
+        () => pushUndo(undoLink({ ...sale, ...patch })),
       )
     })
   }
@@ -164,34 +248,77 @@ export function SalesClientsTable({
   // The optimistic patch only has to look right while the request is in flight; the
   // refresh brings the server's own arithmetic right after.
   function handleToggle(sale: Sale, paid: boolean) {
+    // Going back to A Pagar clears only what the switch can take back - the sale's own
+    // lines. Whatever a client payment put there stays, so the sale may land on partly
+    // paid rather than open.
     const patch: Partial<Sale> = paid
       ? { paid: true, paid_cents: sale.paid_cents + sale.balance_cents, balance_cents: 0 }
-      : { paid: false, paid_cents: 0, balance_cents: sale.amount_cents }
+      : {
+          paid: false,
+          paid_cents: sale.client_payment_cents,
+          balance_cents: sale.amount_cents - sale.client_payment_cents,
+        }
+    const before: Partial<Sale> = {
+      paid: sale.paid,
+      paid_cents: sale.paid_cents,
+      balance_cents: sale.balance_cents,
+    }
 
-    // Going back to A Pagar clears the sale's whole statement, which a stray click should
-    // not cost anybody. Undoing records the full amount again in one line - the balance
-    // comes back exactly, the individual lines it had do not.
-    const onSaved = paid
-      ? undefined
-      : () =>
-          toast(`${sale.program_locator} voltou para A Pagar`, {
-            action: {
-              label: "Desfazer",
-              onClick: () =>
-                persist(
-                  { ...sale, ...patch },
-                  { paid: true, paid_cents: sale.amount_cents, balance_cents: 0 },
-                  { paid: true },
-                  "Erro ao desfazer.",
-                ),
-            },
-          })
-
-    persist(sale, patch, { paid }, "Erro ao atualizar o pagamento.", onSaved)
+    // A stray click here costs a payment line, so both directions offer the way back.
+    // Undoing A Pagar records what was missing again in one line - the balance comes back
+    // exactly, the individual lines it had do not.
+    const message = paid
+      ? `${sale.program_locator} marcada como paga`
+      : `${sale.program_locator} voltou para A Pagar`
+    persist(sale, patch, { paid }, "Erro ao atualizar o pagamento.", () =>
+      pushUndo(
+        () => persist({ ...sale, ...patch }, before, { paid: !paid }, "Erro ao desfazer."),
+        message,
+      ),
+    )
   }
 
   function handleNote(sale: Sale, note: string | null) {
-    persist(sale, { note }, { note }, "Erro ao salvar a observação.")
+    const previous = sale.note ?? null
+    persist(sale, { note }, { note }, "Erro ao salvar a observação.", () =>
+      pushUndo(() =>
+        persist({ ...sale, note }, { note: previous }, { note: previous }, "Erro ao desfazer."),
+      ),
+    )
+  }
+
+  function undoClientPayment(clientPaymentId: string) {
+    startTransition(async () => {
+      const result = await undoClientPaymentAction(clientPaymentId)
+      if ("error" in result) {
+        toast.error(result.error)
+        return
+      }
+      toast.success("Pagamento desfeito.")
+      router.refresh()
+    })
+  }
+
+  // The footer starts over after a payment: the next one is usually another client's, and
+  // a client left selected is how it would land on the wrong one.
+  function handleClientPaymentRecorded(result: ClientPaymentRecorded) {
+    setPayingClientId("")
+    router.refresh()
+    pushUndo(
+      () => undoClientPayment(result.client_payment_id),
+      summarizeClientPayment(result),
+      clientPaymentUndoKey(result.client_payment_id),
+    )
+  }
+
+  function handleClientPaymentUndoneFromHistory(clientPaymentId: string) {
+    const key = clientPaymentUndoKey(clientPaymentId)
+    const entry = undoStack.current.find((e) => e.key === key)
+    if (entry) {
+      undoStack.current = undoStack.current.filter((e) => e.id !== entry.id)
+      toast.dismiss(`undo-${entry.id}`)
+    }
+    router.refresh()
   }
 
   const payingClient = clientOptions.find((c) => c.id === payingClientId)
@@ -346,7 +473,14 @@ export function SalesClientsTable({
             <ClientPaymentPopover
               clientId={payingClientId}
               clientName={payingClient?.name}
-              onRecorded={() => router.refresh()}
+              onRecorded={handleClientPaymentRecorded}
+            />
+          </div>
+          <div role="cell" className={WIDE_CELL}>
+            <ClientPaymentsHistoryPopover
+              clientId={payingClientId}
+              clientName={payingClient?.name}
+              onUndone={handleClientPaymentUndoneFromHistory}
             />
           </div>
         </div>

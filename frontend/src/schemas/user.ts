@@ -5,6 +5,15 @@ import { z } from "zod"
 // screen (or the session) breaks, not just that field.
 export const userRoleSchema = z.enum(["user", "admin", "dev"])
 
+// What each role is called on screen. Kept here rather than in a component so server
+// and client code can both read it - a "use client" module hands a server component
+// a reference, not the object.
+export const userRoleLabels: Record<z.infer<typeof userRoleSchema>, string> = {
+  admin: "Administrador",
+  user: "Usuário",
+  dev: "Desenvolvedor",
+}
+
 export const userSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -98,3 +107,39 @@ export const createUserSchema = {
       .nullish(),
   }),
 }
+
+// updateMeSchemaFor builds the self-service profile schema around the phone the user
+// has now: changing it, or the password, asks for the current password - the backend
+// enforces the same rule, this only says so before the round trip.
+export function updateMeSchemaFor(originalPhone: string) {
+  return z
+    .object({
+      name: z.string().min(1, "Nome é obrigatório"),
+      phone: z
+        .string()
+        .min(10, "Telefone deve ter no mínimo 10 dígitos")
+        .max(11, "Telefone deve ter no máximo 11 dígitos")
+        .regex(/^\d+$/, "Apenas números são permitidos"),
+      new_password: z.union([
+        z.literal(""),
+        z
+          .string()
+          .min(6, "A senha precisa ter no mínimo 6 caracteres")
+          .max(20, "A senha pode ter no máximo 20 caracteres"),
+      ]),
+      current_password: z.string(),
+    })
+    .superRefine((data, ctx) => {
+      const touchesLogin =
+        data.new_password !== "" || data.phone !== originalPhone
+      if (touchesLogin && data.current_password === "") {
+        ctx.addIssue({
+          code: "custom",
+          path: ["current_password"],
+          message: "Informe a senha atual para trocar a senha ou o telefone",
+        })
+      }
+    })
+}
+
+export type UpdateMeRequest = z.infer<ReturnType<typeof updateMeSchemaFor>>

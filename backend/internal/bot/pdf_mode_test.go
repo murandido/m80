@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/murandido/m-80-backend/internal/booking"
 	"github.com/murandido/m-80-backend/internal/data"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"gorm.io/gorm"
@@ -185,7 +186,7 @@ func TestSendDocumentCarriesTheUploadKeysAndTheFileName(t *testing.T) {
 func TestHandleEmissaoDoesNotSendAPDFWhenTheModeIsOff(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		s := newEmissaoScenario(t, tx, traveosAirline())
-		s.Bot.Traveos = workingTraveos()
+		s.Bot.Bookings = booking.NewRegistry(workingTraveos())
 
 		s.Bot.handleEmissao(context.Background(), s.event(), s.text(), time.Now())
 
@@ -202,7 +203,7 @@ func TestAFailingPDFDoesNotChangeTheAnswerToTheGroup(t *testing.T) {
 		// this exercises the real failure: the render or the upload gives up, and the
 		// 🚀 stands.
 		s := newEmissaoScenario(t, tx, traveosAirline())
-		s.Bot.Traveos = workingTraveos()
+		s.Bot.Bookings = booking.NewRegistry(workingTraveos())
 		s.Bot.cmdPDF(context.Background(), s.eventWithID("enable"), "!pdf on", time.Now())
 
 		s.Bot.handleEmissao(context.Background(), s.event(), s.text(), time.Now())
