@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/murandido/m-80-backend/internal/booking"
 )
 
 // waitFor polls until cond holds or the deadline passes. The monitor's probes
@@ -230,3 +232,74 @@ func TestBotProbeFailsWhenTheProcessIsGone(t *testing.T) {
 		t.Error("expected an error when the bot does not answer 200")
 	}
 }
+
+func TestObserveTracksOneProviderPerName(t *testing.T) {
+	var notifications int
+	monitor := NewMonitor(func() { notifications++ })
+
+	monitor.Observe("azul", true)
+	monitor.Observe("gol", false)
+
+	snapshot := monitor.Get()
+	if snapshot.Providers["azul"].State != StateUp {
+		t.Errorf("azul = %q, want up", snapshot.Providers["azul"].State)
+	}
+	if snapshot.Providers["gol"].State != StateDown {
+		t.Errorf("gol = %q, want down", snapshot.Providers["gol"].State)
+	}
+	if notifications != 2 {
+		t.Errorf("notified %d times for two new providers, want 2", notifications)
+	}
+
+	// Same state again is not news. Without this the panel would get an SSE event
+	// after every single lookup, which on a busy day is hundreds carrying nothing.
+	monitor.Observe("azul", true)
+	if notifications != 2 {
+		t.Errorf("notified %d times, want 2 - an unchanged state is not a transition", notifications)
+	}
+
+	monitor.Observe("azul", false)
+	if notifications != 3 {
+		t.Errorf("notified %d times, want 3 - a provider going down is news", notifications)
+	}
+}
+
+func TestGetHandsOutACopyOfTheProviders(t *testing.T) {
+	// The map is written by probe goroutines for as long as the process lives.
+	// Returning the live one would hand every HTTP request a reference into it, and
+	// the lock released on the way out would be guarding nothing.
+	monitor := NewMonitor(func() {})
+	monitor.Observe("azul", true)
+
+	snapshot := monitor.Get()
+	snapshot.Providers["azul"] = Check{State: StateDown}
+
+	if monitor.Get().Providers["azul"].State != StateUp {
+		t.Fatal("mutating the returned snapshot changed the monitor's own state")
+	}
+}
+
+func TestBookingProviderProbeReadsARefusalAsHealthy(t *testing.T) {
+	// The whole basis of the synthetic probe: it asks about a booking that cannot
+	// exist, so the airline saying "no such locator" is the *success* case - the
+	// request reached its application.
+	up := BookingProviderProbe(proberFunc(func(context.Context) error { return booking.ErrNotFound }))
+	if _, err := up(context.Background()); err != nil {
+		t.Errorf("a refused locator was read as an outage: %v", err)
+	}
+
+	down := BookingProviderProbe(proberFunc(func(context.Context) error {
+		return booking.Unavailable(nil, "edge returned 403")
+	}))
+	if _, err := down(context.Background()); err == nil {
+		t.Error("an edge block was read as a healthy carrier")
+	}
+
+	if _, err := BookingProviderProbe(nil)(context.Background()); !errors.Is(err, ErrNotConfigured) {
+		t.Errorf("err = %v, want ErrNotConfigured for a provider that cannot probe", err)
+	}
+}
+
+type proberFunc func(ctx context.Context) error
+
+func (p proberFunc) Probe(ctx context.Context) error { return p(ctx) }

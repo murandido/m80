@@ -3,22 +3,19 @@ package routes
 import (
 	"github.com/go-chi/chi/v5"
 	"github.com/murandido/m-80-backend/internal/api/v1/handlers"
+	"github.com/murandido/m-80-backend/internal/booking"
 	"github.com/murandido/m-80-backend/internal/events"
-	"github.com/murandido/m-80-backend/internal/traveos"
 	"gorm.io/gorm"
 )
 
 // RegisterIssuanceRoutes wires up the /issuances CRUD routes. The broker is passed
 // down so each mutation can announce itself on the SSE stream.
-func RegisterIssuanceRoutes(r chi.Router, db *gorm.DB, broker *events.Broker, traveosClient *traveos.Client) {
-	issuanceHandler := handlers.NewIssuanceHandler(db, broker, traveosClient)
+func RegisterIssuanceRoutes(r chi.Router, db *gorm.DB, broker *events.Broker, bookings *booking.Registry) {
+	issuanceHandler := handlers.NewIssuanceHandler(db, broker, bookings)
 
 	r.Route("/issuances", func(r chi.Router) {
 		// create issuance
 		r.Post("/", issuanceHandler.CreateIssuance)
-
-		// look a booking up at Traveos before the issuance exists
-		r.Post("/traveos-lookup", issuanceHandler.LookupTraveos)
 
 		// get issuances
 		r.Get("/", issuanceHandler.GetIssuances)

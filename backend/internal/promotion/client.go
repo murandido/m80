@@ -51,14 +51,20 @@ type ServiceResponse struct {
 	Screenshot string          `json:"screenshot_base64"`
 }
 
-// Client talks to the promo service over the internal network.
+// Client talks to the promo service over the internal network. It also reaches the separate
+// azul-login-service (a different process: Python/the browser) for the one-time Azul login, hence
+// the second base URL.
 type Client struct {
-	baseURL string
-	http    *http.Client
+	baseURL      string
+	azulLoginURL string
+	http         *http.Client
 }
 
 const (
 	defaultServiceURL = "http://promo-service-dev:8082"
+	// The azul-login-service default for dev; overridden by AZUL_LOGIN_SERVICE_URL in the
+	// compose env. See backend/azul-login-service.
+	defaultAzulLoginURL = "http://azul-login-service-dev:8083"
 	// A browser run is slow by nature: the proof-of-concept measured about twelve
 	// seconds per CPF, so a list of ten is two minutes of legitimate work. This is
 	// deliberately not utils.GeneratePDF's approach - that one uses http.DefaultClient
@@ -72,9 +78,14 @@ func NewClient() *Client {
 	if baseURL == "" {
 		baseURL = defaultServiceURL
 	}
+	azulLoginURL := os.Getenv("AZUL_LOGIN_SERVICE_URL")
+	if azulLoginURL == "" {
+		azulLoginURL = defaultAzulLoginURL
+	}
 	return &Client{
-		baseURL: baseURL,
-		http:    &http.Client{Timeout: defaultTimeout},
+		baseURL:      baseURL,
+		azulLoginURL: azulLoginURL,
+		http:         &http.Client{Timeout: defaultTimeout},
 	}
 }
 

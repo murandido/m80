@@ -19,16 +19,23 @@ const REFRESH_DEBOUNCE_MS = 300
 export function LiveRefresh() {
   const router = useRouter()
   const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  // Whether an event arrived while this tab was in the background. The refresh is still
-  // attempted there - it often lands - but Chrome throttles a hidden tab's timers and
-  // React holds its rendering back, so it cannot be relied on: without the flag the
-  // operator would come back to a screen that looks current and is not, which is the
-  // exact failure this component exists to prevent.
+  // Whether an event arrived while this tab was in the background. A hidden tab does not
+  // refresh at all: it only remembers, and catches up once when it is looked at again.
+  //
+  // It used to refresh anyway. Each refresh re-renders the whole route - the report plus
+  // every picker list, around nine calls to the API - and the API rate-limits per user,
+  // across all of that user's tabs. A Vendas tab left open behind the grid spent the
+  // operator's budget on every issuance a colleague registered, and the 429s surfaced
+  // on the screen they were actually using. Nobody reads a hidden tab; one refresh on
+  // return gives them the same screen for a fraction of the calls.
   const missedWhileHiddenRef = useRef(false)
 
   // Coalesces a burst - issuances registered back to back - into a single refetch.
   const scheduleRefresh = useCallback(() => {
-    if (document.hidden) missedWhileHiddenRef.current = true
+    if (document.hidden) {
+      missedWhileHiddenRef.current = true
+      return
+    }
 
     if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current)
     refreshTimeoutRef.current = setTimeout(() => router.refresh(), REFRESH_DEBOUNCE_MS)
@@ -52,13 +59,17 @@ export function LiveRefresh() {
     [],
   )
 
-  useSSE("/api/events", {
-    "issuance.created": scheduleRefresh,
-    "issuance.updated": scheduleRefresh,
-    "issuance.cancelled": scheduleRefresh,
-    "issuance.deleted": scheduleRefresh,
-    "sale.updated": scheduleRefresh,
-  })
+  useSSE(
+    "/api/events",
+    {
+      "issuance.created": scheduleRefresh,
+      "issuance.updated": scheduleRefresh,
+      "issuance.cancelled": scheduleRefresh,
+      "issuance.deleted": scheduleRefresh,
+      "sale.updated": scheduleRefresh,
+    },
+    { onReconnect: scheduleRefresh },
+  )
 
   return null
 }

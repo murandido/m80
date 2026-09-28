@@ -17,6 +17,8 @@ import { CopyCredentialsMenu } from "./copy-credentials-menu"
 import { DeleteOverlay } from "./delete-overlay"
 import { EditAccountPanel } from "./edit-account-panel"
 import { MergeAccountPanel } from "./merge-account-panel"
+import { AzulAccountControls } from "./azul-account-controls"
+import { SmilesAccountControls } from "./smiles-account-controls"
 
 interface AccountCardProps {
   account: Account
@@ -151,6 +153,10 @@ export function AccountCard({
             </Button>
           </div>
         </div>
+
+        {/* Each strip renders only for its own programme, so at most one appears. */}
+        <AzulAccountControls account={account} />
+        <SmilesAccountControls account={account} />
 
         <DeleteOverlay
           accountName={title}

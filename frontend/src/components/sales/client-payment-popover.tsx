@@ -12,10 +12,19 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Spinner } from "@/components/ui/spinner"
 import { formatCurrencyBRL, parseCurrencyBRLInput } from "@/lib/currency"
 
+export interface ClientPaymentRecorded {
+  client_payment_id: string
+  applied_cents: number
+  settled_sales: number
+  credit_cents: number
+}
+
 interface ClientPaymentPopoverProps {
   clientId: string
   clientName: string | undefined
-  onRecorded: () => void
+  // The table owns the confirmation: it is also what offers the undo, on the toast and
+  // on Ctrl+Z, alongside every other change made on the screen.
+  onRecorded: (result: ClientPaymentRecorded) => void
 }
 
 // Today in the operator's own calendar, the day they mean when they change nothing. en-CA
@@ -30,7 +39,7 @@ function plural(count: number, one: string, many: string): string {
 
 // What the lump sum did, in one line: the operator typed one number and several rows
 // changed, so the confirmation has to say where the money went.
-function summary(result: { applied_cents: number; settled_sales: number; credit_cents: number }): string {
+export function summarizeClientPayment(result: ClientPaymentRecorded): string {
   const parts: string[] = []
   if (result.applied_cents > 0) {
     parts.push(`${formatCurrencyBRL(result.applied_cents)} abatidos nas emissões em aberto`)
@@ -89,8 +98,7 @@ export function ClientPaymentPopover({ clientId, clientName, onRecorded }: Clien
     }
 
     setOpen(false)
-    toast.success(summary(response.result))
-    onRecorded()
+    onRecorded(response.result)
   }
 
   return (
@@ -139,7 +147,7 @@ export function ClientPaymentPopover({ clientId, clientName, onRecorded }: Clien
           </div>
           <p className="text-muted-foreground text-xs">
             Abate nas emissões em aberto do cliente, da mais antiga para a mais nova. O que
-            sobrar fica de crédito para as próximas.
+            sobrar fica de crédito para as próximas. Dá para desfazer pelo Histórico.
           </p>
           <Button type="submit" disabled={busy} className="bg-slate-800 hover:bg-slate-900">
             {busy && <Spinner className="h-4 w-4" />}

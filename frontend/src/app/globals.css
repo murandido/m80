@@ -142,3 +142,22 @@
     @apply bg-background text-foreground;
   }
 }
+/* The filter-navigation bar (QueryNavigationProgress). It waits before showing, so a
+   change that lands as fast as it does on localhost never flashes a bar at all. */
+@keyframes query-progress-appear {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes query-progress-slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}

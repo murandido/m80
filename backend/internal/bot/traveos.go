@@ -68,7 +68,7 @@ func (b *Bot) syncTraveos(
 	// No credentials configured. That is a deployment choice, not something wrong
 	// with this issuance, so it must not put a warning on every message the group
 	// sends - it goes to the log and the issuance stays as the operator typed it.
-	if b.Traveos == nil {
+	if b.Bookings == nil || b.Bookings.Empty() {
 		b.Logger.Infof("%s: traveos is not configured, leaving %s incomplete", flow, locator)
 		return traveosSkipped
 	}
@@ -84,7 +84,7 @@ func (b *Bot) syncTraveos(
 		b.ReactMessage(ctx, evt, reactionFetching)
 	}
 
-	err := issuancesvc.Sync(ctx, b.DB, b.Traveos, issuanceID, force)
+	err := issuancesvc.Sync(ctx, b.DB, b.Bookings, issuanceID, force)
 	switch {
 	case err == nil:
 		b.Logger.Infof("%s: pulled the traveos itinerary for %s", flow, locator)

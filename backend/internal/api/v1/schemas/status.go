@@ -10,6 +10,16 @@ package schemas
 type SystemStatus struct {
 	Bot     DependencyStatus `json:"bot"`
 	Traveos DependencyStatus `json:"traveos"`
+
+	// Providers is one entry per airline integration that reads the carrier
+	// directly, keyed by the provider's name ("azul", "gol"). Empty until the
+	// first carrier is migrated off the vendor, and the panel shows nothing for
+	// it in that case rather than an alarming blank light.
+	//
+	// A map rather than a list because the panel looks providers up by name, and
+	// because which ones exist is decided at boot from the registry rather than
+	// being a fixed set anyone can enumerate here.
+	Providers map[string]DependencyStatus `json:"providers"`
 }
 
 // DependencyStatus is one dependency's condition.

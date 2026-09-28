@@ -8,6 +8,7 @@ import {
   findPersonByNameOrNicknameAction,
   resolveOrCreatePersonAction,
 } from "@/actions/person"
+import { formatAccountAlias } from "@/components/issuances/account-entry"
 import {
   accountBeneficiaryMutationSchema,
   checkAccountNicknameAvailabilitySchema,
@@ -39,6 +40,7 @@ export async function createAccountAction(
     nicknames,
     waives_redemption_fee,
     owns_point_inventory,
+    tracks_statement,
     default_profit_share_percent,
     ...rest
   } = data
@@ -46,6 +48,7 @@ export async function createAccountAction(
     loyalty_program_id,
     waives_redemption_fee: waives_redemption_fee ?? false,
     owns_point_inventory: owns_point_inventory ?? false,
+    tracks_statement: tracks_statement ?? false,
     ...(default_profit_share_percent === undefined
       ? {}
       : { default_profit_share_percent }),
@@ -108,21 +111,20 @@ export async function updateAccountAction(
   const cookieStore = await cookies()
   const token = cookieStore.get("auth_token")?.value
 
-  // Same reason as in createAccountAction: `false` and `0` must survive the strip - and a
-  // balance of zero is a real reading, not an empty field.
+  // Same reason as in createAccountAction: `false` and `0` must survive the strip.
   const {
     waives_redemption_fee,
     owns_point_inventory,
+    tracks_statement,
     default_profit_share_percent,
-    real_balance_points,
     ...rest
   } = data
   const body = {
     ...stripEmptyFields(rest),
     ...(waives_redemption_fee === undefined ? {} : { waives_redemption_fee }),
     ...(owns_point_inventory === undefined ? {} : { owns_point_inventory }),
+    ...(tracks_statement === undefined ? {} : { tracks_statement }),
     ...(default_profit_share_percent === undefined ? {} : { default_profit_share_percent }),
-    ...(real_balance_points === undefined ? {} : { real_balance_points }),
   }
 
   try {
@@ -313,7 +315,10 @@ export async function createAccountForIssuanceAction(
     return { error: `${account.error} A pessoa "${name}" foi criada e ficou sem conta.` }
   }
 
-  const nickname = await createAccountNicknameAction(account.accountId, name, loyaltyProgramId)
+  // The saved alias keeps the administrator in it ("Marlon - Wilmara"), the same shape the
+  // operator typed, rather than the bare handle before the dash.
+  const alias = formatAccountAlias(name, administratorName ?? null)
+  const nickname = await createAccountNicknameAction(account.accountId, alias, loyaltyProgramId)
   if ("error" in nickname || !nickname.nickname) {
     const reason = "error" in nickname ? nickname.error : "Erro ao adicionar apelido."
     return { error: `${reason} A conta foi criada sem apelido.` }

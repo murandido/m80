@@ -41,7 +41,9 @@ type CreateClientPaymentRequest struct {
 
 // ClientPaymentResponse says what a lump sum did.
 type ClientPaymentResponse struct {
-	// SaleIDs are the sales that received money, the client's earlier credit included.
+	// ClientPaymentID is the payment just recorded - what the panel's undo deletes.
+	ClientPaymentID string `json:"client_payment_id"`
+	// SaleIDs are the sales whose lines changed.
 	SaleIDs []string `json:"sale_ids"`
 	// AppliedCents is how much of the amount went into sales; the rest became credit.
 	AppliedCents int `json:"applied_cents" example:"100000"`
@@ -56,6 +58,42 @@ type ClientPaymentSingleResponse struct {
 	Success bool                  `json:"success"`
 	Message string                `json:"message"`
 	Data    ClientPaymentResponse `json:"data"`
+}
+
+// ClientPaymentHistoryResponse is a client's payments, undone ones included, and the
+// credit they leave - what GET /sales/client-payments returns.
+type ClientPaymentHistoryResponse struct {
+	// CreditCents is what the active payments brought in and no sale took.
+	CreditCents int                        `json:"credit_cents" example:"20000"`
+	Payments    []ClientPaymentHistoryItem `json:"payments"`
+}
+
+// ClientPaymentHistoryItem is one lump sum and where its money is now.
+type ClientPaymentHistoryItem struct {
+	ID            string    `json:"id"`
+	AmountCents   int       `json:"amount_cents" example:"120000"`
+	PaidOn        string    `json:"paid_on" example:"2026-09-14"`
+	CreatedByName string    `json:"created_by_name"`
+	CreatedAt     time.Time `json:"created_at"`
+	// DeletedAt is set on an undone payment, which keeps no allocations.
+	DeletedAt     *time.Time `json:"deleted_at"`
+	DeletedByName *string    `json:"deleted_by_name"`
+	// Allocations are the sales this payment covers, oldest first. What they do not add
+	// up to is part of the credit.
+	Allocations []ClientPaymentAllocation `json:"allocations"`
+}
+
+// ClientPaymentAllocation is the part of a lump sum that sits on one sale.
+type ClientPaymentAllocation struct {
+	SaleID         string `json:"sale_id"`
+	ProgramLocator string `json:"program_locator" example:"ABC123"`
+	AmountCents    int    `json:"amount_cents" example:"50000"`
+}
+
+// ClientPaymentUndoResponse says what undoing a payment moved.
+type ClientPaymentUndoResponse struct {
+	SaleIDs     []string `json:"sale_ids"`
+	CreditCents int      `json:"credit_cents" example:"0"`
 }
 
 // SalePaymentResponse is one line of a sale's statement.
@@ -82,6 +120,11 @@ type SaleResponse struct {
 	ClientName *string `json:"client_name"`
 	Paid       bool    `json:"paid"`
 	Note       *string `json:"note"`
+	// ClientPaymentCents is the part of PaidCents that came from the client's lump-sum
+	// payments. Such a sale cannot be switched back to unpaid; the payment is undone in
+	// the client's history instead. ClientPaymentPaidOn (YYYY-MM-DD) is the latest of them.
+	ClientPaymentCents  int     `json:"client_payment_cents"`
+	ClientPaymentPaidOn *string `json:"client_payment_paid_on"`
 
 	ProgramLocator    string    `json:"program_locator"`
 	MainPassengerName *string   `json:"main_passenger_name"`
@@ -213,10 +256,43 @@ type SupplierBalanceResponse struct {
 	AdministratorID     *string `json:"administrator_id"`
 	AdministratorName   *string `json:"administrator_name"`
 
+	// ExportCounter is the administrator's supplier-PDF export count, present only on an
+	// administrator-grouped row - the number lives on the person, not the account.
+	ExportCounter *int `json:"export_counter,omitempty"`
+
 	IssuedPoints   int `json:"issued_points"`
 	RefundedPoints int `json:"refunded_points"`
 	NetPoints      int `json:"net_points"`
 
 	// Issuances is every line that produced the totals above, in chronological order.
 	Issuances []SupplierIssuanceResponse `json:"issuances"`
+}
+
+// IncrementSupplierExportCounterRequest bumps an administrator's supplier-PDF export counter by
+// one, called just before the download so the number in the file name advances per export.
+type IncrementSupplierExportCounterRequest struct {
+	AdministratorID string `json:"administrator_id" validate:"required,uuid"`
+}
+
+// SetSupplierExportCounterRequest overwrites an administrator's counter with an exact value, for
+// correcting it or starting a fresh sequence by hand.
+type SetSupplierExportCounterRequest struct {
+	AdministratorID string `json:"administrator_id" validate:"required,uuid"`
+	Counter         int    `json:"counter" validate:"min=0"`
+}
+
+// SupplierExportCounterResponse carries the administrator's counter after the change.
+type SupplierExportCounterResponse struct {
+	Counter int `json:"counter"`
+}
+
+// BulkIncrementSupplierExportCounterRequest bumps several administrators' counters at once, for
+// the "all suppliers" PDF that covers many administrators in one document.
+type BulkIncrementSupplierExportCounterRequest struct {
+	AdministratorIDs []string `json:"administrator_ids" validate:"required,min=1,dive,uuid"`
+}
+
+// BulkSupplierExportCounterResponse reports how many administrators were incremented.
+type BulkSupplierExportCounterResponse struct {
+	Updated int `json:"updated"`
 }

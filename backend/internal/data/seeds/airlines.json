@@ -93,6 +93,8 @@
     "name": "IBERIA",
     "traveos_airline_id": 49,
     "brand_color": "#ED1C24",
+    "traveos_supported": true,
+    "requires_last_name": true,
     "aliases": [
       "IB"
     ]
@@ -124,6 +126,27 @@
     "brand_color": "#660033",
     "aliases": [
       "QR"
+    ]
+  },
+  {
+    "code": "AIRFRANCE",
+    "name": "AIR FRANCE",
+    "traveos_airline_id": 137,
+    "brand_color": "#0040FF",
+    "traveos_supported": true,
+    "requires_last_name": true,
+    "aliases": [
+      "AF"
+    ]
+  },
+  {
+    "code": "AEROLINEAS",
+    "name": "AEROLÍNEAS ARGENTINAS",
+    "brand_color": "#0078BE",
+    "requires_last_name": true,
+    "aliases": [
+      "AR",
+      "AEROLINEAS ARGENTINAS"
     ]
   }
 ]

@@ -1,6 +1,8 @@
+import { Suspense } from "react"
 import { AppSidebar } from "@/components/layout/app-sidebar"
 import { CommandPaletteProvider } from "@/components/layout/command-palette"
 import { Header } from "@/components/layout/header"
+import { QueryNavigationProgress } from "@/components/layout/query-navigation-progress"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import type { SystemStatus } from "@/schemas/status"
 import type { Role } from "@/lib/navigation"
@@ -27,6 +29,10 @@ export function DashboardShell({
         >
           Pular para o conteúdo
         </a>
+        {/* It reads useSearchParams, which Next wants under a Suspense boundary. */}
+        <Suspense fallback={null}>
+          <QueryNavigationProgress />
+        </Suspense>
         <AppSidebar role={role} user={user} />
         {/* SidebarInset already renders the <main>; the inner wrapper is the
             scroll container and the skip link's target. */}

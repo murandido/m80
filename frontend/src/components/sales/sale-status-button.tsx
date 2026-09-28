@@ -48,8 +48,20 @@ interface SaleStatusButtonProps {
 // One click flips a sale between Pago and A Pagar. Partial amounts are not typed here: they
 // come in through the client payment bar, which spreads a lump sum over the client's sales
 // and leaves at most one of them partly paid - the yellow one.
+// YYYY-MM-DD to dd/mm, without a Date round trip that could shift the day.
+function formatShortDay(day: string): string {
+  const [, month, date] = day.split("-")
+  return `${date}/${month}`
+}
+
 export function SaleStatusButton({ sale, onToggle, disabled }: SaleStatusButtonProps) {
   const status = saleStatus(sale)
+  // Paid entirely by the client's lump sums: the switch has nothing of its own to take
+  // back, and the backend refuses it. The way back is undoing the payment in the history.
+  const coveredByClientPayment =
+    status === "paid" &&
+    sale.client_payment_cents > 0 &&
+    sale.paid_cents - sale.client_payment_cents <= 0
   const inert = status === "cancelled" || status === "no-value"
 
   const paidShare =
@@ -67,7 +79,11 @@ export function SaleStatusButton({ sale, onToggle, disabled }: SaleStatusButtonP
   }[status]
 
   const hint = {
-    paid: "Clique para voltar a A Pagar",
+    paid: coveredByClientPayment
+      ? `Paga pelo pagamento do cliente de ${formatCurrencyBRL(sale.client_payment_cents)}` +
+        (sale.client_payment_paid_on ? ` em ${formatShortDay(sale.client_payment_paid_on)}` : "") +
+        " — desfaça no Histórico"
+      : "Clique para voltar a A Pagar",
     partial: `${Math.round(paidShare)}% pago — clique para quitar o restante`,
     unpaid: "Clique para marcar como pago",
     refund: "Clique para registrar a devolução ao cliente",
@@ -79,7 +95,7 @@ export function SaleStatusButton({ sale, onToggle, disabled }: SaleStatusButtonP
     <button
       type="button"
       onClick={() => onToggle(status !== "paid")}
-      disabled={disabled || inert}
+      disabled={disabled || inert || coveredByClientPayment}
       title={hint}
       aria-label={`${label}. ${hint}`}
       className={cn(

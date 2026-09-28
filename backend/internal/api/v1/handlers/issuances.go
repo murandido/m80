@@ -17,6 +17,7 @@ import (
 	"github.com/murandido/m-80-backend/internal/account"
 	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
+	"github.com/murandido/m-80-backend/internal/booking"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/events"
 	"github.com/murandido/m-80-backend/internal/export"
@@ -56,21 +57,20 @@ type IssuanceHandler struct {
 	DB        *gorm.DB
 	Validator *validator.Validate
 	Broker    *events.Broker
-	// Traveos is nil when the process started without vendor credentials. Layer 3
-	// is opt-in per airline, so that is a supported state, not a fatal one - the
-	// routes that need it answer 503 and everything else works untouched.
-	Traveos *traveos.Client
-	// TraveosLookups holds what a lookup fetched until the create that reuses it.
-	TraveosLookups *issuancesvc.LookupCache
+	// Bookings is where the itinerary comes from: which provider serves which
+	// airline, and what catches the ones that could not be reached. It is nil or
+	// empty when the process started without vendor credentials and no direct
+	// integration is wired - a supported state, not a fatal one, in which the
+	// routes that need an itinerary answer 503 and everything else works untouched.
+	Bookings *booking.Registry
 }
 
-func NewIssuanceHandler(db *gorm.DB, broker *events.Broker, traveosClient *traveos.Client) *IssuanceHandler {
+func NewIssuanceHandler(db *gorm.DB, broker *events.Broker, bookings *booking.Registry) *IssuanceHandler {
 	return &IssuanceHandler{
-		Traveos:        traveosClient,
-		TraveosLookups: issuancesvc.NewLookupCache(),
-		DB:             db,
-		Validator:      validator.New(),
-		Broker:         broker,
+		DB:        db,
+		Validator: validator.New(),
+		Broker:    broker,
+		Bookings:  bookings,
 	}
 }
 
@@ -344,6 +344,13 @@ func preloadIssuanceAssociations(query *gorm.DB) *gorm.DB {
 // answer "does not exist" for every issuance older than this morning. The panel
 // greys the two controls out while a search is active so the suspension is visible
 // rather than surprising; the other dimensions keep applying as plain ANDs.
+// The two non-uuid values the issuer_id filter accepts, mirroring the panel's multi-select:
+// "all" restricts to nothing (every issuer), "none" matches nothing (no issuer selected).
+const (
+	issuerFilterAll  = "all"
+	issuerFilterNone = "none"
+)
+
 func applyIssuanceListFilters(db *gorm.DB, query *gorm.DB, r *http.Request) *gorm.DB {
 	q := r.URL.Query()
 
@@ -365,12 +372,25 @@ func applyIssuanceListFilters(db *gorm.DB, query *gorm.DB, r *http.Request) *gor
 		return query
 	}
 
+	// issuer_id carries the multi-select's choice: a comma-separated list of ids, or one of two
+	// tokens. "none" is the explicit "no issuers selected" state - the panel sends it so that
+	// clearing every issuer shows nothing rather than everything, so short-circuit to an empty
+	// result. "all" (like an absent param) means no issuer restriction. A single id has no comma,
+	// so a panel bundle that still sends one keeps working.
+	rawIssuer := q.Get("issuer_id")
+	if rawIssuer == issuerFilterNone {
+		return query.Where("1 = 0")
+	}
+	var issuers []string
+	if rawIssuer != "" && rawIssuer != issuerFilterAll {
+		issuers = splitIDs(rawIssuer)
+	}
+
 	// created_at/cancelled_at are UTC in the DB; parseDateRange resolves the local
 	// calendar days into UTC bounds so "today" matches the operator's day.
-	issuer := q.Get("issuer_id")
 	from, to := parseDateRange(r)
 
-	if issuer == "" && from == nil && to == nil {
+	if len(issuers) == 0 && from == nil && to == nil {
 		return query
 	}
 
@@ -379,11 +399,11 @@ func applyIssuanceListFilters(db *gorm.DB, query *gorm.DB, r *http.Request) *gor
 	creationArgs := []any{}
 	cancellationArgs := []any{false}
 
-	if issuer != "" {
-		creation = append(creation, "issuer_id = ?")
-		creationArgs = append(creationArgs, issuer)
-		cancellation = append(cancellation, "cancelled_by_id = ?")
-		cancellationArgs = append(cancellationArgs, issuer)
+	if len(issuers) > 0 {
+		creation = append(creation, "issuer_id IN ?")
+		creationArgs = append(creationArgs, issuers)
+		cancellation = append(cancellation, "cancelled_by_id IN ?")
+		cancellationArgs = append(cancellationArgs, issuers)
 	}
 	if from != nil {
 		creation = append(creation, "created_at >= ?")
@@ -448,7 +468,7 @@ func issuanceSearchGroup(db *gorm.DB, search string) *gorm.DB {
 // @Param        account_id          query  string  false  "UUID da conta"
 // @Param        agency_id           query  string  false  "UUID da agência"
 // @Param        q                   query  string  false  "Busca por localizador, passageiro, origem ou destino. Quando presente, os filtros de data e emissor são ignorados."
-// @Param        issuer_id           query  string  false  "UUID do emissor (usuário)"
+// @Param        issuer_id           query  string  false  "UUID do emissor (usuário). Aceita vários separados por vírgula; o token 'all' não filtra (todos os emissores) e 'none' não retorna nenhum."
 // @Success      200  {object}  schemas.IssuanceListResponse
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao buscar emissões"
@@ -478,38 +498,16 @@ func (h *IssuanceHandler) GetIssuances(w http.ResponseWriter, r *http.Request) {
 	utils.SendJSON(w, r, http.StatusOK, "Issuances fetched successfully", resp)
 }
 
-// filteredIssuerSheetName resolves the single tab name the export should collapse into, or ""
-// to keep the one-tab-per-person grouping.
-//
-// It returns a name only when the listing was actually narrowed to one issuer: the operator
-// asked for their own issuances, so the whole file is their block of the manual sheet -
-// including the ones somebody else created and they cancelled, which the cancellation branch
-// of applyIssuanceListFilters brings in. A search suspends that branch (see the filter's
-// comment), so while q is present the export goes back to grouping.
-//
-// The user is read Unscoped so a soft-deleted operator still names their own tab instead of
-// silently falling back to the grouping, and an id that matches nothing degrades to the
-// grouping rather than to an error - the rows are right either way.
-func filteredIssuerSheetName(db *gorm.DB, r *http.Request) string {
-	if strings.TrimSpace(r.URL.Query().Get("q")) != "" {
-		return ""
-	}
-
-	issuer := r.URL.Query().Get("issuer_id")
-	if issuer == "" {
-		return ""
-	}
-
-	var user data.User
-	if err := db.Unscoped().Select("name").First(&user, "id = ?", issuer).Error; err != nil {
-		return ""
-	}
-	return user.Name
-}
+// The spreadsheets GET /issuances/export can build. The control sheet is the default because
+// it is what the panel exported before the choice existed.
+const (
+	issuanceExportLayoutControl = "control"
+	issuanceExportLayoutLegacy  = "legacy"
+)
 
 // GetIssuancesExport handles the GET /issuances/export route.
 // @Summary      Exportar emissões (.xlsx)
-// @Description  Gera uma planilha .xlsx das emissões filtradas, no layout da planilha manual de controle: uma aba por pessoa (a emissão cancelada vai para a aba de quem cancelou, que é onde a listagem também a mostra; com issuer_id informado a planilha vira uma aba só, a dele), colunas A:M (Nº, Companhia, Localizador, Data do Voo, Passageiro Principal, Origem, Destino, Pontos, Milheiro, Taxa, Total, Conta, Observação), as linhas agrupadas em blocos por companhia, o bloco TOTAL DAS CONTAS ao final e, ao lado da tabela, um quadro por conta e companhia com os localizadores e o total de pontos. Dentro de cada bloco a ordem é a da listagem (da mais antiga para a mais recente). Aceita os mesmos filtros da listagem (data, programa de fidelidade, cia aérea, conta, agência e emissor). Emissão cancelada no mesmo dia em que foi criada entra pelo líquido (pontos e taxas menos o reembolso); cancelada em outro dia entra só pelo reembolso, negativo. A linha cancelada é destacada em vermelho claro.
+// @Description  Gera uma planilha .xlsx das emissões filtradas. O layout é escolhido por layout: control (padrão) ou legacy. Layout control: planilha manual de controle numa aba única (a emissão cancelada é atribuída a quem cancelou, que é onde a listagem também a mostra), colunas A:O (Nº, Companhia, Localizador, Data do Voo, Passageiro Principal, Origem, Destino, Pontos, Milheiro, Taxa, Total, Conta, Observação, Taxa Resgate, Emissor), as linhas agrupadas em blocos por companhia, o bloco TOTAL DAS CONTAS ao final e, ao lado da tabela, um quadro por conta e companhia com os localizadores e o total de pontos. A coluna Emissor identifica quem fez cada linha, já que todos os emissores ficam na mesma aba. Dentro de cada bloco a ordem é a da listagem (da mais antiga para a mais recente). Aceita os mesmos filtros da listagem (data, programa de fidelidade, cia aérea, conta, agência e emissor). Emissão cancelada no mesmo dia em que foi criada entra pelo líquido (pontos e taxas menos o reembolso); cancelada em outro dia entra só pelo reembolso, negativo. A linha cancelada é destacada em vermelho claro. Layout legacy: a antiga planilha EMISSÕES GERAIS, uma tabela só (B:P) com os totais do modelo, mais a coluna TAXA RESGATE em Q. Nos dois layouts a Taxa Resgate é a taxa que a conta isenta (Azul Diamante Unique) deixou de pagar, em branco nas contas comuns, com o mesmo sinal dos pontos.
 // @Tags         Emissões
 // @Produce      application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
 // @Security     BearerAuth
@@ -520,12 +518,22 @@ func filteredIssuerSheetName(db *gorm.DB, r *http.Request) string {
 // @Param        account_id          query  string  false  "UUID da conta"
 // @Param        agency_id           query  string  false  "UUID da agência"
 // @Param        q                   query  string  false  "Busca por localizador, passageiro, origem ou destino. Quando presente, os filtros de data e emissor são ignorados."
-// @Param        issuer_id           query  string  false  "UUID do emissor (usuário)"
+// @Param        issuer_id           query  string  false  "UUID do emissor (usuário). Aceita vários separados por vírgula; o token 'all' não filtra (todos os emissores) e 'none' não retorna nenhum."
+// @Param        layout              query  string  false  "Layout da planilha: control (padrão) ou legacy"  Enums(control, legacy)
 // @Success      200  {file}    binary  "Planilha .xlsx das emissões filtradas"
+// @Failure      400  {object}  schemas.ErrorResponse "Layout desconhecido"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao gerar a planilha"
 // @Router       /issuances/export [get]
 func (h *IssuanceHandler) GetIssuancesExport(w http.ResponseWriter, r *http.Request) {
+	// Checked before the query so a typo in the link fails fast instead of silently handing
+	// back the other spreadsheet.
+	layout := r.URL.Query().Get("layout")
+	if layout != "" && layout != issuanceExportLayoutControl && layout != issuanceExportLayoutLegacy {
+		utils.SendError(w, r, http.StatusBadRequest, "Unknown export layout")
+		return
+	}
+
 	var issuances []data.Issuance
 
 	// Same query as GetIssuances, plus the account holder needed to resolve the CONTA label
@@ -547,7 +555,15 @@ func (h *IssuanceHandler) GetIssuancesExport(w http.ResponseWriter, r *http.Requ
 
 	// No period is passed: whether a cancelled issuance enters the sheet as its booking, as
 	// its refund, or as both netting out is decided by its own two dates, not by the filter.
-	content, err := export.BuildIssuancesXLSX(issuances, filteredIssuerSheetName(h.DB, r))
+	var content []byte
+	var err error
+	filenamePrefix := "emissoes"
+	if layout == issuanceExportLayoutLegacy {
+		content, err = export.BuildLegacyIssuancesXLSX(issuances)
+		filenamePrefix = "emissoes-gerais"
+	} else {
+		content, err = export.BuildIssuancesXLSX(issuances)
+	}
 	if err != nil {
 		slog.Error("failed to build issuances export", "err", err)
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to build issuances export")
@@ -555,7 +571,7 @@ func (h *IssuanceHandler) GetIssuancesExport(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Binary response: the standard JSON envelope does not apply, mirroring the PDF path.
-	filename := fmt.Sprintf("emissoes-%s.xlsx", exportFilenameDate(time.Now()))
+	filename := fmt.Sprintf("%s-%s.xlsx", filenamePrefix, exportFilenameDate(time.Now()))
 	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
 	w.Header().Set("Content-Length", strconv.Itoa(len(content)))
@@ -738,107 +754,9 @@ func (h *IssuanceHandler) CreateIssuance(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if req.TraveosLookupID != nil || req.TraveosTicketCode != nil {
-		h.applyTraveosLookup(r.Context(), &created, derefString(req.TraveosLookupID), derefString(req.TraveosTicketCode))
-	}
-
 	h.broadcastIssuance(eventIssuanceCreated, created.ID)
 
 	utils.SendJSON(w, r, http.StatusCreated, "Issuance created successfully", toIssuanceResponse(created))
-}
-
-// applyTraveosLookup writes a lookup's itinerary onto the issuance just created and
-// reloads it, so the response already carries the synced row. Best-effort by design:
-// the issuance is committed by now, and losing the autofill is recoverable with the
-// refetch button - failing the create over it would not be.
-func (h *IssuanceHandler) applyTraveosLookup(ctx context.Context, created *data.Issuance, lookupID, ticketCode string) {
-	// A nil *traveos.Client inside the interface would not compare equal to nil, so the
-	// client is only handed over when there is one. The cached path never needs it.
-	var client issuancesvc.TraveosClient
-	if h.Traveos != nil {
-		client = h.Traveos
-	}
-
-	applyCtx, cancel := context.WithTimeout(ctx, traveosSyncTimeout)
-	defer cancel()
-	if err := issuancesvc.ApplyLookup(applyCtx, h.DB, client, h.TraveosLookups, created.ID, lookupID, ticketCode); err != nil {
-		slog.Error("failed to apply the traveos lookup to a new issuance", "issuance_id", created.ID, "err", err)
-		return
-	}
-
-	if err := preloadIssuanceAssociations(h.DB).
-		Preload("Flights", func(db *gorm.DB) *gorm.DB {
-			return db.Where("direction = ?", "outbound").Order("leg_order asc")
-		}).
-		First(created, "id = ?", created.ID).Error; err != nil {
-		slog.Error("failed to reload the issuance after the traveos lookup", "issuance_id", created.ID, "err", err)
-	}
-}
-
-// LookupTraveos handles the POST /issuances/traveos-lookup route.
-// @Summary      Consultar reserva na Traveos antes de criar a emissão
-// @Description  Busca o bilhete na Traveos (emitindo lá primeiro, se ainda não existir) sem gravar nada, e devolve uma prévia do itinerário. O lookup_id devolvido, enviado em traveos_lookup_id no POST /issuances, grava o itinerário na emissão criada sem consultar a Traveos de novo.
-// @Tags         Emissões
-// @Accept       json
-// @Produce      json
-// @Security     BearerAuth
-// @Param        payload body schemas.TraveosLookupRequest true "Dados que a Traveos usa para localizar a reserva"
-// @Success      200  {object}  schemas.TraveosLookupSingleResponse
-// @Failure      400  {object}  schemas.ErrorResponse "Payload inválido"
-// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
-// @Failure      422  {object}  schemas.ErrorResponse "A cia aérea não usa Traveos, não tem o id da Traveos configurado, ou falta um campo que a cia exige"
-// @Failure      502  {object}  schemas.ErrorResponse "A Traveos recusou ou falhou"
-// @Failure      503  {object}  schemas.ErrorResponse "Integração com a Traveos não configurada neste servidor"
-// @Router       /issuances/traveos-lookup [post]
-func (h *IssuanceHandler) LookupTraveos(w http.ResponseWriter, r *http.Request) {
-	if h.Traveos == nil {
-		// 503 and not 401 - see SyncIssuanceWithTraveos.
-		utils.SendError(w, r, http.StatusServiceUnavailable,
-			"A integração com a Traveos não está configurada neste servidor")
-		return
-	}
-
-	var req schemas.TraveosLookupRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.SendError(w, r, http.StatusBadRequest, "Invalid JSON payload")
-		return
-	}
-	if err := h.Validator.Struct(req); err != nil {
-		utils.SendError(w, r, http.StatusBadRequest, "Validation failed: "+err.Error())
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), traveosSyncTimeout)
-	defer cancel()
-
-	result, err := issuancesvc.Lookup(ctx, h.DB, h.Traveos, h.TraveosLookups, issuancesvc.LookupInput{
-		AirlineID:           req.AirlineID,
-		ProgramLocator:      req.ProgramLocator,
-		AirlineLocator:      req.AirlineLocator,
-		OriginIATACode:      req.OriginIATACode,
-		MainPassengerName:   req.MainPassengerName,
-		LatamPurchaseNumber: req.LatamPurchaseNumber,
-	})
-	if err != nil {
-		h.respondToTraveosSyncError(w, r, "", err)
-		return
-	}
-
-	var flightDate *string
-	if result.FlightDate != nil {
-		formatted := result.FlightDate.Format("2006-01-02")
-		flightDate = &formatted
-	}
-
-	utils.SendJSON(w, r, http.StatusOK, "Reserva encontrada na Traveos", schemas.TraveosLookupResponse{
-		LookupID:            result.LookupID,
-		TicketCode:          result.TicketCode,
-		FlightDate:          flightDate,
-		OriginIATACode:      result.OriginIATACode,
-		DestinationIATACode: result.DestinationIATACode,
-		MainPassengerName:   result.MainPassengerName,
-		LatamPurchaseNumber: result.LatamPurchaseNumber,
-	})
 }
 
 // UpdateIssuance handles the PATCH /issuances/{id} route
@@ -1426,12 +1344,12 @@ const traveosSyncTimeout = 3 * time.Minute
 // @Success      200  {object}  schemas.IssuanceSingleResponse
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      404  {object}  schemas.ErrorResponse "Emissão não encontrada"
-// @Failure      422  {object}  schemas.ErrorResponse "A cia aérea não usa Traveos, não tem o id da Traveos configurado, ou a emissão não tem um campo que a cia exige"
+// @Failure      422  {object}  schemas.ErrorResponse "A cia aérea não usa Traveos, não tem o id da Traveos configurado, a emissão não tem um campo que a cia exige, ou nenhum provedor encontrou a reserva"
 // @Failure      502  {object}  schemas.ErrorResponse "A Traveos recusou ou falhou"
 // @Failure      503  {object}  schemas.ErrorResponse "Integração com a Traveos não configurada neste servidor"
 // @Router       /issuances/{id}/traveos-sync [post]
 func (h *IssuanceHandler) SyncIssuanceWithTraveos(w http.ResponseWriter, r *http.Request) {
-	if h.Traveos == nil {
+	if h.Bookings == nil || h.Bookings.Empty() {
 		// 503 and not 401: the panel deletes the session cookie on a 401, so a
 		// misconfigured integration would log every operator out (see
 		// middleware.RequireAuth for the same reasoning about database hiccups).
@@ -1461,7 +1379,7 @@ func (h *IssuanceHandler) SyncIssuanceWithTraveos(w http.ResponseWriter, r *http
 		h.broadcastIssuance(eventIssuanceUpdated, id)
 	}
 
-	if err := issuancesvc.Sync(ctx, h.DB, h.Traveos, id, true); err != nil {
+	if err := issuancesvc.Sync(ctx, h.DB, h.Bookings, id, true); err != nil {
 		// Sync only unmarks what it marked, and it marks late - after the airline
 		// gates. A refusal before that (airline not integrated, no locator) would
 		// otherwise leave the row locked on every screen until the marker went stale.
@@ -1546,6 +1464,15 @@ func (h *IssuanceHandler) respondToTraveosSyncError(w http.ResponseWriter, r *ht
 			"issuance_id", id, "err", err)
 		utils.SendError(w, r, http.StatusBadGateway,
 			"A Traveos confirmou a emissão mas não devolveu o bilhete. Confira lá antes de tentar de novo")
+
+	// An answer, not an outage: the airline looked and found nothing, and so did the
+	// vendor when it was asked. For a carrier read directly that almost always means
+	// the origin or the surname on the row does not match the booking, which the
+	// operator can fix - the generic 502 below read as "the system is down" instead.
+	case errors.Is(err, booking.ErrNotFound):
+		slog.Warn("no provider found the booking", "issuance_id", id, "err", err)
+		utils.SendError(w, r, http.StatusUnprocessableEntity,
+			"A companhia aérea não encontrou essa reserva. Confira o localizador, a origem e o sobrenome do passageiro")
 
 	default:
 		slog.Error("failed to sync an issuance with traveos", "issuance_id", id, "err", err)

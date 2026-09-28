@@ -1,7 +1,7 @@
 "use client"
 
 import { useRef, useState } from "react"
-import { usePathname, useRouter, useSearchParams } from "next/navigation"
+import { usePathname } from "next/navigation"
 import { CalendarDays, Info, RotateCcw } from "lucide-react"
 import type { DateRange } from "react-day-picker"
 import { Button } from "@/components/ui/button"
@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils"
 import { clearStickyFilters } from "@/lib/sticky-filters"
 import { useAutocompletePreference } from "@/hooks/use-autocomplete-preference"
 import { useStickyFilters } from "@/hooks/use-sticky-filters"
+import { useUrlQuery } from "@/hooks/use-url-query"
 import {
   addDays,
   dateRangeLabel,
@@ -25,7 +26,7 @@ import { LoyaltyProgramCombobox } from "@/components/loyalty-programs/loyalty-pr
 import { AirlineCombobox } from "@/components/airlines/airline-combobox"
 import { AccountCombobox } from "@/components/accounts/account-combobox"
 import { AgencyCombobox } from "@/components/agencies/agency-combobox"
-import { UserCombobox } from "@/components/users/user-combobox"
+import { UserMultiCombobox } from "@/components/users/user-multi-combobox"
 import type { LoyaltyProgram } from "@/schemas/loyalty-program"
 import type { Airline } from "@/schemas/airline"
 import type { AccountOption } from "@/schemas/account"
@@ -47,6 +48,27 @@ const FILTER_KEYS = [
 ] as const
 
 type FilterState = Record<(typeof FILTER_KEYS)[number], string>
+
+// The two non-uuid values issuer_id can carry, matching the backend: "all" restricts to nothing
+// (every issuer), "none" matches nothing (no issuer selected).
+const ISSUERS_ALL = "all"
+const ISSUERS_NONE = "none"
+
+// issuer_id <-> the multi-select's selected ids. An empty selection is "none" (show nothing),
+// and a full one collapses to "all" so the URL stays short and survives a new user being added.
+// An absent/empty param is treated as every issuer, which is what the panel falls back to when
+// it cannot tell who "me" is.
+function parseIssuerParam(param: string, users: User[]): string[] {
+  if (param === "" || param === ISSUERS_ALL) return users.map((u) => u.id)
+  if (param === ISSUERS_NONE) return []
+  return param.split(",").filter(Boolean)
+}
+
+function serializeIssuerSelection(ids: string[], users: User[]): string {
+  if (ids.length === 0) return ISSUERS_NONE
+  if (users.length > 0 && ids.length >= users.length) return ISSUERS_ALL
+  return ids.join(",")
+}
 
 interface IssuancesFilterBarProps {
   loyaltyPrograms: LoyaltyProgram[]
@@ -74,9 +96,8 @@ export function IssuancesFilterBar({
   initialFilters,
   hasSearch,
 }: IssuancesFilterBarProps) {
-  const router = useRouter()
   const pathname = usePathname()
-  const searchParams = useSearchParams()
+  const { replace, update: updateUrl } = useUrlQuery()
   useStickyFilters()
 
   const [filters, setFilters] = useState<FilterState>(initialFilters)
@@ -95,15 +116,13 @@ export function IssuancesFilterBar({
   // new effective filters - e.g. after "Limpar filtros" or browser back/forward.
 
   // Writes ALL the keys (empty when cleared) so clearing one dimension never
-  // drops the URL back to "no keys" and re-triggers the defaults. The search term
-  // is carried over by hand: this builds a fresh URLSearchParams, so anything not
-  // written here is erased - and erasing it would clear the box mid-search.
+  // drops the URL back to "no keys" and re-triggers the defaults. Merged into the
+  // query the screen is heading to, so a search typed a moment ago - still on its
+  // way to the server - is carried along instead of erased.
   function pushFilters(next: FilterState) {
-    const params = new URLSearchParams()
-    for (const key of FILTER_KEYS) params.set(key, next[key])
-    const search = searchParams.get("q")
-    if (search) params.set("q", search)
-    router.replace(`${pathname}?${params.toString()}`)
+    updateUrl((params) => {
+      for (const key of FILTER_KEYS) params.set(key, next[key])
+    })
   }
 
   function update(partial: Partial<FilterState>) {
@@ -295,11 +314,10 @@ export function IssuancesFilterBar({
       </div>
 
       <div className="w-44" title={hasSearch ? searchOverrideTitle : undefined}>
-        <UserCombobox
+        <UserMultiCombobox
           users={users}
-          value={filters.issuer_id}
-          onChange={(id) => update({ issuer_id: id })}
-          placeholder="Todos os emissores"
+          value={parseIssuerParam(filters.issuer_id, users)}
+          onChange={(ids) => update({ issuer_id: serializeIssuerSelection(ids, users) })}
           disabled={hasSearch}
         />
       </div>
@@ -316,6 +334,8 @@ export function IssuancesFilterBar({
         </span>
       )}
 
+      <AutocompleteToggle />
+
       {hasAnyFilter && (
         <Button
           type="button"
@@ -328,7 +348,7 @@ export function IssuancesFilterBar({
           // repopulated from the cookie the operator just asked to drop.
           onClick={() => {
             clearStickyFilters(pathname)
-            router.replace(pathname)
+            replace(new URLSearchParams())
           }}
         >
           <RotateCcw className="h-4 w-4" />
@@ -338,9 +358,6 @@ export function IssuancesFilterBar({
   )
 }
 
-// Rendered by the grid, beside "Nova emissão" under the table: with it on, that button
-// starts the Traveos-first flow, so the two read as one control.
-//
 // Opt-in, and off by default. With it on, a row fetches from Traveos by itself as
 // soon as it has the minimum fields the airline needs - which is a real emission
 // at the vendor, so it must never happen because someone opened the page.
@@ -349,11 +366,11 @@ export function IssuancesFilterBar({
 // toggle is the deliberate difference: the operator fixing yesterday's numbers is
 // editing the same fields as the one entering a new booking, and the vendor cannot
 // tell those two apart.
-export function AutocompleteToggle() {
+function AutocompleteToggle() {
   const [enabled, setEnabled] = useAutocompletePreference()
 
   return (
-    <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+    <label className="ml-auto flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
       <Switch
         checked={enabled}
         onCheckedChange={setEnabled}

@@ -1,6 +1,6 @@
 "use client"
 
-import { useRouter, useSearchParams } from "next/navigation"
+import { useUrlQuery } from "@/hooks/use-url-query"
 import { Label } from "@/components/ui/label"
 import { AccountCombobox } from "@/components/accounts/account-combobox"
 import { DateRangeFilter } from "@/components/filters/date-range-filter"
@@ -27,8 +27,7 @@ export function InventoryToolbar({
   from,
   to,
 }: Props) {
-  const router = useRouter()
-  const searchParams = useSearchParams()
+  const { update } = useUrlQuery()
 
   // Only accounts on the inventory regime. An ordinary account has no batches and never
   // will, so offering it would produce an empty screen with no way to tell why.
@@ -38,12 +37,15 @@ export function InventoryToolbar({
   const programOf = loyaltyPrograms.find((program) => program.id === chosen?.loyalty_program_id)
 
   function push(changes: Record<string, string>) {
-    const params = new URLSearchParams(searchParams.toString())
-    for (const [key, value] of Object.entries(changes)) {
-      if (value) params.set(key, value)
-      else params.delete(key)
-    }
-    router.push(`?${params.toString()}`)
+    update(
+      (params) => {
+        for (const [key, value] of Object.entries(changes)) {
+          if (value) params.set(key, value)
+          else params.delete(key)
+        }
+      },
+      { push: true },
+    )
   }
 
   if (eligible.length === 0) {

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/murandido/m-80-backend/internal/booking"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/traveos"
 	"gorm.io/gorm"
@@ -56,18 +57,18 @@ func TestHandleAlteracao_RetriesTraveosWhenTheCorrectionFixesItsInput(t *testing
 
 		// First pass fails, exactly as a wrong surname would.
 		failing := workingTraveos()
-		failing.ticket = nil
-		failing.emitErr = traveos.ErrEmissionFailed
-		s.Bot.Traveos = failing
+		failing.result = nil
+		failing.importErr = traveos.ErrEmissionFailed
+		s.Bot.Bookings = booking.NewRegistry(failing)
 		s.Bot.handleEmissao(context.Background(), s.event(), s.text(), time.Now())
 
 		// The operator retypes the origin. That is the input the vendor is asked
 		// with, so it earns a second attempt.
 		working := workingTraveos()
-		s.Bot.Traveos = working
+		s.Bot.Bookings = booking.NewRegistry(working)
 		s.Bot.handleAlteracao(context.Background(), s.eventWithID("correction"), correctionText(s, "GRU"), time.Now())
 
-		if got := working.findCalls.Load(); got != 1 {
+		if got := working.fetchCalls.Load(); got != 1 {
 			t.Fatalf("the vendor was searched %d time(s) after the correction, want 1", got)
 		}
 
@@ -86,19 +87,19 @@ func TestHandleAlteracao_DoesNotRetryTraveosForAnUnrelatedField(t *testing.T) {
 		s := newEmissaoScenario(t, tx, traveosAirline())
 
 		failing := workingTraveos()
-		failing.ticket = nil
-		failing.emitErr = traveos.ErrEmissionFailed
-		s.Bot.Traveos = failing
+		failing.result = nil
+		failing.importErr = traveos.ErrEmissionFailed
+		s.Bot.Bookings = booking.NewRegistry(failing)
 		s.Bot.handleEmissao(context.Background(), s.event(), s.text(), time.Now())
 
 		// A corrected price says nothing about why the fetch failed, and asking the
 		// vendor again could mean issuing a real ticket for nothing.
 		working := workingTraveos()
-		s.Bot.Traveos = working
+		s.Bot.Bookings = booking.NewRegistry(working)
 		s.Bot.handleAlteracao(context.Background(), s.eventWithID("correction"),
 			"ALTERACAO - PL"+s.Suffix+"\n30k * 16,5 + 189,22 tx = 684,22", time.Now())
 
-		if got := working.findCalls.Load(); got != 0 {
+		if got := working.fetchCalls.Load(); got != 0 {
 			t.Fatalf("the vendor was searched %d time(s) for a price correction, want 0", got)
 		}
 	})

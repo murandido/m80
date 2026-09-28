@@ -10,12 +10,23 @@ export type SSEHandlers = Record<string, (data: unknown) => void>
 //
 // Reconnection is left to the native EventSource, which already retries with a backoff
 // after the server or the platform closes the stream.
-export function useSSE(url: string, handlers: SSEHandlers): void {
+//
+// What EventSource cannot do is replay what was broadcast while it was away - a deploy,
+// a restarted panel, a dropped network - so a screen that only refetches on events stays
+// quietly out of date after every reconnect, until someone presses F5. `onReconnect`
+// runs on every open after the first, which is the caller's cue to refetch once.
+export function useSSE(
+  url: string,
+  handlers: SSEHandlers,
+  { onReconnect }: { onReconnect?: () => void } = {},
+): void {
   // Handlers are read through a ref so that a caller passing a fresh object literal on
   // every render doesn't tear the connection down and open a new one each time.
   const handlersRef = useRef(handlers)
+  const onReconnectRef = useRef(onReconnect)
   useEffect(() => {
     handlersRef.current = handlers
+    onReconnectRef.current = onReconnect
   })
 
   // Only the event names decide which listeners to register, so the effect re-runs when
@@ -24,6 +35,13 @@ export function useSSE(url: string, handlers: SSEHandlers): void {
 
   useEffect(() => {
     const source = new EventSource(url)
+
+    let hasOpened = false
+    const handleOpen = () => {
+      if (hasOpened) onReconnectRef.current?.()
+      hasOpened = true
+    }
+    source.addEventListener("open", handleOpen)
 
     const listeners = eventNames.split(",").map((eventName) => {
       const listener = (event: MessageEvent<string>) => {
@@ -43,6 +61,7 @@ export function useSSE(url: string, handlers: SSEHandlers): void {
     })
 
     return () => {
+      source.removeEventListener("open", handleOpen)
       for (const { eventName, listener } of listeners) {
         source.removeEventListener(eventName, listener)
       }

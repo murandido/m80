@@ -2,12 +2,6 @@ import { Issuance, IssuanceStatus } from "@/schemas/issuance"
 
 export type SaveStatus = "idle" | "saving" | "success" | "error"
 
-// Where a new issuance is in the Traveos-first flow, which only runs with "Autocompletar
-// dados" on. "collecting" shows just the fields Traveos is asked with; "looking-up" has
-// the vendor working while prices and account are typed; "done" and "failed" are both an
-// ordinary draft from there on - the second one filled by hand. Null on every other row.
-export type TraveosLookupStage = "collecting" | "looking-up" | "done" | "failed"
-
 // Client-side row shape the grid edits. A row with id === null is a draft that
 // only lives in React state until the required fields for POST /issuances are
 // filled - see issuances-grid.tsx.
@@ -81,12 +75,6 @@ export interface IssuanceRow {
   // The row stands for an estorno alone: the booking was made outside the panel, so
   // the supplier balance counts the refund and not the points. Set at cancellation.
   cancellation_only: boolean
-  // Client-only, and only on a draft - see TraveosLookupStage. Never sent in a PATCH.
-  traveosLookup: TraveosLookupStage | null
-  // What the lookup handed back, sent on the create so the backend writes that itinerary
-  // instead of asking Traveos again. Cleared when the carrier or the locator changes.
-  traveos_lookup_id: string | null
-  traveos_ticket_code: string | null
   saveStatus: SaveStatus
   // Sticks until the row next saves successfully, unlike saveStatus which flashes
   // for 900ms and resets. Drives the persistent red row highlight so a failed save
@@ -142,9 +130,6 @@ export function issuanceToRow(issuance: Issuance): IssuanceRow {
     refunded_taxes: issuance.refunded_taxes,
     cancellation_fee: issuance.cancellation_fee,
     cancellation_only: issuance.cancellation_only,
-    traveosLookup: null,
-    traveos_lookup_id: null,
-    traveos_ticket_code: null,
     saveStatus: "idle",
     hasError: false,
   }
@@ -152,13 +137,11 @@ export function issuanceToRow(issuance: Issuance): IssuanceRow {
 
 // issuerId defaults a new draft row's "Emissor" to the logged-in user, and agencyId its
 // "Agência" to the configured default agency - both still freely editable before the row is
-// first created (see issuances-grid.tsx). lookupFirst starts the row in the Traveos-first
-// flow, which is what "Nova emissão" does while "Autocompletar dados" is on.
+// first created (see issuances-grid.tsx).
 export function makeDraftRow(
   issuerId?: string | null,
   agencyId?: string | null,
   issuedOn?: string,
-  lookupFirst = false,
 ): IssuanceRow {
   return {
     key: `draft-${Math.random().toString(36).slice(2)}`,
@@ -199,9 +182,6 @@ export function makeDraftRow(
     refunded_taxes: null,
     cancellation_fee: null,
     cancellation_only: false,
-    traveosLookup: lookupFirst ? "collecting" : null,
-    traveos_lookup_id: null,
-    traveos_ticket_code: null,
     saveStatus: "idle",
     hasError: false,
   }
@@ -210,6 +190,9 @@ export function makeDraftRow(
 // The 5 fields CreateIssuanceRequest requires up front - a draft row only
 // becomes a real POSTed issuance once all of these are filled.
 //
+// autocompleteHintFor (autocomplete.ts) names three of them to the operator, because the
+// Traveos autocomplete only ever looks at saved rows. Adding a field here means adding its
+// explanation there too.
 export function draftIsReadyToCreate(row: IssuanceRow): boolean {
   return (
     row.program_locator.trim() !== "" &&

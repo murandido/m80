@@ -33,6 +33,13 @@ RUN pnpm build
 
 FROM base AS runner
 ENV NODE_ENV=production
+# The operation runs on Brasília time, and the container would otherwise run on UTC -
+# which localhost never does, so nothing looked wrong there. On UTC, every "today"
+# the server resolves (Dashboard, Vendas) turned into tomorrow from 21h onwards and
+# the screens came up empty, and every date or time a Server Component formatted was
+# three hours ahead of the one the browser formats for the same value. Node's bundled
+# ICU carries the zone data, so the slim image needs no tzdata package for this.
+ENV TZ=America/Sao_Paulo
 # The server writes nothing, so it has no reason to own its own files.
 USER node
 # `output: "standalone"` emits a server with only the traced dependencies inlined,

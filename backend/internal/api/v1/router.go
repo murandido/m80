@@ -5,13 +5,14 @@ import (
 	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/handlers"
 	"github.com/murandido/m-80-backend/internal/api/v1/routes"
+	"github.com/murandido/m-80-backend/internal/booking"
 	"github.com/murandido/m-80-backend/internal/events"
 	"github.com/murandido/m-80-backend/internal/health"
-	"github.com/murandido/m-80-backend/internal/traveos"
+	"github.com/murandido/m-80-backend/internal/smilessync"
 	"gorm.io/gorm"
 )
 
-func NewRouter(db *gorm.DB, broker *events.Broker, traveosClient *traveos.Client, monitor *health.Monitor) chi.Router {
+func NewRouter(db *gorm.DB, broker *events.Broker, bookings *booking.Registry, monitor *health.Monitor, smilesGuard *smilessync.SessionGuard) chi.Router {
 	r := chi.NewRouter()
 
 	authHandler := handlers.NewAuthHandler(db)
@@ -27,6 +28,7 @@ func NewRouter(db *gorm.DB, broker *events.Broker, traveosClient *traveos.Client
 			r.Use(middleware.RequireAuth(db))
 
 			r.Get("/me", authHandler.Me)
+			r.Put("/me", authHandler.UpdateMe)
 		})
 	})
 
@@ -42,7 +44,7 @@ func NewRouter(db *gorm.DB, broker *events.Broker, traveosClient *traveos.Client
 		routes.RegisterObservationPresetRoutes(r, db)
 		routes.RegisterAgencyRoutes(r, db)
 		routes.RegisterClientRoutes(r, db)
-		routes.RegisterIssuanceRoutes(r, db, broker, traveosClient)
+		routes.RegisterIssuanceRoutes(r, db, broker, bookings)
 		routes.RegisterSaleRoutes(r, db, broker)
 		routes.RegisterDashboardRoutes(r, db)
 		routes.RegisterAirportRoutes(r, db)
@@ -54,7 +56,8 @@ func NewRouter(db *gorm.DB, broker *events.Broker, traveosClient *traveos.Client
 		// something the issuances grid may ever surface.
 		routes.RegisterPointBatchOriginRoutes(r, db)
 		routes.RegisterPointBatchRoutes(r, db)
-		routes.RegisterStatementRoutes(r, db)
+		routes.RegisterAzulStatementRoutes(r, db)
+		routes.RegisterSmilesStatementRoutes(r, db, smilesGuard)
 		routes.RegisterInventoryPeriodRoutes(r, db)
 		// SSE stream, behind the same auth as everything else in this group
 		routes.RegisterEventRoutes(r, broker)
@@ -71,6 +74,9 @@ func NewRouter(db *gorm.DB, broker *events.Broker, traveosClient *traveos.Client
 		// "/bot/chats" child, never shadowed by RegisterBotRoutes' "/bot/*"
 		// catch-all proxy above (see RegisterListenedChatRoutes doc comment).
 		routes.RegisterListenedChatRoutes(r, db)
+		// Temporary: how each airline's own integration fares against the Traveos fallback,
+		// dev-gated inside. Delete with the rest of migration 66 once Traveos is gone.
+		routes.RegisterBookingLookupRoutes(r, db, bookings)
 		// Temporary: the screen that imports the pre-panel spreadsheet, admin-gated
 		// inside RegisterLegacyImportRoutes. Delete this line along with the rest of
 		// the importer once the migration off the spreadsheets is done.

@@ -1,6 +1,6 @@
 "use client"
 
-import { useTransition } from "react"
+import { useEffect, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { Controller, useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
@@ -33,6 +33,18 @@ interface EditDocumentPanelProps {
   onSaved: () => void
 }
 
+function toDocumentFormValues(document: LoyaltyDocument): FormData {
+  return {
+    name: document.name,
+    // Sent back unchanged: the update request is a whole object, so leaving it out
+    // would fail validation. Same payload the active Switch on the card already
+    // sends.
+    cpf: document.cpf,
+    loyalty_program_id: document.loyalty_program_id,
+    active: document.active,
+  }
+}
+
 // Everything about a registered CPF except the CPF itself.
 //
 // The number is deliberately not editable. The enrolment history in promo_enrollments
@@ -52,16 +64,17 @@ export function EditDocumentPanel({
   const form = useForm<FormData>({
     resolver: zodResolver(updateLoyaltyDocumentSchema.request),
     mode: "onTouched",
-    defaultValues: {
-      name: document.name,
-      // Sent back unchanged: the update request is a whole object, so leaving it out
-      // would fail validation. Same payload the active Switch on the card already
-      // sends.
-      cpf: document.cpf,
-      loyalty_program_id: document.loyalty_program_id,
-      active: document.active,
-    },
+    defaultValues: toDocumentFormValues(document),
   })
+
+  // Re-seeded whenever the panel closes, and whenever the record changes while closed.
+  // It used to be seeded once on mount: flipping the card's "ativo" switch and then
+  // saving a name edit here sent the old flag back and silently undid the switch.
+  useEffect(() => {
+    if (!isOpen) {
+      form.reset(toDocumentFormValues(document))
+    }
+  }, [isOpen, document]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function onSubmit(data: FormData) {
     startTransition(async () => {

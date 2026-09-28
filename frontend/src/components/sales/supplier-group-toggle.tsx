@@ -1,6 +1,6 @@
 "use client"
 
-import { usePathname, useRouter, useSearchParams } from "next/navigation"
+import { useUrlQuery } from "@/hooks/use-url-query"
 import { Building2, UserRound } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { GROUP_BY_ADMINISTRATOR } from "@/app/dashboard/sales/period-params"
@@ -10,21 +10,20 @@ import { cn } from "@/lib/utils"
 // administrator is who gets paid. It writes the URL rather than holding state, so the
 // sticky-filter cookie and the PDF link follow along without knowing about it.
 export function SupplierGroupToggle({ groupBy }: { groupBy: string }) {
-  const router = useRouter()
-  const pathname = usePathname()
-  const searchParams = useSearchParams()
-  const byAdministrator = groupBy === GROUP_BY_ADMINISTRATOR
+  const { params: urlParams, isPending, update } = useUrlQuery()
+  const shownGroupBy = isPending ? (urlParams.get("group_by") ?? "account") : groupBy
+  const byAdministrator = shownGroupBy === GROUP_BY_ADMINISTRATOR
 
   function apply(next: string) {
-    const params = new URLSearchParams(searchParams.toString())
-    if (next === GROUP_BY_ADMINISTRATOR) {
-      params.set("group_by", GROUP_BY_ADMINISTRATOR)
-    } else {
-      // Account is the default on both sides, so it is expressed by the key being absent
-      // rather than by writing it out.
-      params.delete("group_by")
-    }
-    router.replace(`${pathname}?${params.toString()}`)
+    update((params) => {
+      if (next === GROUP_BY_ADMINISTRATOR) {
+        params.set("group_by", GROUP_BY_ADMINISTRATOR)
+      } else {
+        // Account is the default on both sides, so it is expressed by the key being absent
+        // rather than by writing it out.
+        params.delete("group_by")
+      }
+    })
   }
 
   return (

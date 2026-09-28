@@ -11,9 +11,11 @@ import (
 	"time"
 
 	_ "github.com/lib/pq"
+	"github.com/murandido/m-80-backend/internal/azul"
+	"github.com/murandido/m-80-backend/internal/booking"
+	"github.com/murandido/m-80-backend/internal/bookingproviders"
 	"github.com/murandido/m-80-backend/internal/bot"
 	"github.com/murandido/m-80-backend/internal/data"
-	issuancesvc "github.com/murandido/m-80-backend/internal/issuance"
 	"github.com/murandido/m-80-backend/internal/traveos"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/store"
@@ -103,16 +105,28 @@ func main() {
 	// *traveos.Client, so that "no client" really is a nil interface - a nil
 	// *traveos.Client stored in an interface is not nil, and the bot's own check
 	// would miss it.
-	var traveosClient issuancesvc.TraveosClient
+	var fallback booking.Provider
 	if built, err := traveos.New(); err != nil {
 		clientLog.Warnf("traveos integration is disabled, issuances will stay incomplete: %v", err)
 	} else {
-		traveosClient = built
+		fallback = traveos.NewProvider(built)
 	}
+	bookings := booking.NewRegistry(fallback)
+
+	// The airlines' own integrations, the same ones the API registers: without them an
+	// issuance that came in over WhatsApp would go through Traveos even for a carrier
+	// switched on in the airline CRUD. A missing Azul Firebase config only leaves Azul
+	// out, as it does in the API.
+	azulClient, err := azul.New()
+	if err != nil {
+		clientLog.Warnf("azul integration is disabled: %v", err)
+		azulClient = nil
+	}
+	bookingproviders.RegisterDirect(bookings, azulClient)
 
 	// instance the bot struct - pairing is now admin-triggered on demand via
 	// the internal HTTP API below, not auto-started here.
-	botInstance = bot.New(client, clientLog, newDeviceClient, data.DB, traveosClient, bot.Notifiers{
+	botInstance = bot.New(client, clientLog, newDeviceClient, data.DB, bookings, bot.Notifiers{
 		StatusChanged:     notifyStatusCallback(clientLog),
 		ChatRequested:     notifyChatRequestedCallback(clientLog),
 		IssuanceCreated:   notifyIssuanceCreatedCallback(clientLog),

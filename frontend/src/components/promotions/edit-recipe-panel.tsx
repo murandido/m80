@@ -1,6 +1,6 @@
 "use client"
 
-import { useTransition } from "react"
+import { useEffect, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
@@ -24,6 +24,24 @@ interface EditRecipePanelProps {
   onSaved: () => void
 }
 
+function toRecipeFormValues(recipe: PromoRecipe): FormData {
+  return {
+    name: recipe.name,
+    domain: recipe.domain,
+    loyalty_program_id: recipe.loyalty_program_id,
+    // Null comes back from the API as "not pinned"; the form shows it as blank, and
+    // blanking a field is how a selector is handed back to the heuristic.
+    cpf_selector: recipe.cpf_selector ?? "",
+    checkbox_selector: recipe.checkbox_selector ?? "",
+    submit_selector: recipe.submit_selector ?? "",
+    success_pattern: recipe.success_pattern ?? "",
+    failure_pattern: recipe.failure_pattern ?? "",
+    wait_seconds: String(recipe.wait_seconds),
+    active: recipe.active,
+    notes: recipe.notes ?? "",
+  }
+}
+
 export function EditRecipePanel({
   recipe,
   programs,
@@ -36,22 +54,17 @@ export function EditRecipePanel({
   const form = useForm<FormData>({
     resolver: zodResolver(updatePromoRecipeSchema.request),
     mode: "onTouched",
-    defaultValues: {
-      name: recipe.name,
-      domain: recipe.domain,
-      loyalty_program_id: recipe.loyalty_program_id,
-      // Null comes back from the API as "not pinned"; the form shows it as blank, and
-      // blanking a field is how a selector is handed back to the heuristic.
-      cpf_selector: recipe.cpf_selector ?? "",
-      checkbox_selector: recipe.checkbox_selector ?? "",
-      submit_selector: recipe.submit_selector ?? "",
-      success_pattern: recipe.success_pattern ?? "",
-      failure_pattern: recipe.failure_pattern ?? "",
-      wait_seconds: String(recipe.wait_seconds),
-      active: recipe.active,
-      notes: recipe.notes ?? "",
-    },
+    defaultValues: toRecipeFormValues(recipe),
   })
+
+  // Re-seeded whenever the panel closes, and whenever the record changes while closed.
+  // It used to be seeded once on mount: flipping the card's "ativo" switch and then
+  // saving a name edit here sent the old flag back and silently undid the switch.
+  useEffect(() => {
+    if (!isOpen) {
+      form.reset(toRecipeFormValues(recipe))
+    }
+  }, [isOpen, recipe]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function onSubmit(data: FormData) {
     startTransition(async () => {

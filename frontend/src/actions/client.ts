@@ -83,6 +83,12 @@ export async function deleteClientAction(clientId: string) {
     })
 
     if (!res.ok) {
+      // 422 is a client that still has payments: the backend says so in words, which
+      // tells the operator what to undo first. Anything else stays generic.
+      if (res.status === 422) {
+        const json = (await res.json().catch(() => null)) as { message?: string } | null
+        return { error: json?.message || "Erro ao deletar cliente." }
+      }
       return { error: "Erro ao deletar cliente." }
     }
 

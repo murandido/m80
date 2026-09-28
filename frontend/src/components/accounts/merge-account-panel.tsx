@@ -64,6 +64,21 @@ export function MergeAccountPanel({
   const [error, setError] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
 
+  // Forget the pick whenever the panel closes - which a successful merge does too.
+  // The panel stays mounted underneath the card, so without this reopening it showed
+  // the account that was just merged away, with the old preview, ready to confirm against
+  // a record that no longer exists. Adjusted during render rather than in an effect,
+  // so the stale pick never paints.
+  const [wasOpen, setWasOpen] = useState(isOpen)
+  if (isOpen !== wasOpen) {
+    setWasOpen(isOpen)
+    if (!isOpen) {
+      setSourceId("")
+      setPreview(null)
+      setError(null)
+    }
+  }
+
   useEffect(() => {
     if (!sourceId) {
       setPreview(null)

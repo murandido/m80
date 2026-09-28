@@ -10,11 +10,12 @@ import (
 	"github.com/xuri/excelize/v2"
 )
 
-// The sheet mirrors one issuer block of the manual "Controle de Emissões - <mês> <ano>"
-// workbook the team still keeps while the migration to the M-80 finishes: same thirteen
-// columns in the same order (A:M), same per-airline blocks, same Total formula. That is the
-// whole point of the layout - the operator selects A3:M<last> here and pastes it straight
-// into their own block on the shared sheet, with nothing to rearrange first.
+// The sheet mirrors the manual "Controle de Emissões - <mês> <ano>" workbook the team still
+// keeps while the migration to the M-80 finishes: the same thirteen columns in the same order
+// (A:M), same per-airline blocks, same Total formula, so a stretch pastes into the shared sheet
+// with nothing to rearrange first. Two columns the manual sheet does not have sit after them:
+// Taxa Resgate in N, and Emissor in O - every issuer is on this one tab, so Emissor is what
+// says who made each row (it used to be one tab per person).
 //
 // It is built from scratch with excelize, like sale_export.go. It used to be a copy of a
 // MODELO downloaded from Google Sheets at runtime and cached on disk; that made the export
@@ -24,24 +25,23 @@ const (
 	issuanceExportTitleRow     = 1
 	issuanceExportHeaderRow    = 2
 	issuanceExportFirstDataRow = 3
-	// The data table ends at M (Observação); N is left empty as the gutter before the
-	// per-account summary that starts at O.
-	issuanceExportLastColumn = "M"
+	// The data table ends at O (Emissor); P is left empty as the gutter before the
+	// per-account summary that starts at Q.
+	issuanceExportLastColumn = "O"
 
-	// The tab an issuance with no issuer lands on. Named rather than merged into somebody
-	// else's tab: an unattributed issuance is a gap to be filled, not one of the operator's.
-	issuanceExportNoIssuerSheet = "SEM EMISSOR"
-
-	// Excel's own limit on a sheet name.
-	issuanceExportMaxSheetNameLength = 31
+	// The single tab holding every issuance, and what the Emissor cell shows for a row whose
+	// issuer could not be resolved (a soft-deleted user, or none at all).
+	issuanceExportSheetName     = "Emissões"
+	issuanceExportNoIssuerLabel = "SEM EMISSOR"
 )
 
 // exportTimezone matches the timezone the issuance list uses to resolve "today", so the
 // dates written to the sheet are the operator's local calendar days, not UTC.
 const exportTimezone = "America/Sao_Paulo"
 
-// The thirteen columns of the manual sheet, in its order. The widths are not fixed here any
-// more: autoFitColumns sizes each one to what the export actually wrote.
+// The thirteen columns of the manual sheet, in its order, plus the redemption fee after them.
+// The widths are not fixed here any more: autoFitColumns sizes each one to what the export
+// actually wrote.
 var issuanceExportColumns = []struct {
 	column string
 	label  string
@@ -59,6 +59,10 @@ var issuanceExportColumns = []struct {
 	{"K", "Total"},
 	{"L", "Conta"},
 	{"M", "Observação"},
+	{"N", "Taxa Resgate"},
+	// Emissor closes the table: with every issuer on one sheet it is what says who made each
+	// row, the job the separate per-issuer tabs used to do.
+	{"O", "Emissor"},
 }
 
 // exportRow is one issuance reduced to what the sheet writes. Resolved once, up front, so
@@ -80,30 +84,33 @@ type exportRow struct {
 	account string
 	// Free text; blank on an issuance with no observation.
 	observation string
+	// Who the row is attributed to: the canceller on a cancelled row, the issuer otherwise -
+	// the same rule the per-issuer tabs used (issuanceSheetOwner).
+	issuer string
+	// The fee the exempt account (Azul Diamante Unique) did not pay, signed like the taxes.
+	// Nil on an ordinary account, where nothing was saved.
+	redemptionFee *float64
 	// Cancelled rows are tinted so a reconciled block shows at a glance which lines are
 	// giving miles back rather than spending them.
 	cancelled bool
 }
 
-// issuerSheet is one tab: everything one person issued in the exported period.
-type issuerSheet struct {
-	issuer string
-	rows   []exportRow
+// issuanceSheet is the single tab holding every issuance in the exported period. Who made each
+// row is carried by the Emissor column rather than by splitting the workbook into one tab per
+// person, which is what it used to do.
+type issuanceSheet struct {
+	rows []exportRow
 }
 
-// BuildIssuancesXLSX renders the given issuances and returns the resulting .xlsx bytes.
-//
-// singleSheetIssuer, when not empty, collapses the workbook into one tab with that name
-// holding every row. The caller passes it when the export was filtered down to one issuer:
-// the operator asked for their own issuances, so the file is their block of the manual sheet
-// and splitting it by who created each row would hide the ones they only cancelled.
-func BuildIssuancesXLSX(issuances []data.Issuance, singleSheetIssuer string) ([]byte, error) {
-	return renderIssuancesXLSX(issuances, time.Now(), singleSheetIssuer)
+// BuildIssuancesXLSX renders the given issuances into one worksheet and returns the resulting
+// .xlsx bytes.
+func BuildIssuancesXLSX(issuances []data.Issuance) ([]byte, error) {
+	return renderIssuancesXLSX(issuances, time.Now())
 }
 
 // renderIssuancesXLSX holds the pure rendering logic: it takes the reference time explicitly
 // so it can be exercised without depending on the clock.
-func renderIssuancesXLSX(issuances []data.Issuance, now time.Time, singleSheetIssuer string) ([]byte, error) {
+func renderIssuancesXLSX(issuances []data.Issuance, now time.Time) ([]byte, error) {
 	loc, err := time.LoadLocation(exportTimezone)
 	if err != nil {
 		loc = time.UTC
@@ -114,30 +121,14 @@ func renderIssuancesXLSX(issuances []data.Issuance, now time.Time, singleSheetIs
 
 	styles := newStyleCache(f)
 
-	sheets := groupIssuancesByIssuer(issuances, loc)
-	if singleSheetIssuer != "" {
-		sheets = []issuerSheet{{issuer: singleSheetIssuer, rows: exportRowsFor(issuances, loc)}}
+	// One tab, always. An empty result still gets it - a titled empty sheet says "nothing
+	// matched" rather than a workbook with no sheet at all, which Excel refuses to open.
+	sheet := issuanceSheet{rows: exportRowsFor(issuances, loc)}
+	if err := f.SetSheetName(f.GetSheetName(0), issuanceExportSheetName); err != nil {
+		return nil, fmt.Errorf("renderIssuancesXLSX: name sheet: %w", err)
 	}
-	// An empty result still gets one tab: a workbook with no sheet at all is a file Excel
-	// refuses to open, and a titled empty sheet says "nothing matched" rather than nothing.
-	if len(sheets) == 0 {
-		sheets = []issuerSheet{{issuer: issuanceExportNoIssuerSheet}}
-	}
-
-	used := make(map[string]bool, len(sheets))
-	for index, sheet := range sheets {
-		name := uniqueSheetName(sheetNameFor(sheet.issuer), used)
-		if index == 0 {
-			if err := f.SetSheetName(f.GetSheetName(0), name); err != nil {
-				return nil, fmt.Errorf("renderIssuancesXLSX: name first sheet: %w", err)
-			}
-		} else if _, err := f.NewSheet(name); err != nil {
-			return nil, fmt.Errorf("renderIssuancesXLSX: create sheet %q: %w", name, err)
-		}
-
-		if err := writeIssuerSheet(f, name, sheet, styles, now, loc); err != nil {
-			return nil, err
-		}
+	if err := writeIssuanceSheet(f, issuanceExportSheetName, sheet, styles, now, loc); err != nil {
+		return nil, err
 	}
 
 	buffer, err := f.WriteToBuffer()
@@ -165,40 +156,17 @@ func issuanceSheetOwner(issuance data.Issuance) string {
 	if issuance.Issuer != nil && issuance.Issuer.Name != "" {
 		return issuance.Issuer.Name
 	}
-	return issuanceExportNoIssuerSheet
+	return issuanceExportNoIssuerLabel
 }
 
 // exportRowsFor flattens the issuances in the order they came (created_at asc), which the
-// airline blocks then preserve - the same order groupIssuancesByIssuer keeps inside a tab.
+// airline blocks then preserve.
 func exportRowsFor(issuances []data.Issuance, loc *time.Location) []exportRow {
 	rows := make([]exportRow, 0, len(issuances))
 	for _, issuance := range issuances {
 		rows = append(rows, toExportRow(issuance, loc))
 	}
 	return rows
-}
-
-// groupIssuancesByIssuer splits the issuances into one bundle per issuer, sorted by name so
-// two exports of the same period produce the same tabs in the same order. The order inside
-// each bundle is the caller's (created_at asc), which the airline blocks then preserve.
-func groupIssuancesByIssuer(issuances []data.Issuance, loc *time.Location) []issuerSheet {
-	byIssuer := make(map[string][]exportRow)
-	for _, issuance := range issuances {
-		issuer := issuanceSheetOwner(issuance)
-		byIssuer[issuer] = append(byIssuer[issuer], toExportRow(issuance, loc))
-	}
-
-	names := make([]string, 0, len(byIssuer))
-	for name := range byIssuer {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-
-	sheets := make([]issuerSheet, 0, len(names))
-	for _, name := range names {
-		sheets = append(sheets, issuerSheet{issuer: name, rows: byIssuer[name]})
-	}
-	return sheets
 }
 
 // toExportRow flattens one issuance into the values the sheet writes, applying the signed
@@ -229,6 +197,7 @@ func toExportRow(issuance data.Issuance, loc *time.Location) exportRow {
 	}
 
 	row.cancelled = issuance.CancelledAt != nil
+	row.issuer = issuanceSheetOwner(issuance)
 
 	points, taxes := signedIssuanceAmounts(issuance, loc)
 	row.milheiros = float64(points) / 1000
@@ -236,43 +205,12 @@ func toExportRow(issuance data.Issuance, loc *time.Location) exportRow {
 		amount := centsToReais(*taxes)
 		row.taxes = &amount
 	}
+	if fee := signedRedemptionFee(issuance, loc); fee != nil {
+		amount := centsToReais(*fee)
+		row.redemptionFee = &amount
+	}
 
 	return row
-}
-
-// sheetNameFor turns an issuer's name into a legal tab name: Excel rejects : \ / ? * [ ] and
-// caps the name at 31 characters.
-func sheetNameFor(issuer string) string {
-	name := strings.Map(func(r rune) rune {
-		if strings.ContainsRune(`:\/?*[]`, r) {
-			return '-'
-		}
-		return r
-	}, strings.TrimSpace(issuer))
-
-	if name == "" {
-		name = issuanceExportNoIssuerSheet
-	}
-	if runes := []rune(name); len(runes) > issuanceExportMaxSheetNameLength {
-		name = string(runes[:issuanceExportMaxSheetNameLength])
-	}
-	return name
-}
-
-// uniqueSheetName keeps two issuers whose names collide after sanitising (or after the
-// 31-character trim) from silently landing on the same tab.
-func uniqueSheetName(name string, used map[string]bool) string {
-	candidate := name
-	for suffix := 2; used[candidate]; suffix++ {
-		trimmed := name
-		marker := fmt.Sprintf(" (%d)", suffix)
-		if runes := []rune(trimmed); len(runes)+len(marker) > issuanceExportMaxSheetNameLength {
-			trimmed = string(runes[:issuanceExportMaxSheetNameLength-len(marker)])
-		}
-		candidate = trimmed + marker
-	}
-	used[candidate] = true
-	return candidate
 }
 
 // The palette is lifted cell by cell from the two spreadsheets this export has to look
@@ -483,17 +421,17 @@ const (
 	issuanceDateFormat  = "dd/mm/yy;@"
 )
 
-// writeIssuerSheet lays out one tab: title, header, the airline blocks, the totals band,
+// writeIssuanceSheet lays out the tab: title, header, the airline blocks, the totals band,
 // and the per-account summary off to the right.
-func writeIssuerSheet(
+func writeIssuanceSheet(
 	f *excelize.File,
 	sheet string,
-	content issuerSheet,
+	content issuanceSheet,
 	styles *styleCache,
 	now time.Time,
 	loc *time.Location,
 ) error {
-	if err := writeIssuerTitle(f, sheet, content.issuer, styles, now, loc); err != nil {
+	if err := writeIssuanceTitle(f, sheet, styles, now, loc); err != nil {
 		return err
 	}
 	if err := writeIssuanceHeader(f, sheet, styles); err != nil {
@@ -508,7 +446,7 @@ func writeIssuerSheet(
 	if err != nil {
 		return err
 	}
-	if err := writeDailyTotals(f, sheet, content.issuer, blocks, billingRow, styles); err != nil {
+	if err := writeDailyTotals(f, sheet, blocks, billingRow, styles); err != nil {
 		return err
 	}
 
@@ -526,7 +464,7 @@ func writeIssuerSheet(
 // own fixed widths were dropped here: they were measured for its data, and a longer
 // passenger name or observation ran under the next column.
 //
-// The title is skipped on purpose. It is merged across A:M, and excelize does not measure
+// The title is skipped on purpose. It is merged across A:N, and excelize does not measure
 // merged cells - it would size column A to the whole heading and push the table off screen.
 func autoFitColumns(f *excelize.File, sheet string) error {
 	// The merged cells are emptied first and put back afterwards. excelize does not handle
@@ -609,14 +547,14 @@ func blankMergedCells(f *excelize.File, sheet string) (func() error, error) {
 	}, nil
 }
 
-func writeIssuerTitle(
+func writeIssuanceTitle(
 	f *excelize.File,
-	sheet, issuer string,
+	sheet string,
 	styles *styleCache,
 	now time.Time,
 	loc *time.Location,
 ) error {
-	title := fmt.Sprintf("CONTROLE DE EMISSÕES - %s - %s", now.In(loc).Format("02/01/2006"), strings.ToUpper(issuer))
+	title := fmt.Sprintf("CONTROLE DE EMISSÕES - %s", now.In(loc).Format("02/01/2006"))
 	first := fmt.Sprintf("A%d", issuanceExportTitleRow)
 	last := fmt.Sprintf("%s%d", issuanceExportLastColumn, issuanceExportTitleRow)
 
@@ -745,7 +683,7 @@ func writeProgramBlocks(
 	return blocks, sheetRow - 1, nil
 }
 
-// writeBlockSpacer paints the row that separates two airline blocks across A:M. It carries no
+// writeBlockSpacer paints the row that separates two airline blocks across A:N. It carries no
 // value and no number: it is the gap the manual sheet leaves between AZUL and SMILES, made
 // visible so nobody reads it as a missing issuance.
 func writeBlockSpacer(f *excelize.File, sheet string, sheetRow int, styles *styleCache) error {
@@ -794,7 +732,7 @@ func accountsIn(rows []exportRow) []string {
 	return accounts
 }
 
-// writeIssuanceRow fills a single data row (columns A:M) for one issuance.
+// writeIssuanceRow fills a single data row (columns A:O) for one issuance.
 func writeIssuanceRow(
 	f *excelize.File,
 	sheet string,
@@ -866,7 +804,11 @@ func writeIssuanceRow(
 		{"J", row.taxes, body(cellStyle{numFmt: issuanceMoneyFormat})},
 		{"K", nil, body(cellStyle{numFmt: issuanceMoneyFormat, bold: true})},
 		{"L", row.account, body(cellStyle{bold: true})},
-		{"M", row.observation, body(cellStyle{right: borderMedium})},
+		{"M", row.observation, body(cellStyle{})},
+		// N Taxa Resgate - blank on an ordinary account, like Taxa on an issuance with none.
+		{"N", row.redemptionFee, body(cellStyle{numFmt: issuanceMoneyFormat})},
+		// O Emissor - who made the row; closes the table on the right.
+		{"O", row.issuer, body(cellStyle{right: borderMedium})},
 	}
 
 	for _, cell := range cells {
@@ -953,6 +895,13 @@ func writeIssuanceTotals(
 			fill: issuanceExportSumBG, bold: true, numFmt: issuanceMoneyFormat,
 			right: borderMedium, top: borderMedium, bottom: borderMedium,
 		}},
+		// Summed apart from the billing: the fee was never charged to anyone, so it only
+		// reports what the exempt accounts saved.
+		{"N", fmt.Sprintf("SUM(N%d:N%d)", issuanceExportFirstDataRow, lastDataRow), cellStyle{
+			fill: issuanceExportTaxSumBG, fontColor: issuanceExportWhite, bold: true,
+			numFmt: issuanceMoneyFormat,
+			left:   borderMedium, right: borderMedium, top: borderMedium, bottom: borderMedium,
+		}},
 	}
 	for _, sum := range sums {
 		cell := fmt.Sprintf("%s%d", sum.column, sumRow)
@@ -1027,7 +976,7 @@ const (
 
 func writeDailyTotals(
 	f *excelize.File,
-	sheet, issuer string,
+	sheet string,
 	blocks []programBlock,
 	billingRow int,
 	styles *styleCache,
@@ -1061,13 +1010,14 @@ func writeDailyTotals(
 		}
 	}
 
-	// The issuer's name, and beside it the billing figure already computed above.
+	// A general label for the day's block - every issuer is on this one sheet now - and beside
+	// it the billing figure already computed above.
 	issuerRow := headerRow + 1
 	issuerStyle := cellStyle{
 		fill: issuanceTotalsIssuerBG, fontColor: issuanceExportWhite, bold: true, size: 16,
 		left: borderThin, right: borderThin, top: borderThin, bottom: borderThin,
 	}
-	if err := writeMerged(f, sheet, "B", "E", issuerRow, strings.ToUpper(issuer), issuerStyle, styles); err != nil {
+	if err := writeMerged(f, sheet, "B", "E", issuerRow, "TODOS OS EMISSORES", issuerStyle, styles); err != nil {
 		return err
 	}
 	billingStyle := cellStyle{
@@ -1291,15 +1241,15 @@ func writeMergedRows(
 	return nil
 }
 
-// Where the per-account summary lives: column N is the gutter, so the boxes start at O and
+// Where the per-account summary lives: column P is the gutter, so the boxes start at Q and
 // span four columns, one box per account, stacked with a blank row between them. The look
 // is the operator's own block: a dark green banner, a green header row, and rows on pale
 // green with the airline cell coloured and the total in red.
 const (
-	issuanceSummaryProgramColumn = "O"
-	issuanceSummaryLocatorColumn = "P"
-	issuanceSummaryPointsColumn  = "Q"
-	issuanceSummaryTotalColumn   = "R"
+	issuanceSummaryProgramColumn = "Q"
+	issuanceSummaryLocatorColumn = "R"
+	issuanceSummaryPointsColumn  = "S"
+	issuanceSummaryTotalColumn   = "T"
 	// The summary writes points with the same three decimals as the table, without the
 	// thousands separator the block beside the issuances uses.
 	issuanceSummaryPointsFormat = "0.000"
@@ -1564,11 +1514,7 @@ func signedIssuanceAmounts(issuance data.Issuance, loc *time.Location) (int, *in
 
 // signedRedemptionFee is signedIssuanceAmounts' rule applied to the saved redemption fee.
 // Nil - a blank cell - whenever the account is not exempt, because zero would claim a
-// saving of nothing.
-//
-// The sheet stopped carrying a TAXA RESGATE column when it was rebuilt around the manual
-// control sheet, which has no such column. The rule is kept here because it is the only
-// implementation of this accounting for that fee, and the panel still reports it.
+// saving of nothing. Both sheets write it: Taxa Resgate here, TAXA RESGATE on the legacy one.
 func signedRedemptionFee(issuance data.Issuance, loc *time.Location) *int {
 	if issuance.RedemptionFeeSavedCents == nil {
 		return nil

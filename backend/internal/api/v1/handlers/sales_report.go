@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -98,8 +99,12 @@ func (h *SaleHandler) GetSupplierReportPDF(w http.ResponseWriter, r *http.Reques
 
 	// Binary body, so no utils.SendJSON envelope - the same deliberate exception the xlsx
 	// export and the ticket PDF make, for the same reason: there is no envelope in a PDF.
+	// seq is the administrator's export counter, passed by the panel so the number it just
+	// incremented lands in the file name. Absent (0) for the "all suppliers" document.
+	seq, _ := strconv.Atoi(r.URL.Query().Get("seq"))
 	w.Header().Set("Content-Type", "application/pdf")
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", supplierReportFilename(model)))
+	w.Header().Set("Content-Disposition",
+		fmt.Sprintf("attachment; filename=%q", supplierReportFilename(model, seq, time.Now().In(supplierReportLocation()))))
 	// #nosec G705 -- PDF bytes from our own pdf-service, served as an attachment
 	// with an application/pdf content type; nothing here is interpreted as markup.
 	if _, err := w.Write(pdf); err != nil {
@@ -473,18 +478,27 @@ func supplierReportLocation() *time.Location {
 	return loc
 }
 
-// supplierReportFilename names the download. One account gets its own name on the file, so
-// a folder of summaries is sortable; several get a generic one.
-func supplierReportFilename(model supplierreport.ViewModel) string {
+// supplierReportFilename names the download. A per-administrator export carries its export
+// sequence number (seq) so a stack of one administrator's summaries stays ordered and a folder
+// of them is sortable; the "all suppliers" document, which spans several administrators, has no
+// single sequence and is dated instead.
+//
+// The number has to be built here rather than by the panel's <a download>: browsers give the
+// server's Content-Disposition filename precedence over the download attribute, even same-origin.
+func supplierReportFilename(model supplierreport.ViewModel, seq int, now time.Time) string {
+	suffix := ""
+	if seq > 0 {
+		suffix = fmt.Sprintf("-%04d", seq)
+	}
 	// A grouped document is named after the group even when it holds a single account, and
 	// a run of accounts under one administrator has no single account to be named after.
 	if len(model.Groups) == 1 && model.Groups[0].Label != "" {
-		return "resumo-" + slugify(model.Groups[0].Label) + ".pdf"
+		return "resumo-" + slugify(model.Groups[0].Label) + suffix + ".pdf"
 	}
 	if model.SectionCount() != 1 {
-		return "resumo-fornecedores.pdf"
+		return "resumo-fornecedores-" + now.Format("2006-01-02") + ".pdf"
 	}
-	return "resumo-" + slugify(model.Groups[0].Sections[0].AccountLabel) + ".pdf"
+	return "resumo-" + slugify(model.Groups[0].Sections[0].AccountLabel) + suffix + ".pdf"
 }
 
 func derefString(value *string) string {

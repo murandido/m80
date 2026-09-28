@@ -18,6 +18,11 @@ type Airline struct {
 	// emission request. Nil means nobody mapped it yet - a different state from
 	// TraveosSupported being false, which is a deliberate choice not to use Traveos.
 	TraveosAirlineID *int `gorm:"column:traveos_airline_id" json:"traveos_airline_id"`
+	// DirectBookingEnabled turns on this carrier's own endpoint, when one has been
+	// built for it. Distinct from TraveosSupported: that says the vendor may be
+	// used, this says the airline is asked first. Both on at once is the normal
+	// state while an integration is proving itself, with Traveos as the net.
+	DirectBookingEnabled bool `gorm:"column:direct_booking_enabled;not null;default:false" json:"direct_booking_enabled"`
 	// BrandColor is the carrier's primary colour ("#RRGGBB"), used by the ticket
 	// layout. Stored rather than fetched per render, since the ticket must draw for
 	// an issuance whose Traveos data was fetched days ago.

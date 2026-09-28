@@ -106,8 +106,8 @@ func TestSeedAirlinesPopulatesAnEmptyCatalog(t *testing.T) {
 			t.Fatalf("SeedAirlines: %v", err)
 		}
 
-		if got := countAirlines(t, tx); got != 12 {
-			t.Errorf("seeded %d airlines, want 12", got)
+		if got := countAirlines(t, tx); got != 14 {
+			t.Errorf("seeded %d airlines, want 14", got)
 		}
 
 		// The five that have emitted for real, and the ids every emission is sent
@@ -129,7 +129,7 @@ func TestSeedAirlinesPopulatesAnEmptyCatalog(t *testing.T) {
 		// side is not a promise, and turning the gate on for a carrier we have never
 		// read would turn a 🚀 into a ⚠️ for a group doing nothing wrong. TAP and
 		// COPA are on because there is a real ticket for each on the account.
-		for _, code := range []string{"AIREUROPA", "AZULVIAGENS", "IBERIA", "UNITED", "QATAR"} {
+		for _, code := range []string{"AIREUROPA", "AZULVIAGENS", "UNITED", "QATAR"} {
 			if airline := airlineByCode(t, tx, code); airline.TraveosSupported {
 				t.Errorf("%s seeded as traveos_supported; nothing has been read from it", code)
 			}
@@ -139,16 +139,33 @@ func TestSeedAirlinesPopulatesAnEmptyCatalog(t *testing.T) {
 				t.Errorf("%s is off, but there is a ticket for it on the account", code)
 			}
 		}
+		// Air France is "homologada" at 137 and issues through Traveos today; Iberia at 49
+		// reads through it too.
+		for code, wantID := range map[string]int{"AIRFRANCE": 137, "IBERIA": 49} {
+			if airline := airlineByCode(t, tx, code); !airline.TraveosSupported ||
+				airline.TraveosAirlineID == nil || *airline.TraveosAirlineID != wantID {
+				t.Errorf("%s = supported %v, id %v, want supported at %d", code, airline.TraveosSupported, airline.TraveosAirlineID, wantID)
+			}
+		}
+
+		// Traveos does not serve Aerolíneas at all: it is read from the airline alone, so
+		// it has no catalog id and the vendor is never asked about it.
+		if aerolineas := airlineByCode(t, tx, "AEROLINEAS"); aerolineas.TraveosAirlineID != nil ||
+			aerolineas.TraveosSupported || !aerolineas.RequiresLastName ||
+			aerolineas.BrandColor == nil || *aerolineas.BrandColor != "#0078BE" {
+			t.Errorf("AEROLINEAS = id %v, supported %v, requires surname %v, colour %v; want no id, off, surname, #0078BE",
+				aerolineas.TraveosAirlineID, aerolineas.TraveosSupported, aerolineas.RequiresLastName, aerolineas.BrandColor)
+		}
 
 		if latam := airlineByCode(t, tx, "LATAM"); !latam.RequiresPurchaseNumber {
 			t.Error("LATAM seeded without requires_purchase_number")
 		}
 
-		// Six of the seven carriers Traveos reaches need the surname to scrape the
+		// Eight of the nine carriers Traveos reaches need the surname to scrape the
 		// airline's site; AZUL is the one that does not. Seeding this wrong is
 		// expensive in both directions - too strict refuses an EMISSAO that was
 		// fine, too loose spends a real emission the vendor cannot answer.
-		for _, code := range []string{"GOL", "LATAM", "AA", "AVIANCA", "TAP", "COPA"} {
+		for _, code := range []string{"GOL", "LATAM", "AA", "AVIANCA", "TAP", "COPA", "AIRFRANCE", "IBERIA"} {
 			if airline := airlineByCode(t, tx, code); !airline.RequiresLastName {
 				t.Errorf("%s seeded without requires_last_name", code)
 			}
@@ -203,8 +220,8 @@ func TestSeedAirlinesIsIdempotent(t *testing.T) {
 			t.Fatalf("second SeedAirlines: %v", err)
 		}
 
-		if got := countAirlines(t, tx); got != 12 {
-			t.Errorf("after seeding twice there are %d airlines, want 12", got)
+		if got := countAirlines(t, tx); got != 14 {
+			t.Errorf("after seeding twice there are %d airlines, want 14", got)
 		}
 		if second := airlineByCode(t, tx, "GOL"); second.ID != first.ID {
 			t.Error("re-seeding replaced the row instead of leaving it alone")
@@ -225,8 +242,8 @@ func TestSeedAirlinesCorrectsAnExistingRowInPlace(t *testing.T) {
 			t.Fatalf("SeedAirlines: %v", err)
 		}
 
-		if got := countAirlines(t, tx); got != 12 {
-			t.Errorf("got %d airlines, want 12 - the existing GOL was duplicated", got)
+		if got := countAirlines(t, tx); got != 14 {
+			t.Errorf("got %d airlines, want 14 - the existing GOL was duplicated", got)
 		}
 
 		gol := airlineByCode(t, tx, "GOL")

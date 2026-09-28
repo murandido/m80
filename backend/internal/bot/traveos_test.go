@@ -7,46 +7,44 @@ import (
 	"testing"
 	"time"
 
+	"github.com/murandido/m-80-backend/internal/booking"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/traveos"
 	"gorm.io/gorm"
 )
 
-// stubTraveos stands in for the vendor. The bot's side of this integration is
-// only ever about three questions - did it fetch, was it allowed to skip, did it
-// fail - so the stub answers those and nothing else.
+// stubTraveos stands in for the vendor, as a booking provider that also imports -
+// the shape only Traveos has. The bot's side of this integration is only ever
+// about three questions - did it fetch, was it allowed to skip, did it fail - so
+// the stub answers those and nothing else.
 type stubTraveos struct {
-	ticket *traveos.TicketItem
-	data   *traveos.TicketData
+	result *booking.Booking
 
-	findErr error
-	emitErr error
+	fetchErr  error
+	importErr error
 
-	findCalls   atomic.Int32
-	emitCalls   atomic.Int32
-	verifyCalls atomic.Int32
+	fetchCalls  atomic.Int32
+	importCalls atomic.Int32
+	forced      atomic.Bool
 }
 
-func (s *stubTraveos) FindByLocator(_ context.Context, _ string) (*traveos.TicketItem, error) {
-	s.findCalls.Add(1)
-	if s.findErr != nil {
-		return nil, s.findErr
+func (s *stubTraveos) Name() string { return "traveos" }
+
+func (s *stubTraveos) Fetch(_ context.Context, req booking.Request) (*booking.Booking, error) {
+	s.fetchCalls.Add(1)
+	s.forced.Store(req.Force)
+	if s.fetchErr != nil {
+		return nil, s.fetchErr
 	}
-	return s.ticket, nil
+	if s.result == nil {
+		return nil, booking.ErrNotFound
+	}
+	return s.result, nil
 }
 
-func (s *stubTraveos) Emit(_ context.Context, _ int, _, _, _, _ string) error {
-	s.emitCalls.Add(1)
-	return s.emitErr
-}
-
-func (s *stubTraveos) TicketData(_ context.Context, _ string) (*traveos.TicketData, error) {
-	return s.data, nil
-}
-
-func (s *stubTraveos) VerifyTicket(_ context.Context, _ int) (*traveos.VerifyTicketResponse, error) {
-	s.verifyCalls.Add(1)
-	return &traveos.VerifyTicketResponse{Success: true}, nil
+func (s *stubTraveos) EnsureAvailable(context.Context, booking.Request) error {
+	s.importCalls.Add(1)
+	return s.importErr
 }
 
 // workingTraveos answers as if the ticket were already there - the common case
@@ -77,24 +75,19 @@ func workingTraveos() *stubTraveos {
 	departure := time.Date(2026, 8, 1, 14, 24, 0, 0, time.UTC)
 
 	return &stubTraveos{
-		ticket: &traveos.TicketItem{ID: 7001, Code: "ticket-code", Locator: "ABC123"},
-		data: &traveos.TicketData{
-			Emission: traveos.Emission{
-				Code:     "ticket-code",
-				TripType: "somente_ida",
-				Passengers: []traveos.Passenger{
-					{FirstName: "FERNANDA CRISTINA MS", LastName: "PRADO", Type: "ADT"},
-				},
+		result: &booking.Booking{
+			Locator:  "ABC123",
+			TripType: booking.TripOneWay,
+			Passengers: []booking.Passenger{
+				{FirstName: "FERNANDA CRISTINA MS", LastName: "PRADO", Type: booking.PassengerAdult},
 			},
-			Flights: traveos.Directional{
-				Outbound: []traveos.Flight{{
-					Number:          "AA930",
-					Cabin:           "Econômica",
-					OriginIATA:      "CNF",
-					DestinationIATA: "GRU",
-					DepartureAt:     traveos.NaiveTime{Time: departure},
-				}},
-			},
+			Outbound: []booking.Flight{{
+				Number:          "AA930",
+				Cabin:           "Econômica",
+				OriginIATA:      "CNF",
+				DestinationIATA: "GRU",
+				DepartureAt:     departure,
+			}},
 		},
 	}
 }
@@ -111,7 +104,7 @@ func TestHandleEmissao_CompletesTheIssuanceFromTraveos(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		s := newEmissaoScenario(t, tx, traveosAirline())
 		vendor := workingTraveos()
-		s.Bot.Traveos = vendor
+		s.Bot.Bookings = booking.NewRegistry(vendor)
 
 		s.Bot.handleEmissao(context.Background(), s.event(), s.text(), time.Now())
 
@@ -135,12 +128,13 @@ func TestHandleEmissao_CompletesTheIssuanceFromTraveos(t *testing.T) {
 
 		// Found, so never issued. Emitting a ticket that already exists creates a
 		// second real record at the vendor, with nothing on their side to stop it.
-		if got := vendor.emitCalls.Load(); got != 0 {
+		if got := vendor.importCalls.Load(); got != 0 {
 			t.Errorf("emitted %d time(s) for a ticket that was already there, want 0", got)
 		}
-		// force is false on this path, and verify-ticket belongs to the forced one.
-		if got := vendor.verifyCalls.Load(); got != 0 {
-			t.Errorf("verify-ticket was called %d time(s) from a message, want 0", got)
+		// force is false on this path: a message is a first fetch, never the
+		// operator asking for a stale itinerary to be refreshed.
+		if vendor.forced.Load() {
+			t.Error("a fetch triggered by a message asked the provider to force a refresh")
 		}
 
 		if got := s.Notify.Load(); got != 1 {
@@ -156,9 +150,9 @@ func TestHandleEmissao_WarnsAndKeepsThePartialIssuanceWhenTraveosFails(t *testin
 	runInTx(t, func(tx *gorm.DB) {
 		s := newEmissaoScenario(t, tx, traveosAirline())
 		vendor := workingTraveos()
-		vendor.ticket = nil
-		vendor.emitErr = traveos.ErrEmissionFailed
-		s.Bot.Traveos = vendor
+		vendor.result = nil
+		vendor.importErr = traveos.ErrEmissionFailed
+		s.Bot.Bookings = booking.NewRegistry(vendor)
 
 		s.Bot.handleEmissao(context.Background(), s.event(), s.text(), time.Now())
 
@@ -195,12 +189,12 @@ func TestHandleEmissao_AnUnsupportedAirlineIsNotAWarning(t *testing.T) {
 		// so an incomplete issuance is the expected outcome, not a problem.
 		s := newEmissaoScenario(t, tx, data.Airline{TraveosSupported: false})
 		vendor := workingTraveos()
-		s.Bot.Traveos = vendor
+		s.Bot.Bookings = booking.NewRegistry(vendor)
 
 		s.Bot.handleEmissao(context.Background(), s.event(), s.text(), time.Now())
 
 		assertFetchThen(t, s.Client.reactions(), "🚀")
-		if got := vendor.findCalls.Load(); got != 0 {
+		if got := vendor.fetchCalls.Load(); got != 0 {
 			t.Errorf("the vendor was searched %d time(s) for an unsupported airline, want 0", got)
 		}
 	})
@@ -212,7 +206,7 @@ func TestHandleEmissao_ReactsNormallyWithNoTraveosConfigured(t *testing.T) {
 		// issuance is the part the group depends on, and it works without them - so
 		// the absence must not put a warning on every message the team sends.
 		s := newEmissaoScenario(t, tx, traveosAirline())
-		s.Bot.Traveos = nil
+		s.Bot.Bookings = nil
 
 		s.Bot.handleEmissao(context.Background(), s.event(), s.text(), time.Now())
 
@@ -229,8 +223,8 @@ func TestSyncTraveosReportsACancelledJobAsAFailureWithoutBlamingTheVendor(t *tes
 	runInTx(t, func(tx *gorm.DB) {
 		s := newEmissaoScenario(t, tx, traveosAirline())
 		vendor := workingTraveos()
-		vendor.findErr = errors.New("context canceled")
-		s.Bot.Traveos = vendor
+		vendor.fetchErr = errors.New("context canceled")
+		s.Bot.Bookings = booking.NewRegistry(vendor)
 
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()

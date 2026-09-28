@@ -90,7 +90,11 @@ export function PendingChatsTable({ chats }: { chats: ListenedChat[] }) {
   // bridge as the bot connection status: refetch on the event, never trust
   // any payload (there isn't one).
   const refresh = useCallback(() => router.refresh(), [router])
-  useSSE("/api/events", { "listened_chat.requested": refresh })
+  useSSE(
+    "/api/events",
+    { "listened_chat.requested": refresh },
+    { onReconnect: refresh },
+  )
 
   return (
     <Card>
