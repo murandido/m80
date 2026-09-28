@@ -72,8 +72,12 @@ Siga `docs/deploy.md` — os treze passos são os mesmos, a máquina só é outr
    produção — e são elas que o anonimizador recebe ao gerar o dump.
 3. **`TRAVEOS_*_PROD` em branco.** A Traveos não tem sandbox: credencial real aqui bate no tenant de
    produção do fornecedor. Sem elas o bot sobe normalmente, apenas sem a integração.
-4. **`API_DOMAIN_PROD`** com o domínio DuckDNS desta máquina, e o A record resolvendo **antes** de
-   subir o Caddy (o Let's Encrypt tem limite de 5 falhas por hora por domínio).
+4. **`API_DOMAIN_PROD="ca.emioitenta.com.br"`**, com os registros A de `ca.` **e** `www.ca.`
+   resolvendo para esta máquina **antes** de subir o Caddy (o Let's Encrypt tem limite de 5 falhas
+   por hora por domínio). O `www.ca.` não é opcional: o Caddyfile serve `www.{$API_DOMAIN}` para
+   redirecionar, e sem o registro esse certificado falha em loop. Para recriar o Caddy à mão aqui,
+   é `IMAGE_TAG=ca-latest docker compose --profile prod up -d --force-recreate caddy-prod` — nunca
+   `IMAGE_TAG=latest`, que ganha do `.env`.
 5. **PAT do GHCR** classic, escopo somente `read:packages`, `docker login ghcr.io` como `deploy`.
    Gere um sem prazo curto: um PAT de 30 dias vira uma falha de `pull` no meio de um deploy.
 6. **`sudo install -d -o deploy -g deploy -m 700 /var/backups/m-80`.** Sem isso o **segundo** deploy
