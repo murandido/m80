@@ -231,14 +231,14 @@ func toAccountPickerResponse(account data.Account) schemas.AccountPickerResponse
 
 // CreateAccount handles the POST /accounts route
 // @Summary      Criar conta
-// @Description  Cria uma nova conta de programa de fidelidade no sistema.
+// @Description  Cria uma nova conta de programa de fidelidade no sistema. O titular é obrigatório.
 // @Tags         Contas
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
 // @Param        payload body schemas.CreateAccountRequest true "Dados da nova conta"
 // @Success      201  {object}  schemas.AccountSingleResponse
-// @Failure      400  {object}  schemas.ErrorResponse "Payload inválido"
+// @Failure      400  {object}  schemas.ErrorResponse "Payload inválido ou sem titular"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      422  {object}  schemas.ErrorResponse "Programa de fidelidade, titular ou administrador informado não existe"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao criar conta"
@@ -248,6 +248,13 @@ func (h *AccountHandler) CreateAccount(w http.ResponseWriter, r *http.Request) {
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		utils.SendError(w, r, http.StatusBadRequest, "Invalid JSON payload")
+		return
+	}
+
+	// Checked ahead of the validator for the message: this is the one a caller from before
+	// the holder became mandatory will hit, and it should say what is missing in words.
+	if req.HolderID == nil || *req.HolderID == "" {
+		utils.SendError(w, r, http.StatusBadRequest, "Informe o titular da conta")
 		return
 	}
 
@@ -285,7 +292,14 @@ func (h *AccountHandler) CreateAccount(w http.ResponseWriter, r *http.Request) {
 		account.Complete = account.ComputeComplete()
 	}
 
-	if err := h.DB.Create(&account).Error; err != nil {
+	// The new account takes on the holder's aliases, so the bot finds it by the same names
+	// it already knows the holder by (internal/account/nicknames.go).
+	if err := h.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&account).Error; err != nil {
+			return err
+		}
+		return acct.UnifyHolderNicknames(tx, *account.HolderID)
+	}); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == postgresForeignKeyViolation {
 			utils.SendError(w, r, http.StatusUnprocessableEntity, "Programa de fidelidade, titular ou administrador informado não existe")
@@ -614,6 +628,7 @@ func (h *AccountHandler) UpdateAccount(w http.ResponseWriter, r *http.Request) {
 	if req.Password != nil {
 		account.Password = req.Password
 	}
+	previousHolderID := account.HolderID
 	if req.HolderID != nil {
 		account.HolderID = req.HolderID
 	}
@@ -643,7 +658,19 @@ func (h *AccountHandler) UpdateAccount(w http.ResponseWriter, r *http.Request) {
 		account.Complete = account.ComputeComplete()
 	}
 
-	if err := h.DB.Save(&account).Error; err != nil {
+	// Handed to another holder, the account joins that holder's list of aliases and brings
+	// its own along. The previous holder keeps theirs: they may still be how the bot knows them.
+	holderChanged := account.HolderID != nil &&
+		(previousHolderID == nil || *previousHolderID != *account.HolderID)
+	if err := h.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Save(&account).Error; err != nil {
+			return err
+		}
+		if holderChanged {
+			return acct.UnifyHolderNicknames(tx, *account.HolderID)
+		}
+		return nil
+	}); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == postgresForeignKeyViolation {
 			utils.SendError(w, r, http.StatusUnprocessableEntity, "Programa de fidelidade, titular ou administrador informado não existe")

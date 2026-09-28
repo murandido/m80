@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	acct "github.com/murandido/m-80-backend/internal/account"
 	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
@@ -150,45 +151,18 @@ func (h *AccountHandler) MergeAccount(w http.ResponseWriter, r *http.Request) {
 			return errMergeRefused
 		}
 
-		if err := archiveCollidingNicknames(tx, keepID, dropID); err != nil {
+		if err := mergeAccountsTx(tx, keep, drop, userCtx.ID); err != nil {
 			return err
 		}
-
-		// Unscoped: the aliases just archived above move too. They are what
-		// issuances.account_nickname_id points at, so leaving them on a row that is about
-		// to be deleted would take the record of which alias the EMISSAO came in by.
-		if err := tx.Unscoped().Model(&data.AccountNickname{}).
-			Where("account_id = ?", dropID).
-			UpdateColumn("account_id", keepID).Error; err != nil {
+		// The absorbed account's aliases are now the survivor's; its holder answers to them too.
+		var merged data.Account
+		if err := tx.First(&merged, "id = ?", keep.ID).Error; err != nil {
 			return err
 		}
-
-		if err := moveIssuances(tx, keepID, dropID, userCtx.ID); err != nil {
-			return err
+		if merged.HolderID != nil {
+			return acct.UnifyHolderNicknames(tx, *merged.HolderID)
 		}
-
-		// UpdateColumns, not Save: Account.BeforeSave re-encrypts the password, and this
-		// write has no business anywhere near it.
-		updates := map[string]any{}
-		if keep.HolderID == nil && drop.HolderID != nil {
-			keep.HolderID = drop.HolderID
-			updates["holder_id"] = *drop.HolderID
-		}
-		if keep.AdministratorID == nil && drop.AdministratorID != nil {
-			keep.AdministratorID = drop.AdministratorID
-			updates["administrator_id"] = *drop.AdministratorID
-		}
-		if len(updates) > 0 {
-			updates["complete"] = keep.ComputeComplete()
-			if err := tx.Model(&data.Account{}).Where("id = ?", keep.ID).
-				UpdateColumns(updates).Error; err != nil {
-				return err
-			}
-		}
-
-		// Unscoped: without it GORM would archive the duplicate, which is the state the
-		// operator is trying to get out of. Nothing points at the row by now.
-		return tx.Unscoped().Delete(&data.Account{}, "id = ?", dropID).Error
+		return nil
 	})
 
 	if err != nil {
@@ -208,6 +182,52 @@ func (h *AccountHandler) MergeAccount(w http.ResponseWriter, r *http.Request) {
 	}
 
 	utils.SendJSON(w, r, http.StatusOK, "Contas mescladas com sucesso", toAccountResponse(merged))
+}
+
+// mergeAccountsTx folds drop into keep: aliases, issuances and the holder/administrator keep
+// is missing, and then deletes drop for real. The caller has already locked both rows and
+// checked they belong to the same program - the single merge and the holder-row merge
+// (person_merge_row.go) each do that their own way, and this is the part they share.
+func mergeAccountsTx(tx *gorm.DB, keep, drop data.Account, actorID string) error {
+	if err := archiveCollidingNicknames(tx, keep.ID, drop.ID); err != nil {
+		return err
+	}
+
+	// Unscoped: the aliases just archived above move too. They are what
+	// issuances.account_nickname_id points at, so leaving them on a row that is about
+	// to be deleted would take the record of which alias the EMISSAO came in by.
+	if err := tx.Unscoped().Model(&data.AccountNickname{}).
+		Where("account_id = ?", drop.ID).
+		UpdateColumn("account_id", keep.ID).Error; err != nil {
+		return err
+	}
+
+	if err := moveIssuances(tx, keep.ID, drop.ID, actorID); err != nil {
+		return err
+	}
+
+	// UpdateColumns, not Save: Account.BeforeSave re-encrypts the password, and this
+	// write has no business anywhere near it.
+	updates := map[string]any{}
+	if keep.HolderID == nil && drop.HolderID != nil {
+		keep.HolderID = drop.HolderID
+		updates["holder_id"] = *drop.HolderID
+	}
+	if keep.AdministratorID == nil && drop.AdministratorID != nil {
+		keep.AdministratorID = drop.AdministratorID
+		updates["administrator_id"] = *drop.AdministratorID
+	}
+	if len(updates) > 0 {
+		updates["complete"] = keep.ComputeComplete()
+		if err := tx.Model(&data.Account{}).Where("id = ?", keep.ID).
+			UpdateColumns(updates).Error; err != nil {
+			return err
+		}
+	}
+
+	// Unscoped: without it GORM would archive the duplicate, which is the state the
+	// operator is trying to get out of. Nothing points at the row by now.
+	return tx.Unscoped().Delete(&data.Account{}, "id = ?", drop.ID).Error
 }
 
 const errDifferentPrograms = "Só é possível mesclar contas do mesmo programa"

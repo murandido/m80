@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	acct "github.com/murandido/m-80-backend/internal/account"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/utils"
@@ -211,53 +212,9 @@ func (h *PeopleHandler) MergePerson(w http.ResponseWriter, r *http.Request) {
 			keep, drop = drop, keep
 		}
 
-		// Unscoped on both: leaving an archived account behind would keep it holding the
-		// foreign key, and the DELETE at the end would be refused. UpdateColumn rather than
-		// Update because this is not somebody editing the account.
-		for _, column := range []string{"holder_id", "administrator_id"} {
-			if err := tx.Unscoped().Model(&data.Account{}).
-				Where(column+" = ?", dropID).
-				UpdateColumn(column, keepID).Error; err != nil {
-				return err
-			}
-		}
-
-		// No collision to handle: person_nicknames.nickname is globally unique, so the two
-		// can never be holding the same alias.
-		if err := tx.Model(&data.PersonNickname{}).
-			Where("person_id = ?", dropID).
-			UpdateColumn("person_id", keepID).Error; err != nil {
-			return err
-		}
-
-		if keepNickname {
-			nickname, free, err := nicknameFromName(tx, keep, drop)
-			if err != nil {
-				return err
-			}
-			switch {
-			case nickname == "":
-				// Same name, or already an alias of the survivor - nothing to add.
-			case free:
-				if err := tx.Create(&data.PersonNickname{PersonID: keep.ID, Nickname: nickname}).Error; err != nil {
-					return err
-				}
-			default:
-				warning = fmt.Sprintf("O apelido %q já é de outro cadastro, então não foi criado.", nickname)
-			}
-		}
-
-		// The delete comes before the copy on purpose: the CPF is unique across people -
-		// idx_people_cpf_fingerprint since migration 38 - so writing the absorbed CPF onto the
-		// survivor while that row still holds it is refused. The fingerprint follows the number
-		// automatically: Person.BeforeSave derives it on the Save below.
-		if err := tx.Delete(&data.Person{}, "id = ?", dropID).Error; err != nil {
-			return err
-		}
-
-		carryPersonFields(&keep, &drop)
-		keep.Complete = keep.ComputeComplete()
-		return tx.Save(&keep).Error
+		mergeWarning, err := mergePeopleTx(tx, keep, drop, keepNickname)
+		warning = mergeWarning
+		return err
 	})
 
 	if err != nil {
@@ -275,6 +232,66 @@ func (h *PeopleHandler) MergePerson(w http.ResponseWriter, r *http.Request) {
 		Person:  toPersonResponse(merged),
 		Warning: warning,
 	})
+}
+
+// mergePeopleTx repoints everything that references drop onto keep, fills in what keep is
+// missing and deletes drop. The caller holds the lock on both rows. It returns a warning when
+// the absorbed name could not become an alias because somebody else already answers to it.
+func mergePeopleTx(tx *gorm.DB, keep, drop data.Person, keepNickname bool) (string, error) {
+	var warning string
+
+	// Unscoped on both: leaving an archived account behind would keep it holding the
+	// foreign key, and the DELETE at the end would be refused. UpdateColumn rather than
+	// Update because this is not somebody editing the account.
+	for _, column := range []string{"holder_id", "administrator_id"} {
+		if err := tx.Unscoped().Model(&data.Account{}).
+			Where(column+" = ?", drop.ID).
+			UpdateColumn(column, keep.ID).Error; err != nil {
+			return "", err
+		}
+	}
+
+	// No collision to handle: person_nicknames.nickname is globally unique, so the two
+	// can never be holding the same alias.
+	if err := tx.Model(&data.PersonNickname{}).
+		Where("person_id = ?", drop.ID).
+		UpdateColumn("person_id", keep.ID).Error; err != nil {
+		return "", err
+	}
+
+	if keepNickname {
+		nickname, free, err := nicknameFromName(tx, keep, drop)
+		if err != nil {
+			return "", err
+		}
+		switch {
+		case nickname == "":
+			// Same name, or already an alias of the survivor - nothing to add.
+		case free:
+			if err := tx.Create(&data.PersonNickname{PersonID: keep.ID, Nickname: nickname}).Error; err != nil {
+				return "", err
+			}
+		default:
+			warning = fmt.Sprintf("O apelido %q já é de outro cadastro, então não foi criado.", nickname)
+		}
+	}
+
+	// The delete comes before the copy on purpose: the CPF is unique across people -
+	// idx_people_cpf_fingerprint since migration 38 - so writing the absorbed CPF onto the
+	// survivor while that row still holds it is refused. The fingerprint follows the number
+	// automatically: Person.BeforeSave derives it on the Save below.
+	if err := tx.Delete(&data.Person{}, "id = ?", drop.ID).Error; err != nil {
+		return "", err
+	}
+
+	carryPersonFields(&keep, &drop)
+	keep.Complete = keep.ComputeComplete()
+	if err := tx.Save(&keep).Error; err != nil {
+		return "", err
+	}
+
+	// Both people's aliases and both sets of accounts are one row now: one list of aliases.
+	return warning, acct.UnifyHolderNicknames(tx, keep.ID)
 }
 
 // nicknameFromName reports the absorbed person's name as an alias for the survivor: the

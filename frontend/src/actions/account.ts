@@ -5,6 +5,8 @@ import { env } from "@/lib/env"
 import { stripEmptyFields } from "@/lib/strip-empty-fields"
 import {
   createPersonAction,
+  createPersonNicknameAction,
+  deletePersonAction,
   findPersonByNameOrNicknameAction,
   resolveOrCreatePersonAction,
 } from "@/actions/person"
@@ -18,10 +20,9 @@ import {
   createAccountSchema,
   deleteAccountNicknameSchema,
   deleteAccountSchema,
-  mergeAccountPreviewSchema,
-  mergeAccountSchema,
   updateAccountSchema,
 } from "@/schemas/account"
+import { createPersonSchema } from "@/schemas/person"
 import { z } from "zod"
 
 export async function createAccountAction(
@@ -102,6 +103,51 @@ export async function createAccountAction(
   } catch {
     return { error: "Erro de conexão com o servidor." }
   }
+}
+
+// "Cadastrar Conta" registers the holder and their first loyalty account together - the
+// panel no longer has a separate screen for people. Without an account (no program picked)
+// only the person is created, which is how an administrator who holds nothing gets in.
+//
+// There is no backend transaction across the two, so the order is chosen to make undoing
+// cheap: the person goes in bare, then the account, and only then the aliases. If the account
+// is refused, the person is deleted again - nothing references them yet, and their aliases,
+// the one thing that could, have not been written.
+export async function createHolderWithAccountAction(
+  holder: z.infer<typeof createPersonSchema.request>,
+  account: Omit<z.infer<typeof createAccountSchema.request>, "holder_id"> | null,
+) {
+  const { nicknames: holderNicknames, ...holderData } = holder
+
+  const person = await createPersonAction(holderData)
+  if ("error" in person) {
+    return { error: person.error }
+  }
+
+  const failedNicknames: string[] = []
+
+  if (account) {
+    const created = await createAccountAction({ ...account, holder_id: person.personId })
+    if ("error" in created) {
+      const rollback = await deletePersonAction(person.personId)
+      return {
+        error:
+          "error" in rollback
+            ? `${created.error} O titular "${holder.name}" foi criado e ficou sem conta.`
+            : created.error,
+      }
+    }
+    failedNicknames.push(...(created.failedNicknames ?? []))
+  }
+
+  for (const nickname of holderNicknames ?? []) {
+    const result = await createPersonNicknameAction(person.personId, nickname)
+    if (result.error) {
+      failedNicknames.push(nickname)
+    }
+  }
+
+  return { success: true as const, personId: person.personId, failedNicknames }
 }
 
 export async function updateAccountAction(
@@ -403,59 +449,6 @@ export async function attachAdministratorToAccountAction(
   }
 
   return { attached: true as const }
-}
-
-export async function previewMergeAccountAction(keepId: string, sourceId: string) {
-  const cookieStore = await cookies()
-  const token = cookieStore.get("auth_token")?.value
-
-  try {
-    const res = await fetch(
-      `${env.BACKEND_URL}/api/v1/accounts/${keepId}/merge-preview?source_id=${sourceId}`,
-      { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" },
-    )
-
-    const json = await res.json()
-    const parsed = mergeAccountPreviewSchema.response.safeParse(json)
-
-    if (!res.ok || !parsed.data?.data) {
-      return { error: parsed.data?.message || "Erro ao calcular a prévia." }
-    }
-
-    return { preview: parsed.data.data }
-  } catch {
-    return { error: "Erro de conexão com o servidor." }
-  }
-}
-
-// Absorbs sourceId into keepId and deletes it. Unlike the delete button, which only
-// archives, this one takes the row out - which is why the panel shows the preview first.
-export async function mergeAccountAction(keepId: string, sourceId: string) {
-  const cookieStore = await cookies()
-  const token = cookieStore.get("auth_token")?.value
-
-  try {
-    const res = await fetch(`${env.BACKEND_URL}/api/v1/accounts/${keepId}/merge`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ source_id: sourceId }),
-    })
-
-    const json = await res.json()
-    const parsed = mergeAccountSchema.response.safeParse(json)
-
-    if (!res.ok) {
-      // e.g. 422 "Só é possível mesclar contas do mesmo programa"
-      return { error: parsed.data?.message || "Erro ao mesclar as contas." }
-    }
-
-    return { success: true as const }
-  } catch {
-    return { error: "Erro de conexão com o servidor." }
-  }
 }
 
 // --- Beneficiaries: the manual half of the CPF control ---------------------------------

@@ -58,24 +58,6 @@ export const getPeopleSchema = {
   }),
 }
 
-// The paginated management listing (GET /people/manage). The plain /people route
-// stays unpaginated because it is what feeds the holder, administrator and
-// passenger pickers on the accounts, sales and issuances screens.
-export const listPeopleSchema = {
-  response: z.object({
-    success: z.boolean(),
-    message: z.string(),
-    data: z
-      .object({
-        people: z.array(personSchema).nullish(),
-        total: z.number(),
-        page: z.number(),
-        limit: z.number(),
-      })
-      .nullish(),
-  }),
-}
-
 const optionalTextField = z.string().optional().or(z.literal(""))
 const optionalEmailField = z.union([z.literal(""), z.string().email("Email inválido")])
 
@@ -157,15 +139,29 @@ export const checkNicknameAvailabilitySchema = {
   }),
 }
 
-// What a merge would move, asked for before the operator confirms: the action deletes a
-// record for good, so the panel has to be able to say what is about to happen.
-export const mergePersonPreviewSchema = {
+
+// What merging a whole row of the accounts screen would do: the person (or holderless
+// account) absorbed, plus every loyalty account in a program the surviving holder already has.
+export const mergeRowPreviewSchema = {
   response: z.object({
     success: z.boolean(),
     message: z.string(),
     data: z
       .object({
-        accounts: z.number(),
+        accounts_merged: z
+          .array(
+            z.object({
+              program_name: z.string(),
+              keep_account_id: z.string(),
+              drop_account_id: z.string(),
+              drop_login: z.string().nullish(),
+              issuances: z.number(),
+              colliding_nicknames: z.array(z.string()).nullish(),
+            }),
+          )
+          .nullish(),
+        accounts_moved: z.number(),
+        administered: z.number(),
         nicknames: z.number(),
         fields_to_fill: z.array(z.string()).nullish(),
         nickname_from_name: z.string(),
@@ -174,19 +170,15 @@ export const mergePersonPreviewSchema = {
   }),
 }
 
-export const mergePersonSchema = {
+export type MergeRowPreview = NonNullable<z.infer<typeof mergeRowPreviewSchema.response>["data"]>
+
+export const mergeRowSchema = {
   response: z.object({
     success: z.boolean(),
     message: z.string(),
-    data: z
-      .object({
-        person: personSchema,
-        warning: z.string(),
-      })
-      .nullish(),
+    data: z.object({ warning: z.string() }).nullish(),
   }),
 }
 
-export type MergePersonPreview = NonNullable<
-  z.infer<typeof mergePersonPreviewSchema.response>["data"]
->
+// The row being absorbed: another holder, or an account nobody holds.
+export type MergeRowSource = { kind: "person"; id: string } | { kind: "account"; id: string }

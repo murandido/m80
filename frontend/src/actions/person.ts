@@ -11,8 +11,9 @@ import {
   deletePersonNicknameSchema,
   deletePersonSchema,
   getPeopleOptionsSchema,
-  mergePersonPreviewSchema,
-  mergePersonSchema,
+  mergeRowPreviewSchema,
+  mergeRowSchema,
+  type MergeRowSource,
   updatePersonSchema,
 } from "@/schemas/person"
 import { z } from "zod"
@@ -275,18 +276,25 @@ export async function deletePersonAction(personId: string) {
   }
 }
 
-export async function previewMergePersonAction(keepId: string, sourceId: string) {
+function mergeRowSourceParams(source: MergeRowSource): Record<string, string> {
+  return source.kind === "person"
+    ? { source_person_id: source.id }
+    : { source_account_id: source.id }
+}
+
+export async function previewMergeRowAction(keepId: string, source: MergeRowSource) {
   const cookieStore = await cookies()
   const token = cookieStore.get("auth_token")?.value
+  const query = new URLSearchParams(mergeRowSourceParams(source))
 
   try {
     const res = await fetch(
-      `${env.BACKEND_URL}/api/v1/people/${keepId}/merge-preview?source_id=${sourceId}`,
+      `${env.BACKEND_URL}/api/v1/people/${keepId}/merge-row-preview?${query.toString()}`,
       { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" },
     )
 
     const json = await res.json()
-    const parsed = mergePersonPreviewSchema.response.safeParse(json)
+    const parsed = mergeRowPreviewSchema.response.safeParse(json)
 
     if (!res.ok || !parsed.data?.data) {
       return { error: parsed.data?.message || "Erro ao calcular a prévia." }
@@ -298,31 +306,32 @@ export async function previewMergePersonAction(keepId: string, sourceId: string)
   }
 }
 
-// Absorbs sourceId into keepId and deletes it. There is no undo, which is why the panel
-// only calls this after showing the preview above.
-export async function mergePersonAction(
+// Absorbs a whole row into keepId's: the person (or holderless account), and every loyalty
+// account in a program keepId already has. One transaction on the backend and no undo, which
+// is why the panel shows the preview above first.
+export async function mergeRowAction(
   keepId: string,
-  sourceId: string,
+  source: MergeRowSource,
   keepNickname: boolean,
 ) {
   const cookieStore = await cookies()
   const token = cookieStore.get("auth_token")?.value
 
   try {
-    const res = await fetch(`${env.BACKEND_URL}/api/v1/people/${keepId}/merge`, {
+    const res = await fetch(`${env.BACKEND_URL}/api/v1/people/${keepId}/merge-row`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ source_id: sourceId, keep_nickname: keepNickname }),
+      body: JSON.stringify({ ...mergeRowSourceParams(source), keep_nickname: keepNickname }),
     })
 
     const json = await res.json()
-    const parsed = mergePersonSchema.response.safeParse(json)
+    const parsed = mergeRowSchema.response.safeParse(json)
 
     if (!res.ok) {
-      return { error: parsed.data?.message || "Erro ao mesclar os cadastros." }
+      return { error: parsed.data?.message || "Erro ao mesclar." }
     }
 
     return { success: true as const, warning: parsed.data?.data?.warning ?? "" }

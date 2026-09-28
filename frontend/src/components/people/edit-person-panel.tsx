@@ -31,7 +31,6 @@ import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 import { Person, updatePersonSchema } from "@/schemas/person"
 import { updatePersonAction } from "@/actions/person"
-import { PersonNicknames } from "./person-nicknames"
 
 type FormData = z.infer<typeof updatePersonSchema.request>
 
@@ -102,32 +101,15 @@ export function EditPersonPanel({ person, isOpen, onSaved }: EditPersonPanelProp
         <div className="rounded-b-md border border-t-0 border-slate-200 p-4">
           <div className="mb-4">
             <h2 className="text-sm font-semibold text-slate-800">
-              Informações da pessoa
+              Informações do titular
             </h2>
             <p className="mt-0.5 text-xs text-slate-500">
-              Veja e/ou atualize as informações da pessoa aqui!
+              Veja e/ou atualize as informações do titular aqui!
             </p>
           </div>
 
           <form onSubmit={form.handleSubmit(onSubmit)}>
             <Field className="flex flex-col gap-5">
-              {/* UUID — read-only */}
-              <div className="flex flex-col gap-1 text-sm">
-                <FieldLabel htmlFor="edit-person-uuid">UUID</FieldLabel>
-                <InputGroup className="bg-slate-100">
-                  <InputGroupInput
-                    id="edit-person-uuid"
-                    type="text"
-                    value={person.id}
-                    readOnly
-                    className="cursor-default select-all text-slate-400"
-                  />
-                  <InputGroupAddon align="inline-end">
-                    <Hash className="h-4 w-4 text-slate-400" />
-                  </InputGroupAddon>
-                </InputGroup>
-              </div>
-
               <h3 className="text-xs font-semibold tracking-wide text-slate-500 uppercase">
                 Dados pessoais
               </h3>
@@ -473,12 +455,6 @@ export function EditPersonPanel({ person, isOpen, onSaved }: EditPersonPanelProp
                   />
                 </div>
               </div>
-
-              <Separator />
-              <h3 className="text-xs font-semibold tracking-wide text-slate-500 uppercase">
-                Apelidos
-              </h3>
-              <PersonNicknames personId={person.id} nicknames={person.nicknames} />
 
               <Separator />
 

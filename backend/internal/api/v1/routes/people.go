@@ -37,6 +37,12 @@ func RegisterPeopleRoutes(r chi.Router, db *gorm.DB) {
 		r.With(requireAdmin).Get("/{id}/merge-preview", peopleHandler.PreviewMergePerson)
 		r.With(requireAdmin).Post("/{id}/merge", peopleHandler.MergePerson)
 
+		// merge a whole row of the accounts screen into this holder: the person (or the
+		// holderless account) and every loyalty account that repeats a program. Admin-only
+		// for the same reason.
+		r.With(requireAdmin).Get("/{id}/merge-row-preview", peopleHandler.PreviewMergeRow)
+		r.With(requireAdmin).Post("/{id}/merge-row", peopleHandler.MergeRow)
+
 		// nicknames sub-resource
 		RegisterPersonNicknameRoutes(r, db)
 	})

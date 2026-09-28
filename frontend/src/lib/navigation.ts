@@ -14,7 +14,6 @@ import {
   Sparkles,
   Ticket,
   UserRound,
-  Users,
 } from "lucide-react"
 import type { User } from "@/schemas/user"
 
@@ -117,9 +116,9 @@ export const navSections: NavSection[] = [
 // getting "nothing found" is worse than not searching at all — but adding them
 // to the nav tree would duplicate a link the page already offers.
 //
-// sectionLabel is what the breadcrumb shows in place of a parent section. Proprietários
-// needs it spelled out: unlike Fornecedores, its URL is not nested under the sidebar link
-// it is reached from, so nothing can be inferred from the path.
+// sectionLabel is what the breadcrumb shows in place of a parent section. It has to be
+// spelled out for a URL that is not nested under the sidebar link it is reached from,
+// since nothing can be inferred from the path.
 export const extraDestinations: (NavLink & { sectionLabel: string })[] = [
   {
     title: "Fornecedores",
@@ -127,12 +126,6 @@ export const extraDestinations: (NavLink & { sectionLabel: string })[] = [
     icon: Landmark,
     roles: ["admin"],
     sectionLabel: "Operação",
-  },
-  {
-    title: "Proprietários",
-    url: "/dashboard/people",
-    icon: Users,
-    sectionLabel: "Gestão",
   },
   // Temporary, reached from the airline screen: how each airline's own integration fares
   // against the Traveos fallback. Goes away with the vendor.
@@ -177,8 +170,8 @@ export function findNavLocation(
   }
 
   // Extra destinations are not in the tree, so without this a page like
-  // /dashboard/people — which has no sidebar parent to prefix-match — would fall all the
-  // way through and render a breadcrumb saying only "Dashboard".
+  // /dashboard/airlines/direct-lookups would be claimed by its sidebar parent at best, and
+  // one with no parent to prefix-match would render a breadcrumb saying only "Dashboard".
   const extra = extraDestinations.find((item) => pathname.startsWith(item.url))
   if (extra) {
     return { section: { label: extra.sectionLabel, items: [] }, link: extra }

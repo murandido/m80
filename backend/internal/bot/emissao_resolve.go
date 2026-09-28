@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	acct "github.com/murandido/m-80-backend/internal/account"
 	"github.com/murandido/m-80-backend/internal/data"
 	issuancesvc "github.com/murandido/m-80-backend/internal/issuance"
 	"gorm.io/gorm"
@@ -261,6 +262,12 @@ func resolveAccountByNickname(tx *gorm.DB, programID, nickname string) (data.Acc
 	if err := tx.Create(&created).Error; err != nil {
 		return data.Account{}, nil, err
 	}
+
+	// The holder may already have other aliases (and other accounts): the new account answers
+	// to all of them, and they to this one - one list per holder, as the panel shows it.
+	if err := acct.UnifyHolderNicknames(tx, holderID); err != nil {
+		return data.Account{}, nil, err
+	}
 	return account, &created.ID, nil
 }
 
@@ -301,8 +308,12 @@ func attachAdministrator(tx *gorm.DB, account *data.Account, accountNickname, ni
 			accountNickname, current.Name, nickname)
 
 	case account.AdministratorID != nil:
-		// Free name, account already has an administrator: another alias for them.
-		return tx.Create(&data.PersonNickname{PersonID: *account.AdministratorID, Nickname: nickname}).Error
+		// Free name, account already has an administrator: another alias for them - and so
+		// for every account they hold themselves (internal/account/nicknames.go).
+		if err := tx.Create(&data.PersonNickname{PersonID: *account.AdministratorID, Nickname: nickname}).Error; err != nil {
+			return err
+		}
+		return acct.UnifyHolderNicknames(tx, *account.AdministratorID)
 
 	default:
 		// Free name, no administrator yet: a new person takes the role.
