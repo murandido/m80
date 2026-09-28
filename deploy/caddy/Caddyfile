@@ -6,6 +6,15 @@
 # That is why CORS_ALLOWED_ORIGINS_PROD can stay empty for good: the browser is
 # no longer merely uninterested in calling the API directly, it has no address
 # to call.
+
+# www only exists to land on the bare domain, so the session cookie (which is
+# per hostname) always lives on one name. Every machine using this file needs a
+# www record too: without it Caddy retries this certificate forever and burns
+# the Let's Encrypt failure quota.
+www.{$API_DOMAIN} {
+	redir https://{$API_DOMAIN}{uri} permanent
+}
+
 {$API_DOMAIN} {
 	encode gzip
 
