@@ -75,9 +75,14 @@ Siga `docs/deploy.md` — os treze passos são os mesmos, a máquina só é outr
 4. **`API_DOMAIN_PROD="ca.emioitenta.com.br"`**, com os registros A de `ca.` **e** `www.ca.`
    resolvendo para esta máquina **antes** de subir o Caddy (o Let's Encrypt tem limite de 5 falhas
    por hora por domínio). O `www.ca.` não é opcional: o Caddyfile serve `www.{$API_DOMAIN}` para
-   redirecionar, e sem o registro esse certificado falha em loop. Para recriar o Caddy à mão aqui,
-   é `IMAGE_TAG=ca-latest docker compose --profile prod up -d --force-recreate caddy-prod` — nunca
-   `IMAGE_TAG=latest`, que ganha do `.env`.
+   redirecionar, e sem o registro esse certificado falha em loop. Para recriar o Caddy à mão aqui:
+   ```bash
+   IMAGE_TAG=$(sed -n 's/^CURRENT_TAG=//p' /opt/m80/deploy/.deploy-state) \
+     docker compose --profile prod up -d --force-recreate --no-deps caddy-prod
+   ```
+   Sem `--no-deps`, o Compose recria junto o painel e a API na tag que você passou — e `latest` /
+   `ca-latest` na máquina podem ser imagens velhas, porque o deploy publica por SHA. Foi assim que a
+   API de produção caiu em 28/09/2026: subiu uma imagem que não conhecia a migration do banco.
 5. **PAT do GHCR** classic, escopo somente `read:packages`, `docker login ghcr.io` como `deploy`.
    Gere um sem prazo curto: um PAT de 30 dias vira uma falha de `pull` no meio de um deploy.
 6. **`sudo install -d -o deploy -g deploy -m 700 /var/backups/m-80`.** Sem isso o **segundo** deploy
