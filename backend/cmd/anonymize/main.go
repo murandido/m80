@@ -125,6 +125,8 @@ func (a *anonymiser) all() error {
 		{"account_nicknames", a.accountNicknames},
 		{"agencies", a.agencies},
 		{"sale_payments", a.salePayments},
+		{"sales", a.sales},
+		{"airline statements", a.airlineStatements},
 		{"clients", a.clients},
 		{"users", a.users},
 		{"person_nicknames", a.personNicknames},
@@ -368,7 +370,21 @@ func (a *anonymiser) accounts() error {
 	if err != nil {
 		return err
 	}
-	return logAffected("accounts", "rows", result)
+	if err := logAffected("accounts", "rows", result); err != nil {
+		return err
+	}
+	// The Azul customer key and the Smiles refresh token are live sessions with the airline,
+	// not something a fake password makes harmless: carried over, the sync loops would read
+	// real statements from the CA's Mode box. Clearing them is also what keeps those loops
+	// off every account (they only pick up rows where it is set), while tracks_statement
+	// stays as is so the statement screens still show the imported lines.
+	result, err = a.tx.Exec(`
+		UPDATE accounts SET azul_customer_key = NULL, smiles_refresh_token = NULL
+		 WHERE azul_customer_key IS NOT NULL OR smiles_refresh_token IS NOT NULL`)
+	if err != nil {
+		return err
+	}
+	return logAffected("accounts", "airline sessions cleared", result)
 }
 
 func (a *anonymiser) issuancePassengers() error {
@@ -586,6 +602,48 @@ func (a *anonymiser) salePayments() error {
 	return logAffected("sale_payments", "notes replaced", result)
 }
 
+// sales replaces the note on the payments screen - "paga na sexta", "cobrar do Fulano".
+func (a *anonymiser) sales() error {
+	result, err := a.tx.Exec(`
+		UPDATE sales SET note = 'Nota de exemplo (conteúdo original removido).'
+		 WHERE note IS NOT NULL AND note <> ''`)
+	if err != nil {
+		return err
+	}
+	return logAffected("sales", "notes replaced", result)
+}
+
+// airlineStatements scrubs the lines read from Azul and Smiles. The airline's description
+// of a transfer or a booking can carry the name of whoever sent the points or flew, so it
+// falls back to the type's own wording, which is what tells the lines apart on screen. The
+// locator goes because it opens the booking on the airline's site, and the issuances'
+// locators were already scrambled without a map to follow here. The operator's comment is
+// free text like every other note. The sync state's detail is the last error the airline
+// returned, which may quote the account.
+func (a *anonymiser) airlineStatements() error {
+	queries := []struct{ table, sql string }{
+		{"azul_statement_lines", `
+			UPDATE azul_statement_lines
+			   SET description = type_description, locator = NULL,
+			       comment = CASE WHEN comment IS NULL OR comment = '' THEN comment
+			                      ELSE 'Comentário de exemplo (conteúdo original removido).' END`},
+		{"smiles_statement_lines", `
+			UPDATE smiles_statement_lines SET description = type_description, locator = NULL`},
+		{"azul_sync_state", `UPDATE azul_sync_state SET detail = NULL WHERE detail IS NOT NULL`},
+		{"smiles_sync_state", `UPDATE smiles_sync_state SET detail = NULL WHERE detail IS NOT NULL`},
+	}
+	for _, query := range queries {
+		result, err := a.tx.Exec(query.sql)
+		if err != nil {
+			return fmt.Errorf("%s: %w", query.table, err)
+		}
+		if err := logAffected(query.table, "rows scrubbed", result); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // A batch's note is either what the operator typed or the airline's own wording copied from
 // the statement, and a transfer's wording can name the person who sent the points. It is
 // numbered rather than made uniform because the note is what tells two batches of the same
@@ -715,7 +773,10 @@ func (a *anonymiser) truncateTables() error {
 	// listened_chats is the bot's routing table, keyed by real WhatsApp addresses. It is
 	// also the wrong thing to carry over: the CA's Mode bot is never paired, so a chat list
 	// there would describe conversations that environment cannot have.
-	for _, table := range []string{"audit_logs", "listened_chats"} {
+	//
+	// booking_lookup_attempts is a temporary report of production's calls to the airlines,
+	// and its error column quotes whatever the airline answered about a real booking.
+	for _, table := range []string{"audit_logs", "listened_chats", "booking_lookup_attempts"} {
 		// The name is a literal from the slice above, not input.
 		if _, err := a.tx.Exec(fmt.Sprintf(`TRUNCATE TABLE %s CASCADE`, table)); err != nil {
 			return err
