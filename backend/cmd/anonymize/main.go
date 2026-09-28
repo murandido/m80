@@ -617,7 +617,9 @@ func (a *anonymiser) sales() error {
 // of a transfer or a booking can carry the name of whoever sent the points or flew, so it
 // falls back to the type's own wording, which is what tells the lines apart on screen. The
 // locator goes because it opens the booking on the airline's site, and the issuances'
-// locators were already scrambled without a map to follow here. The operator's comment is
+// locators were already scrambled without a map to follow here. Smiles' external_id goes
+// with it: on the first load it turned out to be the booking locator again, under another
+// name, and nothing reads it outside the sync that is off here. The operator's comment is
 // free text like every other note. The sync state's detail is the last error the airline
 // returned, which may quote the account.
 func (a *anonymiser) airlineStatements() error {
@@ -628,7 +630,8 @@ func (a *anonymiser) airlineStatements() error {
 			       comment = CASE WHEN comment IS NULL OR comment = '' THEN comment
 			                      ELSE 'Comentário de exemplo (conteúdo original removido).' END`},
 		{"smiles_statement_lines", `
-			UPDATE smiles_statement_lines SET description = type_description, locator = NULL`},
+			UPDATE smiles_statement_lines
+			   SET description = type_description, locator = NULL, external_id = NULL`},
 		{"azul_sync_state", `UPDATE azul_sync_state SET detail = NULL WHERE detail IS NOT NULL`},
 		{"smiles_sync_state", `UPDATE smiles_sync_state SET detail = NULL WHERE detail IS NOT NULL`},
 	}
