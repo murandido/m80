@@ -84,6 +84,7 @@ func TestAccountListFiltersByCategory(t *testing.T) {
 
 		// A second account on the same program, under a court injunction.
 		injunction := data.Account{
+			HolderID:         testHolder(t, tx),
 			LoyaltyProgramID: world.program.ID,
 			Category:         data.AccountCategoryInjunction,
 		}

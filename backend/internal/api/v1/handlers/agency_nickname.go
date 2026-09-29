@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/utils"
@@ -52,7 +53,7 @@ func (h *AgencyNicknameHandler) agencyExists(agencyID string) bool {
 // @Success      201  {object}  schemas.AgencyNicknameResponse
 // @Failure      400  {object}  schemas.ErrorResponse "Payload inválido"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
-// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a administradores"
+// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a desenvolvedores"
 // @Failure      404  {object}  schemas.ErrorResponse "Agência não encontrada"
 // @Failure      422  {object}  schemas.ErrorResponse "Apelido já está em uso"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao criar apelido"
@@ -138,7 +139,7 @@ func (h *AgencyNicknameHandler) CheckAgencyNicknameAvailability(w http.ResponseW
 func (h *AgencyNicknameHandler) GetAgencyNicknames(w http.ResponseWriter, r *http.Request) {
 	agencyID := chi.URLParam(r, "id")
 
-	if !h.agencyExists(agencyID) {
+	if !middleware.AgencyScopeFrom(r.Context()).Allows(agencyID) || !h.agencyExists(agencyID) {
 		utils.SendError(w, r, http.StatusNotFound, "Agency not found")
 		return
 	}
@@ -174,6 +175,10 @@ func (h *AgencyNicknameHandler) GetAgencyNickname(w http.ResponseWriter, r *http
 	nicknameID := chi.URLParam(r, "nicknameID")
 
 	var nickname data.AgencyNickname
+	if !middleware.AgencyScopeFrom(r.Context()).Allows(agencyID) {
+		utils.SendError(w, r, http.StatusNotFound, "Nickname not found")
+		return
+	}
 	if err := h.DB.First(&nickname, "id = ? AND agency_id = ?", nicknameID, agencyID).Error; err != nil {
 		utils.SendError(w, r, http.StatusNotFound, "Nickname not found")
 		return
@@ -195,7 +200,7 @@ func (h *AgencyNicknameHandler) GetAgencyNickname(w http.ResponseWriter, r *http
 // @Success      200  {object}  schemas.AgencyNicknameResponse
 // @Failure      400  {object}  schemas.ErrorResponse "Payload inválido"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
-// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a administradores"
+// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a desenvolvedores"
 // @Failure      404  {object}  schemas.ErrorResponse "Apelido não encontrado"
 // @Failure      422  {object}  schemas.ErrorResponse "Apelido já está em uso"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao atualizar apelido"
@@ -244,7 +249,7 @@ func (h *AgencyNicknameHandler) UpdateAgencyNickname(w http.ResponseWriter, r *h
 // @Param        nicknameID  path  string  true  "UUID do apelido"
 // @Success      200  {object}  schemas.ErrorResponse "Apelido deletado com sucesso"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
-// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a administradores"
+// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a desenvolvedores"
 // @Failure      404  {object}  schemas.ErrorResponse "Apelido não encontrado"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao deletar apelido"
 // @Router       /agencies/{id}/nicknames/{nicknameID} [delete]

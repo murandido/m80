@@ -10,7 +10,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/data"
 	"gorm.io/gorm"
 )
@@ -28,7 +27,7 @@ func seedAzulStatementTarget(t *testing.T, tx *gorm.DB) (data.Account, data.User
 	agency := data.Agency{Name: "Test Agency " + suffix}
 	create(t, tx, &agency)
 	user := createUser(t, tx, "Operador "+suffix)
-	account := data.Account{LoyaltyProgramID: program.ID, OwnsPointInventory: true, TracksStatement: true}
+	account := data.Account{HolderID: testHolder(t, tx), LoyaltyProgramID: program.ID, OwnsPointInventory: true, TracksStatement: true}
 	create(t, tx, &account)
 
 	return account, user
@@ -78,7 +77,7 @@ func azulStatementRequest(method, accountID, userID, body string) *http.Request 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", accountID)
 	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
-	ctx = context.WithValue(ctx, middleware.UserContextKey, data.User{ID: userID, Role: data.RoleAdmin})
+	ctx = asUser(ctx, data.User{ID: userID, Role: data.RoleAdmin})
 	return req.WithContext(ctx)
 }
 

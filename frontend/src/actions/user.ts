@@ -16,13 +16,17 @@ export async function updateUserAction(
   const cookieStore = await cookies()
   const token = cookieStore.get("auth_token")?.value
 
-  const body: Record<string, string> = {
+  const body: Record<string, string | string[]> = {
     name: data.name,
     phone: data.phone,
     role: data.role,
   }
   if (data.password) {
     body.password = data.password
+  }
+  // Absent means "leave the grants alone" to the API, which is what an admin's edit needs.
+  if (data.agency_ids) {
+    body.agency_ids = data.agency_ids
   }
 
   try {
@@ -35,6 +39,9 @@ export async function updateUserAction(
       body: JSON.stringify(body),
     })
 
+    if (res.status === 403) {
+      return { error: "Só desenvolvedores alteram agências, o perfil de desenvolvedor ou contas de desenvolvedor." }
+    }
     if (!res.ok) {
       return { error: "Erro ao atualizar usuário." }
     }
@@ -55,6 +62,9 @@ export async function deleteUserAction(userId: string) {
       headers: { Authorization: `Bearer ${token}` },
     })
 
+    if (res.status === 403) {
+      return { error: "Só desenvolvedores removem um desenvolvedor." }
+    }
     if (!res.ok) {
       return { error: "Erro ao deletar usuário." }
     }

@@ -4,6 +4,8 @@ import { Separator } from "@/components/ui/separator"
 import { env } from "@/lib/env"
 import { getSessionUser, requireAdmin } from "@/lib/session"
 import { getUsersSchema, User } from "@/schemas/user"
+import { Agency, getAgenciesSchema } from "@/schemas/agency"
+import { fetchList } from "@/lib/fetch-list"
 import { UserCard } from "@/components/users/user-card"
 import { CreateUserForm } from "@/components/users/create-user-form"
 import { ListFilterBar } from "@/components/shared/list-filter-bar"
@@ -60,13 +62,24 @@ export default async function UsersPage({
   }
   currentUserId = sessionUser?.id ?? null
 
+  // Only a dev assigns agencies, so only a dev's page needs the list to pick from. A dev's
+  // /agencies is every agency, which is exactly the set there is to choose among.
+  const viewerIsDev = sessionUser?.role === "dev"
+  const agencies: Agency[] = viewerIsDev
+    ? ((await fetchList<Agency>(
+        `${env.BACKEND_URL}/api/v1/agencies`,
+        getAgenciesSchema.response,
+        authHeader,
+      )) ?? [])
+    : []
+
   return (
     <div className="p-6 sm:p-8">
       <div className="flex flex-col gap-2 sm:gap-6">
         <h1 className="text-lg font-semibold text-slate-800">
           Usuários do M80
         </h1>
-        <CreateUserForm />
+        <CreateUserForm viewerIsDev={viewerIsDev} agencies={agencies} />
         <ListFilterBar
           searchPlaceholder="Buscar por nome ou telefone"
           order={params.order}
@@ -97,6 +110,8 @@ export default async function UsersPage({
                 key={user.id}
                 user={user}
                 isCurrentUser={user.id === currentUserId}
+                viewerIsDev={viewerIsDev}
+                agencies={agencies}
               />
             ))
           )}

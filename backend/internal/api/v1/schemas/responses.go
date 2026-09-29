@@ -76,6 +76,20 @@ type MergePersonResultSingleResponse struct {
 	Data    MergePersonResultResponse `json:"data"`
 }
 
+// MergeRowPreviewSingleResponse is the GET /people/{id}/merge-row-preview route response
+type MergeRowPreviewSingleResponse struct {
+	Success bool                    `json:"success" example:"true"`
+	Message string                  `json:"message" example:"Prévia calculada com sucesso"`
+	Data    MergeRowPreviewResponse `json:"data"`
+}
+
+// MergeRowResultSingleResponse is the POST /people/{id}/merge-row route response
+type MergeRowResultSingleResponse struct {
+	Success bool                   `json:"success" example:"true"`
+	Message string                 `json:"message" example:"Contas mescladas com sucesso"`
+	Data    MergeRowResultResponse `json:"data"`
+}
+
 // PersonNicknameListResponse is the GET /people/{id}/nicknames route response
 type PersonNicknameListResponse struct {
 	Success bool                     `json:"success" example:"true"`
@@ -117,6 +131,35 @@ type AccountPaginatedResponse struct {
 	Success bool                 `json:"success" example:"true"`
 	Message string               `json:"message" example:"Contas listadas com sucesso"`
 	Data    AccountPaginatedData `json:"data"`
+}
+
+// AccountHolderRow is one row of the accounts screen: a holder and every loyalty account
+// they hold. Holder is null on a row that is a single account with no holder.
+type AccountHolderRow struct {
+	Holder   *PersonResponse   `json:"holder"`
+	Accounts []AccountResponse `json:"accounts"`
+}
+
+// AccountHolderPaginatedData is the data payload for the listing grouped by holder.
+type AccountHolderPaginatedData struct {
+	Rows  []AccountHolderRow `json:"rows"`
+	Total int64              `json:"total"`
+	Page  int                `json:"page"`
+	Limit int                `json:"limit"`
+	// HolderlessTotal counts every account without a holder, archived included and filters
+	// ignored: what still stands between accounts.holder_id and a NOT NULL.
+	HolderlessTotal int64 `json:"holderless_total"`
+	// DuplicateProgramsTotal counts holders with two live accounts in one program, and
+	// AdminConflictsTotal holders whose accounts name different administrators. Both unfiltered.
+	DuplicateProgramsTotal int64 `json:"duplicate_programs_total"`
+	AdminConflictsTotal    int64 `json:"admin_conflicts_total"`
+}
+
+// AccountHolderPaginatedResponse is the GET /accounts/holders route response
+type AccountHolderPaginatedResponse struct {
+	Success bool                       `json:"success" example:"true"`
+	Message string                     `json:"message" example:"Contas listadas com sucesso"`
+	Data    AccountHolderPaginatedData `json:"data"`
 }
 
 // AccountSingleResponse is the response from single-account routes

@@ -16,7 +16,7 @@ import (
 // gates as EMISSAO and ALTERACAO - see authorizeSender - and the same
 // silence on a failed gate.
 func (b *Bot) handleCancelamento(ctx context.Context, evt *events.Message, text string, startedAt time.Time) {
-	user, allowed := b.authorizeSender(evt, "cancelamento")
+	user, scope, allowed := b.authorizeSender(evt, "cancelamento")
 	if !allowed {
 		return
 	}
@@ -35,6 +35,9 @@ func (b *Bot) handleCancelamento(ctx context.Context, evt *events.Message, text 
 		issuance, err := findIssuanceToCancel(tx, msg.ProgramLocator)
 		if err != nil {
 			return err
+		}
+		if !scope.Allows(issuance.AgencyID) {
+			return errIssuanceOutOfScope(msg.ProgramLocator)
 		}
 
 		_, err = issuancesvc.Cancel(tx, issuance, cancelInputFor(msg, issuance), user.ID)

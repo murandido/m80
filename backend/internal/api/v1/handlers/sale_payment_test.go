@@ -11,7 +11,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/events"
@@ -60,7 +59,7 @@ func callCreatePayment(t *testing.T, tx *gorm.DB, saleID, body string) *httptest
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", saleID)
 	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
-	ctx = context.WithValue(ctx, middleware.UserContextKey, actor)
+	ctx = asUser(ctx, actor)
 	req = req.WithContext(ctx)
 
 	rec := httptest.NewRecorder()

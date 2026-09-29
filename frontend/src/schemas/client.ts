@@ -4,6 +4,9 @@ export const clientSchema = z.object({
   id: z.string(),
   name: z.string(),
   phone: z.string().nullable(),
+  // Null only for the clients the migration could not place - they bought through more than
+  // one agency - until a dev assigns one. Defaulted so an older API response still parses.
+  agency_id: z.string().nullable().default(null),
   created_at: z.string(),
   updated_at: z.string(),
 })
@@ -41,6 +44,7 @@ export const createClientSchema = {
   request: z.object({
     name: z.string().min(1, "Nome é obrigatório"),
     phone: z.string().trim().optional(),
+    agency_id: z.string().min(1, "Agência é obrigatória"),
   }),
   response: z.object({
     success: z.boolean(),
@@ -53,6 +57,7 @@ export const updateClientSchema = {
   request: z.object({
     name: z.string().min(1, "Nome é obrigatório"),
     phone: z.string().trim().optional(),
+    agency_id: z.string().min(1, "Agência é obrigatória"),
   }),
   response: z.object({
     success: z.boolean(),

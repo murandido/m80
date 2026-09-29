@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/murandido/m-80-backend/internal/access"
 	"github.com/murandido/m-80-backend/internal/data"
 	issuancesvc "github.com/murandido/m-80-backend/internal/issuance"
 	"gorm.io/gorm"
@@ -72,7 +73,7 @@ func TestResolveEmissao_ExistingNicknameReusesAccount(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		f := seedEmissaoFixture(t, tx, data.Airline{})
 
-		account := data.Account{LoyaltyProgramID: f.Program.ID, Complete: true}
+		account := data.Account{HolderID: testHolder(t, tx), LoyaltyProgramID: f.Program.ID, Complete: true}
 		seed(t, tx, &account)
 		nickname := data.AccountNickname{
 			AccountID:        account.ID,
@@ -84,7 +85,7 @@ func TestResolveEmissao_ExistingNicknameReusesAccount(t *testing.T) {
 		before := countRows(t, tx, "accounts", "loyalty_program_id = ?", f.Program.ID)
 
 		// Typed in a different case than it was registered - the same account.
-		input, err := resolveEmissao(tx, f.message("heraldo"))
+		input, err := resolveEmissao(tx, f.message("heraldo"), access.FullScope())
 		if err != nil {
 			t.Fatalf("resolveEmissao returned %v", err)
 		}
@@ -105,7 +106,7 @@ func TestResolveEmissao_UnknownNicknameCreatesIncompleteAccount(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		f := seedEmissaoFixture(t, tx, data.Airline{})
 
-		input, err := resolveEmissao(tx, f.message("Heraldo"))
+		input, err := resolveEmissao(tx, f.message("Heraldo"), access.FullScope())
 		if err != nil {
 			t.Fatalf("resolveEmissao returned %v", err)
 		}
@@ -170,7 +171,7 @@ func TestResolveEmissao_AdminNicknameCreatesIncompletePersonAndLinks(t *testing.
 		msg := f.message("Heraldo")
 		msg.AdminNickname = "Fulano" + f.Suffix
 
-		input, err := resolveEmissao(tx, msg)
+		input, err := resolveEmissao(tx, msg, access.FullScope())
 		if err != nil {
 			t.Fatalf("resolveEmissao returned %v", err)
 		}
@@ -203,7 +204,7 @@ func seedAccountWithAdministrator(t *testing.T, tx *gorm.DB, f emissaoFixture, a
 	seed(t, tx, &admin)
 	seed(t, tx, &data.PersonNickname{PersonID: admin.ID, Nickname: adminName})
 
-	account := data.Account{LoyaltyProgramID: f.Program.ID, AdministratorID: &admin.ID}
+	account := data.Account{HolderID: testHolder(t, tx), LoyaltyProgramID: f.Program.ID, AdministratorID: &admin.ID}
 	seed(t, tx, &account)
 	seed(t, tx, &data.AccountNickname{
 		AccountID:        account.ID,
@@ -228,7 +229,7 @@ func TestResolveEmissao_NewAdminNameBecomesAnAliasOfTheCurrentOne(t *testing.T) 
 		msg := f.message("Heraldo")
 		msg.AdminNickname = "Fulano" + f.Suffix
 
-		if _, err := resolveEmissao(tx, msg); err != nil {
+		if _, err := resolveEmissao(tx, msg, access.FullScope()); err != nil {
 			t.Fatalf("resolveEmissao returned %v", err)
 		}
 
@@ -273,7 +274,7 @@ func TestResolveEmissao_AdminNameOwnedBySomeoneElseIsRejected(t *testing.T) {
 		msg := f.message("Heraldo")
 		msg.AdminNickname = "Fulano" + f.Suffix
 
-		_, err := resolveEmissao(tx, msg)
+		_, err := resolveEmissao(tx, msg, access.FullScope())
 		if err == nil {
 			t.Fatal("expected the conflict to be refused")
 		}
@@ -296,7 +297,7 @@ func TestResolveEmissao_AgencyNicknameCreatesNonDefaultAgency(t *testing.T) {
 		msg := f.message("Heraldo")
 		msg.AgencyNickname = "Agencia" + f.Suffix
 
-		input, err := resolveEmissao(tx, msg)
+		input, err := resolveEmissao(tx, msg, access.FullScope())
 		if err != nil {
 			t.Fatalf("resolveEmissao returned %v", err)
 		}
@@ -320,7 +321,7 @@ func TestResolveEmissao_NoAgencyLeavesTheDefaultToTheService(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		f := seedEmissaoFixture(t, tx, data.Airline{})
 
-		input, err := resolveEmissao(tx, f.message("Heraldo"))
+		input, err := resolveEmissao(tx, f.message("Heraldo"), access.FullScope())
 		if err != nil {
 			t.Fatalf("resolveEmissao returned %v", err)
 		}
@@ -398,7 +399,7 @@ func TestResolveEmissao_AirlineRequirements(t *testing.T) {
 				msg := f.message("Heraldo")
 				msg.Line2Extras = tt.extras
 
-				in, err := resolveEmissao(tx, msg)
+				in, err := resolveEmissao(tx, msg, access.FullScope())
 
 				if tt.wantErr != nil {
 					if !errors.Is(err, tt.wantErr) {
@@ -431,7 +432,7 @@ func TestResolveEmissao_ObservationPreset(t *testing.T) {
 		msg := f.message("Heraldo")
 		msg.ObservationCode = preset.Code
 
-		input, err := resolveEmissao(tx, msg)
+		input, err := resolveEmissao(tx, msg, access.FullScope())
 		if err != nil {
 			t.Fatalf("resolveEmissao returned %v", err)
 		}
@@ -448,7 +449,7 @@ func TestResolveEmissao_UnknownObservationPresetIsRejected(t *testing.T) {
 		msg := f.message("Heraldo")
 		msg.ObservationCode = "NOSUCHCODE"
 
-		_, err := resolveEmissao(tx, msg)
+		_, err := resolveEmissao(tx, msg, access.FullScope())
 		if err == nil || !strings.Contains(err.Error(), "não é um código de observação cadastrado") {
 			t.Fatalf("err = %v, want it to name the unknown code", err)
 		}
@@ -462,7 +463,7 @@ func TestResolveEmissao_UnknownProgramIsRejected(t *testing.T) {
 		msg := f.message("Heraldo")
 		msg.ProgramCode = "NOSUCHPROGRAM"
 
-		_, err := resolveEmissao(tx, msg)
+		_, err := resolveEmissao(tx, msg, access.FullScope())
 		if err == nil || !strings.Contains(err.Error(), "Não encontrei nenhum programa") {
 			t.Fatalf("err = %v, want it to name the unknown program", err)
 		}
@@ -476,7 +477,7 @@ func TestResolveEmissao_UnknownAirportIsRejected(t *testing.T) {
 		msg := f.message("Heraldo")
 		msg.OriginIATACode = "ZZZ"
 
-		_, err := resolveEmissao(tx, msg)
+		_, err := resolveEmissao(tx, msg, access.FullScope())
 		if !errors.Is(err, issuancesvc.ErrAirportNotFound) {
 			t.Fatalf("err = %v, want ErrAirportNotFound", err)
 		}
@@ -500,7 +501,7 @@ func TestResolveEmissao_ArchivedAccountStartsFresh(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		f := seedEmissaoFixture(t, tx, data.Airline{})
 
-		archived := data.Account{LoyaltyProgramID: f.Program.ID, Complete: true}
+		archived := data.Account{HolderID: testHolder(t, tx), LoyaltyProgramID: f.Program.ID, Complete: true}
 		seed(t, tx, &archived)
 		nickname := data.AccountNickname{
 			AccountID:        archived.ID,
@@ -517,7 +518,7 @@ func TestResolveEmissao_ArchivedAccountStartsFresh(t *testing.T) {
 			t.Fatalf("archiving the account: %v", err)
 		}
 
-		input, err := resolveEmissao(tx, f.message("Heraldo"))
+		input, err := resolveEmissao(tx, f.message("Heraldo"), access.FullScope())
 		if err != nil {
 			t.Fatalf("resolveEmissao returned %v", err)
 		}
@@ -538,6 +539,67 @@ func TestResolveEmissao_ArchivedAccountStartsFresh(t *testing.T) {
 		}
 		if successor.Complete {
 			t.Error("the fresh account was not created incomplete")
+		}
+	})
+}
+
+func TestResolveEmissao_KnownHolderReusesTheirAccountInTheProgram(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		f := seedEmissaoFixture(t, tx, data.Airline{})
+
+		// The holder is known by "Cleidiane", but her account in this program was registered
+		// under another alias - so the alias lookup misses and only the person is found.
+		holder := data.Person{Name: "Cleidiane " + f.Suffix}
+		seed(t, tx, &holder)
+		seed(t, tx, &data.PersonNickname{PersonID: holder.ID, Nickname: "Cleidiane" + f.Suffix})
+		account := data.Account{LoyaltyProgramID: f.Program.ID, HolderID: &holder.ID}
+		seed(t, tx, &account)
+		seed(t, tx, &data.AccountNickname{AccountID: account.ID, LoyaltyProgramID: f.Program.ID, Nickname: "Cleidi" + f.Suffix})
+
+		before := countRows(t, tx, "accounts", "loyalty_program_id = ?", f.Program.ID)
+
+		input, err := resolveEmissao(tx, f.message("Cleidiane"+f.Suffix), access.FullScope())
+		if err != nil {
+			t.Fatalf("resolveEmissao returned %v", err)
+		}
+
+		if input.AccountID != account.ID {
+			t.Fatalf("AccountID = %q, want her existing account %q", input.AccountID, account.ID)
+		}
+		if after := countRows(t, tx, "accounts", "loyalty_program_id = ?", f.Program.ID); after != before {
+			t.Fatalf("accounts went from %d to %d, expected no second account", before, after)
+		}
+		if input.AccountNicknameID == nil {
+			t.Fatal("AccountNicknameID is nil, want the alias the message used")
+		}
+	})
+}
+
+func TestResolveEmissao_AdministratorReachesTheHolderOtherAccounts(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		f := seedEmissaoFixture(t, tx, data.Airline{})
+		other := seedEmissaoFixture(t, tx, data.Airline{})
+
+		holder := data.Person{Name: "Holder " + f.Suffix}
+		seed(t, tx, &holder)
+		account := data.Account{LoyaltyProgramID: f.Program.ID, HolderID: &holder.ID}
+		seed(t, tx, &account)
+		seed(t, tx, &data.AccountNickname{AccountID: account.ID, LoyaltyProgramID: f.Program.ID, Nickname: "Titular" + f.Suffix})
+		sibling := data.Account{LoyaltyProgramID: other.Program.ID, HolderID: &holder.ID}
+		seed(t, tx, &sibling)
+
+		msg := f.message("Titular" + f.Suffix)
+		msg.AdminNickname = "Admin" + f.Suffix
+		if _, err := resolveEmissao(tx, msg, access.FullScope()); err != nil {
+			t.Fatalf("resolveEmissao returned %v", err)
+		}
+
+		var reloaded data.Account
+		if err := tx.First(&reloaded, "id = ?", sibling.ID).Error; err != nil {
+			t.Fatal(err)
+		}
+		if reloaded.AdministratorID == nil {
+			t.Fatal("the holder's other account did not get the administrator")
 		}
 	})
 }

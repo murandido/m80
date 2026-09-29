@@ -231,14 +231,14 @@ func toAccountPickerResponse(account data.Account) schemas.AccountPickerResponse
 
 // CreateAccount handles the POST /accounts route
 // @Summary      Criar conta
-// @Description  Cria uma nova conta de programa de fidelidade no sistema.
+// @Description  Cria uma nova conta de programa de fidelidade no sistema. O titular é obrigatório.
 // @Tags         Contas
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
 // @Param        payload body schemas.CreateAccountRequest true "Dados da nova conta"
 // @Success      201  {object}  schemas.AccountSingleResponse
-// @Failure      400  {object}  schemas.ErrorResponse "Payload inválido"
+// @Failure      400  {object}  schemas.ErrorResponse "Payload inválido ou sem titular"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      422  {object}  schemas.ErrorResponse "Programa de fidelidade, titular ou administrador informado não existe"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao criar conta"
@@ -248,6 +248,13 @@ func (h *AccountHandler) CreateAccount(w http.ResponseWriter, r *http.Request) {
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		utils.SendError(w, r, http.StatusBadRequest, "Invalid JSON payload")
+		return
+	}
+
+	// Checked ahead of the validator for the message: this is the one a caller from before
+	// the holder became mandatory will hit, and it should say what is missing in words.
+	if req.HolderID == nil || *req.HolderID == "" {
+		utils.SendError(w, r, http.StatusBadRequest, "Informe o titular da conta")
 		return
 	}
 
@@ -285,7 +292,42 @@ func (h *AccountHandler) CreateAccount(w http.ResponseWriter, r *http.Request) {
 		account.Complete = account.ComputeComplete()
 	}
 
-	if err := h.DB.Create(&account).Error; err != nil {
+	// The new account takes on the holder's aliases, so the bot finds it by the same names
+	// it already knows the holder by (internal/account/nicknames.go).
+	if err := h.DB.Transaction(func(tx *gorm.DB) error {
+		if err := requireLivePeople(tx, account.HolderID, account.AdministratorID); err != nil {
+			return err
+		}
+		if err := acct.RequireFreeProgram(tx, *account.HolderID, account.LoyaltyProgramID, ""); err != nil {
+			return err
+		}
+		// One administrator per holder (internal/account/administrators.go): a new account
+		// with none takes the one the holder's other accounts agree on; one that names an
+		// administrator makes it the holder's.
+		namedAdministrator := account.AdministratorID
+		if namedAdministrator == nil {
+			inherited, _, err := acct.HolderAdministrator(tx, *account.HolderID)
+			if err != nil {
+				return err
+			}
+			account.AdministratorID = inherited
+			if req.Complete == nil {
+				account.Complete = account.ComputeComplete()
+			}
+		}
+		if err := tx.Create(&account).Error; err != nil {
+			return err
+		}
+		if namedAdministrator != nil {
+			if err := acct.SetHolderAdministrator(tx, *account.HolderID, namedAdministrator); err != nil {
+				return err
+			}
+		}
+		return acct.UnifyHolderNicknames(tx, *account.HolderID)
+	}); err != nil {
+		if sendAccountRuleError(w, r, err) {
+			return
+		}
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == postgresForeignKeyViolation {
 			utils.SendError(w, r, http.StatusUnprocessableEntity, "Programa de fidelidade, titular ou administrador informado não existe")
@@ -605,6 +647,7 @@ func (h *AccountHandler) UpdateAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	previousProgramID := account.LoyaltyProgramID
 	if req.LoyaltyProgramID != nil {
 		account.LoyaltyProgramID = *req.LoyaltyProgramID
 	}
@@ -614,6 +657,7 @@ func (h *AccountHandler) UpdateAccount(w http.ResponseWriter, r *http.Request) {
 	if req.Password != nil {
 		account.Password = req.Password
 	}
+	previousHolderID := account.HolderID
 	if req.HolderID != nil {
 		account.HolderID = req.HolderID
 	}
@@ -643,7 +687,46 @@ func (h *AccountHandler) UpdateAccount(w http.ResponseWriter, r *http.Request) {
 		account.Complete = account.ComputeComplete()
 	}
 
-	if err := h.DB.Save(&account).Error; err != nil {
+	// Handed to another holder, the account joins that holder's list of aliases and brings
+	// its own along. The previous holder keeps theirs: they may still be how the bot knows them.
+	holderChanged := account.HolderID != nil &&
+		(previousHolderID == nil || *previousHolderID != *account.HolderID)
+	programChanged := account.LoyaltyProgramID != previousProgramID
+	if err := h.DB.Transaction(func(tx *gorm.DB) error {
+		// Moving the account to another holder or program must not give that holder a second
+		// live account in the program (internal/account/programs.go).
+		if err := requireLivePeople(tx, req.HolderID, req.AdministratorID); err != nil {
+			return err
+		}
+		if account.HolderID != nil && (holderChanged || programChanged) {
+			if err := acct.RequireFreeProgram(tx, *account.HolderID, account.LoyaltyProgramID, account.ID); err != nil {
+				return err
+			}
+		}
+		if err := tx.Save(&account).Error; err != nil {
+			return err
+		}
+		if account.HolderID == nil {
+			return nil
+		}
+		// An administrator chosen on one account is the holder's; an account handed to
+		// another holder joins that holder's administrator when there is no conflict.
+		if req.AdministratorID != nil && *req.AdministratorID != "" {
+			if err := acct.SetHolderAdministrator(tx, *account.HolderID, account.AdministratorID); err != nil {
+				return err
+			}
+		}
+		if holderChanged {
+			if err := acct.AlignHolderAdministrator(tx, *account.HolderID); err != nil {
+				return err
+			}
+			return acct.UnifyHolderNicknames(tx, *account.HolderID)
+		}
+		return nil
+	}); err != nil {
+		if sendAccountRuleError(w, r, err) {
+			return
+		}
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == postgresForeignKeyViolation {
 			utils.SendError(w, r, http.StatusUnprocessableEntity, "Programa de fidelidade, titular ou administrador informado não existe")
@@ -670,12 +753,12 @@ func (h *AccountHandler) UpdateAccount(w http.ResponseWriter, r *http.Request) {
 
 // DeleteAccount handles the DELETE /accounts/{id} route.
 // @Summary      Deletar conta
-// @Description  Arquiva uma conta: ela some das listagens e dos seletores, mas as emissões antigas continuam mostrando em que conta foram feitas. Os apelidos da conta são arquivados junto, liberando o nome para outra conta do mesmo programa.
+// @Description  Apaga a conta de verdade quando nada a referencia; com histórico (emissões, inclusive na lixeira; lotes; períodos; extrato; beneficiários) ela é arquivada: some das listagens e dos seletores, e as emissões antigas continuam mostrando em que conta foram feitas. Os apelidos vão junto nos dois casos.
 // @Tags         Contas
 // @Produce      json
 // @Security     BearerAuth
 // @Param        id  path  string  true  "UUID da conta"
-// @Success      200  {object}  schemas.ErrorResponse "Conta arquivada com sucesso"
+// @Success      200  {object}  schemas.AccountRemovalSingleResponse "Conta apagada ou arquivada"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      422  {object}  schemas.ErrorResponse "Conta ainda referenciada por outro registro"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao arquivar conta"
@@ -683,28 +766,57 @@ func (h *AccountHandler) UpdateAccount(w http.ResponseWriter, r *http.Request) {
 func (h *AccountHandler) DeleteAccount(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
-	// One transaction for the two, because an account whose aliases outlived it is
-	// worse than one that was never archived: the alias is how the bot routes an
-	// EMISSAO, so it would keep sending new issuances to an account nobody can see.
+	// Deleted for real when nothing refers to it, archived otherwise (internal/account/remove.go).
+	// Either way its aliases go in the same transaction: an alias outliving its account would
+	// keep the bot routing EMISSAOs to something nobody can see.
+	var deleted bool
 	err := h.DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("account_id = ?", id).Delete(&data.AccountNickname{}).Error; err != nil {
-			return err
-		}
-		return tx.Delete(&data.Account{}, "id = ?", id).Error
+		var err error
+		deleted, err = acct.RemoveAccount(tx, id)
+		return err
 	})
-
 	if err != nil {
-		// Still reachable, just no longer through the issuance: people is referenced by
-		// holder_id/administrator_id with RESTRICT and other rows may point here too.
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == postgresForeignKeyViolation {
-			utils.SendError(w, r, http.StatusUnprocessableEntity, "Não é possível excluir conta ainda referenciada por outro registro")
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			utils.SendError(w, r, http.StatusNotFound, "Conta não encontrada")
 			return
 		}
-
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to delete account: "+err.Error())
 		return
 	}
 
-	utils.SendJSON(w, r, http.StatusOK, "Account deleted successfully", nil)
+	message := "Conta arquivada: ela tem histórico, que continua mostrando a conta"
+	if deleted {
+		message = "Conta apagada"
+	}
+	utils.SendJSON(w, r, http.StatusOK, message, schemas.AccountRemovalResponse{Deleted: deleted})
+}
+
+// sendAccountRuleError answers the business rules an account write can break with a 422 that
+// says which, and reports whether it did. Anything else is left to the caller.
+func sendAccountRuleError(w http.ResponseWriter, r *http.Request, err error) bool {
+	var programTaken *acct.ProgramTakenError
+	if errors.As(err, &programTaken) {
+		utils.SendError(w, r, http.StatusUnprocessableEntity, programTaken.Error())
+		return true
+	}
+	var archived *acct.ArchivedError
+	if errors.As(err, &archived) {
+		utils.SendError(w, r, http.StatusUnprocessableEntity, archived.Error())
+		return true
+	}
+	return false
+}
+
+// requireLivePeople refuses a holder or administrator that has been archived. Empty or nil
+// ids are "not given" and pass.
+func requireLivePeople(tx *gorm.DB, ids ...*string) error {
+	for _, id := range ids {
+		if id == nil || *id == "" {
+			continue
+		}
+		if err := acct.RequireLivePerson(tx, *id); err != nil {
+			return err
+		}
+	}
+	return nil
 }

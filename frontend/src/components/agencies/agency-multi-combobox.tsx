@@ -17,6 +17,9 @@ interface AgencyMultiComboboxProps {
   value: string[]
   onChange: (ids: string[]) => void
   disabled?: boolean
+  // What an empty selection reads as. The suppliers filter means "every agency" by it; a
+  // user's grants mean the opposite - no agency at all - so the caller says which.
+  emptyLabel?: string
 }
 
 function matches(agency: Agency, query: string): boolean {
@@ -38,6 +41,7 @@ export function AgencyMultiCombobox({
   value,
   onChange,
   disabled,
+  emptyLabel = "Todas as agências",
 }: AgencyMultiComboboxProps) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState("")
@@ -66,7 +70,7 @@ export function AgencyMultiCombobox({
 
   const label =
     value.length === 0
-      ? "Todas as agências"
+      ? emptyLabel
       : value.length === 1
         ? (agencies.find((a) => a.id === value[0])?.name ?? "1 agência")
         : `${value.length} agências`
@@ -146,7 +150,8 @@ export function AgencyMultiCombobox({
             onClick={() => onChange([])}
             className="mt-2 w-full rounded-sm px-2 py-1.5 text-left text-sm text-slate-500 hover:bg-accent"
           >
-            Limpar seleção (todas as agências)
+            {/* Says what an empty selection means here, which is the caller's call - see emptyLabel. */}
+            Limpar seleção ({emptyLabel.toLowerCase()})
           </button>
         )}
       </PopoverContent>

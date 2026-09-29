@@ -30,6 +30,9 @@ import type { Sale } from "@/schemas/sale"
 interface SalesClientsTableProps {
   sales: Sale[]
   clients: Client[]
+  // The agency the list shows. A client created from a row belongs to it, since a sale
+  // and its client share an agency.
+  agencyId: string
   // The column filters, as the server applied them.
   clientFilter: string
   paidFilter: string
@@ -82,6 +85,7 @@ function formatDay(iso: string): string {
 export function SalesClientsTable({
   sales,
   clients,
+  agencyId,
   clientFilter,
   paidFilter,
 }: SalesClientsTableProps) {
@@ -223,7 +227,7 @@ export function SalesClientsTable({
     markSaving(sale.id, true)
 
     startTransition(async () => {
-      const result = await createClientAction({ name })
+      const result = await createClientAction({ name, agency_id: agencyId })
       markSaving(sale.id, false)
 
       if ("error" in result) {

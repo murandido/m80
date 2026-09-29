@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
-import { Controller, useForm } from "react-hook-form"
+import { Controller, useForm, useWatch } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
 import {
@@ -26,7 +26,9 @@ import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 import { User, updateUserSchema } from "@/schemas/user"
 import { RoleSelector } from "@/components/users/role-selector"
+import { UserAgenciesField } from "@/components/users/user-agencies-field"
 import { updateUserAction } from "@/actions/user"
+import type { Agency } from "@/schemas/agency"
 
 type FormData = z.infer<typeof updateUserSchema.request>
 
@@ -34,9 +36,12 @@ interface EditUserPanelProps {
   user: User
   isOpen: boolean
   onSaved: () => void
+  // See CreateUserForm: agencies and the dev role are a dev's alone.
+  viewerIsDev: boolean
+  agencies: Agency[]
 }
 
-export function EditUserPanel({ user, isOpen, onSaved }: EditUserPanelProps) {
+export function EditUserPanel({ user, isOpen, onSaved, viewerIsDev, agencies }: EditUserPanelProps) {
   const router = useRouter()
   const [showPassword, setShowPassword] = useState(false)
   const [isPending, startTransition] = useTransition()
@@ -49,8 +54,10 @@ export function EditUserPanel({ user, isOpen, onSaved }: EditUserPanelProps) {
       phone: user.phone,
       password: "",
       role: user.role,
+      agency_ids: viewerIsDev ? user.agency_ids : undefined,
     },
   })
+  const role = useWatch({ control: form.control, name: "role" })
 
   // Re-seeded whenever the panel closes, and whenever the record itself changes
   // while closed. The second half matters after a save or a merge: the panel closes
@@ -58,7 +65,13 @@ export function EditUserPanel({ user, isOpen, onSaved }: EditUserPanelProps) {
   // the pre-save values - and saving that form again would write them back.
   useEffect(() => {
     if (!isOpen) {
-      form.reset({ name: user.name, phone: user.phone, password: "", role: user.role })
+      form.reset({
+        name: user.name,
+        phone: user.phone,
+        password: "",
+        role: user.role,
+        agency_ids: viewerIsDev ? user.agency_ids : undefined,
+      })
       setShowPassword(false)
     }
   }, [isOpen, user]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -223,10 +236,29 @@ export function EditUserPanel({ user, isOpen, onSaved }: EditUserPanelProps) {
                       value={field.value}
                       onChange={field.onChange}
                       disabled={isPending}
+                      allowDev={viewerIsDev}
                     />
                   )}
                 />
               </div>
+
+              {/* agencies - dev only, and meaningless for a dev account */}
+              {viewerIsDev && role !== "dev" && (
+                <div className="flex flex-col gap-1 text-sm">
+                  <Controller
+                    name="agency_ids"
+                    control={form.control}
+                    render={({ field }) => (
+                      <UserAgenciesField
+                        agencies={agencies}
+                        value={field.value ?? []}
+                        onChange={field.onChange}
+                        disabled={isPending}
+                      />
+                    )}
+                  />
+                </div>
+              )}
 
               <Separator />
 

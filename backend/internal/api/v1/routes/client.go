@@ -2,6 +2,7 @@ package routes
 
 import (
 	"github.com/go-chi/chi/v5"
+	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/handlers"
 	"gorm.io/gorm"
 )
@@ -22,12 +23,12 @@ func RegisterClientRoutes(r chi.Router, db *gorm.DB) {
 		r.Get("/manage", clientHandler.ManageClients)
 
 		// get client
-		r.Get("/{id}", clientHandler.GetClient)
+		r.With(middleware.RequireClientInScope(db)).Get("/{id}", clientHandler.GetClient)
 
 		// update client
-		r.Put("/{id}", clientHandler.UpdateClient)
+		r.With(middleware.RequireClientInScope(db)).Put("/{id}", clientHandler.UpdateClient)
 
 		// delete client
-		r.Delete("/{id}", clientHandler.DeleteClient)
+		r.With(middleware.RequireClientInScope(db)).Delete("/{id}", clientHandler.DeleteClient)
 	})
 }

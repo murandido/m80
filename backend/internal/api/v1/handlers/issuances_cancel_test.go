@@ -15,7 +15,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/murandido/m-80-backend/internal/api/middleware"
+	"github.com/murandido/m-80-backend/internal/access"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/events"
@@ -124,7 +124,7 @@ func seedIssuance(t *testing.T, tx *gorm.DB) (data.Issuance, data.User) {
 	program := data.LoyaltyProgram{Name: "Test Program", Code: "L" + suffix, DefaultAirlineID: airline.ID}
 	create(t, tx, &program)
 
-	account := data.Account{LoyaltyProgramID: program.ID}
+	account := data.Account{HolderID: testHolder(t, tx), LoyaltyProgramID: program.ID}
 	create(t, tx, &account)
 
 	agency := data.Agency{Name: "Test Agency " + suffix}
@@ -190,7 +190,7 @@ func callCancel(tx *gorm.DB, id, userID, body string) *httptest.ResponseRecorder
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", id)
 	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
-	ctx = context.WithValue(ctx, middleware.UserContextKey, data.User{ID: userID, Role: "admin"})
+	ctx = asUser(ctx, data.User{ID: userID, Role: "admin"})
 	req = req.WithContext(ctx)
 
 	rec := httptest.NewRecorder()
@@ -431,8 +431,14 @@ type listResponse struct {
 // query params, no auth context) and returns the set of issuance ids it returned.
 func callGetIssuances(t *testing.T, tx *gorm.DB, query string) map[string]bool {
 	t.Helper()
+	return callGetIssuancesAs(t, tx, query, access.FullScope())
+}
+
+// callGetIssuancesAs lists issuances as a caller restricted to the given agency scope.
+func callGetIssuancesAs(t *testing.T, tx *gorm.DB, query string, scope access.AgencyScope) map[string]bool {
+	t.Helper()
 	handler := NewIssuanceHandler(tx, events.NewBroker(), nil)
-	req := httptest.NewRequest(http.MethodGet, "/issuances?"+query, nil)
+	req := withScope(httptest.NewRequest(http.MethodGet, "/issuances?"+query, nil), scope)
 	rec := httptest.NewRecorder()
 	handler.GetIssuances(rec, req)
 
@@ -517,7 +523,7 @@ func callUncancel(tx *gorm.DB, id, userID string) *httptest.ResponseRecorder {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", id)
 	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
-	ctx = context.WithValue(ctx, middleware.UserContextKey, data.User{ID: userID, Role: "admin"})
+	ctx = asUser(ctx, data.User{ID: userID, Role: "admin"})
 	req = req.WithContext(ctx)
 
 	rec := httptest.NewRecorder()

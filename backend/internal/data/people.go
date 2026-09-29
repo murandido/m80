@@ -38,6 +38,9 @@ type Person struct {
 	Complete            bool      `gorm:"not null;default:false" json:"complete"`
 	CreatedAt           time.Time `json:"created_at"`
 	UpdatedAt           time.Time `json:"updated_at"`
+	// DeletedAt archives the person (migration 74): hidden from every list and picker, still
+	// there for the old rows that name them. See DeletePerson.
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
 // BeforeSave keeps the CPF and its fingerprint in step, and encrypts the number.

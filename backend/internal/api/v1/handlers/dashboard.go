@@ -93,7 +93,7 @@ func dashboardIncludesAmount(role string) bool {
 func (h *DashboardHandler) GetDashboard(w http.ResponseWriter, r *http.Request) {
 	agencyID, err := resolveAgencyFilter(h.DB, r)
 	if err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "No default agency configured")
+		sendAgencyFilterError(w, r, err)
 		return
 	}
 

@@ -25,6 +25,7 @@ import {
   SALES_URL_KEYS,
   type SalesSearchParams,
 } from "./period-params"
+import { defaultAgencyId } from "@/lib/default-agency"
 
 export const metadata: Metadata = {
   title: "Controle de pagamentos",
@@ -77,12 +78,11 @@ export default async function SalesClientsPage({
     ),
   ])
 
-  // The backend falls back to the main agency when agency_id is absent; resolving it here
-  // too is what lets the combobox show its name instead of an empty placeholder.
+  // The backend falls back to the user's default agency when agency_id is absent; resolving
+  // it here too is what lets the combobox show its name instead of an empty placeholder.
   const effectiveFilters = {
     ...filters,
-    agency_id:
-      filters.agency_id || (agencies ?? []).find((a) => a.is_default)?.id || "",
+    agency_id: filters.agency_id || defaultAgencyId(agencies) || "",
   }
 
   return (
@@ -144,7 +144,10 @@ export default async function SalesClientsPage({
             // Remounted when the client filter changes, so the footer's client follows it.
             key={filters.client_id}
             sales={sales}
-            clients={clients ?? []}
+            // A sale's client belongs to the sale's agency, so the pickers offer only the
+            // clients of the agency this list is showing.
+            clients={(clients ?? []).filter((c) => c.agency_id === effectiveFilters.agency_id)}
+            agencyId={effectiveFilters.agency_id}
             clientFilter={filters.client_id}
             paidFilter={filters.paid}
           />

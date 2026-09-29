@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/utils"
@@ -53,7 +54,7 @@ func toAgencyResponse(agency data.Agency) schemas.AgencyResponse {
 // @Success      201  {object}  schemas.AgencySingleResponse
 // @Failure      400  {object}  schemas.ErrorResponse "Payload inválido"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
-// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a administradores"
+// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a desenvolvedores"
 // @Failure      422  {object}  schemas.ErrorResponse "Já existe uma agência padrão definida"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao criar agência"
 // @Router       /agencies [post]
@@ -143,7 +144,9 @@ func agencyListQuery(db *gorm.DB, params listQuery) *gorm.DB {
 func (h *AgencyHandler) GetAgencies(w http.ResponseWriter, r *http.Request) {
 	var agencies []data.Agency
 
-	if err := agencyListQuery(h.DB, parseListQuery(r)).Preload("Nicknames").Find(&agencies).Error; err != nil {
+	scope := middleware.AgencyScopeFrom(r.Context())
+	query := scope.Restrict(agencyListQuery(h.DB, parseListQuery(r)), "agencies.id")
+	if err := query.Preload("Nicknames").Find(&agencies).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch agencies")
 		return
 	}
@@ -171,7 +174,9 @@ func (h *AgencyHandler) GetAgency(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
 	var agency data.Agency
-	if err := h.DB.Preload("Nicknames").First(&agency, "id = ?", id).Error; err != nil {
+	// An agency outside the caller's scope answers exactly like one that does not exist.
+	scope := middleware.AgencyScopeFrom(r.Context())
+	if err := scope.Restrict(h.DB, "agencies.id").Preload("Nicknames").First(&agency, "id = ?", id).Error; err != nil {
 		utils.SendError(w, r, http.StatusNotFound, "Agency not found")
 		return
 	}
@@ -191,7 +196,7 @@ func (h *AgencyHandler) GetAgency(w http.ResponseWriter, r *http.Request) {
 // @Success      200  {object}  schemas.AgencySingleResponse
 // @Failure      400  {object}  schemas.ErrorResponse "Payload inválido"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
-// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a administradores"
+// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a desenvolvedores"
 // @Failure      404  {object}  schemas.ErrorResponse "Agência não encontrada"
 // @Failure      422  {object}  schemas.ErrorResponse "Já existe uma agência padrão definida"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao atualizar agência"
@@ -255,7 +260,7 @@ func (h *AgencyHandler) UpdateAgency(w http.ResponseWriter, r *http.Request) {
 // @Param        id  path  string  true  "UUID da agência"
 // @Success      200  {object}  schemas.ErrorResponse "Agência deletada com sucesso"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
-// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a administradores"
+// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a desenvolvedores"
 // @Failure      422  {object}  schemas.ErrorResponse "Agência vinculada a uma emissão"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao deletar agência"
 // @Router       /agencies/{id} [delete]

@@ -11,8 +11,10 @@ type CreateAccountRequest struct {
 	LoyaltyProgramID string  `json:"loyalty_program_id" validate:"required,uuid"`
 	Login            *string `json:"login" validate:"omitempty"`
 	Password         *string `json:"password" validate:"omitempty"`
-	HolderID         *string `json:"holder_id" validate:"omitempty,uuid"`
-	AdministratorID  *string `json:"administrator_id" validate:"omitempty,uuid"`
+	// HolderID is required: the panel shows an account as part of its holder's row, so one
+	// without a holder has nowhere to belong. Older rows may still lack it; new ones cannot.
+	HolderID        *string `json:"holder_id" validate:"required,uuid"`
+	AdministratorID *string `json:"administrator_id" validate:"omitempty,uuid"`
 	// Category decides whether the program's beneficiary cap applies. Omitted means
 	// "unidentified", the honest default for an account nobody has classified.
 	Category *string `json:"category" validate:"omitempty,oneof=unidentified standard injunction"`
@@ -192,4 +194,17 @@ type MergeAccountPreviewResponse struct {
 	// CollidingNicknames are the absorbed aliases the surviving account already answers
 	// to. They are archived instead of moved, so the panel warns about them by name.
 	CollidingNicknames []string `json:"colliding_nicknames"`
+}
+
+// AccountRemovalResponse says whether DELETE /accounts/{id} deleted the account for real or,
+// because it carries history, archived it.
+type AccountRemovalResponse struct {
+	Deleted bool `json:"deleted"`
+}
+
+// AccountRemovalSingleResponse is the DELETE /accounts/{id} route response.
+type AccountRemovalSingleResponse struct {
+	Success bool                   `json:"success" example:"true"`
+	Message string                 `json:"message" example:"Conta apagada"`
+	Data    AccountRemovalResponse `json:"data"`
 }

@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { personSchema } from "./person"
 
 export const loyaltyProgramSummarySchema = z.object({
   id: z.string(),
@@ -200,24 +201,50 @@ export const getAccountSchema = {
   }),
 }
 
-// GET /accounts/manage. The plain /accounts stays an array because the pickers on the
-// issuances grid, the sales screens and the importer read it whole.
-export const listAccountsSchema = {
+// GET /accounts/holders: the accounts screen, one row per holder with every loyalty account
+// they hold. holder is null on a row that is a single account nobody holds - older data the
+// API no longer lets anyone create. A person holding nothing (an administrator, say) comes
+// back with an empty accounts list.
+export const accountHolderRowSchema = z.object({
+  holder: personSchema.nullable(),
+  accounts: z.array(accountSchema),
+})
+
+export type AccountHolderRow = z.infer<typeof accountHolderRowSchema>
+
+export const listAccountHoldersSchema = {
   response: z.object({
     success: z.boolean(),
     message: z.string(),
     data: z
       .object({
-        accounts: z.array(accountSchema).nullish(),
+        rows: z.array(accountHolderRowSchema).nullish(),
         total: z.number(),
         page: z.number(),
         limit: z.number(),
+        // Every account without a holder, archived included and filters ignored: what still
+        // stands between accounts.holder_id and a NOT NULL. Defaulted for an API published
+        // before it existed.
+        holderless_total: z
+          .number()
+          .nullish()
+          .transform((value) => value ?? 0),
+        // Holders with two live accounts in one program, and holders whose accounts name
+        // different administrators - the other two to-do lists. Defaulted the same way.
+        duplicate_programs_total: z
+          .number()
+          .nullish()
+          .transform((value) => value ?? 0),
+        admin_conflicts_total: z
+          .number()
+          .nullish()
+          .transform((value) => value ?? 0),
       })
       .nullish(),
   }),
 }
 
-export type AccountPage = NonNullable<z.infer<typeof listAccountsSchema.response>["data"]>
+export type AccountHolderPage = NonNullable<z.infer<typeof listAccountHoldersSchema.response>["data"]>
 
 const optionalTextField = z.string().optional().or(z.literal(""))
 const optionalUuidField = z.union([z.literal(""), z.string().uuid("UUID inválido")])
@@ -227,7 +254,9 @@ export const createAccountSchema = {
     loyalty_program_id: z.string().uuid("UUID inválido"),
     login: optionalTextField,
     password: optionalTextField,
-    holder_id: optionalUuidField,
+    // Required since the accounts screen became one row per holder: an account without one
+    // has no row to live in.
+    holder_id: z.string().uuid("Informe o titular"),
     administrator_id: optionalUuidField,
     category: accountCategorySchema.optional(),
     waives_redemption_fee: z.boolean().optional(),
@@ -298,8 +327,8 @@ export const checkAccountNicknameAvailabilitySchema = {
   }),
 }
 
-// Same idea as mergePersonPreviewSchema: the counts the panel shows before an
-// irreversible merge. issuances includes the ones in the grid's trash.
+// The counts the panel shows before folding a holder's second account in a program into
+// the first - irreversible. issuances includes the ones in the grid's trash.
 export const mergeAccountPreviewSchema = {
   response: z.object({
     success: z.boolean(),

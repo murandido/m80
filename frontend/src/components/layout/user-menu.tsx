@@ -73,10 +73,13 @@ export function UserMenu({ user }: { user: User | null }) {
               </Link>
             </DropdownMenuItem>
             <DropdownMenuItem variant="destructive" asChild>
-              <Link href="/api/logout">
+              {/* A plain anchor, not Link: in production builds Link prefetches what it
+                  renders, and prefetching this route runs the handler - opening this menu
+                  was enough to delete the session cookie. */}
+              <a href="/api/logout">
                 <LogOut />
                 Sair
-              </Link>
+              </a>
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

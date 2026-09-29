@@ -29,6 +29,7 @@ import {
   DASHBOARD_URL_KEYS,
   type DashboardSearchParams,
 } from "./dashboard-params"
+import { defaultAgencyId } from "@/lib/default-agency"
 
 export const metadata: Metadata = {
   title: "Dashboard",
@@ -88,11 +89,11 @@ export default async function DashboardPage({
   const canSeeAmounts = canAccess(user?.role, ["admin"])
   const metric = resolveDashboardMetric(params, canSeeAmounts)
 
-  // The backend falls back to the main agency when agency_id is absent; resolving it here
-  // too is what lets the combobox show its name instead of an empty placeholder.
+  // The backend falls back to the user's default agency when agency_id is absent; resolving
+  // it here too is what lets the combobox show its name instead of an empty placeholder.
   const effectiveFilters = {
     ...filters,
-    agency_id: filters.agency_id || (agencies ?? []).find((a) => a.is_default)?.id || "",
+    agency_id: filters.agency_id || defaultAgencyId(agencies) || "",
   }
 
   return (

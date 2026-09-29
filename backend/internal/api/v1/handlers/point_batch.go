@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/utils"
@@ -121,6 +122,11 @@ func (h *PointBatchHandler) CreatePointBatch(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	if !middleware.AgencyScopeFrom(r.Context()).Allows(req.FundingAgencyID) {
+		utils.SendError(w, r, http.StatusNotFound, "Agência não encontrada")
+		return
+	}
+
 	acquiredOn, err := time.Parse(batchDateLayout, req.AcquiredOn)
 	if err != nil {
 		utils.SendError(w, r, http.StatusBadRequest, "Data inválida: use o formato AAAA-MM-DD")
@@ -207,6 +213,9 @@ func (h *PointBatchHandler) GetPointBatches(w http.ResponseWriter, r *http.Reque
 	// that does not parse is ignored rather than refused - the panel always sends a valid
 	// pair, and a half-typed one is not worth an error screen.
 	query := h.DB.Preload("Origin").Preload("FundingAgency").Where("account_id = ?", accountID)
+	// Only the batches paid for by one of the caller's agencies: what another agency spent
+	// on points is its business, even when both issue from the same account.
+	query = middleware.AgencyScopeFrom(r.Context()).Restrict(query, "point_batches.funding_agency_id")
 	if from, err := time.Parse(batchDateLayout, r.URL.Query().Get("from")); err == nil {
 		query = query.Where("acquired_on >= ?", from)
 	}
@@ -254,7 +263,9 @@ func (h *PointBatchHandler) UpdatePointBatch(w http.ResponseWriter, r *http.Requ
 	id := chi.URLParam(r, "id")
 
 	var batch data.PointBatch
-	if err := h.DB.First(&batch, "id = ?", id).Error; err != nil {
+	// A batch funded by an agency outside the caller's scope answers like a missing one.
+	scope := middleware.AgencyScopeFrom(r.Context())
+	if err := scope.Restrict(h.DB, "point_batches.funding_agency_id").First(&batch, "id = ?", id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			utils.SendError(w, r, http.StatusNotFound, "Lote não encontrado")
 			return
@@ -293,6 +304,10 @@ func (h *PointBatchHandler) UpdatePointBatch(w http.ResponseWriter, r *http.Requ
 		updates["cost_cents"] = *req.CostCents
 	}
 	if req.FundingAgencyID != nil {
+		if !scope.Allows(*req.FundingAgencyID) {
+			utils.SendError(w, r, http.StatusNotFound, "Agência não encontrada")
+			return
+		}
 		updates["funding_agency_id"] = *req.FundingAgencyID
 	}
 	if req.ProfitSharePercent != nil {
@@ -342,7 +357,9 @@ func (h *PointBatchHandler) SettlePointBatch(w http.ResponseWriter, r *http.Requ
 	id := chi.URLParam(r, "id")
 
 	var batch data.PointBatch
-	if err := h.DB.First(&batch, "id = ?", id).Error; err != nil {
+	// A batch funded by an agency outside the caller's scope answers like a missing one.
+	scope := middleware.AgencyScopeFrom(r.Context())
+	if err := scope.Restrict(h.DB, "point_batches.funding_agency_id").First(&batch, "id = ?", id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			utils.SendError(w, r, http.StatusNotFound, "Lote não encontrado")
 			return
@@ -394,7 +411,9 @@ func (h *PointBatchHandler) DeletePointBatch(w http.ResponseWriter, r *http.Requ
 	id := chi.URLParam(r, "id")
 
 	var batch data.PointBatch
-	if err := h.DB.First(&batch, "id = ?", id).Error; err != nil {
+	// A batch funded by an agency outside the caller's scope answers like a missing one.
+	scope := middleware.AgencyScopeFrom(r.Context())
+	if err := scope.Restrict(h.DB, "point_batches.funding_agency_id").First(&batch, "id = ?", id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			utils.SendError(w, r, http.StatusNotFound, "Lote não encontrado")
 			return

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	acct "github.com/murandido/m-80-backend/internal/account"
 	"github.com/murandido/m-80-backend/internal/data"
 	issuancesvc "github.com/murandido/m-80-backend/internal/issuance"
 	"gorm.io/gorm"
@@ -379,6 +380,18 @@ func registerMappedAliases(tx *gorm.DB, mappings Mappings) (int, error) {
 			return 0, fmt.Errorf("legacyimport: registering the alias %q: %w", label, err)
 		}
 		registered++
+
+		// Shared with the account's holder and their other accounts, like any alias written
+		// from the panel (internal/account/nicknames.go).
+		var account data.Account
+		if err := tx.First(&account, "id = ?", mapping.AccountID).Error; err != nil {
+			return 0, fmt.Errorf("legacyimport: reading the account of alias %q: %w", label, err)
+		}
+		if account.HolderID != nil {
+			if err := acct.UnifyHolderNicknames(tx, *account.HolderID); err != nil {
+				return 0, fmt.Errorf("legacyimport: sharing the alias %q: %w", label, err)
+			}
+		}
 	}
 
 	return registered, nil

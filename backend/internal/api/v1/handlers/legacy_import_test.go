@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"mime/multipart"
@@ -12,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/murandido/m-80-backend/internal/api/middleware"
+	"github.com/murandido/m-80-backend/internal/access"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/events"
@@ -87,6 +86,20 @@ func postLegacyImport(
 	fields map[string]string,
 ) *httptest.ResponseRecorder {
 	t.Helper()
+	return postLegacyImportAs(t, tx, handle, userID, content, fields, access.FullScope())
+}
+
+// postLegacyImportAs is postLegacyImport for a caller restricted to the given agencies.
+func postLegacyImportAs(
+	t *testing.T,
+	tx *gorm.DB,
+	handle func(*LegacyImportHandler, http.ResponseWriter, *http.Request),
+	userID string,
+	content []byte,
+	fields map[string]string,
+	scope access.AgencyScope,
+) *httptest.ResponseRecorder {
+	t.Helper()
 
 	var body bytes.Buffer
 	form := multipart.NewWriter(&body)
@@ -109,8 +122,7 @@ func postLegacyImport(
 
 	req := httptest.NewRequest(http.MethodPost, "/issuances/legacy-import", &body)
 	req.Header.Set("Content-Type", form.FormDataContentType())
-	req = req.WithContext(context.WithValue(req.Context(),
-		middleware.UserContextKey, data.User{ID: userID, Role: data.RoleAdmin}))
+	req = withScope(req.WithContext(asUser(req.Context(), data.User{ID: userID, Role: data.RoleAdmin})), scope)
 
 	rec := httptest.NewRecorder()
 	handle(&LegacyImportHandler{DB: tx, Broker: events.NewBroker()}, rec, req)

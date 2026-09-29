@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/murandido/m-80-backend/internal/access"
 	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/azul"
@@ -131,10 +132,10 @@ func (h *StatementHandler) AzulStatementEntries(w http.ResponseWriter, r *http.R
 			entry.DayBalance = &closing
 		}
 		if booking, found := resolved[key]; found {
-			entry.LinkedIssuance = toLinkedIssuance(booking)
+			entry.LinkedIssuance = toLinkedIssuance(booking, middleware.AgencyScopeFrom(r.Context()))
 		}
 		if batch, found := resolvedBatches[key]; found {
-			entry.LinkedBatch = toLinkedBatch(batch)
+			entry.LinkedBatch = toLinkedBatch(batch, middleware.AgencyScopeFrom(r.Context()))
 		}
 		entries = append(entries, entry)
 	}
@@ -323,7 +324,8 @@ func (h *StatementHandler) LinkStatementBooking(w http.ResponseWriter, r *http.R
 	// The issuance must belong to this account: a locator on one account cannot be pinned to
 	// another account's booking. Cheaper and clearer than trusting the client's scoping.
 	var issuance data.Issuance
-	if err := h.DB.First(&issuance, "id = ? AND account_id = ?", body.IssuanceID, account.ID).Error; err != nil {
+	scope := middleware.AgencyScopeFrom(r.Context())
+	if err := scope.Restrict(h.DB, "issuances.agency_id").First(&issuance, "id = ? AND account_id = ?", body.IssuanceID, account.ID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			utils.SendError(w, r, http.StatusUnprocessableEntity, "Emissão não encontrada nesta conta")
 			return
@@ -399,7 +401,7 @@ func (h *StatementHandler) respondBookingLink(w http.ResponseWriter, r *http.Req
 	}
 	response := schemas.AzulBookingLinkResponse{Locator: locator}
 	if booking, found := resolved[locator]; found {
-		response.LinkedIssuance = toLinkedIssuance(booking)
+		response.LinkedIssuance = toLinkedIssuance(booking, middleware.AgencyScopeFrom(r.Context()))
 	}
 	utils.SendJSON(w, r, http.StatusOK, message, response)
 }
@@ -443,7 +445,8 @@ func (h *StatementHandler) LinkStatementBatch(w http.ResponseWriter, r *http.Req
 
 	// The batch must belong to this account.
 	var batch data.PointBatch
-	if err := h.DB.First(&batch, "id = ? AND account_id = ?", body.BatchID, account.ID).Error; err != nil {
+	scope := middleware.AgencyScopeFrom(r.Context())
+	if err := scope.Restrict(h.DB, "point_batches.funding_agency_id").First(&batch, "id = ? AND account_id = ?", body.BatchID, account.ID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			utils.SendError(w, r, http.StatusUnprocessableEntity, "Lote não encontrado nesta conta")
 			return
@@ -523,7 +526,7 @@ func (h *StatementHandler) respondBatchLink(w http.ResponseWriter, r *http.Reque
 	}
 	response := schemas.AzulBatchLinkResponse{Key: key}
 	if batch, found := resolved[key]; found {
-		response.LinkedBatch = toLinkedBatch(batch)
+		response.LinkedBatch = toLinkedBatch(batch, middleware.AgencyScopeFrom(r.Context()))
 	}
 	utils.SendJSON(w, r, http.StatusOK, message, response)
 }
@@ -563,9 +566,15 @@ func statementLineKey(row data.AzulStatementLine) string {
 		row.OccurredOn.Format(batchDateLayout), derefString(row.TypeCode), row.Points)
 }
 
-// toLinkedIssuance summarises a resolved booking for the statement page.
-func toLinkedIssuance(booking statement.ResolvedBooking) *schemas.AzulStatementLinkedIssuance {
+// toLinkedIssuance summarises a resolved booking for the statement page. A booking issued by
+// an agency outside the caller's scope still shows as linked - the airline's statement is the
+// account's, and hiding the match would make the line look unreconciled - but with nothing of
+// the issuance itself: no id to open, no passenger, no route.
+func toLinkedIssuance(booking statement.ResolvedBooking, scope access.AgencyScope) *schemas.AzulStatementLinkedIssuance {
 	issuance := booking.Issuance
+	if !scope.Allows(issuance.AgencyID) {
+		return &schemas.AzulStatementLinkedIssuance{Manual: booking.Manual}
+	}
 	return &schemas.AzulStatementLinkedIssuance{
 		IssuanceID:    issuance.ID,
 		PassengerName: derefString(issuance.MainPassengerName),
@@ -577,9 +586,14 @@ func toLinkedIssuance(booking statement.ResolvedBooking) *schemas.AzulStatementL
 	}
 }
 
-// toLinkedBatch summarises a resolved batch (lote) for the statement page.
-func toLinkedBatch(resolved statement.ResolvedBatch) *schemas.AzulStatementLinkedBatch {
+// toLinkedBatch summarises a resolved batch (lote) for the statement page. A batch another
+// agency paid for shows as linked without its id, origin or cost - the same reasoning as
+// toLinkedIssuance.
+func toLinkedBatch(resolved statement.ResolvedBatch, scope access.AgencyScope) *schemas.AzulStatementLinkedBatch {
 	batch := resolved.Batch
+	if !scope.Allows(batch.FundingAgencyID) {
+		return &schemas.AzulStatementLinkedBatch{Manual: resolved.Manual}
+	}
 	origin := ""
 	if batch.Origin != nil {
 		origin = batch.Origin.Name

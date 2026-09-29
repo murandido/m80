@@ -49,7 +49,7 @@ var interruptedJobGrace = 10 * time.Second
 // cancellation frees it up, and there is no way to tell which of them "PNR
 // digitado errado" meant without asking, so the bot doesn't guess.
 func (b *Bot) handleDeletar(ctx context.Context, evt *events.Message, text string, startedAt time.Time) {
-	user, allowed := b.authorizeSender(evt, "deletar")
+	user, scope, allowed := b.authorizeSender(evt, "deletar")
 	if !allowed {
 		return
 	}
@@ -80,6 +80,9 @@ func (b *Bot) handleDeletar(ctx context.Context, evt *events.Message, text strin
 				return nil
 			}
 			return err
+		}
+		if !scope.Allows(issuance.AgencyID) {
+			return errIssuanceOutOfScope(msg.ProgramLocator)
 		}
 
 		deleted = true
