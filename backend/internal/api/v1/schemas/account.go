@@ -195,3 +195,16 @@ type MergeAccountPreviewResponse struct {
 	// to. They are archived instead of moved, so the panel warns about them by name.
 	CollidingNicknames []string `json:"colliding_nicknames"`
 }
+
+// AccountRemovalResponse says whether DELETE /accounts/{id} deleted the account for real or,
+// because it carries history, archived it.
+type AccountRemovalResponse struct {
+	Deleted bool `json:"deleted"`
+}
+
+// AccountRemovalSingleResponse is the DELETE /accounts/{id} route response.
+type AccountRemovalSingleResponse struct {
+	Success bool                   `json:"success" example:"true"`
+	Message string                 `json:"message" example:"Conta apagada"`
+	Data    AccountRemovalResponse `json:"data"`
+}

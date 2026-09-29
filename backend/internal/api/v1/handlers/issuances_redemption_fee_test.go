@@ -159,7 +159,7 @@ func TestPatchIssuance_MovingToAnOrdinaryAccountClearsTheSaving(t *testing.T) {
 			t.Fatalf("redemption_fee_saved_cents = %v, want 6990 before the move", saved)
 		}
 
-		ordinary := data.Account{LoyaltyProgramID: issuance.LoyaltyProgramID}
+		ordinary := data.Account{HolderID: testHolder(t, tx), LoyaltyProgramID: issuance.LoyaltyProgramID}
 		create(t, tx, &ordinary)
 
 		rec := callPatchIssuance(tx, issuance.ID, user.ID, `{"account_id":"`+ordinary.ID+`"}`)

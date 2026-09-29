@@ -120,6 +120,10 @@ func Create(db *gorm.DB, in CreateInput, actorID string) (data.Issuance, error) 
 	}
 
 	err := db.Transaction(func(tx *gorm.DB) error {
+		// Nothing new points at an archived account (internal/account/live.go).
+		if err := account.RequireLiveAccount(tx, in.AccountID); err != nil {
+			return err
+		}
 		if err := ValidateAccountNickname(tx, in.AccountID, in.AccountNicknameID); err != nil {
 			return err
 		}

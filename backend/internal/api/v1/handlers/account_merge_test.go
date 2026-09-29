@@ -64,9 +64,9 @@ func seedAccountMergeWorld(t *testing.T, tx *gorm.DB) accountMergeWorld {
 	create(t, tx, &agency)
 	user := createUser(t, tx, "Tester")
 
-	keep := data.Account{LoyaltyProgramID: program.ID}
+	keep := data.Account{HolderID: testHolder(t, tx), LoyaltyProgramID: program.ID}
 	create(t, tx, &keep)
-	drop := data.Account{LoyaltyProgramID: program.ID}
+	drop := data.Account{HolderID: testHolder(t, tx), LoyaltyProgramID: program.ID}
 	create(t, tx, &drop)
 
 	return accountMergeWorld{program: program, airline: airline, agency: agency, user: user, keep: keep, drop: drop}
@@ -223,14 +223,16 @@ func TestMergeAccount_ArchivesACollidingNicknameAndKeepsItsIssuance(t *testing.T
 	})
 }
 
-func TestMergeAccount_MovesAliasesAndInheritsTheHolder(t *testing.T) {
+// Every account has a holder now (migration 75), so what the survivor can still inherit is
+// the administrator.
+func TestMergeAccount_MovesAliasesAndInheritsTheAdministrator(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		world := seedAccountMergeWorld(t, tx)
-		holder := seedPerson(t, tx, "Heraldo Ribeiro")
+		admin := seedPerson(t, tx, "Heraldo Ribeiro")
 
 		if err := tx.Model(&data.Account{}).Where("id = ?", world.drop.ID).
-			UpdateColumn("holder_id", holder.ID).Error; err != nil {
-			t.Fatalf("setting the holder: %v", err)
+			UpdateColumn("administrator_id", admin.ID).Error; err != nil {
+			t.Fatalf("setting the administrator: %v", err)
 		}
 		alias := data.AccountNickname{
 			AccountID:        world.drop.ID,
@@ -248,8 +250,8 @@ func TestMergeAccount_MovesAliasesAndInheritsTheHolder(t *testing.T) {
 		if err := tx.Preload("Nicknames").First(&merged, "id = ?", world.keep.ID).Error; err != nil {
 			t.Fatalf("reloading the surviving account: %v", err)
 		}
-		if merged.HolderID == nil || *merged.HolderID != holder.ID {
-			t.Errorf("holder_id: got %v, want %q", merged.HolderID, holder.ID)
+		if merged.AdministratorID == nil || *merged.AdministratorID != admin.ID {
+			t.Errorf("administrator_id: got %v, want %q", merged.AdministratorID, admin.ID)
 		}
 		if len(merged.Nicknames) != 1 || merged.Nicknames[0].ID != alias.ID {
 			t.Errorf("nicknames: got %+v, want the absorbed alias", merged.Nicknames)
@@ -263,7 +265,7 @@ func TestMergeAccount_RefusesDifferentPrograms(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		world := seedAccountMergeWorld(t, tx)
 		other := seedProgram(t, tx)
-		stranger := data.Account{LoyaltyProgramID: other.ID}
+		stranger := data.Account{HolderID: testHolder(t, tx), LoyaltyProgramID: other.ID}
 		create(t, tx, &stranger)
 
 		rec := callMergeAccount(tx, world.keep.ID, world.user.ID, `{"source_id":"`+stranger.ID+`"}`)
@@ -309,10 +311,10 @@ func TestMergeAccount_AbsorbsAnArchivedDuplicate(t *testing.T) {
 func TestPreviewMergeAccount_CountsWithoutWriting(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		world := seedAccountMergeWorld(t, tx)
-		holder := seedPerson(t, tx, "Heraldo Ribeiro")
+		admin := seedPerson(t, tx, "Heraldo Ribeiro")
 		if err := tx.Model(&data.Account{}).Where("id = ?", world.drop.ID).
-			UpdateColumn("holder_id", holder.ID).Error; err != nil {
-			t.Fatalf("setting the holder: %v", err)
+			UpdateColumn("administrator_id", admin.ID).Error; err != nil {
+			t.Fatalf("setting the administrator: %v", err)
 		}
 
 		world.issue(t, tx, world.drop.ID)
@@ -350,8 +352,8 @@ func TestPreviewMergeAccount_CountsWithoutWriting(t *testing.T) {
 		if len(resp.Data.CollidingNicknames) != 1 {
 			t.Errorf("colliding_nicknames: got %v, want one entry", resp.Data.CollidingNicknames)
 		}
-		if len(resp.Data.FieldsToFill) != 1 || resp.Data.FieldsToFill[0] != "titular" {
-			t.Errorf("fields_to_fill: got %v, want [titular]", resp.Data.FieldsToFill)
+		if len(resp.Data.FieldsToFill) != 1 || resp.Data.FieldsToFill[0] != "administrador" {
+			t.Errorf("fields_to_fill: got %v, want [administrador]", resp.Data.FieldsToFill)
 		}
 
 		var stillThere int64

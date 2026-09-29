@@ -1141,8 +1141,13 @@ func TestGetSupplierBalances_LabelsAccountByNicknameAndNeverByFullUUID(t *testin
 		today := spDay(t, 0)
 		period := "date_from=" + today + "&date_to=" + today
 
-		// No holder, no login and no alias: the label degrades to a short id rather
-		// than dumping the whole UUID into the table.
+		// No holder name, no login and no alias: the label degrades to a short id rather
+		// than dumping the whole UUID into the table. Every account has a holder since
+		// migration 75, so "no holder" is spelled as a holder with an empty name.
+		if err := tx.Exec(`UPDATE people SET name = '' WHERE id = (SELECT holder_id FROM accounts WHERE id = ?)`,
+			issuance.AccountID).Error; err != nil {
+			t.Fatal(err)
+		}
 		bare := findBalance(callGetSupplierBalances(t, tx, period), issuance.AccountID)
 		if bare == nil {
 			t.Fatal("account missing from the supplier balances")

@@ -1,0 +1,1 @@
+ALTER TABLE accounts ALTER COLUMN holder_id DROP NOT NULL;

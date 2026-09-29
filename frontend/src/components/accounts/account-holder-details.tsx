@@ -1,20 +1,21 @@
 "use client"
 
 import { useState } from "react"
-import { useRouter } from "next/navigation"
-import { Menu, Trash2 } from "lucide-react"
+import { Menu } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { Person } from "@/schemas/person"
 import { EditPersonPanel } from "@/components/people/edit-person-panel"
-import { DeleteOverlay } from "@/components/people/delete-overlay"
 import { PersonNicknames } from "@/components/people/person-nicknames"
+import { PersonOption } from "@/schemas/person"
+import { HolderAdministratorField } from "./holder-administrator-field"
 
 interface AccountHolderDetailsProps {
   holder: Person
-  // A holder can only be deleted once nothing points at them - accounts.holder_id is
-  // ON DELETE RESTRICT - so the button only exists on a row with no accounts left.
-  canDelete: boolean
+  people: PersonOption[]
+  // Distinct administrators across the holder's live accounts (see HolderAdministratorField).
+  administratorIds: string[]
+  hasAccounts: boolean
 }
 
 // "1990-05-17T00:00:00Z" → "17/05/1990". Sliced rather than parsed: the date carries no
@@ -43,12 +44,11 @@ function formatAddress(holder: Person): string | null {
 // the operator opens the edit panel.
 export function AccountHolderDetails({
   holder,
-  canDelete,
+  people,
+  administratorIds,
+  hasAccounts,
 }: AccountHolderDetailsProps) {
-  const router = useRouter()
   const [isEditOpen, setIsEditOpen] = useState(false)
-  const [isDeleteOpen, setIsDeleteOpen] = useState(false)
-  const [isDeleted, setIsDeleted] = useState(false)
 
   const rows: [string, string | null][] = [
     ["Nome", holder.name],
@@ -63,11 +63,9 @@ export function AccountHolderDetails({
     <div className="flex flex-col">
       <div
         className={cn(
-          "relative overflow-hidden border border-slate-200 bg-white transition-opacity duration-300",
+          "relative overflow-hidden border border-slate-200 bg-white",
           isEditOpen ? "rounded-t-md" : "rounded-md",
-          isDeleted ? "opacity-0" : "opacity-100",
         )}
-        onTransitionEnd={() => isDeleted && router.refresh()}
       >
         <div className="flex items-start justify-between gap-3 px-4 py-3">
           <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
@@ -81,18 +79,6 @@ export function AccountHolderDetails({
             ))}
           </dl>
           <div className="flex shrink-0 gap-2">
-            {canDelete && (
-              <Button
-                variant="outline"
-                size="icon"
-                title="Excluir titular"
-                aria-label="Excluir titular"
-                onClick={() => setIsDeleteOpen(true)}
-                className="border-slate-800 text-slate-800 transition-colors duration-200 hover:border-red-600 hover:bg-red-600 hover:text-white active:border-red-950 active:bg-red-950 active:text-white"
-              >
-                <Trash2 className="h-4 w-4" />
-              </Button>
-            )}
             <Button
               variant="outline"
               size="icon"
@@ -114,19 +100,21 @@ export function AccountHolderDetails({
         {/* One list for the holder and every program they have: an alias added here is
             also how the bot finds each of their accounts (internal/account/nicknames.go). */}
         <div className="flex flex-col gap-1.5 border-t border-slate-100 px-4 py-3">
+          <span className="text-xs text-slate-500">Administrador</span>
+          <HolderAdministratorField
+            // Remounted when the saved value changes, so the field starts from it again.
+            key={administratorIds.join(",")}
+            holderId={holder.id}
+            people={people}
+            currentIds={administratorIds}
+            hasAccounts={hasAccounts}
+          />
+        </div>
+
+        <div className="flex flex-col gap-1.5 border-t border-slate-100 px-4 py-3">
           <span className="text-xs text-slate-500">Apelidos</span>
           <PersonNicknames personId={holder.id} nicknames={holder.nicknames} />
         </div>
-
-        {canDelete && (
-          <DeleteOverlay
-            personName={holder.name}
-            personId={holder.id}
-            isOpen={isDeleteOpen}
-            onDismissed={() => setIsDeleteOpen(false)}
-            onDeleted={() => setIsDeleted(true)}
-          />
-        )}
       </div>
 
       <EditPersonPanel

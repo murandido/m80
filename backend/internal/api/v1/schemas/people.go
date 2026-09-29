@@ -137,3 +137,23 @@ type MergeRowPreviewResponse struct {
 type MergeRowResultResponse struct {
 	Warning string `json:"warning"`
 }
+
+// SetHolderAdministratorRequest names the administrator of every account a holder has.
+// Empty or null clears it.
+type SetHolderAdministratorRequest struct {
+	AdministratorID *string `json:"administrator_id" validate:"omitempty,uuid"`
+}
+
+// PersonRemovalResponse is what removing a holder did (or would do, for the preview).
+type PersonRemovalResponse struct {
+	AccountsDeleted  int  `json:"accounts_deleted"`
+	AccountsArchived int  `json:"accounts_archived"`
+	PersonDeleted    bool `json:"person_deleted"`
+}
+
+// PersonRemovalSingleResponse is the DELETE /people/{id} and delete-preview route response.
+type PersonRemovalSingleResponse struct {
+	Success bool                  `json:"success" example:"true"`
+	Message string                `json:"message" example:"Titular excluído"`
+	Data    PersonRemovalResponse `json:"data"`
+}

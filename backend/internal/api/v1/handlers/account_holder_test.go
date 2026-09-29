@@ -41,7 +41,6 @@ type holderWorld struct {
 	azul     data.LoyaltyProgram
 	fulana   data.Person // holds a Smiles and an Azul account
 	beltrano data.Person // holds nothing - an administrator
-	orphan   data.Account
 }
 
 func seedHolderWorld(t *testing.T, tx *gorm.DB) holderWorld {
@@ -56,12 +55,9 @@ func seedHolderWorld(t *testing.T, tx *gorm.DB) holderWorld {
 		beltrano: seedPerson(t, tx, "Bruno "+marker),
 	}
 
-	smilesLogin, azulLogin, orphanLogin := "a-smiles-"+marker, "a-azul-"+marker, "z-orphan-"+marker
+	smilesLogin, azulLogin := "a-smiles-"+marker, "a-azul-"+marker
 	create(t, tx, &data.Account{LoyaltyProgramID: world.smiles.ID, HolderID: &world.fulana.ID, Login: &smilesLogin, AdministratorID: &world.beltrano.ID})
 	create(t, tx, &data.Account{LoyaltyProgramID: world.azul.ID, HolderID: &world.fulana.ID, Login: &azulLogin, Category: data.AccountCategoryInjunction})
-
-	world.orphan = data.Account{LoyaltyProgramID: world.smiles.ID, Login: &orphanLogin}
-	create(t, tx, &world.orphan)
 
 	return world
 }
@@ -72,12 +68,12 @@ func TestListAccountHolders_GroupsAccountsUnderTheirHolder(t *testing.T) {
 
 		page := callListAccountHolders(t, tx, url.Values{"q": {world.marker}})
 
-		if page.Total != 3 || len(page.Rows) != 3 {
-			t.Fatalf("rows: got total=%d len=%d, want 3 (Ana, Bruno, the orphan)", page.Total, len(page.Rows))
+		if page.Total != 2 || len(page.Rows) != 2 {
+			t.Fatalf("rows: got total=%d len=%d, want 2 (Ana, Bruno)", page.Total, len(page.Rows))
 		}
 
-		// name_asc: "Ana …", "Bruno …", then the orphan labelled by its login "z-orphan-…".
-		ana, bruno, orphan := page.Rows[0], page.Rows[1], page.Rows[2]
+		// name_asc: "Ana …" then "Bruno …".
+		ana, bruno := page.Rows[0], page.Rows[1]
 		if ana.Holder == nil || ana.Holder.ID != world.fulana.ID {
 			t.Fatalf("first row: got %+v, want Ana", ana.Holder)
 		}
@@ -86,9 +82,6 @@ func TestListAccountHolders_GroupsAccountsUnderTheirHolder(t *testing.T) {
 		}
 		if bruno.Holder == nil || bruno.Holder.ID != world.beltrano.ID || len(bruno.Accounts) != 0 {
 			t.Errorf("second row: want Bruno with no accounts, got %+v / %d accounts", bruno.Holder, len(bruno.Accounts))
-		}
-		if orphan.Holder != nil || len(orphan.Accounts) != 1 || orphan.Accounts[0].ID != world.orphan.ID {
-			t.Errorf("third row: want the orphan account alone, got holder=%+v accounts=%d", orphan.Holder, len(orphan.Accounts))
 		}
 	})
 }
@@ -99,7 +92,7 @@ func TestListAccountHolders_ProgramFilterKeepsTheWholeRow(t *testing.T) {
 
 		page := callListAccountHolders(t, tx, url.Values{"q": {world.marker}, "loyalty_program_id": {world.azul.ID}})
 
-		// Only Ana holds an Azul account; Bruno holds nothing and the orphan is Smiles.
+		// Only Ana holds an Azul account; Bruno holds nothing.
 		if page.Total != 1 || len(page.Rows) != 1 {
 			t.Fatalf("rows: got total=%d len=%d, want 1", page.Total, len(page.Rows))
 		}
@@ -121,13 +114,13 @@ func TestListAccountHolders_SearchReachesAccountColumns(t *testing.T) {
 	})
 }
 
-func TestListAccountHolders_IncompleteFilterIncludesTheOrphan(t *testing.T) {
+func TestListAccountHolders_IncompleteFilterCoversPersonAndAccounts(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		world := seedHolderWorld(t, tx)
 
 		incomplete := callListAccountHolders(t, tx, url.Values{"q": {world.marker}, "complete": {"false"}})
-		if incomplete.Total != 3 {
-			t.Errorf("complete=false: got %d, want 3 - nothing seeded here is complete", incomplete.Total)
+		if incomplete.Total != 2 {
+			t.Errorf("complete=false: got %d, want 2 - nothing seeded here is complete", incomplete.Total)
 		}
 
 		complete := callListAccountHolders(t, tx, url.Values{"q": {world.marker}, "complete": {"true"}})
@@ -142,8 +135,8 @@ func TestListAccountHolders_PaginatesRowsNotAccounts(t *testing.T) {
 		world := seedHolderWorld(t, tx)
 
 		first := callListAccountHolders(t, tx, url.Values{"q": {world.marker}, "limit": {"1"}, "page": {"1"}})
-		if first.Total != 3 || len(first.Rows) != 1 || len(first.Rows[0].Accounts) != 2 {
-			t.Fatalf("page 1: got total=%d rows=%d, want 3 total and Ana's full row", first.Total, len(first.Rows))
+		if first.Total != 2 || len(first.Rows) != 1 || len(first.Rows[0].Accounts) != 2 {
+			t.Fatalf("page 1: got total=%d rows=%d, want 2 total and Ana's full row", first.Total, len(first.Rows))
 		}
 
 		second := callListAccountHolders(t, tx, url.Values{"q": {world.marker}, "limit": {"1"}, "page": {"2"}})
@@ -153,42 +146,34 @@ func TestListAccountHolders_PaginatesRowsNotAccounts(t *testing.T) {
 	})
 }
 
-func TestListAccountHolders_ArchivedOrphansAreRowsToo(t *testing.T) {
+func TestListAccountHolders_FlagsRepeatedProgramsAndAdminConflicts(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		world := seedHolderWorld(t, tx)
-		archivedLogin := "y-archived-" + world.marker
-		archived := data.Account{LoyaltyProgramID: world.azul.ID, Login: &archivedLogin}
-		create(t, tx, &archived)
-		if err := tx.Delete(&archived).Error; err != nil {
+
+		// Ana gets a second live Smiles, and her Azul a different administrator than her Smiles.
+		secondLogin := "a-smiles-2-" + world.marker
+		create(t, tx, &data.Account{LoyaltyProgramID: world.smiles.ID, HolderID: &world.fulana.ID, Login: &secondLogin})
+		otherAdmin := seedPerson(t, tx, "Carla "+world.marker)
+		if err := tx.Model(&data.Account{}).
+			Where("holder_id = ? AND loyalty_program_id = ?", world.fulana.ID, world.azul.ID).
+			UpdateColumn("administrator_id", otherAdmin.ID).Error; err != nil {
 			t.Fatal(err)
 		}
 
-		// A NOT NULL on holder_id counts archived rows too, so the listing has to show them.
-		page := callListAccountHolders(t, tx, url.Values{"q": {world.marker}})
-		if page.Total != 4 {
-			t.Fatalf("rows: got %d, want 4 (Ana, Bruno and both orphans)", page.Total)
+		dup := callListAccountHolders(t, tx, url.Values{"q": {world.marker}, "duplicate_programs_only": {"true"}})
+		if dup.Total != 1 || dup.Rows[0].Holder == nil || dup.Rows[0].Holder.ID != world.fulana.ID {
+			t.Fatalf("duplicate_programs_only: got %d rows, want only Ana", dup.Total)
+		}
+		if dup.DuplicateProgramsTotal < 1 {
+			t.Errorf("duplicate_programs_total: got %d", dup.DuplicateProgramsTotal)
 		}
 
-		holderless := callListAccountHolders(t, tx, url.Values{"q": {world.marker}, "holderless_only": {"true"}})
-		if holderless.Total != 2 {
-			t.Fatalf("holderless_only: got %d rows, want 2", holderless.Total)
+		conflicts := callListAccountHolders(t, tx, url.Values{"q": {world.marker}, "admin_conflicts_only": {"true"}})
+		if conflicts.Total != 1 || conflicts.Rows[0].Holder.ID != world.fulana.ID {
+			t.Fatalf("admin_conflicts_only: got %d rows, want only Ana", conflicts.Total)
 		}
-		var sawArchived bool
-		for _, row := range holderless.Rows {
-			if row.Holder != nil {
-				t.Errorf("holderless_only returned a holder row: %s", row.Holder.Name)
-			}
-			if len(row.Accounts) == 1 && row.Accounts[0].ID == archived.ID {
-				sawArchived = row.Accounts[0].DeletedAt != nil
-			}
-		}
-		if !sawArchived {
-			t.Error("the archived orphan did not come back marked as archived")
-		}
-
-		// The total ignores the search: it is how far the whole table is from the NOT NULL.
-		if holderless.HolderlessTotal < 2 {
-			t.Errorf("holderless_total: got %d, want at least 2", holderless.HolderlessTotal)
+		if conflicts.AdminConflictsTotal < 1 {
+			t.Errorf("admin_conflicts_total: got %d", conflicts.AdminConflictsTotal)
 		}
 	})
 }

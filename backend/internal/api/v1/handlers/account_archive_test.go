@@ -172,7 +172,7 @@ func TestDeleteAccount_ArchivesTheAliasesAndFreesTheName(t *testing.T) {
 
 		// The freed name goes to a different account of the same program, which is what
 		// the partial unique index exists to allow.
-		successor := data.Account{LoyaltyProgramID: issuance.LoyaltyProgramID}
+		successor := data.Account{HolderID: testHolder(t, tx), LoyaltyProgramID: issuance.LoyaltyProgramID}
 		create(t, tx, &successor)
 
 		reused := data.AccountNickname{

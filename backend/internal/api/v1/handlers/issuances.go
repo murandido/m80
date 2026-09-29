@@ -293,6 +293,8 @@ func issuanceErrorResponse(err error) (int, string) {
 		return http.StatusUnprocessableEntity, err.Error()
 	case errors.Is(err, issuancesvc.ErrProgramLocatorTaken):
 		return http.StatusUnprocessableEntity, "Program locator já está em uso por uma emissão ativa"
+	case errors.As(err, new(*account.ArchivedError)):
+		return http.StatusUnprocessableEntity, err.Error()
 	default:
 		return 0, ""
 	}
@@ -546,7 +548,8 @@ func (h *IssuanceHandler) GetIssuancesExport(w http.ResponseWriter, r *http.Requ
 	// which tab a cancelled issuance lands on. Neither is preloaded for the listing, which shows
 	// no such column.
 	query := preloadIssuanceAssociations(h.DB).
-		Preload("Account.Holder").
+		// Unscoped: an archived holder still names the issuances made on their accounts.
+		Preload("Account.Holder", func(db *gorm.DB) *gorm.DB { return db.Unscoped() }).
 		Preload("CancelledBy").
 		Preload("Flights", func(db *gorm.DB) *gorm.DB {
 			return db.Where("direction = ?", "outbound").Order("leg_order asc")
@@ -880,6 +883,13 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 	// *string field cannot otherwise express clearing the alias, since JSON null and an
 	// absent key both decode to nil.
 	if req.AccountID != nil {
+		// Moving an issuance onto an archived account is a new reference to it: refused.
+		if *req.AccountID != issuance.AccountID {
+			if err := account.RequireLiveAccount(h.DB, *req.AccountID); err != nil {
+				utils.SendError(w, r, http.StatusUnprocessableEntity, err.Error())
+				return
+			}
+		}
 		if err := issuancesvc.ValidateAccountNickname(h.DB, *req.AccountID, req.AccountNicknameID); err != nil {
 			utils.SendError(w, r, http.StatusBadRequest, err.Error())
 			return
@@ -1307,6 +1317,13 @@ func (h *IssuanceHandler) UncancelIssuance(w http.ResponseWriter, r *http.Reques
 
 	if issuance.Active {
 		utils.SendError(w, r, http.StatusUnprocessableEntity, "issuance is not cancelled")
+		return
+	}
+
+	// Reviving the booking makes it count on its account again, which an archived account
+	// must not start doing (internal/account/live.go).
+	if err := account.RequireLiveAccount(h.DB, issuance.AccountID); err != nil {
+		utils.SendError(w, r, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 

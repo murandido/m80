@@ -266,11 +266,11 @@ export async function deletePersonAction(personId: string) {
     const parsed = deletePersonSchema.response.safeParse(json)
 
     if (!res.ok) {
-      // e.g. 422 "Não é possível excluir pessoa vinculada a uma conta"
-      return { error: parsed.data?.message || "Erro ao deletar pessoa." }
+      // e.g. 422 "Esta pessoa ainda é administradora das contas de ..."
+      return { error: parsed.data?.message || "Erro ao excluir." }
     }
 
-    return { success: true }
+    return { success: true as const, removal: parsed.data?.data ?? null }
   } catch {
     return { error: "Erro de conexão com o servidor." }
   }
@@ -335,6 +335,55 @@ export async function mergeRowAction(
     }
 
     return { success: true as const, warning: parsed.data?.data?.warning ?? "" }
+  } catch {
+    return { error: "Erro de conexão com o servidor." }
+  }
+}
+
+// Sets the administrator of every account the holder has - one per holder, the way the
+// backend keeps it (internal/account/administrators.go). An empty id clears it.
+export async function setHolderAdministratorAction(holderId: string, administratorId: string) {
+  const cookieStore = await cookies()
+  const token = cookieStore.get("auth_token")?.value
+
+  try {
+    const res = await fetch(`${env.BACKEND_URL}/api/v1/people/${holderId}/administrator`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ administrator_id: administratorId || null }),
+    })
+
+    if (!res.ok) {
+      const json = await res.json().catch(() => null)
+      return { error: json?.message || "Erro ao definir o administrador." }
+    }
+
+    return { success: true as const }
+  } catch {
+    return { error: "Erro de conexão com o servidor." }
+  }
+}
+
+// What deleting the holder would do, without doing it - the row's confirmation reads it.
+export async function previewDeletePersonAction(personId: string) {
+  const cookieStore = await cookies()
+  const token = cookieStore.get("auth_token")?.value
+
+  try {
+    const res = await fetch(`${env.BACKEND_URL}/api/v1/people/${personId}/delete-preview`, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    })
+    const json = await res.json()
+    const parsed = deletePersonSchema.response.safeParse(json)
+
+    if (!res.ok || !parsed.data?.data) {
+      return { error: parsed.data?.message || "Erro ao calcular a prévia." }
+    }
+    return { removal: parsed.data.data }
   } catch {
     return { error: "Erro de conexão com o servidor." }
   }

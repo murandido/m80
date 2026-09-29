@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { ChevronDown, Merge, TriangleAlert } from "lucide-react"
+import { ChevronDown, Merge, Trash2, TriangleAlert } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import {
@@ -15,6 +15,7 @@ import { AccountProgramBlock } from "./account-program-block"
 import { AccountHolderDetails } from "./account-holder-details"
 import { CreateAccountForm } from "./create-account-form"
 import { MergeAccountHolderPanel } from "./merge-account-holder-panel"
+import { DeleteHolderPanel } from "./delete-holder-panel"
 
 interface AccountHolderRowProps {
   row: AccountHolderRowData
@@ -48,11 +49,12 @@ export function AccountHolderRow({
   canMerge,
 }: AccountHolderRowProps) {
   // One panel at a time: both slide out of the header's bottom edge.
-  const [openPanel, setOpenPanel] = useState<"none" | "details" | "merge">(
-    "none",
-  )
+  const [openPanel, setOpenPanel] = useState<
+    "none" | "details" | "merge" | "delete"
+  >("none")
   const isOpen = openPanel === "details"
   const isMergeOpen = openPanel === "merge"
+  const isDeleteOpen = openPanel === "delete"
 
   const title = holderRowTitle(row)
   // Only a holderless row can be archived: a holder's archived accounts are not listed.
@@ -63,6 +65,18 @@ export function AccountHolderRow({
     row.accounts[0]?.nicknames ??
     []
   ).map((nickname) => nickname.nickname)
+  // The two things the database cannot yet refuse on its own (see the page's banner).
+  const liveAccounts = row.accounts.filter((account) => !account.deleted_at)
+  const programIds = liveAccounts.map((account) => account.loyalty_program_id)
+  const hasDuplicateProgram = new Set(programIds).size < programIds.length
+  const administratorIds = [
+    ...new Set(
+      liveAccounts
+        .map((account) => account.administrator_id)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ]
+  const hasAdminConflict = administratorIds.length > 1
   const isIncomplete =
     (row.holder && !row.holder.complete) ||
     row.accounts.some((account) => !account.complete)
@@ -102,6 +116,24 @@ export function AccountHolderRow({
               {isArchived && (
                 <span className="rounded-md bg-slate-200 px-2 py-0.5 text-xs text-slate-700">
                   Arquivada
+                </span>
+              )}
+              {hasDuplicateProgram && (
+                <span
+                  className="inline-flex items-center gap-1 rounded-md bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800"
+                  title="Duas contas vivas no mesmo programa. Abra a linha e mescle a que sobra na outra."
+                >
+                  <TriangleAlert className="h-3 w-3" />
+                  Programa repetido
+                </span>
+              )}
+              {hasAdminConflict && (
+                <span
+                  className="inline-flex items-center gap-1 rounded-md bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800"
+                  title="As contas deste titular têm administradores diferentes. Escolha um na seção Titular."
+                >
+                  <TriangleAlert className="h-3 w-3" />
+                  Administradores diferentes
                 </span>
               )}
               {isIncomplete && (
@@ -154,6 +186,27 @@ export function AccountHolderRow({
             <Merge className="h-4 w-4" />
           </Button>
         )}
+        {/* The whole row goes: the holder and every account of theirs, deleted where nothing
+            refers to them and archived otherwise. The panel says which before it happens. */}
+        {row.holder && (
+          <Button
+            variant="outline"
+            size="icon"
+            title="Excluir esta linha"
+            aria-label="Excluir esta linha"
+            onClick={() =>
+              setOpenPanel((prev) => (prev === "delete" ? "none" : "delete"))
+            }
+            className={cn(
+              "shrink-0 transition-colors duration-200",
+              isDeleteOpen
+                ? "border-red-600 bg-red-600 text-white hover:border-red-700 hover:bg-red-700"
+                : "border-slate-800 text-slate-800 hover:border-red-600 hover:bg-red-600 hover:text-white active:border-red-950 active:bg-red-950 active:text-white",
+            )}
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        )}
       </div>
 
       <div
@@ -180,12 +233,22 @@ export function AccountHolderRow({
                   people={people}
                   loyaltyPrograms={loyaltyPrograms}
                   canReconcile={canMerge}
+                  duplicates={row.accounts.filter(
+                    (other) =>
+                      other.id !== account.id &&
+                      other.loyalty_program_id === account.loyalty_program_id &&
+                      !other.deleted_at,
+                  )}
+                  canMerge={canMerge}
                 />
               ))}
               {row.holder && (
                 <CreateAccountForm
                   people={people}
-                  loyaltyPrograms={loyaltyPrograms}
+                  // A holder has one account per program: only the ones they lack are offered.
+                  loyaltyPrograms={loyaltyPrograms.filter(
+                    (program) => !programIds.includes(program.id),
+                  )}
                   holderId={row.holder.id}
                 />
               )}
@@ -198,7 +261,9 @@ export function AccountHolderRow({
               {row.holder ? (
                 <AccountHolderDetails
                   holder={row.holder}
-                  canDelete={row.accounts.length === 0}
+                  people={people}
+                  administratorIds={administratorIds}
+                  hasAccounts={liveAccounts.length > 0}
                 />
               ) : (
                 <p className="text-sm text-amber-800">
@@ -225,6 +290,15 @@ export function AccountHolderRow({
           loyaltyPrograms={loyaltyPrograms}
           isOpen={isMergeOpen}
           onMerged={() => setOpenPanel("none")}
+        />
+      )}
+
+      {row.holder && (
+        <DeleteHolderPanel
+          holderId={row.holder.id}
+          holderName={row.holder.name}
+          isOpen={isDeleteOpen}
+          onCancel={() => setOpenPanel("none")}
         />
       )}
     </div>

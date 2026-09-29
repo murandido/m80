@@ -117,7 +117,7 @@ func seedFixture(t *testing.T, tx *gorm.DB, airline data.Airline) fixture {
 	program := data.LoyaltyProgram{Name: "Test Program", Code: "L" + suffix, DefaultAirlineID: airline.ID}
 	create(t, tx, &program)
 
-	account := data.Account{LoyaltyProgramID: program.ID}
+	account := data.Account{HolderID: testHolder(t, tx), LoyaltyProgramID: program.ID}
 	create(t, tx, &account)
 
 	// is_default is left false on purpose: a shared database may already have a

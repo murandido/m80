@@ -290,7 +290,7 @@ func TestHandleAlteracao_AThreeLetterAliasIsNotAnAirport(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		s := newCorrectionScenario(t, tx, data.Airline{})
 
-		account := data.Account{LoyaltyProgramID: s.Program.ID, Complete: true}
+		account := data.Account{HolderID: testHolder(t, tx), LoyaltyProgramID: s.Program.ID, Complete: true}
 		seed(t, tx, &account)
 		seed(t, tx, &data.AccountNickname{
 			AccountID:        account.ID,

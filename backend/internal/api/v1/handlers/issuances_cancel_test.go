@@ -124,7 +124,7 @@ func seedIssuance(t *testing.T, tx *gorm.DB) (data.Issuance, data.User) {
 	program := data.LoyaltyProgram{Name: "Test Program", Code: "L" + suffix, DefaultAirlineID: airline.ID}
 	create(t, tx, &program)
 
-	account := data.Account{LoyaltyProgramID: program.ID}
+	account := data.Account{HolderID: testHolder(t, tx), LoyaltyProgramID: program.ID}
 	create(t, tx, &account)
 
 	agency := data.Agency{Name: "Test Agency " + suffix}

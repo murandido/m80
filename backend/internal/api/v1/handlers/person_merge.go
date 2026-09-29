@@ -280,7 +280,9 @@ func mergePeopleTx(tx *gorm.DB, keep, drop data.Person, keepNickname bool) (stri
 	// idx_people_cpf_fingerprint since migration 38 - so writing the absorbed CPF onto the
 	// survivor while that row still holds it is refused. The fingerprint follows the number
 	// automatically: Person.BeforeSave derives it on the Save below.
-	if err := tx.Delete(&data.Person{}, "id = ?", drop.ID).Error; err != nil {
+	// Unscoped: a merge removes the absorbed row for real - archiving it would keep its CPF
+	// holding the unique index and the person half-alive.
+	if err := tx.Unscoped().Delete(&data.Person{}, "id = ?", drop.ID).Error; err != nil {
 		return "", err
 	}
 
@@ -290,7 +292,11 @@ func mergePeopleTx(tx *gorm.DB, keep, drop data.Person, keepNickname bool) (stri
 		return "", err
 	}
 
-	// Both people's aliases and both sets of accounts are one row now: one list of aliases.
+	// Both people's aliases and both sets of accounts are one row now: one list of aliases,
+	// and one administrator where the two rows did not disagree.
+	if err := acct.AlignHolderAdministrator(tx, keep.ID); err != nil {
+		return "", err
+	}
 	return warning, acct.UnifyHolderNicknames(tx, keep.ID)
 }
 

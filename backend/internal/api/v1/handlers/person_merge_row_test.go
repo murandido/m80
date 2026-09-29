@@ -141,55 +141,6 @@ func TestMergeRow_MergesThePersonAndTheRepeatedProgram(t *testing.T) {
 	})
 }
 
-func TestMergeRow_OrphanWithoutAPairOnlyGetsTheHolder(t *testing.T) {
-	runInTx(t, func(tx *gorm.DB) {
-		world := seedRowMergeWorld(t, tx)
-		orphan := data.Account{LoyaltyProgramID: world.azul.ID}
-		create(t, tx, &orphan)
-
-		preview := callPreviewMergeRow(t, tx, world.keepPerson.ID, "source_account_id="+orphan.ID)
-		if preview.AccountsMoved != 1 || len(preview.AccountsMerged) != 0 {
-			t.Fatalf("preview: got moved=%d merged=%d, want 1 and 0", preview.AccountsMoved, len(preview.AccountsMerged))
-		}
-
-		rec := callMergeRow(tx, world.keepPerson.ID, world.user.ID, `{"source_account_id":"`+orphan.ID+`"}`)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("status: got %d (body: %s)", rec.Code, rec.Body.String())
-		}
-		var reloaded data.Account
-		if err := tx.First(&reloaded, "id = ?", orphan.ID).Error; err != nil {
-			t.Fatal(err)
-		}
-		if reloaded.HolderID == nil || *reloaded.HolderID != world.keepPerson.ID {
-			t.Errorf("holder: got %v, want the survivor", reloaded.HolderID)
-		}
-	})
-}
-
-func TestMergeRow_OrphanInARepeatedProgramIsMerged(t *testing.T) {
-	runInTx(t, func(tx *gorm.DB) {
-		world := seedRowMergeWorld(t, tx)
-		orphan := data.Account{LoyaltyProgramID: world.program.ID}
-		create(t, tx, &orphan)
-		issued := world.issue(t, tx, orphan.ID)
-
-		rec := callMergeRow(tx, world.keepPerson.ID, world.user.ID, `{"source_account_id":"`+orphan.ID+`"}`)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("status: got %d (body: %s)", rec.Code, rec.Body.String())
-		}
-		if err := tx.Unscoped().First(&data.Account{}, "id = ?", orphan.ID).Error; !errors.Is(err, gorm.ErrRecordNotFound) {
-			t.Errorf("orphan: want merged away, got err=%v", err)
-		}
-		var issuance data.Issuance
-		if err := tx.First(&issuance, "id = ?", issued.ID).Error; err != nil {
-			t.Fatal(err)
-		}
-		if issuance.AccountID != world.keepSmiles.ID {
-			t.Errorf("issuance account: got %s, want the survivor's Smiles", issuance.AccountID)
-		}
-	})
-}
-
 func TestMergeRow_RefusesAnAccountThatHasAHolder(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		world := seedRowMergeWorld(t, tx)
@@ -208,37 +159,6 @@ func TestMergeRow_RefusesBothSourcesAtOnce(t *testing.T) {
 		body := `{"source_person_id":"` + world.dropPerson.ID + `","source_account_id":"` + world.dropAzul.ID + `"}`
 		if rec := callMergeRow(tx, world.keepPerson.ID, world.user.ID, body); rec.Code != http.StatusBadRequest {
 			t.Fatalf("status: got %d, want 400", rec.Code)
-		}
-	})
-}
-
-func TestMergeRow_ArchivedOrphanGetsTheHolder(t *testing.T) {
-	runInTx(t, func(tx *gorm.DB) {
-		world := seedRowMergeWorld(t, tx)
-		orphan := data.Account{LoyaltyProgramID: world.azul.ID}
-		create(t, tx, &orphan)
-		if err := tx.Delete(&orphan).Error; err != nil {
-			t.Fatal(err)
-		}
-
-		preview := callPreviewMergeRow(t, tx, world.keepPerson.ID, "source_account_id="+orphan.ID)
-		if preview.AccountsMoved != 1 {
-			t.Fatalf("preview: got moved=%d, want 1", preview.AccountsMoved)
-		}
-
-		rec := callMergeRow(tx, world.keepPerson.ID, world.user.ID, `{"source_account_id":"`+orphan.ID+`"}`)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("status: got %d (%s)", rec.Code, rec.Body.String())
-		}
-		var reloaded data.Account
-		if err := tx.Unscoped().First(&reloaded, "id = ?", orphan.ID).Error; err != nil {
-			t.Fatal(err)
-		}
-		if reloaded.HolderID == nil || *reloaded.HolderID != world.keepPerson.ID {
-			t.Errorf("holder: got %v, want the survivor", reloaded.HolderID)
-		}
-		if !reloaded.DeletedAt.Valid {
-			t.Error("the orphan came back from the archive; it should only gain a holder")
 		}
 	})
 }

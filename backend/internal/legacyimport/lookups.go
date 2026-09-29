@@ -315,7 +315,7 @@ func (l *lookups) findAccountByLabel(
 
 	var account data.Account
 	err = db.Preload("Holder").Preload("Nicknames").
-		Joins("JOIN people ON people.id = accounts.holder_id").
+		Joins("JOIN people ON people.id = accounts.holder_id AND people.deleted_at IS NULL").
 		Where("accounts.loyalty_program_id = ?", program.ID).
 		Where("unaccent(people.name) ILIKE unaccent(?)", label).
 		First(&account).Error

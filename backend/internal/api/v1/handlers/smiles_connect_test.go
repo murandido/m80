@@ -100,6 +100,7 @@ func seedSmilesAccount(t *testing.T, tx *gorm.DB) (data.Account, data.User) {
 	//nolint:gosec // G101: fixed test fixtures, not real credentials
 	login, password := "12345678900", "senha-da-conta"
 	account := data.Account{
+		HolderID:           testHolder(t, tx),
 		LoyaltyProgramID:   program.ID,
 		OwnsPointInventory: true,
 		TracksStatement:    true,

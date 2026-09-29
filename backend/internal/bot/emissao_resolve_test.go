@@ -73,7 +73,7 @@ func TestResolveEmissao_ExistingNicknameReusesAccount(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		f := seedEmissaoFixture(t, tx, data.Airline{})
 
-		account := data.Account{LoyaltyProgramID: f.Program.ID, Complete: true}
+		account := data.Account{HolderID: testHolder(t, tx), LoyaltyProgramID: f.Program.ID, Complete: true}
 		seed(t, tx, &account)
 		nickname := data.AccountNickname{
 			AccountID:        account.ID,
@@ -204,7 +204,7 @@ func seedAccountWithAdministrator(t *testing.T, tx *gorm.DB, f emissaoFixture, a
 	seed(t, tx, &admin)
 	seed(t, tx, &data.PersonNickname{PersonID: admin.ID, Nickname: adminName})
 
-	account := data.Account{LoyaltyProgramID: f.Program.ID, AdministratorID: &admin.ID}
+	account := data.Account{HolderID: testHolder(t, tx), LoyaltyProgramID: f.Program.ID, AdministratorID: &admin.ID}
 	seed(t, tx, &account)
 	seed(t, tx, &data.AccountNickname{
 		AccountID:        account.ID,
@@ -501,7 +501,7 @@ func TestResolveEmissao_ArchivedAccountStartsFresh(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		f := seedEmissaoFixture(t, tx, data.Airline{})
 
-		archived := data.Account{LoyaltyProgramID: f.Program.ID, Complete: true}
+		archived := data.Account{HolderID: testHolder(t, tx), LoyaltyProgramID: f.Program.ID, Complete: true}
 		seed(t, tx, &archived)
 		nickname := data.AccountNickname{
 			AccountID:        archived.ID,
@@ -539,6 +539,67 @@ func TestResolveEmissao_ArchivedAccountStartsFresh(t *testing.T) {
 		}
 		if successor.Complete {
 			t.Error("the fresh account was not created incomplete")
+		}
+	})
+}
+
+func TestResolveEmissao_KnownHolderReusesTheirAccountInTheProgram(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		f := seedEmissaoFixture(t, tx, data.Airline{})
+
+		// The holder is known by "Cleidiane", but her account in this program was registered
+		// under another alias - so the alias lookup misses and only the person is found.
+		holder := data.Person{Name: "Cleidiane " + f.Suffix}
+		seed(t, tx, &holder)
+		seed(t, tx, &data.PersonNickname{PersonID: holder.ID, Nickname: "Cleidiane" + f.Suffix})
+		account := data.Account{LoyaltyProgramID: f.Program.ID, HolderID: &holder.ID}
+		seed(t, tx, &account)
+		seed(t, tx, &data.AccountNickname{AccountID: account.ID, LoyaltyProgramID: f.Program.ID, Nickname: "Cleidi" + f.Suffix})
+
+		before := countRows(t, tx, "accounts", "loyalty_program_id = ?", f.Program.ID)
+
+		input, err := resolveEmissao(tx, f.message("Cleidiane"+f.Suffix), access.FullScope())
+		if err != nil {
+			t.Fatalf("resolveEmissao returned %v", err)
+		}
+
+		if input.AccountID != account.ID {
+			t.Fatalf("AccountID = %q, want her existing account %q", input.AccountID, account.ID)
+		}
+		if after := countRows(t, tx, "accounts", "loyalty_program_id = ?", f.Program.ID); after != before {
+			t.Fatalf("accounts went from %d to %d, expected no second account", before, after)
+		}
+		if input.AccountNicknameID == nil {
+			t.Fatal("AccountNicknameID is nil, want the alias the message used")
+		}
+	})
+}
+
+func TestResolveEmissao_AdministratorReachesTheHolderOtherAccounts(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		f := seedEmissaoFixture(t, tx, data.Airline{})
+		other := seedEmissaoFixture(t, tx, data.Airline{})
+
+		holder := data.Person{Name: "Holder " + f.Suffix}
+		seed(t, tx, &holder)
+		account := data.Account{LoyaltyProgramID: f.Program.ID, HolderID: &holder.ID}
+		seed(t, tx, &account)
+		seed(t, tx, &data.AccountNickname{AccountID: account.ID, LoyaltyProgramID: f.Program.ID, Nickname: "Titular" + f.Suffix})
+		sibling := data.Account{LoyaltyProgramID: other.Program.ID, HolderID: &holder.ID}
+		seed(t, tx, &sibling)
+
+		msg := f.message("Titular" + f.Suffix)
+		msg.AdminNickname = "Admin" + f.Suffix
+		if _, err := resolveEmissao(tx, msg, access.FullScope()); err != nil {
+			t.Fatalf("resolveEmissao returned %v", err)
+		}
+
+		var reloaded data.Account
+		if err := tx.First(&reloaded, "id = ?", sibling.ID).Error; err != nil {
+			t.Fatal(err)
+		}
+		if reloaded.AdministratorID == nil {
+			t.Fatal("the holder's other account did not get the administrator")
 		}
 	})
 }

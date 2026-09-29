@@ -229,6 +229,16 @@ export const listAccountHoldersSchema = {
           .number()
           .nullish()
           .transform((value) => value ?? 0),
+        // Holders with two live accounts in one program, and holders whose accounts name
+        // different administrators - the other two to-do lists. Defaulted the same way.
+        duplicate_programs_total: z
+          .number()
+          .nullish()
+          .transform((value) => value ?? 0),
+        admin_conflicts_total: z
+          .number()
+          .nullish()
+          .transform((value) => value ?? 0),
       })
       .nullish(),
   }),
@@ -316,6 +326,35 @@ export const checkAccountNicknameAvailabilitySchema = {
     data: z.object({ available: z.boolean() }).nullish(),
   }),
 }
+
+// The counts the panel shows before folding a holder's second account in a program into
+// the first - irreversible. issuances includes the ones in the grid's trash.
+export const mergeAccountPreviewSchema = {
+  response: z.object({
+    success: z.boolean(),
+    message: z.string(),
+    data: z
+      .object({
+        issuances: z.number(),
+        nicknames: z.number(),
+        fields_to_fill: z.array(z.string()).nullish(),
+        colliding_nicknames: z.array(z.string()).nullish(),
+      })
+      .nullish(),
+  }),
+}
+
+export const mergeAccountSchema = {
+  response: z.object({
+    success: z.boolean(),
+    message: z.string(),
+    data: accountSchema.nullish(),
+  }),
+}
+
+export type MergeAccountPreview = NonNullable<
+  z.infer<typeof mergeAccountPreviewSchema.response>["data"]
+>
 
 // One person on an account's beneficiary ledger. The CPF is never returned in full because
 // it is never stored in full: cpf_masked is built from the number at write time, and

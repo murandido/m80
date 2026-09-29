@@ -284,7 +284,7 @@ func TestGetAccounts_OrdersAliasNamedAccountsAlongsideTheRest(t *testing.T) {
 
 		// Alias-named account: no holder, no login. Before the fix this sorted last
 		// no matter what its alias said.
-		aliasOnly := data.Account{LoyaltyProgramID: program.ID}
+		aliasOnly := data.Account{HolderID: testHolder(t, tx), LoyaltyProgramID: program.ID}
 		create(t, tx, &aliasOnly)
 		alias := data.AccountNickname{
 			AccountID:        aliasOnly.ID,

@@ -9,7 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
-	"github.com/jackc/pgx/v5/pgconn"
+	acct "github.com/murandido/m-80-backend/internal/account"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/utils"
@@ -419,30 +419,61 @@ func (h *PeopleHandler) UpdatePerson(w http.ResponseWriter, r *http.Request) {
 }
 
 // DeletePerson handles the DELETE /people/{id} route.
-// @Summary      Deletar pessoa
-// @Description  Remove uma pessoa do sistema. Falha com 422 se a pessoa estiver vinculada a uma conta.
+// @Summary      Excluir titular
+// @Description  Exclui o titular e todas as contas dele. Conta sem histórico (emissões, inclusive na lixeira; lotes; períodos; extrato; beneficiários) é apagada de verdade; com histórico, é arquivada. O titular é apagado quando nenhuma conta o referencia mais, e arquivado caso contrário — some do painel e os apelidos dele são liberados.
 // @Tags         Pessoas
 // @Produce      json
 // @Security     BearerAuth
-// @Param        id  path  string  true  "UUID da pessoa"
-// @Success      200  {object}  schemas.ErrorResponse "Pessoa deletada com sucesso"
+// @Param        id  path  string  true  "UUID do titular"
+// @Success      200  {object}  schemas.PersonRemovalSingleResponse "O que foi apagado e o que foi arquivado"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
-// @Failure      422  {object}  schemas.ErrorResponse "Pessoa vinculada a uma conta"
-// @Failure      500  {object}  schemas.ErrorResponse "Erro ao deletar pessoa"
+// @Failure      404  {object}  schemas.ErrorResponse "Titular não encontrado"
+// @Failure      422  {object}  schemas.ErrorResponse "A pessoa ainda administra contas de outros titulares"
+// @Failure      500  {object}  schemas.ErrorResponse "Erro ao excluir"
 // @Router       /people/{id} [delete]
 func (h *PeopleHandler) DeletePerson(w http.ResponseWriter, r *http.Request) {
+	h.removePerson(w, r, false)
+}
+
+// PreviewDeletePerson handles the GET /people/{id}/delete-preview route.
+// @Summary      Prévia da exclusão do titular
+// @Description  Diz o que DELETE /people/{id} faria, sem escrever nada.
+// @Tags         Pessoas
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id  path  string  true  "UUID do titular"
+// @Success      200  {object}  schemas.PersonRemovalSingleResponse
+// @Failure      404  {object}  schemas.ErrorResponse "Titular não encontrado"
+// @Failure      422  {object}  schemas.ErrorResponse "A pessoa ainda administra contas de outros titulares"
+// @Router       /people/{id}/delete-preview [get]
+func (h *PeopleHandler) PreviewDeletePerson(w http.ResponseWriter, r *http.Request) {
+	h.removePerson(w, r, true)
+}
+
+func (h *PeopleHandler) removePerson(w http.ResponseWriter, r *http.Request, dryRun bool) {
 	id := chi.URLParam(r, "id")
 
-	if err := h.DB.Delete(&data.Person{}, "id = ?", id).Error; err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == postgresForeignKeyViolation {
-			utils.SendError(w, r, http.StatusUnprocessableEntity, "Não é possível excluir pessoa vinculada a uma conta")
-			return
+	var removal acct.PersonRemoval
+	err := h.DB.Transaction(func(tx *gorm.DB) error {
+		var err error
+		removal, err = acct.RemovePerson(tx, id, dryRun)
+		return err
+	})
+	if err != nil {
+		switch {
+		case acct.IsRemovalRefusal(err):
+			utils.SendError(w, r, http.StatusUnprocessableEntity, err.Error())
+		case errors.Is(err, gorm.ErrRecordNotFound):
+			utils.SendError(w, r, http.StatusNotFound, "Titular não encontrado")
+		default:
+			utils.SendError(w, r, http.StatusInternalServerError, "Failed to delete person: "+err.Error())
 		}
-
-		utils.SendError(w, r, http.StatusInternalServerError, "Failed to delete person: "+err.Error())
 		return
 	}
 
-	utils.SendJSON(w, r, http.StatusOK, "Person deleted successfully", nil)
+	utils.SendJSON(w, r, http.StatusOK, "Titular excluído", schemas.PersonRemovalResponse{
+		AccountsDeleted:  removal.AccountsDeleted,
+		AccountsArchived: removal.AccountsArchived,
+		PersonDeleted:    removal.PersonDeleted,
+	})
 }

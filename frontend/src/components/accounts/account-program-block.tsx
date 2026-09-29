@@ -2,7 +2,15 @@
 
 import { useState } from "react"
 import { useRouter } from "next/navigation"
-import { Eye, EyeOff, Menu, Trash2, Users } from "lucide-react"
+import {
+  Eye,
+  EyeOff,
+  Menu,
+  Merge,
+  Trash2,
+  TriangleAlert,
+  Users,
+} from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { Account } from "@/schemas/account"
@@ -18,36 +26,47 @@ import { DeleteOverlay } from "./delete-overlay"
 import { EditAccountPanel } from "./edit-account-panel"
 import { AzulAccountControls } from "./azul-account-controls"
 import { SmilesAccountControls } from "./smiles-account-controls"
+import { MergeDuplicateAccountPanel } from "./merge-duplicate-account-panel"
 
 interface AccountProgramBlockProps {
   account: Account
   people: PersonOption[]
   loyaltyPrograms: LoyaltyProgram[]
   canReconcile: boolean
+  // The holder's other live accounts in this same program. Non-empty means the row breaks
+  // the one-account-per-program rule and this block offers to fold itself into one of them.
+  duplicates: Account[]
+  // Merging deletes a record for good, so only admins get the button (the API agrees).
+  canMerge: boolean
 }
 
 // One loyalty account inside a holder's row: the credentials the operator signs in with,
-// and every per-account action the old account card had. Merging is not here - it works on
-// the whole row (see merge-account-holder-panel.tsx).
+// and every per-account action the old account card had. Merging two holders works on the
+// whole row (merge-account-holder-panel.tsx); the only merge here is folding a holder's
+// second account in a program into the first.
 export function AccountProgramBlock({
   account,
   people,
   loyaltyPrograms,
   canReconcile,
+  duplicates,
+  canMerge,
 }: AccountProgramBlockProps) {
   const router = useRouter()
   const [isDeleteOpen, setIsDeleteOpen] = useState(false)
   // One panel at a time: they share the block's bottom edge, and two open at once would
   // both claim the rounded corner.
-  const [openPanel, setOpenPanel] = useState<"none" | "edit" | "beneficiaries">(
-    "none",
-  )
+  const [openPanel, setOpenPanel] = useState<
+    "none" | "edit" | "beneficiaries" | "merge"
+  >("none")
   const [isDeleted, setIsDeleted] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
 
   const isArchived = Boolean(account.deleted_at)
   const isEditOpen = openPanel === "edit"
   const isBeneficiariesOpen = openPanel === "beneficiaries"
+  const isMergeOpen = openPanel === "merge"
+  const isDuplicate = duplicates.length > 0 && !isArchived
 
   function handleFadeEnd() {
     if (isDeleted) router.refresh()
@@ -73,6 +92,15 @@ export function AccountProgramBlock({
               <AccountCategoryBadge category={account.category} />
               {account.waives_redemption_fee && <RedemptionFeeWaiverBadge />}
               {account.cpf_usage && <CPFUsageMeter usage={account.cpf_usage} />}
+              {isDuplicate && (
+                <span
+                  className="inline-flex items-center gap-1 rounded-md bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800"
+                  title="O titular tem mais de uma conta neste programa. Mescle a que sobra na outra."
+                >
+                  <TriangleAlert className="h-3 w-3" />
+                  Programa repetido
+                </span>
+              )}
             </div>
             <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
               <dt className="text-slate-500">Login</dt>
@@ -106,7 +134,9 @@ export function AccountProgramBlock({
                   <span className="text-slate-400">—</span>
                 )}
               </dd>
-              {administrator && (
+              {/* The administrator is the holder's, shown once under the holder; only an
+                  account without a holder carries its own. */}
+              {!account.holder_id && administrator && (
                 <>
                   <dt className="text-slate-500">Administrador</dt>
                   <dd className="truncate text-slate-800">
@@ -182,6 +212,27 @@ export function AccountProgramBlock({
                 >
                   <Menu className="h-4 w-4" />
                 </Button>
+                {isDuplicate && canMerge && (
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    title={`Mesclar na outra ${account.loyalty_program.name}`}
+                    aria-label={`Mesclar na outra ${account.loyalty_program.name}`}
+                    onClick={() =>
+                      setOpenPanel((prev) =>
+                        prev === "merge" ? "none" : "merge",
+                      )
+                    }
+                    className={cn(
+                      "transition-colors duration-200",
+                      isMergeOpen
+                        ? "border-amber-600 bg-amber-600 text-white hover:border-amber-700 hover:bg-amber-700"
+                        : "border-amber-600 text-amber-700 hover:border-amber-400 hover:bg-amber-400 hover:text-white active:border-amber-800 active:bg-amber-800 active:text-white",
+                    )}
+                  >
+                    <Merge className="h-4 w-4" />
+                  </Button>
+                )}
               </>
             )}
           </div>
@@ -213,6 +264,15 @@ export function AccountProgramBlock({
         isOpen={isEditOpen}
         onSaved={() => setOpenPanel("none")}
       />
+
+      {isDuplicate && canMerge && (
+        <MergeDuplicateAccountPanel
+          account={account}
+          targets={duplicates}
+          isOpen={isMergeOpen}
+          onMerged={() => setOpenPanel("none")}
+        />
+      )}
     </div>
   )
 }

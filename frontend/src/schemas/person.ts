@@ -106,10 +106,21 @@ export const updatePersonSchema = {
   }),
 }
 
+// What removing a holder did - or would do, for the delete-preview route: accounts nothing
+// refers to are deleted for real, the ones with history archived, and the holder deleted when
+// no account names them any more (archived otherwise).
+export const personRemovalSchema = z.object({
+  accounts_deleted: z.number(),
+  accounts_archived: z.number(),
+  person_deleted: z.boolean(),
+})
+
+export type PersonRemoval = z.infer<typeof personRemovalSchema>
+
 export const deletePersonSchema = {
   response: z.object({
     message: z.string(),
-    data: z.null().nullish(),
+    data: personRemovalSchema.nullish(),
   }),
 }
 

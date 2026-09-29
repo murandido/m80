@@ -150,6 +150,10 @@ func (h *AccountHandler) MergeAccount(w http.ResponseWriter, r *http.Request) {
 			differentPrograms = true
 			return errMergeRefused
 		}
+		// The survivor gains issuances and aliases; an archived one must not.
+		if keep.DeletedAt.Valid {
+			return &acct.ArchivedError{What: "A conta que fica foi excluída"}
+		}
 
 		if err := mergeAccountsTx(tx, keep, drop, userCtx.ID); err != nil {
 			return err
@@ -160,6 +164,9 @@ func (h *AccountHandler) MergeAccount(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		if merged.HolderID != nil {
+			if err := acct.AlignHolderAdministrator(tx, *merged.HolderID); err != nil {
+				return err
+			}
 			return acct.UnifyHolderNicknames(tx, *merged.HolderID)
 		}
 		return nil
@@ -168,6 +175,9 @@ func (h *AccountHandler) MergeAccount(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if differentPrograms {
 			utils.SendError(w, r, http.StatusUnprocessableEntity, errDifferentPrograms)
+			return
+		}
+		if sendAccountRuleError(w, r, err) {
 			return
 		}
 		sendAccountMergeError(w, r, err)

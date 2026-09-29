@@ -366,33 +366,39 @@ export function CreateAccountForm({ people, loyaltyPrograms, holderId }: CreateA
                   />
                 </div>
 
-                <Separator />
-                <h3 className="text-xs font-semibold tracking-wide text-slate-500 uppercase">
-                  Administrador
-                </h3>
+                {/* A new holder's first account names the administrator, which becomes the
+                    holder's. A program added to an existing holder takes theirs. */}
+                {!isAddingProgram && (
+                  <>
+                    <Separator />
+                    <h3 className="text-xs font-semibold tracking-wide text-slate-500 uppercase">
+                      Administrador
+                    </h3>
 
-                {/* administrator_id */}
-                <div className="flex flex-col gap-1 text-sm">
-                  <Controller
-                    name="account.administrator_id"
-                    control={form.control}
-                    render={({ field, fieldState }) => (
-                      <>
-                        <FieldLabel htmlFor={`${idPrefix}administrator_id`}>Administrador</FieldLabel>
-                        <PersonCombobox
-                          people={people}
-                          value={field.value ?? ""}
-                          onChange={field.onChange}
-                          disabled={isPending}
-                          placeholder="Buscar administrador por nome ou apelido..."
-                        />
-                        {fieldState.invalid && (
-                          <FieldError errors={[fieldState.error]} />
+                    {/* administrator_id */}
+                    <div className="flex flex-col gap-1 text-sm">
+                      <Controller
+                        name="account.administrator_id"
+                        control={form.control}
+                        render={({ field, fieldState }) => (
+                          <>
+                            <FieldLabel htmlFor={`${idPrefix}administrator_id`}>Administrador</FieldLabel>
+                            <PersonCombobox
+                              people={people}
+                              value={field.value ?? ""}
+                              onChange={field.onChange}
+                              disabled={isPending}
+                              placeholder="Buscar administrador por nome ou apelido..."
+                            />
+                            {fieldState.invalid && (
+                              <FieldError errors={[fieldState.error]} />
+                            )}
+                          </>
                         )}
-                      </>
-                    )}
-                  />
-                </div>
+                      />
+                    </div>
+                  </>
+                )}
 
                 <Separator />
 

@@ -301,7 +301,11 @@ func (h *PeopleHandler) MergeRow(w http.ResponseWriter, r *http.Request) {
 				return err
 			}
 		}
-		// The orphan's aliases join the row's list, and the row's reach the orphan.
+		// The orphan's aliases join the row's list, and the row's reach the orphan; so does
+		// the row's administrator.
+		if err := acct.AlignHolderAdministrator(tx, keep.ID); err != nil {
+			return err
+		}
 		return acct.UnifyHolderNicknames(tx, keep.ID)
 	})
 

@@ -33,6 +33,7 @@ func seedStatementTarget(t *testing.T, tx *gorm.DB) (data.Account, data.PointBat
 	program := data.LoyaltyProgram{Name: "Test Program", Code: "L" + suffix, DefaultAirlineID: airline.ID}
 	create(t, tx, &program)
 	account := data.Account{
+		HolderID:                  testHolder(t, tx),
 		LoyaltyProgramID:          program.ID,
 		OwnsPointInventory:        true,
 		DefaultProfitSharePercent: 50,

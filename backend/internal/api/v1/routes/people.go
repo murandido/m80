@@ -29,7 +29,12 @@ func RegisterPeopleRoutes(r chi.Router, db *gorm.DB) {
 		// update person
 		r.Put("/{id}", peopleHandler.UpdatePerson)
 
-		// delete person
+		// the administrator of every account the holder has - one per holder
+		r.Put("/{id}/administrator", peopleHandler.SetHolderAdministrator)
+
+		// delete person: the holder and their accounts - deleted where nothing refers to them,
+		// archived otherwise
+		r.Get("/{id}/delete-preview", peopleHandler.PreviewDeletePerson)
 		r.Delete("/{id}", peopleHandler.DeletePerson)
 
 		// merge two people into one. Admin-only, like the legacy import: it rewrites
