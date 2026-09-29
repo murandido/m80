@@ -18,10 +18,13 @@ import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 import { createClientSchema } from "@/schemas/client"
 import { createClientAction } from "@/actions/client"
+import { ClientAgencyField } from "@/components/clients/client-agency-field"
+import { defaultAgencyId } from "@/lib/default-agency"
+import type { Agency } from "@/schemas/agency"
 
 type FormData = z.infer<typeof createClientSchema.request>
 
-export function CreateClientForm() {
+export function CreateClientForm({ agencies }: { agencies: Agency[] }) {
   const router = useRouter()
   const [isOpen, setIsOpen] = useState(false)
   const [isPending, startTransition] = useTransition()
@@ -32,6 +35,7 @@ export function CreateClientForm() {
     defaultValues: {
       name: "",
       phone: "",
+      agency_id: defaultAgencyId(agencies) ?? "",
     },
   })
 
@@ -142,6 +146,16 @@ export function CreateClientForm() {
                         )}
                       </>
                     )}
+                  />
+                </div>
+
+                {/* agency */}
+                <div className="flex flex-col gap-1 text-sm">
+                  <ClientAgencyField
+                    control={form.control}
+                    name="agency_id"
+                    agencies={agencies}
+                    disabled={isPending}
                   />
                 </div>
 

@@ -18,6 +18,8 @@ import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 import { Client, updateClientSchema } from "@/schemas/client"
 import { updateClientAction } from "@/actions/client"
+import { ClientAgencyField } from "@/components/clients/client-agency-field"
+import type { Agency } from "@/schemas/agency"
 
 type FormData = z.infer<typeof updateClientSchema.request>
 
@@ -25,15 +27,19 @@ interface EditClientPanelProps {
   client: Client
   isOpen: boolean
   onSaved: () => void
+  agencies: Agency[]
 }
 
-export function EditClientPanel({ client, isOpen, onSaved }: EditClientPanelProps) {
+export function EditClientPanel({ client, isOpen, onSaved, agencies }: EditClientPanelProps) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
 
   const defaultValues: FormData = {
     name: client.name,
     phone: client.phone ?? "",
+    // Empty for a client still waiting for an agency: saving then requires choosing one,
+    // which is exactly how a dev settles it.
+    agency_id: client.agency_id ?? "",
   }
 
   const form = useForm<FormData>({
@@ -158,6 +164,16 @@ export function EditClientPanel({ client, isOpen, onSaved }: EditClientPanelProp
                       )}
                     </>
                   )}
+                />
+              </div>
+
+              {/* agency */}
+              <div className="flex flex-col gap-1 text-sm">
+                <ClientAgencyField
+                  control={form.control}
+                  name="agency_id"
+                  agencies={agencies}
+                  disabled={isPending}
                 />
               </div>
 

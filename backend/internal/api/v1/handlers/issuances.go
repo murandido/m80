@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
+	"github.com/murandido/m-80-backend/internal/access"
 	"github.com/murandido/m-80-backend/internal/account"
 	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
@@ -354,6 +355,10 @@ const (
 func applyIssuanceListFilters(db *gorm.DB, query *gorm.DB, r *http.Request) *gorm.DB {
 	q := r.URL.Query()
 
+	// First, and unconditionally: every early return below - the search, "none" - must
+	// already be inside the caller's agencies.
+	query = middleware.AgencyScopeFrom(r.Context()).Restrict(query, "issuances.agency_id")
+
 	for column, param := range map[string]string{
 		"account_id":         "account_id",
 		"loyalty_program_id": "loyalty_program_id",
@@ -602,6 +607,7 @@ func (h *IssuanceHandler) GetIssuancesSummary(w http.ResponseWriter, r *http.Req
 		Preload("Flights", func(db *gorm.DB) *gorm.DB {
 			return db.Where("direction = ?", "outbound").Order("leg_order asc")
 		})
+	query = middleware.AgencyScopeFrom(r.Context()).Restrict(query, "issuances.agency_id")
 
 	if err := query.Find(&issuances).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch issuances")
@@ -656,6 +662,8 @@ func (h *IssuanceHandler) GetIssuance(w http.ResponseWriter, r *http.Request) {
 // @Success      201  {object}  schemas.IssuanceSingleResponse
 // @Failure      400  {object}  schemas.ErrorResponse "Payload inválido, flight_date com formato inválido, código IATA inexistente ou apelido que não pertence à conta"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      403  {object}  schemas.ErrorResponse "Usuário sem acesso a nenhuma agência"
+// @Failure      404  {object}  schemas.ErrorResponse "Agência fora do escopo do usuário"
 // @Failure      422  {object}  schemas.ErrorResponse "Program locator já está em uso por uma emissão ativa"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao criar emissão"
 // @Router       /issuances [post]
@@ -708,6 +716,27 @@ func (h *IssuanceHandler) CreateIssuance(w http.ResponseWriter, r *http.Request)
 		}
 		moment := rebaseToDay(time.Now(), day)
 		issuedAt = &moment
+	}
+
+	// The agency is settled here rather than left to issuancesvc.Create's fallback: that
+	// fallback is the main agency, which a restricted user may not be allowed to see - their
+	// issuance would vanish from their own grid the moment it was saved.
+	scope := middleware.AgencyScopeFrom(r.Context())
+	if req.AgencyID != nil && !scope.Allows(*req.AgencyID) {
+		utils.SendError(w, r, http.StatusNotFound, "Agency not found")
+		return
+	}
+	if req.AgencyID == nil {
+		agencyID, err := access.ResolveDefaultAgency(h.DB, scope)
+		if errors.Is(err, access.ErrNoAgencyAccess) {
+			utils.SendError(w, r, http.StatusForbidden, "Você não tem acesso a nenhuma agência")
+			return
+		}
+		if err != nil {
+			utils.SendError(w, r, http.StatusInternalServerError, "Failed to resolve the agency: "+err.Error())
+			return
+		}
+		req.AgencyID = &agencyID
 	}
 
 	// Complete is deliberately not part of the input: an issuance created from
@@ -859,6 +888,29 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 		issuance.AccountNicknameID = req.AccountNicknameID
 	}
 	if req.AgencyID != nil {
+		// The route already proved the issuance is in scope; moving it has to land in
+		// scope too, or it would be a way to hand an issuance to an agency the user
+		// cannot see - and lose it from their own grid.
+		if !middleware.AgencyScopeFrom(r.Context()).Allows(*req.AgencyID) {
+			utils.SendError(w, r, http.StatusNotFound, "Agency not found")
+			return
+		}
+		// A sale's client belongs to the sale's agency, so moving an issuance whose sale
+		// already has a client would break that pairing. Unlinking the client comes first.
+		if *req.AgencyID != issuance.AgencyID {
+			var linked int64
+			if err := h.DB.Model(&data.Sale{}).
+				Where("issuance_id = ? AND client_id IS NOT NULL", issuance.ID).
+				Count(&linked).Error; err != nil {
+				utils.SendError(w, r, http.StatusInternalServerError, "Failed to check the sale: "+err.Error())
+				return
+			}
+			if linked > 0 {
+				utils.SendError(w, r, http.StatusUnprocessableEntity,
+					"A venda desta emissão tem cliente de outra agência: desvincule o cliente antes de trocar a agência")
+				return
+			}
+		}
 		issuance.AgencyID = *req.AgencyID
 	}
 	// Same empty-string-means-cleared convention as AirlineLocator above, and for the

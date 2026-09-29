@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
+	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/azulsync"
 	"github.com/murandido/m-80-backend/internal/data"
@@ -120,6 +121,12 @@ func (h *StatementHandler) CommitAzulStatement(w http.ResponseWriter, r *http.Re
 	for _, selection := range body.Batches {
 		if err := h.Validator.Struct(selection); err != nil {
 			utils.SendError(w, r, http.StatusBadRequest, "Seleção inválida: "+err.Error())
+			return
+		}
+		// Each credit becomes a batch paid for by the agency chosen for it, so every choice
+		// has to be one of the caller's own.
+		if !middleware.AgencyScopeFrom(r.Context()).Allows(selection.FundingAgencyID) {
+			utils.SendError(w, r, http.StatusNotFound, "Agência não encontrada")
 			return
 		}
 	}

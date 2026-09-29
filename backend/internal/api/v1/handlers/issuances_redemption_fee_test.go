@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/events"
 	"gorm.io/gorm"
@@ -23,7 +22,7 @@ func callPatchIssuance(tx *gorm.DB, id, userID, body string) *httptest.ResponseR
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", id)
 	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
-	ctx = context.WithValue(ctx, middleware.UserContextKey, data.User{ID: userID, Role: "admin"})
+	ctx = asUser(ctx, data.User{ID: userID, Role: "admin"})
 	req = req.WithContext(ctx)
 
 	rec := httptest.NewRecorder()

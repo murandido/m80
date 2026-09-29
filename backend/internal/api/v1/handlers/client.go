@@ -8,6 +8,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/murandido/m-80-backend/internal/access"
+	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/utils"
@@ -31,6 +33,7 @@ func toClientResponse(client data.Client) schemas.ClientResponse {
 		ID:        client.ID,
 		Name:      client.Name,
 		Phone:     client.Phone,
+		AgencyID:  client.AgencyID,
 		CreatedAt: client.CreatedAt,
 		UpdatedAt: client.UpdatedAt,
 	}
@@ -63,15 +66,34 @@ func (h *ClientHandler) CreateClient(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	scope := middleware.AgencyScopeFrom(r.Context())
+	if req.AgencyID == nil {
+		agencyID, err := access.ResolveDefaultAgency(h.DB, scope)
+		if errors.Is(err, access.ErrNoAgencyAccess) {
+			utils.SendError(w, r, http.StatusForbidden, "Você não tem acesso a nenhuma agência")
+			return
+		}
+		if err != nil {
+			utils.SendError(w, r, http.StatusInternalServerError, "Failed to resolve the agency: "+err.Error())
+			return
+		}
+		req.AgencyID = &agencyID
+	}
+	if !scope.Allows(*req.AgencyID) {
+		utils.SendError(w, r, http.StatusNotFound, "Agência não encontrada")
+		return
+	}
+
 	client := data.Client{
-		Name:  req.Name,
-		Phone: req.Phone,
+		Name:     req.Name,
+		Phone:    req.Phone,
+		AgencyID: req.AgencyID,
 	}
 
 	if err := h.DB.Create(&client).Error; err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == postgresUniqueViolation {
-			utils.SendError(w, r, http.StatusUnprocessableEntity, "Client name already in use")
+			utils.SendError(w, r, http.StatusUnprocessableEntity, "Já existe um cliente com esse nome nesta agência")
 			return
 		}
 
@@ -98,8 +120,19 @@ var clientOrder = map[string]string{
 //
 // The phone is searched alongside the name because those are the only two fields a
 // client has, and "who is this number" is half of why anyone opens this screen.
-func clientListQuery(db *gorm.DB, params listQuery) *gorm.DB {
-	query := db.Model(&data.Client{})
+//
+// It is narrowed to the caller's agencies, which also keeps the clients still waiting for an
+// agency (NULL) away from everyone but devs. agency_id narrows it to one agency - the sale's,
+// when the picker asks - and pending_agency=true to those waiting ones, for the dev banner.
+func clientListQuery(db *gorm.DB, r *http.Request, params listQuery) *gorm.DB {
+	query := middleware.AgencyScopeFrom(r.Context()).Restrict(db.Model(&data.Client{}), "clients.agency_id")
+
+	if agencyID := r.URL.Query().Get("agency_id"); agencyID != "" {
+		query = query.Where("clients.agency_id = ?", agencyID)
+	}
+	if r.URL.Query().Get("pending_agency") == "true" {
+		query = query.Where("clients.agency_id IS NULL")
+	}
 
 	if params.Q != "" {
 		like := likePattern(params.Q)
@@ -125,7 +158,7 @@ func clientListQuery(db *gorm.DB, params listQuery) *gorm.DB {
 // @Router       /clients [get]
 func (h *ClientHandler) ListClients(w http.ResponseWriter, r *http.Request) {
 	var clients []data.Client
-	if err := clientListQuery(h.DB, parseListQuery(r)).Find(&clients).Error; err != nil {
+	if err := clientListQuery(h.DB, r, parseListQuery(r)).Find(&clients).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch clients")
 		return
 	}
@@ -154,7 +187,7 @@ func (h *ClientHandler) ListClients(w http.ResponseWriter, r *http.Request) {
 // @Router       /clients/manage [get]
 func (h *ClientHandler) ManageClients(w http.ResponseWriter, r *http.Request) {
 	params := parseListQuery(r)
-	query := clientListQuery(h.DB, params)
+	query := clientListQuery(h.DB, r, params)
 
 	// The count runs on the same filtered query as the page, so the total the
 	// pagination control shows can never disagree with what it is paginating.
@@ -245,10 +278,21 @@ func (h *ClientHandler) UpdateClient(w http.ResponseWriter, r *http.Request) {
 		client.Phone = req.Phone
 	}
 
+	// Moving a client between agencies leaves their past sales where they were - those are
+	// history - and only governs which sales they can be linked to from now on. That is also
+	// how a dev settles a client migration 000072 could not place.
+	if req.AgencyID != nil {
+		if !middleware.AgencyScopeFrom(r.Context()).Allows(*req.AgencyID) {
+			utils.SendError(w, r, http.StatusNotFound, "Agência não encontrada")
+			return
+		}
+		client.AgencyID = req.AgencyID
+	}
+
 	if err := h.DB.Save(&client).Error; err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == postgresUniqueViolation {
-			utils.SendError(w, r, http.StatusUnprocessableEntity, "Client name already in use")
+			utils.SendError(w, r, http.StatusUnprocessableEntity, "Já existe um cliente com esse nome nesta agência")
 			return
 		}
 

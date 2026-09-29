@@ -40,16 +40,22 @@ func RegisterSaleRoutes(r chi.Router, db *gorm.DB, broker *events.Broker) {
 		// bulk bump for the "all suppliers" PDF, which covers several administrators at once
 		r.With(middleware.RequireAdmin()).Post("/suppliers/export-counter/bulk", saleHandler.BulkIncrementSupplierExportCounter)
 
-		// link a client (and, for a panel that has not been published yet, the old
-		// paid switch - translated into a payment; see settleSaleFromLegacyFlag)
-		r.Patch("/{id}", saleHandler.UpdateSale)
+		// Everything addressed by a sale id sits behind the scope check - see
+		// middleware.RequireSaleInScope.
+		r.Route("/{id}", func(r chi.Router) {
+			r.Use(middleware.RequireSaleInScope(db))
 
-		// The statement of a sale: what the client has handed over, in parts. Open to
-		// any authenticated user, like the clients view it belongs to - receiving money
-		// from a client is the operator's own work.
-		r.Get("/{id}/payments", saleHandler.GetSalePayments)
-		r.Post("/{id}/payments", saleHandler.CreateSalePayment)
-		r.Delete("/{id}/payments/{paymentID}", saleHandler.DeleteSalePayment)
+			// link a client (and, for a panel that has not been published yet, the old
+			// paid switch - translated into a payment; see settleSaleFromLegacyFlag)
+			r.Patch("/", saleHandler.UpdateSale)
+
+			// The statement of a sale: what the client has handed over, in parts. Open to
+			// any authenticated user, like the clients view it belongs to - receiving money
+			// from a client is the operator's own work.
+			r.Get("/payments", saleHandler.GetSalePayments)
+			r.Post("/payments", saleHandler.CreateSalePayment)
+			r.Delete("/payments/{paymentID}", saleHandler.DeleteSalePayment)
+		})
 
 		// A lump sum from a client, spread over their open sales oldest first; what no sale
 		// takes is the client's credit. Same audience as the statement above.

@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
 	"gorm.io/gorm"
@@ -20,7 +19,7 @@ func rowMergeRequest(req *http.Request, keepID, actorID string) *http.Request {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", keepID)
 	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
-	ctx = context.WithValue(ctx, middleware.UserContextKey, data.User{ID: actorID, Role: data.RoleAdmin})
+	ctx = asUser(ctx, data.User{ID: actorID, Role: data.RoleAdmin})
 	return req.WithContext(ctx)
 }
 

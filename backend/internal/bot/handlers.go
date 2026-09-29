@@ -390,7 +390,7 @@ func (b *Bot) mayAct(evt *events.Message, kind triggerKind, text string) bool {
 		return true
 	}
 
-	_, allowed := b.authorizeSender(evt, flowNames[kind])
+	_, _, allowed := b.authorizeSender(evt, flowNames[kind])
 	return allowed
 }
 

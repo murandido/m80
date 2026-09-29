@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/murandido/m-80-backend/internal/access"
 	"github.com/murandido/m-80-backend/internal/data"
 	issuancesvc "github.com/murandido/m-80-backend/internal/issuance"
 	"gorm.io/gorm"
@@ -84,7 +85,7 @@ func TestResolveEmissao_ExistingNicknameReusesAccount(t *testing.T) {
 		before := countRows(t, tx, "accounts", "loyalty_program_id = ?", f.Program.ID)
 
 		// Typed in a different case than it was registered - the same account.
-		input, err := resolveEmissao(tx, f.message("heraldo"))
+		input, err := resolveEmissao(tx, f.message("heraldo"), access.FullScope())
 		if err != nil {
 			t.Fatalf("resolveEmissao returned %v", err)
 		}
@@ -105,7 +106,7 @@ func TestResolveEmissao_UnknownNicknameCreatesIncompleteAccount(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		f := seedEmissaoFixture(t, tx, data.Airline{})
 
-		input, err := resolveEmissao(tx, f.message("Heraldo"))
+		input, err := resolveEmissao(tx, f.message("Heraldo"), access.FullScope())
 		if err != nil {
 			t.Fatalf("resolveEmissao returned %v", err)
 		}
@@ -170,7 +171,7 @@ func TestResolveEmissao_AdminNicknameCreatesIncompletePersonAndLinks(t *testing.
 		msg := f.message("Heraldo")
 		msg.AdminNickname = "Fulano" + f.Suffix
 
-		input, err := resolveEmissao(tx, msg)
+		input, err := resolveEmissao(tx, msg, access.FullScope())
 		if err != nil {
 			t.Fatalf("resolveEmissao returned %v", err)
 		}
@@ -228,7 +229,7 @@ func TestResolveEmissao_NewAdminNameBecomesAnAliasOfTheCurrentOne(t *testing.T) 
 		msg := f.message("Heraldo")
 		msg.AdminNickname = "Fulano" + f.Suffix
 
-		if _, err := resolveEmissao(tx, msg); err != nil {
+		if _, err := resolveEmissao(tx, msg, access.FullScope()); err != nil {
 			t.Fatalf("resolveEmissao returned %v", err)
 		}
 
@@ -273,7 +274,7 @@ func TestResolveEmissao_AdminNameOwnedBySomeoneElseIsRejected(t *testing.T) {
 		msg := f.message("Heraldo")
 		msg.AdminNickname = "Fulano" + f.Suffix
 
-		_, err := resolveEmissao(tx, msg)
+		_, err := resolveEmissao(tx, msg, access.FullScope())
 		if err == nil {
 			t.Fatal("expected the conflict to be refused")
 		}
@@ -296,7 +297,7 @@ func TestResolveEmissao_AgencyNicknameCreatesNonDefaultAgency(t *testing.T) {
 		msg := f.message("Heraldo")
 		msg.AgencyNickname = "Agencia" + f.Suffix
 
-		input, err := resolveEmissao(tx, msg)
+		input, err := resolveEmissao(tx, msg, access.FullScope())
 		if err != nil {
 			t.Fatalf("resolveEmissao returned %v", err)
 		}
@@ -320,7 +321,7 @@ func TestResolveEmissao_NoAgencyLeavesTheDefaultToTheService(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		f := seedEmissaoFixture(t, tx, data.Airline{})
 
-		input, err := resolveEmissao(tx, f.message("Heraldo"))
+		input, err := resolveEmissao(tx, f.message("Heraldo"), access.FullScope())
 		if err != nil {
 			t.Fatalf("resolveEmissao returned %v", err)
 		}
@@ -398,7 +399,7 @@ func TestResolveEmissao_AirlineRequirements(t *testing.T) {
 				msg := f.message("Heraldo")
 				msg.Line2Extras = tt.extras
 
-				in, err := resolveEmissao(tx, msg)
+				in, err := resolveEmissao(tx, msg, access.FullScope())
 
 				if tt.wantErr != nil {
 					if !errors.Is(err, tt.wantErr) {
@@ -431,7 +432,7 @@ func TestResolveEmissao_ObservationPreset(t *testing.T) {
 		msg := f.message("Heraldo")
 		msg.ObservationCode = preset.Code
 
-		input, err := resolveEmissao(tx, msg)
+		input, err := resolveEmissao(tx, msg, access.FullScope())
 		if err != nil {
 			t.Fatalf("resolveEmissao returned %v", err)
 		}
@@ -448,7 +449,7 @@ func TestResolveEmissao_UnknownObservationPresetIsRejected(t *testing.T) {
 		msg := f.message("Heraldo")
 		msg.ObservationCode = "NOSUCHCODE"
 
-		_, err := resolveEmissao(tx, msg)
+		_, err := resolveEmissao(tx, msg, access.FullScope())
 		if err == nil || !strings.Contains(err.Error(), "não é um código de observação cadastrado") {
 			t.Fatalf("err = %v, want it to name the unknown code", err)
 		}
@@ -462,7 +463,7 @@ func TestResolveEmissao_UnknownProgramIsRejected(t *testing.T) {
 		msg := f.message("Heraldo")
 		msg.ProgramCode = "NOSUCHPROGRAM"
 
-		_, err := resolveEmissao(tx, msg)
+		_, err := resolveEmissao(tx, msg, access.FullScope())
 		if err == nil || !strings.Contains(err.Error(), "Não encontrei nenhum programa") {
 			t.Fatalf("err = %v, want it to name the unknown program", err)
 		}
@@ -476,7 +477,7 @@ func TestResolveEmissao_UnknownAirportIsRejected(t *testing.T) {
 		msg := f.message("Heraldo")
 		msg.OriginIATACode = "ZZZ"
 
-		_, err := resolveEmissao(tx, msg)
+		_, err := resolveEmissao(tx, msg, access.FullScope())
 		if !errors.Is(err, issuancesvc.ErrAirportNotFound) {
 			t.Fatalf("err = %v, want ErrAirportNotFound", err)
 		}
@@ -517,7 +518,7 @@ func TestResolveEmissao_ArchivedAccountStartsFresh(t *testing.T) {
 			t.Fatalf("archiving the account: %v", err)
 		}
 
-		input, err := resolveEmissao(tx, f.message("Heraldo"))
+		input, err := resolveEmissao(tx, f.message("Heraldo"), access.FullScope())
 		if err != nil {
 			t.Fatalf("resolveEmissao returned %v", err)
 		}

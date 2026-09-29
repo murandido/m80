@@ -12,7 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/murandido/m-80-backend/internal/api/middleware"
+	"github.com/murandido/m-80-backend/internal/access"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/events"
@@ -79,7 +79,7 @@ func callGetSales(t *testing.T, tx *gorm.DB, query string) []schemas.SaleRespons
 	t.Helper()
 	handler := NewSaleHandler(tx, events.NewBroker())
 
-	req := httptest.NewRequest(http.MethodGet, "/sales?"+query, nil)
+	req := withScope(httptest.NewRequest(http.MethodGet, "/sales?"+query, nil), access.FullScope())
 	rec := httptest.NewRecorder()
 	handler.GetSales(rec, req)
 
@@ -108,7 +108,7 @@ func callCreateIssuance(tx *gorm.DB, userID, body string) *httptest.ResponseReco
 	handler := NewIssuanceHandler(tx, events.NewBroker(), nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/issuances", strings.NewReader(body))
-	ctx := context.WithValue(req.Context(), middleware.UserContextKey, data.User{ID: userID, Role: "admin"})
+	ctx := asUser(req.Context(), data.User{ID: userID, Role: "admin"})
 	req = req.WithContext(ctx)
 
 	rec := httptest.NewRecorder()
@@ -164,7 +164,7 @@ func TestDeleteIssuance_DeletesSale(t *testing.T) {
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("id", issuance.ID)
 		ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
-		ctx = context.WithValue(ctx, middleware.UserContextKey, data.User{ID: user.ID, Role: "admin"})
+		ctx = asUser(ctx, data.User{ID: user.ID, Role: "admin"})
 		rec := httptest.NewRecorder()
 		handler.DeleteIssuance(rec, req.WithContext(ctx))
 
@@ -282,8 +282,7 @@ func TestGetSales_FiltersByIssuanceDimensions(t *testing.T) {
 		wanted, wantedSale := seedSaleFixture(t, tx, main.ID)
 		_, otherSale := seedSaleFixture(t, tx, main.ID)
 
-		client := data.Client{Name: "Cliente " + uuid.New().String()[:8]}
-		create(t, tx, &client)
+		client := seedClient(t, tx)
 		if err := tx.Model(&data.Sale{}).Where("id = ?", wantedSale.ID).
 			Update("client_id", client.ID).Error; err != nil {
 			t.Fatalf("failed to link client: %v", err)
@@ -372,7 +371,7 @@ func callUpdateSale(t *testing.T, tx *gorm.DB, id, body string) *httptest.Respon
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", id)
 	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
-	ctx = context.WithValue(ctx, middleware.UserContextKey, actor)
+	ctx = asUser(ctx, actor)
 	req = req.WithContext(ctx)
 
 	rec := httptest.NewRecorder()
@@ -385,8 +384,7 @@ func TestUpdateSale_LinksClientAndMarksPaid(t *testing.T) {
 		main := defaultAgency(t, tx)
 		_, sale := seedSaleFixture(t, tx, main.ID)
 
-		client := data.Client{Name: "Cliente " + uuid.New().String()[:8]}
-		create(t, tx, &client)
+		client := seedClient(t, tx)
 
 		rec := callUpdateSale(t, tx, sale.ID, `{"client_id":"`+client.ID+`","paid":true}`)
 		if rec.Code != http.StatusOK {
@@ -422,8 +420,7 @@ func TestUpdateSale_NullClientUnlinks(t *testing.T) {
 		main := defaultAgency(t, tx)
 		_, sale := seedSaleFixture(t, tx, main.ID)
 
-		client := data.Client{Name: "Cliente " + uuid.New().String()[:8]}
-		create(t, tx, &client)
+		client := seedClient(t, tx)
 		if err := tx.Model(&data.Sale{}).Where("id = ?", sale.ID).Update("client_id", client.ID).Error; err != nil {
 			t.Fatalf("failed to pre-link client: %v", err)
 		}
@@ -447,8 +444,7 @@ func TestUpdateSale_OmittedClientKeepsLink(t *testing.T) {
 		main := defaultAgency(t, tx)
 		_, sale := seedSaleFixture(t, tx, main.ID)
 
-		client := data.Client{Name: "Cliente " + uuid.New().String()[:8]}
-		create(t, tx, &client)
+		client := seedClient(t, tx)
 		if err := tx.Model(&data.Sale{}).Where("id = ?", sale.ID).Update("client_id", client.ID).Error; err != nil {
 			t.Fatalf("failed to pre-link client: %v", err)
 		}
@@ -569,7 +565,7 @@ func TestUpdateSale_BroadcastsSaleUpdated(t *testing.T) {
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("id", sale.ID)
 		ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
-		ctx = context.WithValue(ctx, middleware.UserContextKey, actor)
+		ctx = asUser(ctx, actor)
 		req = req.WithContext(ctx)
 
 		rec := httptest.NewRecorder()
@@ -608,7 +604,7 @@ func TestUpdateSale_DoesNotBroadcastOnFailure(t *testing.T) {
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("id", unknownID)
 		ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
-		ctx = context.WithValue(ctx, middleware.UserContextKey, actor)
+		ctx = asUser(ctx, actor)
 		req = req.WithContext(ctx)
 
 		rec := httptest.NewRecorder()
@@ -631,7 +627,7 @@ func callGetSupplierBalances(t *testing.T, tx *gorm.DB, query string) []schemas.
 	t.Helper()
 	handler := NewSaleHandler(tx, events.NewBroker())
 
-	req := httptest.NewRequest(http.MethodGet, "/sales/suppliers?"+query, nil)
+	req := withScope(httptest.NewRequest(http.MethodGet, "/sales/suppliers?"+query, nil), access.FullScope())
 	rec := httptest.NewRecorder()
 	handler.GetSupplierBalances(rec, req)
 
@@ -912,7 +908,7 @@ func callSetSupplierCost(t *testing.T, tx *gorm.DB, body string) *httptest.Respo
 	t.Helper()
 	handler := NewSaleHandler(tx, events.NewBroker())
 
-	req := httptest.NewRequest(http.MethodPost, "/sales/suppliers/issuances", strings.NewReader(body))
+	req := withScope(httptest.NewRequest(http.MethodPost, "/sales/suppliers/issuances", strings.NewReader(body)), access.FullScope())
 	rec := httptest.NewRecorder()
 	handler.UpdateSupplierIssuances(rec, req)
 	return rec

@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/murandido/m-80-backend/internal/access"
 	"github.com/murandido/m-80-backend/internal/data"
 	"gorm.io/gorm"
 )
@@ -76,7 +77,7 @@ func TestResolveAlteracao_AssignsRouteExtrasByAirlineFlags(t *testing.T) {
 			t.Fatalf("parseAlteracao returned %v", err)
 		}
 
-		fields, err := resolveAlteracao(tx, msg, issuance)
+		fields, err := resolveAlteracao(tx, msg, issuance, access.FullScope())
 		if err != nil {
 			t.Fatalf("resolveAlteracao returned %v", err)
 		}
@@ -106,7 +107,7 @@ func TestResolveAlteracao_LeavesOutAnExtraTheMessageDidNotMention(t *testing.T) 
 			t.Fatalf("parseAlteracao returned %v", err)
 		}
 
-		fields, err := resolveAlteracao(tx, msg, issuance)
+		fields, err := resolveAlteracao(tx, msg, issuance, access.FullScope())
 		if err != nil {
 			t.Fatalf("resolveAlteracao refused a route line that only moves the origin: %v", err)
 		}
@@ -131,7 +132,7 @@ func TestResolveAlteracao_RefusesARouteWithAFieldTooMany(t *testing.T) {
 			t.Fatalf("parseAlteracao returned %v", err)
 		}
 
-		if _, err := resolveAlteracao(tx, msg, issuance); err == nil {
+		if _, err := resolveAlteracao(tx, msg, issuance, access.FullScope()); err == nil {
 			t.Fatal("a route line with a field the airline does not use was accepted")
 		} else if !strings.Contains(err.Error(), "não usa") {
 			t.Fatalf("error %q does not say the field is unused", err)
@@ -159,7 +160,7 @@ func TestResolveAlteracao_RefusesAnUnknownObservationCodeItWasToldAbout(t *testi
 		if err != nil {
 			t.Fatalf("parseAlteracao returned %v", err)
 		}
-		fields, err := resolveAlteracao(tx, msg, issuance)
+		fields, err := resolveAlteracao(tx, msg, issuance, access.FullScope())
 		if err != nil {
 			t.Fatalf("resolveAlteracao returned %v for a registered code", err)
 		}

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/murandido/m-80-backend/internal/access"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/events"
@@ -56,7 +57,7 @@ func listIssuances(t *testing.T, tx *gorm.DB) []schemas.IssuanceResponse {
 	t.Helper()
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/issuances", nil)
+	req := withScope(httptest.NewRequest(http.MethodGet, "/issuances", nil), access.FullScope())
 	NewIssuanceHandler(tx, events.NewBroker(), nil).GetIssuances(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /issuances: expected 200, got %d: %s", rec.Code, rec.Body.String())

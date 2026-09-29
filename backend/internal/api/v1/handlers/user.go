@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"slices"
 
@@ -37,7 +38,8 @@ func NewUserHandler(db *gorm.DB) *UserHandler {
 // @Success      201  {object}  schemas.UserSingleResponse
 // @Failure      400  {object}  schemas.ErrorResponse "Payload inválido"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
-// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a administradores"
+// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a administradores; agências e perfil de desenvolvedor só por desenvolvedores"
+// @Failure      422  {object}  schemas.ErrorResponse "Agência inexistente"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao criar usuário"
 // @Router       /users [post]
 func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
@@ -53,6 +55,11 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !callerIsDev(r) && (req.Role == data.RoleDev || req.AgencyIDs != nil) {
+		utils.SendError(w, r, http.StatusForbidden, "Só desenvolvedores definem agências e o perfil de desenvolvedor")
+		return
+	}
+
 	user := data.User{
 		Name:     req.Name,
 		Phone:    req.Phone,
@@ -60,20 +67,28 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		Role:     req.Role,
 	}
 
-	if err := h.DB.Create(&user).Error; err != nil {
+	// A dev's role already covers every agency; grants on one would only go stale.
+	var agencyIDs []string
+	if req.AgencyIDs != nil && req.Role != data.RoleDev {
+		agencyIDs = *req.AgencyIDs
+	}
+
+	err := h.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&user).Error; err != nil {
+			return err
+		}
+		return replaceUserAgencies(tx, user.ID, agencyIDs)
+	})
+	if errors.Is(err, errUnknownAgency) {
+		utils.SendError(w, r, http.StatusUnprocessableEntity, "Agência inexistente")
+		return
+	}
+	if err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to create user: "+err.Error())
 		return
 	}
 
-	resp := schemas.UserResponse{
-		ID:        user.ID,
-		Name:      user.Name,
-		Phone:     user.Phone,
-		Role:      user.Role,
-		CreatedAt: user.CreatedAt,
-	}
-
-	utils.SendJSON(w, r, http.StatusCreated, "User created successfully", resp)
+	utils.SendJSON(w, r, http.StatusCreated, "User created successfully", toUserResponse(user, agencyIDs))
 }
 
 // userOrder is the whitelist of sort keys; the client's string only ever indexes it.
@@ -127,15 +142,19 @@ func (h *UserHandler) GetUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	userIDs := make([]string, 0, len(users))
+	for _, user := range users {
+		userIDs = append(userIDs, user.ID)
+	}
+	grants, err := loadUserAgencyIDs(h.DB, userIDs)
+	if err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch users")
+		return
+	}
+
 	var resp []schemas.UserResponse
 	for _, user := range users {
-		resp = append(resp, schemas.UserResponse{
-			ID:        user.ID,
-			Name:      user.Name,
-			Phone:     user.Phone,
-			Role:      user.Role,
-			CreatedAt: user.CreatedAt,
-		})
+		resp = append(resp, toUserResponse(user, grants[user.ID]))
 	}
 
 	utils.SendJSON(w, r, http.StatusOK, "Users fetched successfully", resp)
@@ -162,15 +181,13 @@ func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := schemas.UserResponse{
-		ID:        user.ID,
-		Name:      user.Name,
-		Phone:     user.Phone,
-		Role:      user.Role,
-		CreatedAt: user.CreatedAt,
+	grants, err := loadUserAgencyIDs(h.DB, []string{user.ID})
+	if err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch user")
+		return
 	}
 
-	utils.SendJSON(w, r, http.StatusOK, "User fetched successfully", resp)
+	utils.SendJSON(w, r, http.StatusOK, "User fetched successfully", toUserResponse(user, grants[user.ID]))
 }
 
 // UpdateUser handles the PUT /users/{id} route
@@ -185,8 +202,9 @@ func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 // @Success      200  {object}  schemas.UserSingleResponse
 // @Failure      400  {object}  schemas.ErrorResponse "Payload inválido"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
-// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a administradores"
+// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a administradores; agências, perfil e contas de desenvolvedor só por desenvolvedores"
 // @Failure      404  {object}  schemas.ErrorResponse "Usuário não encontrado"
+// @Failure      422  {object}  schemas.ErrorResponse "Agência inexistente"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao atualizar usuário"
 // @Router       /users/{id} [put]
 func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
@@ -217,6 +235,12 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A dev account, the dev role and the agency grants are all a dev's call; see callerIsDev.
+	if !callerIsDev(r) && (user.Role == data.RoleDev || req.Role == data.RoleDev || req.AgencyIDs != nil) {
+		utils.SendError(w, r, http.StatusForbidden, "Só desenvolvedores definem agências e o perfil de desenvolvedor")
+		return
+	}
+
 	if req.Name != "" {
 		user.Name = req.Name
 	}
@@ -233,20 +257,36 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		user.Role = req.Role
 	}
 
-	if err := h.DB.Save(&user).Error; err != nil {
+	err = h.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Save(&user).Error; err != nil {
+			return err
+		}
+		switch {
+		case user.Role == data.RoleDev:
+			// Promoted to dev: the role covers every agency, and grants left behind would
+			// silently come back into force on a later demotion.
+			return replaceUserAgencies(tx, user.ID, nil)
+		case req.AgencyIDs != nil:
+			return replaceUserAgencies(tx, user.ID, *req.AgencyIDs)
+		}
+		return nil
+	})
+	if errors.Is(err, errUnknownAgency) {
+		utils.SendError(w, r, http.StatusUnprocessableEntity, "Agência inexistente")
+		return
+	}
+	if err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to update user: "+err.Error())
 		return
 	}
 
-	resp := schemas.UserResponse{
-		ID:        user.ID,
-		Name:      user.Name,
-		Phone:     user.Phone,
-		Role:      user.Role,
-		CreatedAt: user.CreatedAt,
+	grants, err := loadUserAgencyIDs(h.DB, []string{user.ID})
+	if err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch user")
+		return
 	}
 
-	utils.SendJSON(w, r, http.StatusOK, "User updated successfully", resp)
+	utils.SendJSON(w, r, http.StatusOK, "User updated successfully", toUserResponse(user, grants[user.ID]))
 }
 
 // DeleteUser handles the DELETE /users/{id} route.
@@ -258,11 +298,19 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 // @Param        id  path  string  true  "UUID do usuário"
 // @Success      200  {object}  schemas.ErrorResponse "Usuário deletado com sucesso"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
-// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a administradores"
+// @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a administradores; contas de desenvolvedor só por desenvolvedores"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao deletar usuário"
 // @Router       /users/{id} [delete]
 func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+
+	if !callerIsDev(r) {
+		var target data.User
+		if err := h.DB.Select("role").First(&target, "id = ?", id).Error; err == nil && target.Role == data.RoleDev {
+			utils.SendError(w, r, http.StatusForbidden, "Só desenvolvedores removem um desenvolvedor")
+			return
+		}
+	}
 
 	// soft delete
 	// because data.User model embeds gorm.Model, gorm will not run a "DELETE FROM" query

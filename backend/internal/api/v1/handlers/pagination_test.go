@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/murandido/m-80-backend/internal/access"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
 	"gorm.io/gorm"
@@ -55,7 +56,7 @@ func callAccountsPage(t *testing.T, tx *gorm.DB, query string) schemas.AccountPa
 func callManageClients(t *testing.T, tx *gorm.DB, query string) schemas.ClientPaginatedData {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	NewClientHandler(tx).ManageClients(rec, httptest.NewRequest(http.MethodGet, "/clients/manage?"+query, nil))
+	NewClientHandler(tx).ManageClients(rec, withScope(httptest.NewRequest(http.MethodGet, "/clients/manage?"+query, nil), access.FullScope()))
 
 	var resp clientPaginatedResponse
 	decodeOK(t, rec, "ManageClients", &resp)
@@ -65,7 +66,7 @@ func callManageClients(t *testing.T, tx *gorm.DB, query string) schemas.ClientPa
 func callListClients(t *testing.T, tx *gorm.DB, query string) []schemas.ClientResponse {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	NewClientHandler(tx).ListClients(rec, httptest.NewRequest(http.MethodGet, "/clients?"+query, nil))
+	NewClientHandler(tx).ListClients(rec, withScope(httptest.NewRequest(http.MethodGet, "/clients?"+query, nil), access.FullScope()))
 
 	var resp clientListResponse
 	decodeOK(t, rec, "ListClients", &resp)

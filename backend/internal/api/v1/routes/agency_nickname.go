@@ -11,18 +11,20 @@ import (
 func RegisterAgencyNicknameRoutes(r chi.Router, db *gorm.DB) {
 	agencyNicknameHandler := handlers.NewAgencyNicknameHandler(db)
 
-	// nickname availability check (global, not scoped to a specific agency)
-	r.Get("/nicknames/availability", agencyNicknameHandler.CheckAgencyNicknameAvailability)
+	requireDev := middleware.RequireDev()
 
-	requireAdmin := middleware.RequireAdmin()
+	// Nickname availability check. It is global - it answers across every agency - and only
+	// the dev-only agency form asks it, so it follows that form instead of leaking to a
+	// restricted user that a nickname exists in an agency they cannot see.
+	r.With(requireDev).Get("/nicknames/availability", agencyNicknameHandler.CheckAgencyNicknameAvailability)
 
 	r.Route("/{id}/nicknames", func(r chi.Router) {
-		// Writes follow the agencies screen they are edited from; reads stay open
-		// because the bot resolves an agency by nickname on behalf of any operator.
-		r.With(requireAdmin).Post("/", agencyNicknameHandler.CreateAgencyNickname)
+		// Writes follow the dev-only agencies screen they are edited from; reads stay
+		// open to any role, narrowed by the handler to the caller's agency scope.
+		r.With(requireDev).Post("/", agencyNicknameHandler.CreateAgencyNickname)
 		r.Get("/", agencyNicknameHandler.GetAgencyNicknames)
 		r.Get("/{nicknameID}", agencyNicknameHandler.GetAgencyNickname)
-		r.With(requireAdmin).Put("/{nicknameID}", agencyNicknameHandler.UpdateAgencyNickname)
-		r.With(requireAdmin).Delete("/{nicknameID}", agencyNicknameHandler.DeleteAgencyNickname)
+		r.With(requireDev).Put("/{nicknameID}", agencyNicknameHandler.UpdateAgencyNickname)
+		r.With(requireDev).Delete("/{nicknameID}", agencyNicknameHandler.DeleteAgencyNickname)
 	})
 }

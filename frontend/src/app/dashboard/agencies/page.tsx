@@ -1,7 +1,7 @@
 import type { Metadata } from "next"
 import { cookies } from "next/headers"
 import { Separator } from "@/components/ui/separator"
-import { requireAdmin } from "@/lib/session"
+import { requireDev } from "@/lib/session"
 import { env } from "@/lib/env"
 import { getAgenciesSchema, Agency } from "@/schemas/agency"
 import { AgencyCard } from "@/components/agencies/agency-card"
@@ -23,7 +23,9 @@ export default async function AgenciesPage({
 }: {
   searchParams: Promise<Partial<Record<(typeof AGENCIES_URL_KEYS)[number], string>>>
 }) {
-  await requireAdmin()
+  // Dev only: devs decide which agencies each account sees, so creating one - or moving the
+  // main agency - is theirs too. The API refuses the writes to anyone else.
+  await requireDev()
 
   const cookieStore = await cookies()
   const token = cookieStore.get("auth_token")?.value

@@ -53,8 +53,10 @@ func newEmissaoScenario(t *testing.T, tx *gorm.DB, airline data.Airline) emissao
 	})
 
 	// An agency flagged is_default has to exist: the message carries no agency,
-	// so the issuance service falls back to it.
-	seedDefaultAgency(t, tx)
+	// so the issuance lands on it - and the sender has to be granted it, since a
+	// user with no agencies may not issue at all.
+	defaultAgency := seedDefaultAgency(t, tx)
+	seed(t, tx, &data.UserAgency{UserID: user.ID, AgencyID: defaultAgency.ID})
 
 	client := &fakeClientBase{}
 	notify := &atomic.Int32{}
@@ -91,18 +93,18 @@ func newEmissaoScenario(t *testing.T, tx *gorm.DB, airline data.Airline) emissao
 }
 
 // seedDefaultAgency makes sure exactly one agency is flagged is_default inside
-// this test's transaction, whether or not the database already had one.
-func seedDefaultAgency(t *testing.T, tx *gorm.DB) {
+// this test's transaction, whether or not the database already had one, and
+// returns it.
+func seedDefaultAgency(t *testing.T, tx *gorm.DB) data.Agency {
 	t.Helper()
 
-	var count int64
-	if err := tx.Model(&data.Agency{}).Where("is_default = ?", true).Count(&count).Error; err != nil {
-		t.Fatalf("failed to count default agencies: %v", err)
+	var agency data.Agency
+	if err := tx.Where("is_default = ?", true).First(&agency).Error; err == nil {
+		return agency
 	}
-	if count > 0 {
-		return
-	}
-	seed(t, tx, &data.Agency{Name: "Agência Padrão", IsDefault: true})
+	agency = data.Agency{Name: "Agência Padrão", IsDefault: true}
+	seed(t, tx, &agency)
+	return agency
 }
 
 // text builds a full EMISSAO message for the scenario's loyalty program. The

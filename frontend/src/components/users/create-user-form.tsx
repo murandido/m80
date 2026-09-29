@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
-import { Controller, useForm } from "react-hook-form"
+import { Controller, useForm, useWatch } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
 import { UserCog, X, Eye, EyeOff, PhoneCall, User, KeyRound, Save } from "lucide-react"
@@ -19,11 +19,20 @@ import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 import { createUserSchema } from "@/schemas/user"
 import { RoleSelector } from "@/components/users/role-selector"
+import { UserAgenciesField } from "@/components/users/user-agencies-field"
 import { createUserAction } from "@/actions/user"
+import type { Agency } from "@/schemas/agency"
 
 type FormData = z.infer<typeof createUserSchema.request>
 
-export function CreateUserForm() {
+interface CreateUserFormProps {
+  // Whether the person filling the form is a dev: only then are agencies and the dev role
+  // offered, since the API refuses both from anyone else.
+  viewerIsDev: boolean
+  agencies: Agency[]
+}
+
+export function CreateUserForm({ viewerIsDev, agencies }: CreateUserFormProps) {
   const router = useRouter()
   const [isOpen, setIsOpen] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
@@ -37,8 +46,10 @@ export function CreateUserForm() {
       phone: "",
       password: "",
       role: "user",
+      agency_ids: viewerIsDev ? [] : undefined,
     },
   })
+  const role = useWatch({ control: form.control, name: "role" })
 
   function handleToggle() {
     if (isOpen) {
@@ -50,7 +61,9 @@ export function CreateUserForm() {
 
   function onSubmit(data: FormData) {
     startTransition(async () => {
-      const result = await createUserAction(data)
+      // A dev's role covers every agency; grants on one would only go stale.
+      const payload = data.role === "dev" ? { ...data, agency_ids: undefined } : data
+      const result = await createUserAction(payload)
 
       if (result.error) {
         form.setError("root", { message: result.error })
@@ -201,10 +214,32 @@ export function CreateUserForm() {
                     name="role"
                     control={form.control}
                     render={({ field }) => (
-                      <RoleSelector value={field.value} onChange={field.onChange} />
+                      <RoleSelector
+                        value={field.value}
+                        onChange={field.onChange}
+                        allowDev={viewerIsDev}
+                      />
                     )}
                   />
                 </div>
+
+                {/* agencies - dev only, and meaningless for a dev account */}
+                {viewerIsDev && role !== "dev" && (
+                  <div className="flex flex-col gap-1 text-sm">
+                    <Controller
+                      name="agency_ids"
+                      control={form.control}
+                      render={({ field }) => (
+                        <UserAgenciesField
+                          agencies={agencies}
+                          value={field.value ?? []}
+                          onChange={field.onChange}
+                          disabled={isPending}
+                        />
+                      )}
+                    />
+                  </div>
+                )}
 
                 <Separator />
 

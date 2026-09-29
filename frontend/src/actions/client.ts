@@ -18,7 +18,11 @@ export async function createClientAction(
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ name: data.name, phone: data.phone || undefined }),
+      body: JSON.stringify({
+        name: data.name,
+        phone: data.phone || undefined,
+        agency_id: data.agency_id,
+      }),
     })
 
     const json = await res.json()
@@ -56,7 +60,11 @@ export async function updateClientAction(
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ name: data.name, phone: data.phone || undefined }),
+      body: JSON.stringify({
+        name: data.name,
+        phone: data.phone || undefined,
+        agency_id: data.agency_id,
+      }),
     })
 
     const json = await res.json()

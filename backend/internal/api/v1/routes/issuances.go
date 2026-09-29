@@ -2,6 +2,7 @@ package routes
 
 import (
 	"github.com/go-chi/chi/v5"
+	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/handlers"
 	"github.com/murandido/m-80-backend/internal/booking"
 	"github.com/murandido/m-80-backend/internal/events"
@@ -26,37 +27,43 @@ func RegisterIssuanceRoutes(r chi.Router, db *gorm.DB, broker *events.Broker, bo
 		// export filtered issuances as an .xlsx spreadsheet
 		r.Get("/export", issuanceHandler.GetIssuancesExport)
 
-		// get issuance
-		r.Get("/{id}", issuanceHandler.GetIssuance)
+		// Everything addressed by id sits behind the scope check, so a route added to this
+		// group is protected without having to remember it (see RequireIssuanceInScope).
+		r.Route("/{id}", func(r chi.Router) {
+			r.Use(middleware.RequireIssuanceInScope(db))
 
-		// update issuance (autosave, partial)
-		r.Patch("/{id}", issuanceHandler.UpdateIssuance)
+			// get issuance
+			r.Get("/", issuanceHandler.GetIssuance)
 
-		// delete issuance (soft delete)
-		r.Delete("/{id}", issuanceHandler.DeleteIssuance)
+			// update issuance (autosave, partial)
+			r.Patch("/", issuanceHandler.UpdateIssuance)
 
-		// cancel issuance (deactivate + refund + audit)
-		r.Post("/{id}/cancel", issuanceHandler.CancelIssuance)
+			// delete issuance (soft delete)
+			r.Delete("/", issuanceHandler.DeleteIssuance)
 
-		// uncancel issuance (revert cancellation, restore prior sale state + audit)
-		r.Post("/{id}/uncancel", issuanceHandler.UncancelIssuance)
+			// cancel issuance (deactivate + refund + audit)
+			r.Post("/cancel", issuanceHandler.CancelIssuance)
 
-		// pull the itinerary from Traveos, issuing the ticket there first if needed
-		r.Post("/{id}/traveos-sync", issuanceHandler.SyncIssuanceWithTraveos)
+			// uncancel issuance (revert cancellation, restore prior sale state + audit)
+			r.Post("/uncancel", issuanceHandler.UncancelIssuance)
 
-		// the passenger's ticket - the same document twice, as the page the panel
-		// shows and as the file it downloads
-		r.Get("/{id}/ticket", issuanceHandler.GetIssuanceTicket)
-		r.Get("/{id}/pdf", issuanceHandler.GetIssuanceTicketPDF)
+			// pull the itinerary from Traveos, issuing the ticket there first if needed
+			r.Post("/traveos-sync", issuanceHandler.SyncIssuanceWithTraveos)
 
-		// the two things about a booking the airline changes after issuing, and
-		// that Traveos lets an operator correct. Each PUT replaces its whole set.
-		r.Get("/{id}/seats", issuanceHandler.GetIssuanceSeats)
-		r.Put("/{id}/seats", issuanceHandler.PutIssuanceSeats)
-		r.Get("/{id}/baggage", issuanceHandler.GetIssuanceBaggage)
-		r.Put("/{id}/baggage", issuanceHandler.PutIssuanceBaggage)
+			// the passenger's ticket - the same document twice, as the page the panel
+			// shows and as the file it downloads
+			r.Get("/ticket", issuanceHandler.GetIssuanceTicket)
+			r.Get("/pdf", issuanceHandler.GetIssuanceTicketPDF)
 
-		// passengers sub-resource
-		RegisterIssuancePassengerRoutes(r, db)
+			// the two things about a booking the airline changes after issuing, and
+			// that Traveos lets an operator correct. Each PUT replaces its whole set.
+			r.Get("/seats", issuanceHandler.GetIssuanceSeats)
+			r.Put("/seats", issuanceHandler.PutIssuanceSeats)
+			r.Get("/baggage", issuanceHandler.GetIssuanceBaggage)
+			r.Put("/baggage", issuanceHandler.PutIssuanceBaggage)
+
+			// passengers sub-resource
+			RegisterIssuancePassengerRoutes(r, db)
+		})
 	})
 }

@@ -3,6 +3,7 @@ package bot
 import (
 	"strings"
 
+	"github.com/murandido/m-80-backend/internal/access"
 	"github.com/murandido/m-80-backend/internal/data"
 	"gorm.io/gorm"
 )
@@ -55,7 +56,7 @@ type alteracaoFields struct {
 // reason: it is not read-only. An account alias nobody registered yet creates
 // the account, the person behind it and the alias itself, and none of that may
 // outlive a message that fails further down.
-func resolveAlteracao(tx *gorm.DB, msg *alteracaoMessage, issuance data.Issuance) (alteracaoFields, error) {
+func resolveAlteracao(tx *gorm.DB, msg *alteracaoMessage, issuance data.Issuance, scope access.AgencyScope) (alteracaoFields, error) {
 	var fields alteracaoFields
 
 	settled, err := settleAlteracaoLines(tx, msg.Corrections)
@@ -64,7 +65,7 @@ func resolveAlteracao(tx *gorm.DB, msg *alteracaoMessage, issuance data.Issuance
 	}
 
 	for _, line := range settled {
-		if err := resolveAlteracaoLine(tx, line, issuance, &fields); err != nil {
+		if err := resolveAlteracaoLine(tx, line, issuance, scope, &fields); err != nil {
 			return fields, err
 		}
 	}
@@ -154,7 +155,7 @@ func observationPresetExists(tx *gorm.DB, code string) (bool, error) {
 // by the very function that parses the equivalent EMISSAO line, so a number, an
 // airport code or an alias means exactly the same thing in both messages - and
 // a change to the format only has one place to be made.
-func resolveAlteracaoLine(tx *gorm.DB, line alteracaoLine, issuance data.Issuance, fields *alteracaoFields) error {
+func resolveAlteracaoLine(tx *gorm.DB, line alteracaoLine, issuance data.Issuance, scope access.AgencyScope, fields *alteracaoFields) error {
 	var draft emissaoMessage
 
 	switch line.Kind {
@@ -213,7 +214,7 @@ func resolveAlteracaoLine(tx *gorm.DB, line alteracaoLine, issuance data.Issuanc
 			}
 		}
 		if draft.AgencyNickname != "" {
-			agencyID, err := resolveAgencyByNickname(tx, draft.AgencyNickname)
+			agencyID, err := resolveAgencyByNickname(tx, draft.AgencyNickname, scope)
 			if err != nil {
 				return err
 			}

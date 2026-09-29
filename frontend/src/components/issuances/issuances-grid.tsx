@@ -82,6 +82,7 @@ import {
 import { parseAccountEntry } from "@/components/issuances/account-entry"
 import { normalizeSearch } from "@/lib/search"
 import { z } from "zod"
+import { defaultAgencyId } from "@/lib/default-agency"
 
 const COLUMN_LABELS = [
   "Cia aérea",
@@ -326,10 +327,10 @@ export function IssuancesGrid({
   // receives paste events, and navigator.clipboard.readText() prompts for a
   // clipboard-read permission on first use.
   const pasteCatcherRef = useRef<HTMLTextAreaElement>(null)
-  // The agency a new draft row defaults to - the one flagged is_default. The backend applies
+  // The agency a new draft row defaults to - the user's default one. The backend applies
   // the same fallback when agency_id is omitted, so this just surfaces it in the draft.
-  const defaultAgencyId = useMemo(
-    () => referenceData.agencies.find((a) => a.is_default)?.id ?? null,
+  const draftAgencyId = useMemo(
+    () => defaultAgencyId(referenceData.agencies) ?? null,
     [referenceData.agencies],
   )
   // Rows whose POST is currently in flight. `row.isDraft` alone can't gate the create:
@@ -501,7 +502,7 @@ export function IssuancesGrid({
     (key: string) => {
       setRows((prev) => {
         const next = prev.filter((row) => row.key !== key)
-        return next.length > 0 ? next : [makeDraftRow(currentUserId, defaultAgencyId, recordingOnRef.current)]
+        return next.length > 0 ? next : [makeDraftRow(currentUserId, draftAgencyId, recordingOnRef.current)]
       })
       setAccountClearedKeys((prev) => {
         if (!prev.has(key)) return prev
@@ -510,7 +511,7 @@ export function IssuancesGrid({
         return next
       })
     },
-    [currentUserId, defaultAgencyId],
+    [currentUserId, draftAgencyId],
   )
 
   const flashSaveStatus = useCallback(
@@ -845,11 +846,11 @@ export function IssuancesGrid({
       const { sel, sticky } = interactionRef.current
       const resolved = resolveNextCell(currentRows, sel, direction, 0, columnCountRef.current)
       if (resolved.appendRow) {
-        setRows((prev) => [...prev, makeDraftRow(currentUserId, defaultAgencyId, recordingOnRef.current)])
+        setRows((prev) => [...prev, makeDraftRow(currentUserId, draftAgencyId, recordingOnRef.current)])
       }
       dispatch({ type: "MOVE", r: resolved.r, c: resolved.c, alsoEdit: sticky })
     },
-    [applyPatch, currentUserId, defaultAgencyId],
+    [applyPatch, currentUserId, draftAgencyId],
   )
 
   const resolveAccountEntryForRow = useCallback(
@@ -1133,7 +1134,7 @@ export function IssuancesGrid({
     }
 
     const newIndex = rows.length
-    setRows((prev) => [...prev, makeDraftRow(currentUserId, defaultAgencyId, recordingOnRef.current)])
+    setRows((prev) => [...prev, makeDraftRow(currentUserId, draftAgencyId, recordingOnRef.current)])
     dispatch({ type: "CLICK_CELL", r: newIndex, c: 0, editable: true })
   }
 
@@ -1208,7 +1209,7 @@ export function IssuancesGrid({
       e.preventDefault()
       const direction: Direction = e.shiftKey ? "tab-left" : "tab-right"
       const resolved = resolveNextCell(rows, interaction.sel, direction, 0, columnCount)
-      if (resolved.appendRow) setRows((prev) => [...prev, makeDraftRow(currentUserId, defaultAgencyId, recordingOnRef.current)])
+      if (resolved.appendRow) setRows((prev) => [...prev, makeDraftRow(currentUserId, draftAgencyId, recordingOnRef.current)])
       dispatch({ type: "MOVE", r: resolved.r, c: resolved.c, alsoEdit: interaction.sticky })
       return
     }

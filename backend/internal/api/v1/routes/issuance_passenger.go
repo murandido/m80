@@ -6,11 +6,12 @@ import (
 	"gorm.io/gorm"
 )
 
-// RegisterIssuancePassengerRoutes wires up the /issuances/{id}/passengers CRUD routes.
+// RegisterIssuancePassengerRoutes wires up the /issuances/{id}/passengers CRUD routes. It is
+// mounted inside the /issuances/{id} group, which is what applies the agency scope to it.
 func RegisterIssuancePassengerRoutes(r chi.Router, db *gorm.DB) {
 	issuancePassengerHandler := handlers.NewIssuancePassengerHandler(db)
 
-	r.Route("/{id}/passengers", func(r chi.Router) {
+	r.Route("/passengers", func(r chi.Router) {
 		// create passenger
 		r.Post("/", issuancePassengerHandler.CreateIssuancePassenger)
 

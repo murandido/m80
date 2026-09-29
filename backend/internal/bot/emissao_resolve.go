@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/murandido/m-80-backend/internal/access"
 	acct "github.com/murandido/m-80-backend/internal/account"
 	"github.com/murandido/m-80-backend/internal/data"
 	issuancesvc "github.com/murandido/m-80-backend/internal/issuance"
@@ -41,7 +42,7 @@ func operatorErrorf(cause error, format string, args ...any) error {
 // account, and the whole point of typing it into WhatsApp is that it works from
 // the airport. What gets created is marked incomplete, so it surfaces in the
 // panel as something still to be filled in rather than passing for real data.
-func resolveEmissao(tx *gorm.DB, msg *emissaoMessage) (issuancesvc.CreateInput, error) {
+func resolveEmissao(tx *gorm.DB, msg *emissaoMessage, scope access.AgencyScope) (issuancesvc.CreateInput, error) {
 	var input issuancesvc.CreateInput
 
 	var program data.LoyaltyProgram
@@ -80,9 +81,13 @@ func resolveEmissao(tx *gorm.DB, msg *emissaoMessage) (issuancesvc.CreateInput, 
 		}
 	}
 
+	// Nil when line 4 names no agency, on purpose: a new EMISSAO reads that as "my default
+	// agency" (see defaultAgencyFor), while an edited one reads it as "leave the agency
+	// alone" (see correctionFromEmissao). Filling it in here would make the second one
+	// quietly move the issuance.
 	var agencyID *string
 	if msg.AgencyNickname != "" {
-		id, err := resolveAgencyByNickname(tx, msg.AgencyNickname)
+		id, err := resolveAgencyByNickname(tx, msg.AgencyNickname, scope)
 		if err != nil {
 			return input, err
 		}
@@ -369,15 +374,24 @@ func resolvePersonByNickname(tx *gorm.DB, nickname string) (string, error) {
 	return person.ID, nil
 }
 
-func resolveAgencyByNickname(tx *gorm.DB, nickname string) (string, error) {
+func resolveAgencyByNickname(tx *gorm.DB, nickname string, scope access.AgencyScope) (string, error) {
 	var existing data.AgencyNickname
 	err := tx.Where("LOWER(nickname) = LOWER(?)", nickname).Order("created_at").First(&existing).Error
 
 	switch {
 	case err == nil:
+		if !scope.Allows(existing.AgencyID) {
+			return "", operatorErrorf(nil, "Você não tem acesso à agência %q", nickname)
+		}
 		return existing.AgencyID, nil
 
 	case errors.Is(err, gorm.ErrRecordNotFound):
+		// Only a dev conjures an agency from a message. Anyone else would be creating an
+		// agency that sits outside their own grants - invisible to them the moment the
+		// issuance is saved - and agencies are a dev's to create anyway.
+		if !scope.All {
+			return "", operatorErrorf(nil, "Não encontrei a agência %q. Peça a um desenvolvedor para cadastrá-la", nickname)
+		}
 		// is_default stays false: a brand new agency conjured from a message
 		// must never become the fallback for every other issuance.
 		agency := data.Agency{Name: nickname, IsDefault: false}

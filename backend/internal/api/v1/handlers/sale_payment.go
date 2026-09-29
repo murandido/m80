@@ -192,6 +192,10 @@ func (h *SaleHandler) CreateClientPayment(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	if !h.clientInScope(w, r, req.ClientID) {
+		return
+	}
+
 	var result sale.ClientPaymentResult
 	err = h.DB.Transaction(func(tx *gorm.DB) error {
 		var txErr error
@@ -240,6 +244,9 @@ func (h *SaleHandler) GetClientPayments(w http.ResponseWriter, r *http.Request) 
 	clientID := r.URL.Query().Get("client_id")
 	if err := h.Validator.Var(clientID, "required,uuid"); err != nil {
 		utils.SendError(w, r, http.StatusBadRequest, "client_id inválido")
+		return
+	}
+	if !h.clientInScope(w, r, clientID) {
 		return
 	}
 
@@ -333,6 +340,13 @@ func (h *SaleHandler) DeleteClientPayment(w http.ResponseWriter, r *http.Request
 		return
 	}
 	paymentID := chi.URLParam(r, "paymentID")
+
+	var payment data.ClientPayment
+	if err := h.DB.Select("client_id").First(&payment, "id = ?", paymentID).Error; err == nil {
+		if !h.clientInScope(w, r, payment.ClientID) {
+			return
+		}
+	}
 
 	var result sale.ClientPaymentResult
 	err := h.DB.Transaction(func(tx *gorm.DB) error {
@@ -466,4 +480,26 @@ func optionalText(value *string) *string {
 		return nil
 	}
 	return value
+}
+
+// clientInScope answers 404 itself when the client is outside the caller's agencies, and
+// reports whether to carry on. A client payment is spread over the client's open sales, and
+// since a client and their sales share one agency, checking the client is checking all of
+// them. A client still waiting for an agency (NULL) belongs to nobody's scope but a dev's.
+func (h *SaleHandler) clientInScope(w http.ResponseWriter, r *http.Request, clientID string) bool {
+	scope := middleware.AgencyScopeFrom(r.Context())
+	if scope.All {
+		return true
+	}
+	var client data.Client
+	err := scope.Restrict(h.DB, "clients.agency_id").Select("id").First(&client, "id = ?", clientID).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		utils.SendError(w, r, http.StatusNotFound, "Cliente não encontrado")
+		return false
+	}
+	if err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to load the client: "+err.Error())
+		return false
+	}
+	return true
 }

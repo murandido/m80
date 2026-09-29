@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/murandido/m-80-backend/internal/access"
 	"github.com/murandido/m-80-backend/internal/auth"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/utils"
@@ -17,6 +18,11 @@ import (
 type ContextKey string
 
 const UserContextKey ContextKey = "user_claims"
+
+// AgencyScopeContextKey holds the access.AgencyScope of the authenticated user. It lives next
+// to the user rather than inside data.User because it is not a column of users, and loading it
+// here - once per request - is what lets every handler filter without a query of its own.
+const AgencyScopeContextKey ContextKey = "agency_scope"
 
 // RequireAuth validates the JWT and ensures the user still exists in the database
 func RequireAuth(db *gorm.DB) func(handler http.Handler) http.Handler {
@@ -65,7 +71,18 @@ func RequireAuth(db *gorm.DB) func(handler http.Handler) http.Handler {
 				return
 			}
 
+			// Same reasoning as above: failing to read the grants is an outage, not a
+			// verdict on the user, and treating it as "no agencies" would show an empty
+			// panel that looks exactly like data loss.
+			scope, err := access.LoadAgencyScope(db, user)
+			if err != nil {
+				slog.Error("auth: failed to load the user's agency scope", "user_id", userId, "err", err)
+				utils.SendError(w, r, http.StatusServiceUnavailable, "Serviço temporariamente indisponível")
+				return
+			}
+
 			ctx := context.WithValue(r.Context(), UserContextKey, user)
+			ctx = context.WithValue(ctx, AgencyScopeContextKey, scope)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
@@ -104,4 +121,12 @@ func RequireAdmin() func(handler http.Handler) http.Handler {
 // RequireDev allows nobody but dev, hence the empty list.
 func RequireDev() func(handler http.Handler) http.Handler {
 	return RequireRole()
+}
+
+// AgencyScopeFrom returns the agency scope RequireAuth stored. A request without one was
+// never authenticated, so it gets an empty scope - "no agency" - instead of a full one: a
+// wiring mistake has to fail closed.
+func AgencyScopeFrom(ctx context.Context) access.AgencyScope {
+	scope, _ := ctx.Value(AgencyScopeContextKey).(access.AgencyScope)
+	return scope
 }
