@@ -24,6 +24,9 @@ func RegisterAccountRoutes(r chi.Router, db *gorm.DB) {
 		// segment ahead of a param, so this never gets read as /accounts/{id}.
 		r.Get("/manage", accountHandler.ListAccounts)
 
+		// the management screen: one row per holder with all of their accounts
+		r.Get("/holders", accountHandler.ListAccountHolders)
+
 		// get account
 		r.Get("/{id}", accountHandler.GetAccount)
 

@@ -2,11 +2,14 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/murandido/m-80-backend/internal/access"
 	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
@@ -242,7 +245,44 @@ func (h *LegacyImportHandler) readUpload(
 		}
 	}
 
+	if !h.scopeMappings(w, r, &mappings) {
+		return nil, mappings, false
+	}
+
 	return content, mappings, true
+}
+
+// scopeMappings keeps the import inside the caller's agencies. The day's agency is settled
+// here when none was picked, instead of letting legacyimport fall back to the main agency on
+// its own: that agency may be outside the caller's scope, and the imported day would vanish
+// from their grid. Row overrides are checked one by one - any single row pointed elsewhere
+// would be a way to write into an agency the user cannot see.
+func (h *LegacyImportHandler) scopeMappings(w http.ResponseWriter, r *http.Request, mappings *legacyimport.Mappings) bool {
+	scope := middleware.AgencyScopeFrom(r.Context())
+
+	if strings.TrimSpace(mappings.AgencyID) == "" {
+		agencyID, err := access.ResolveDefaultAgency(h.DB, scope)
+		if errors.Is(err, access.ErrNoAgencyAccess) {
+			utils.SendError(w, r, http.StatusForbidden, "Você não tem acesso a nenhuma agência")
+			return false
+		}
+		if err != nil {
+			utils.SendError(w, r, http.StatusInternalServerError, "Não consegui resolver a agência: "+err.Error())
+			return false
+		}
+		mappings.AgencyID = agencyID
+	}
+	if !scope.Allows(mappings.AgencyID) {
+		utils.SendError(w, r, http.StatusNotFound, "Agência não encontrada")
+		return false
+	}
+	for _, row := range mappings.RowAgencies {
+		if row.AgencyID != "" && !scope.Allows(row.AgencyID) {
+			utils.SendError(w, r, http.StatusNotFound, "Agência não encontrada")
+			return false
+		}
+	}
+	return true
 }
 
 // findDay picks the sheet for a "YYYY-MM-DD" day. The client sends the date rather than

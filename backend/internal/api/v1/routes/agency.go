@@ -7,17 +7,18 @@ import (
 	"gorm.io/gorm"
 )
 
-// RegisterAgencyRoutes wires up the /agencies CRUD routes. Managing agencies is an
-// admin screen, so the writes require admin; reading stays open to every authenticated
-// user because the agency combobox appears on the dashboard, on the issuances grid and
-// on the payments screen, which plain operators use.
+// RegisterAgencyRoutes wires up the /agencies CRUD routes. The writes are dev-only: devs
+// decide which agencies each account may see (user_agencies), and an admin able to create
+// an agency - or to flip is_default - would be deciding part of that for them. Reading stays
+// open to every authenticated user because the agency combobox appears on the dashboard, the
+// issuances grid and the payments screen; the handlers narrow it to the caller's scope.
 func RegisterAgencyRoutes(r chi.Router, db *gorm.DB) {
 	agencyHandler := handlers.NewAgencyHandler(db)
-	requireAdmin := middleware.RequireAdmin()
+	requireDev := middleware.RequireDev()
 
 	r.Route("/agencies", func(r chi.Router) {
 		// create agency
-		r.With(requireAdmin).Post("/", agencyHandler.CreateAgency)
+		r.With(requireDev).Post("/", agencyHandler.CreateAgency)
 
 		// get agencies
 		r.Get("/", agencyHandler.GetAgencies)
@@ -26,10 +27,10 @@ func RegisterAgencyRoutes(r chi.Router, db *gorm.DB) {
 		r.Get("/{id}", agencyHandler.GetAgency)
 
 		// update agency
-		r.With(requireAdmin).Put("/{id}", agencyHandler.UpdateAgency)
+		r.With(requireDev).Put("/{id}", agencyHandler.UpdateAgency)
 
 		// delete agency
-		r.With(requireAdmin).Delete("/{id}", agencyHandler.DeleteAgency)
+		r.With(requireDev).Delete("/{id}", agencyHandler.DeleteAgency)
 
 		// nicknames sub-resource
 		RegisterAgencyNicknameRoutes(r, db)

@@ -473,40 +473,61 @@ export function EditAccountPanel({
                 />
               </div>
 
-              {/* administrator_id */}
-              <div className="flex flex-col gap-1 text-sm">
-                <Controller
-                  name="administrator_id"
-                  control={form.control}
-                  render={({ field, fieldState }) => (
-                    <>
-                      <FieldLabel htmlFor="edit-account-administrator-id">
-                        Administrador
-                      </FieldLabel>
-                      <PersonCombobox
-                        people={people}
-                        value={field.value ?? ""}
-                        onChange={field.onChange}
-                        disabled={isPending}
-                        placeholder="Buscar administrador por nome ou apelido..."
-                      />
-                      {fieldState.invalid && (
-                        <FieldError errors={[fieldState.error]} />
+              {/* The administrator is the holder's (one for all their accounts) and is
+                  chosen in the Titular section; only an account without a holder has its own. */}
+              {account.holder_id ? (
+                <p className="text-xs text-slate-500">
+                  O administrador é do titular e vale para todos os programas dele. Escolha-o na
+                  seção Titular.
+                </p>
+              ) : (
+                <>
+                  {/* administrator_id */}
+                  <div className="flex flex-col gap-1 text-sm">
+                    <Controller
+                      name="administrator_id"
+                      control={form.control}
+                      render={({ field, fieldState }) => (
+                        <>
+                          <FieldLabel htmlFor="edit-account-administrator-id">
+                            Administrador
+                          </FieldLabel>
+                          <PersonCombobox
+                            people={people}
+                            value={field.value ?? ""}
+                            onChange={field.onChange}
+                            disabled={isPending}
+                            placeholder="Buscar administrador por nome ou apelido..."
+                          />
+                          {fieldState.invalid && (
+                            <FieldError errors={[fieldState.error]} />
+                          )}
+                        </>
                       )}
-                    </>
-                  )}
-                />
-              </div>
+                    />
+                  </div>
+
+                </>
+              )}
 
               <Separator />
               <h3 className="text-xs font-semibold tracking-wide text-slate-500 uppercase">
                 Apelidos
               </h3>
-              <AccountNicknames
-                accountId={account.id}
-                loyaltyProgramId={account.loyalty_program_id}
-                nicknames={account.nicknames}
-              />
+              {/* A holder's aliases are one list for the holder and every program - they are
+                  edited once, under the holder, rather than per account. */}
+              {account.holder_id ? (
+                <p className="text-xs text-slate-500">
+                  Os apelidos são do titular e valem para todos os programas dele. Edite-os na
+                  seção Titular.
+                </p>
+              ) : (
+                <AccountNicknames
+                  accountId={account.id}
+                  loyaltyProgramId={account.loyalty_program_id}
+                  nicknames={account.nicknames}
+                />
+              )}
 
               <Separator />
 

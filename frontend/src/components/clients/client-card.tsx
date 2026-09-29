@@ -6,14 +6,17 @@ import { Menu, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { Client } from "@/schemas/client"
+import type { Agency } from "@/schemas/agency"
 import { DeleteOverlay } from "./delete-overlay"
 import { EditClientPanel } from "./edit-client-panel"
 
 interface ClientCardProps {
   client: Client
+  agencies: Agency[]
 }
 
-export function ClientCard({ client }: ClientCardProps) {
+export function ClientCard({ client, agencies }: ClientCardProps) {
+  const agencyName = agencies.find((agency) => agency.id === client.agency_id)?.name
   const router = useRouter()
   const [isDeleteOpen, setIsDeleteOpen] = useState(false)
   const [isEditOpen, setIsEditOpen] = useState(false)
@@ -38,6 +41,11 @@ export function ClientCard({ client }: ClientCardProps) {
             <span className="text-sm font-medium text-slate-800">{client.name}</span>
             {client.phone && (
               <span className="text-xs text-slate-500">{client.phone}</span>
+            )}
+            {client.agency_id === null ? (
+              <span className="text-xs font-medium text-amber-600">Sem agência</span>
+            ) : (
+              agencyName && <span className="text-xs text-slate-500">{agencyName}</span>
             )}
           </div>
           <div className="flex gap-2">
@@ -78,6 +86,7 @@ export function ClientCard({ client }: ClientCardProps) {
         client={client}
         isOpen={isEditOpen}
         onSaved={() => setIsEditOpen(false)}
+        agencies={agencies}
       />
     </div>
   )

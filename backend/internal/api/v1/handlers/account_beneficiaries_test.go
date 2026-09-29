@@ -49,7 +49,7 @@ func seedCPFWorld(t *testing.T, tx *gorm.DB, limit int, window, mode string) cpf
 	}
 	create(t, tx, &program)
 
-	acc := data.Account{LoyaltyProgramID: program.ID, Category: data.AccountCategoryStandard}
+	acc := data.Account{HolderID: testHolder(t, tx), LoyaltyProgramID: program.ID, Category: data.AccountCategoryStandard}
 	create(t, tx, &acc)
 
 	agency := data.Agency{Name: "CPF Agency " + suffix}

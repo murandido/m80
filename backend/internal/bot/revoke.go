@@ -82,7 +82,9 @@ func revokedMessageID(v *events.Message) string {
 // survived the deletion of the message that created it is a phantom nobody would
 // think to look for.
 func (b *Bot) handleMessageRevoke(ctx context.Context, evt *events.Message, _ time.Time) {
-	user, allowed := b.authorizeSender(evt, "delecao")
+	// No scope check here: the only issuance this can touch is the one this very message
+	// created, which the resolver already kept inside the sender's agencies at the time.
+	user, _, allowed := b.authorizeSender(evt, "delecao")
 	if !allowed {
 		return
 	}

@@ -2,13 +2,11 @@ package handlers
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/data"
 	"gorm.io/gorm"
 )
@@ -25,7 +23,7 @@ func callUpdateMe(t *testing.T, tx *gorm.DB, user data.User, payload map[string]
 		t.Fatalf("marshal payload: %v", err)
 	}
 	req := httptest.NewRequest(http.MethodPut, "/auth/me", bytes.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, data.User{ID: user.ID, Role: user.Role}))
+	req = req.WithContext(asUser(req.Context(), data.User{ID: user.ID, Role: user.Role}))
 	rec := httptest.NewRecorder()
 	NewAuthHandler(tx).UpdateMe(rec, req)
 	return rec

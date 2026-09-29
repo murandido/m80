@@ -99,3 +99,61 @@ type MergePersonResultResponse struct {
 	Person  PersonResponse `json:"person"`
 	Warning string         `json:"warning"`
 }
+
+// MergeRowRequest names the row to absorb into the holder in the URL: another person, or an
+// account that has no holder. Exactly one of the two.
+type MergeRowRequest struct {
+	SourcePersonID  string `json:"source_person_id" validate:"omitempty,uuid"`
+	SourceAccountID string `json:"source_account_id" validate:"omitempty,uuid"`
+	// Same default as MergePersonRequest.KeepNickname; ignored when the source is an account.
+	KeepNickname *bool `json:"keep_nickname" validate:"omitempty"`
+}
+
+// MergeRowAccountPair is one loyalty account the absorbed row has in a program the surviving
+// holder already has an account in - the two get merged into the survivor's.
+type MergeRowAccountPair struct {
+	ProgramName        string   `json:"program_name"`
+	KeepAccountID      string   `json:"keep_account_id"`
+	DropAccountID      string   `json:"drop_account_id"`
+	DropLogin          *string  `json:"drop_login"`
+	Issuances          int64    `json:"issuances"`
+	CollidingNicknames []string `json:"colliding_nicknames"`
+}
+
+// MergeRowPreviewResponse is what merging a row would do, worked out before it runs.
+type MergeRowPreviewResponse struct {
+	// AccountsMerged are folded into the survivor's account in the same program.
+	AccountsMerged []MergeRowAccountPair `json:"accounts_merged"`
+	// AccountsMoved only change holder: programs the survivor did not have yet.
+	AccountsMoved int64 `json:"accounts_moved"`
+	// Administered counts the accounts the absorbed person administers, which follow them.
+	Administered     int64    `json:"administered"`
+	Nicknames        int64    `json:"nicknames"`
+	FieldsToFill     []string `json:"fields_to_fill"`
+	NicknameFromName string   `json:"nickname_from_name"`
+}
+
+// MergeRowResultResponse is whatever the merge could not do, for the panel to warn about.
+type MergeRowResultResponse struct {
+	Warning string `json:"warning"`
+}
+
+// SetHolderAdministratorRequest names the administrator of every account a holder has.
+// Empty or null clears it.
+type SetHolderAdministratorRequest struct {
+	AdministratorID *string `json:"administrator_id" validate:"omitempty,uuid"`
+}
+
+// PersonRemovalResponse is what removing a holder did (or would do, for the preview).
+type PersonRemovalResponse struct {
+	AccountsDeleted  int  `json:"accounts_deleted"`
+	AccountsArchived int  `json:"accounts_archived"`
+	PersonDeleted    bool `json:"person_deleted"`
+}
+
+// PersonRemovalSingleResponse is the DELETE /people/{id} and delete-preview route response.
+type PersonRemovalSingleResponse struct {
+	Success bool                  `json:"success" example:"true"`
+	Message string                `json:"message" example:"Titular excluído"`
+	Data    PersonRemovalResponse `json:"data"`
+}

@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/inventory"
@@ -138,6 +139,12 @@ func (h *StatementHandler) CommitSmilesStatement(w http.ResponseWriter, r *http.
 			utils.SendError(w, r, http.StatusBadRequest, "Seleção inválida: "+err.Error())
 			return
 		}
+		// Each credit becomes a batch paid for by the agency chosen for it, so every choice
+		// has to be one of the caller's own.
+		if !middleware.AgencyScopeFrom(r.Context()).Allows(selection.FundingAgencyID) {
+			utils.SendError(w, r, http.StatusNotFound, "Agência não encontrada")
+			return
+		}
 	}
 
 	reconciliation, _, _, err := h.reconcileSmiles(account.ID)
@@ -252,10 +259,10 @@ func (h *StatementHandler) SmilesStatementEntries(w http.ResponseWriter, r *http
 			DayBalance:      row.DayBalance,
 		}
 		if booking, found := resolved[key]; found {
-			entry.LinkedIssuance = toLinkedIssuance(booking)
+			entry.LinkedIssuance = toLinkedIssuance(booking, middleware.AgencyScopeFrom(r.Context()))
 		}
 		if batch, found := resolvedBatches[key]; found {
-			entry.LinkedBatch = toLinkedBatch(batch)
+			entry.LinkedBatch = toLinkedBatch(batch, middleware.AgencyScopeFrom(r.Context()))
 		}
 		entries = append(entries, entry)
 	}

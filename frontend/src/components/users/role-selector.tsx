@@ -22,11 +22,17 @@ export function RoleSelector({
   value,
   onChange,
   disabled,
+  allowDev = false,
 }: {
   value: Role
   onChange: (role: Role) => void
   disabled?: boolean
+  // Only a dev hands out the dev role - the API refuses it from anyone else - so the
+  // option is not offered to an admin at all.
+  allowDev?: boolean
 }) {
+  const options = allowDev ? roleOptions : roleOptions.filter((option) => option.value !== "dev")
+
   return (
     <>
       <FieldLabel>
@@ -35,7 +41,7 @@ export function RoleSelector({
       {/* flex-wrap because "Desenvolvedor" is far longer than the other two: on the narrow
           edit panel the third button drops to its own line instead of squeezing the label. */}
       <div className="flex flex-wrap gap-2">
-        {roleOptions.map((option) => (
+        {options.map((option) => (
           <Button
             key={option.value}
             type="button"

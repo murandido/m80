@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/murandido/m-80-backend/internal/access"
+	acct "github.com/murandido/m-80-backend/internal/account"
 	"github.com/murandido/m-80-backend/internal/data"
 	issuancesvc "github.com/murandido/m-80-backend/internal/issuance"
 	"gorm.io/gorm"
@@ -40,7 +42,7 @@ func operatorErrorf(cause error, format string, args ...any) error {
 // account, and the whole point of typing it into WhatsApp is that it works from
 // the airport. What gets created is marked incomplete, so it surfaces in the
 // panel as something still to be filled in rather than passing for real data.
-func resolveEmissao(tx *gorm.DB, msg *emissaoMessage) (issuancesvc.CreateInput, error) {
+func resolveEmissao(tx *gorm.DB, msg *emissaoMessage, scope access.AgencyScope) (issuancesvc.CreateInput, error) {
 	var input issuancesvc.CreateInput
 
 	var program data.LoyaltyProgram
@@ -79,9 +81,13 @@ func resolveEmissao(tx *gorm.DB, msg *emissaoMessage) (issuancesvc.CreateInput, 
 		}
 	}
 
+	// Nil when line 4 names no agency, on purpose: a new EMISSAO reads that as "my default
+	// agency" (see defaultAgencyFor), while an edited one reads it as "leave the agency
+	// alone" (see correctionFromEmissao). Filling it in here would make the second one
+	// quietly move the issuance.
 	var agencyID *string
 	if msg.AgencyNickname != "" {
-		id, err := resolveAgencyByNickname(tx, msg.AgencyNickname)
+		id, err := resolveAgencyByNickname(tx, msg.AgencyNickname, scope)
 		if err != nil {
 			return input, err
 		}
@@ -237,6 +243,18 @@ func resolveAccountByNickname(tx *gorm.DB, programID, nickname string) (data.Acc
 		return data.Account{}, nil, err
 	}
 
+	// The alias is new to this program, but the person it names may already have an account
+	// in it - registered under another alias, or before aliases were shared. That account is
+	// the one meant: a holder has one live account per program (internal/account/programs.go),
+	// so the alias joins it instead of a second account being opened.
+	held, err := acct.HolderAccountInProgram(tx, holderID, programID, "")
+	if err != nil {
+		return data.Account{}, nil, err
+	}
+	if held != nil {
+		return adoptAccount(tx, *held, orphaned, programID, nickname)
+	}
+
 	// administrator_id stays null on purpose. Defaulting it to the holder would
 	// make the first different name on line 4 become an alias of the holder
 	// forever - see attachAdministrator, which only ever aliases onto an
@@ -261,7 +279,40 @@ func resolveAccountByNickname(tx *gorm.DB, programID, nickname string) (data.Acc
 	if err := tx.Create(&created).Error; err != nil {
 		return data.Account{}, nil, err
 	}
+
+	// The holder may already have other aliases (and other accounts): the new account answers
+	// to all of them, and they to this one - one list per holder, as the panel shows it.
+	if err := acct.UnifyHolderNicknames(tx, holderID); err != nil {
+		return data.Account{}, nil, err
+	}
 	return account, &created.ID, nil
+}
+
+// adoptAccount points an alias at an account the holder already has: the stray alias row when
+// one survived its account, a new one otherwise. The rest of the holder's list follows.
+func adoptAccount(tx *gorm.DB, account data.Account, orphaned *data.AccountNickname, programID, nickname string) (data.Account, *string, error) {
+	if orphaned != nil {
+		if err := tx.Model(orphaned).Update("account_id", account.ID).Error; err != nil {
+			return data.Account{}, nil, err
+		}
+	} else if err := tx.Create(&data.AccountNickname{
+		AccountID:        account.ID,
+		LoyaltyProgramID: programID,
+		Nickname:         nickname,
+	}).Error; err != nil {
+		return data.Account{}, nil, err
+	}
+
+	if err := acct.UnifyHolderNicknames(tx, *account.HolderID); err != nil {
+		return data.Account{}, nil, err
+	}
+
+	var alias data.AccountNickname
+	if err := tx.Where("account_id = ? AND LOWER(nickname) = LOWER(?)", account.ID, nickname).
+		First(&alias).Error; err != nil {
+		return data.Account{}, nil, err
+	}
+	return account, &alias.ID, nil
 }
 
 // attachAdministrator decides what an administrator name on line 4 means for an
@@ -283,13 +334,25 @@ func attachAdministrator(tx *gorm.DB, account *data.Account, accountNickname, ni
 		return err
 	}
 
+	// The administrator is the holder's, not the account's (internal/account/administrators.go).
+	// An account still without one is read as having the holder's, so a message naming
+	// somebody else is the same conflict it would be on any of the holder's other accounts.
+	if account.AdministratorID == nil && account.HolderID != nil {
+		inherited, _, err := acct.HolderAdministrator(tx, *account.HolderID)
+		if err != nil {
+			return err
+		}
+		account.AdministratorID = inherited
+	}
+
 	switch {
 	case found && account.AdministratorID == nil:
 		return setAccountAdministrator(tx, account, personID)
 
 	case found && *account.AdministratorID == personID:
-		// Already the administrator, under this name or another of their aliases.
-		return nil
+		// Already the administrator, under this name or another of their aliases - possibly
+		// only inherited from the holder, so it is written down on this account too.
+		return setAccountAdministrator(tx, account, personID)
 
 	case found:
 		var current data.Person
@@ -301,8 +364,16 @@ func attachAdministrator(tx *gorm.DB, account *data.Account, accountNickname, ni
 			accountNickname, current.Name, nickname)
 
 	case account.AdministratorID != nil:
-		// Free name, account already has an administrator: another alias for them.
-		return tx.Create(&data.PersonNickname{PersonID: *account.AdministratorID, Nickname: nickname}).Error
+		// Free name, account already has an administrator: another alias for them - and so
+		// for every account they hold themselves (internal/account/nicknames.go). The
+		// administrator may only have been inherited from the holder, so it is written down.
+		if err := setAccountAdministrator(tx, account, *account.AdministratorID); err != nil {
+			return err
+		}
+		if err := tx.Create(&data.PersonNickname{PersonID: *account.AdministratorID, Nickname: nickname}).Error; err != nil {
+			return err
+		}
+		return acct.UnifyHolderNicknames(tx, *account.AdministratorID)
 
 	default:
 		// Free name, no administrator yet: a new person takes the role.
@@ -316,6 +387,10 @@ func attachAdministrator(tx *gorm.DB, account *data.Account, accountNickname, ni
 
 func setAccountAdministrator(tx *gorm.DB, account *data.Account, personID string) error {
 	account.AdministratorID = &personID
+	if account.HolderID != nil {
+		// Every account of the holder, not just the one in the message.
+		return acct.SetHolderAdministrator(tx, *account.HolderID, &personID)
+	}
 	return tx.Model(account).Update("administrator_id", personID).Error
 }
 
@@ -358,15 +433,24 @@ func resolvePersonByNickname(tx *gorm.DB, nickname string) (string, error) {
 	return person.ID, nil
 }
 
-func resolveAgencyByNickname(tx *gorm.DB, nickname string) (string, error) {
+func resolveAgencyByNickname(tx *gorm.DB, nickname string, scope access.AgencyScope) (string, error) {
 	var existing data.AgencyNickname
 	err := tx.Where("LOWER(nickname) = LOWER(?)", nickname).Order("created_at").First(&existing).Error
 
 	switch {
 	case err == nil:
+		if !scope.Allows(existing.AgencyID) {
+			return "", operatorErrorf(nil, "Você não tem acesso à agência %q", nickname)
+		}
 		return existing.AgencyID, nil
 
 	case errors.Is(err, gorm.ErrRecordNotFound):
+		// Only a dev conjures an agency from a message. Anyone else would be creating an
+		// agency that sits outside their own grants - invisible to them the moment the
+		// issuance is saved - and agencies are a dev's to create anyway.
+		if !scope.All {
+			return "", operatorErrorf(nil, "Não encontrei a agência %q. Peça a um desenvolvedor para cadastrá-la", nickname)
+		}
 		// is_default stays false: a brand new agency conjured from a message
 		// must never become the fallback for every other issuance.
 		agency := data.Agency{Name: nickname, IsDefault: false}

@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
+	"github.com/murandido/m-80-backend/internal/access"
 	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
@@ -55,17 +57,6 @@ func NewSaleHandler(db *gorm.DB, broker *events.Broker) *SaleHandler {
 		Validator: validator.New(),
 		Broker:    broker,
 	}
-}
-
-// defaultAgencyID resolves the "agência principal" - the single agency flagged is_default.
-// It is what the sales views fall back to when no agency_id is asked for, so the operator
-// lands on their own agency instead of a mix of every partner's issuances.
-func defaultAgencyID(db *gorm.DB) (string, error) {
-	var agency data.Agency
-	if err := db.Select("id").Where("is_default = ?", true).First(&agency).Error; err != nil {
-		return "", err
-	}
-	return agency.ID, nil
 }
 
 // saleRow is the flat shape scanned out of the sales listing join. A hand-written join
@@ -207,14 +198,37 @@ func toSaleResponse(row saleRow) schemas.SaleResponse {
 	}
 }
 
-// resolveAgencyFilter reads the agency_id query param, falling back to the main agency.
-// The fallback is what makes the operator land on their own agency instead of a mix of
-// every partner's issuances, while still allowing them to switch.
+// errAgencyOutOfScope is an agency_id the caller asked for but may not see. It answers like
+// an agency that does not exist.
+var errAgencyOutOfScope = errors.New("agency outside the caller's scope")
+
+// resolveAgencyFilter reads the agency_id query param, falling back to the caller's default
+// agency: the main one when they may see it, else their first (access.ResolveDefaultAgency).
+// The fallback is what makes the operator land on their own agency instead of a mix of every
+// partner's issuances, while still allowing them to switch - within their scope.
 func resolveAgencyFilter(db *gorm.DB, r *http.Request) (string, error) {
+	scope := middleware.AgencyScopeFrom(r.Context())
 	if value := r.URL.Query().Get("agency_id"); value != "" {
+		if !scope.Allows(value) {
+			return "", errAgencyOutOfScope
+		}
 		return value, nil
 	}
-	return defaultAgencyID(db)
+	return access.ResolveDefaultAgency(db, scope)
+}
+
+// sendAgencyFilterError answers a failed resolveAgencyFilter. The two scope outcomes are
+// kept apart from a real failure: a user with no agency is a 403 the panel can explain, and
+// an out-of-scope agency is a plain 404.
+func sendAgencyFilterError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, access.ErrNoAgencyAccess):
+		utils.SendError(w, r, http.StatusForbidden, "Você não tem acesso a nenhuma agência")
+	case errors.Is(err, errAgencyOutOfScope):
+		utils.SendError(w, r, http.StatusNotFound, "Agency not found")
+	default:
+		utils.SendError(w, r, http.StatusInternalServerError, "No default agency configured")
+	}
 }
 
 // allAgenciesToken is the explicit "every agency" choice on the suppliers view. It exists
@@ -253,11 +267,13 @@ func resolveSupplierAgencyFilter(db *gorm.DB, r *http.Request) ([]string, error)
 		return []string{agencyID}, nil
 	}
 
+	// "Every agency" is every agency the caller may see - nil (no restriction) only for dev.
+	scope := middleware.AgencyScopeFrom(r.Context())
 	if raw == allAgenciesToken {
-		return nil, nil
+		return scope.Intersect(nil), nil
 	}
 
-	ids := splitIDs(raw)
+	ids := scope.Intersect(splitIDs(raw))
 	// A list that parsed down to nothing is a malformed param, not a request for
 	// everything - fall back rather than quietly widening the query.
 	if len(ids) == 0 {
@@ -329,7 +345,7 @@ func applySaleListFilters(query *gorm.DB, r *http.Request) *gorm.DB {
 func (h *SaleHandler) GetSales(w http.ResponseWriter, r *http.Request) {
 	agencyID, err := resolveAgencyFilter(h.DB, r)
 	if err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "No default agency configured")
+		sendAgencyFilterError(w, r, err)
 		return
 	}
 
@@ -376,7 +392,7 @@ func (h *SaleHandler) GetSales(w http.ResponseWriter, r *http.Request) {
 func (h *SaleHandler) GetSalesExport(w http.ResponseWriter, r *http.Request) {
 	agencyID, err := resolveAgencyFilter(h.DB, r)
 	if err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "No default agency configured")
+		sendAgencyFilterError(w, r, err)
 		return
 	}
 
@@ -492,6 +508,18 @@ func (h *SaleHandler) UpdateSale(w http.ResponseWriter, r *http.Request) {
 			var client data.Client
 			if err := h.DB.First(&client, "id = ?", *req.ClientID).Error; err != nil {
 				utils.SendError(w, r, http.StatusUnprocessableEntity, "Cliente não encontrado")
+				return
+			}
+			// A sale and its client belong to the same agency. That is what keeps a client's
+			// payments inside one agency - they are spread over the client's open sales - and
+			// what lets a user see a client exactly when they can see the client's sales.
+			var issuance data.Issuance
+			if err := h.DB.Unscoped().Select("agency_id").First(&issuance, "id = ?", sale.IssuanceID).Error; err != nil {
+				utils.SendError(w, r, http.StatusInternalServerError, "Failed to load the sale's issuance: "+err.Error())
+				return
+			}
+			if client.AgencyID == nil || *client.AgencyID != issuance.AgencyID {
+				utils.SendError(w, r, http.StatusUnprocessableEntity, "O cliente é de outra agência")
 				return
 			}
 		}
@@ -709,7 +737,12 @@ func (e *supplierFetchError) Error() string { return e.message }
 // was generated from.
 func (h *SaleHandler) fetchSupplierRows(r *http.Request) ([]supplierIssuanceRow, *time.Time, *time.Time, *supplierFetchError) {
 	agencyIDs, err := resolveSupplierAgencyFilter(h.DB, r)
-	if err != nil {
+	switch {
+	case errors.Is(err, access.ErrNoAgencyAccess):
+		return nil, nil, nil, &supplierFetchError{http.StatusForbidden, "Você não tem acesso a nenhuma agência"}
+	case errors.Is(err, errAgencyOutOfScope):
+		return nil, nil, nil, &supplierFetchError{http.StatusNotFound, "Agency not found"}
+	case err != nil:
 		return nil, nil, nil, &supplierFetchError{http.StatusInternalServerError, "No default agency configured"}
 	}
 
@@ -760,8 +793,9 @@ func (h *SaleHandler) fetchSupplierRows(r *http.Request) ([]supplierIssuanceRow,
 		// miles. The join is hand-written, so this scope has to be explicit.
 		Where("issuances.deleted_at IS NULL")
 
-	// nil means every agency was asked for; IN () on an empty slice would match nothing,
-	// which is the opposite.
+	// nil means every agency was asked for by a dev; IN () on an empty slice would match
+	// nothing, which is the opposite. A restricted "all" is never nil - see
+	// resolveSupplierAgencyFilter.
 	if agencyIDs != nil {
 		query = query.Where("issuances.agency_id IN ?", agencyIDs)
 	}
@@ -997,6 +1031,22 @@ func (h *SaleHandler) UpdateSupplierIssuances(w http.ResponseWriter, r *http.Req
 	if err := h.Validator.Struct(req); err != nil {
 		utils.SendError(w, r, http.StatusBadRequest, "Validation failed: "+err.Error())
 		return
+	}
+
+	// The ids arrive loose in the body, so no route middleware saw them. One issuance outside
+	// the caller's agencies refuses the whole batch - writing the rest would make the answer
+	// depend on which rows happened to be in scope.
+	if scope := middleware.AgencyScopeFrom(r.Context()); !scope.All {
+		var inScope int64
+		query := scope.Restrict(h.DB.Model(&data.Issuance{}), "issuances.agency_id")
+		if err := query.Where("issuances.id IN ?", req.IssuanceIDs).Count(&inScope).Error; err != nil {
+			utils.SendError(w, r, http.StatusInternalServerError, "Failed to check the issuances: "+err.Error())
+			return
+		}
+		if inScope != int64(len(slices.Compact(slices.Sorted(slices.Values(req.IssuanceIDs))))) {
+			utils.SendError(w, r, http.StatusNotFound, "Issuance not found")
+			return
+		}
 	}
 
 	updates := map[string]any{}

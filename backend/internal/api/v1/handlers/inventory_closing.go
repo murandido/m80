@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/murandido/m-80-backend/internal/access"
+	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/inventory"
@@ -62,6 +64,8 @@ func (h *InventoryClosingHandler) GetInventoryClosing(w http.ResponseWriter, r *
 		return
 	}
 
+	scope := middleware.AgencyScopeFrom(r.Context())
+
 	names, err := h.agencyNames()
 	if err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch agencies: "+err.Error())
@@ -111,6 +115,7 @@ func (h *InventoryClosingHandler) GetInventoryClosing(w http.ResponseWriter, r *
 			utils.SendError(w, r, http.StatusInternalServerError, "Failed to read the closing: "+err.Error())
 			return
 		}
+		closing = scopeClosing(closing, scope)
 
 		closedPeriodID, err := h.closedPeriodID(accountID, endsOn)
 		if err != nil {
@@ -378,4 +383,51 @@ func nameOf(names map[string]string, id string) *string {
 		return nil
 	}
 	return &name
+}
+
+// scopeClosing narrows one account's closing to what a restricted caller may see: the batches
+// their agencies paid for, and the transfers their agencies take part in. The account totals
+// are summed again from the batches kept - the same sums ReadClosing makes - so the header
+// never carries money from a batch the screen does not list. The counterparty of a kept
+// transfer stays named: a settlement that hides who pays whom cannot be acted on.
+//
+// PendingPoints is left as is. It is points, not money, and it is the account's warning that
+// a batch is missing - hiding it would only hide that something needs entering.
+func scopeClosing(closing inventory.Closing, scope access.AgencyScope) inventory.Closing {
+	if scope.All {
+		return closing
+	}
+
+	involved := func(settlements []inventory.Settlement) []inventory.Settlement {
+		kept := make([]inventory.Settlement, 0, len(settlements))
+		for _, settlement := range settlements {
+			if scope.Allows(settlement.AgencyID) || scope.Allows(settlement.ToAgencyID) {
+				kept = append(kept, settlement)
+			}
+		}
+		return kept
+	}
+
+	batches := make([]inventory.BatchResult, 0, len(closing.Batches))
+	closing.CostCents, closing.RevenueCents = 0, 0
+	for _, batch := range closing.Batches {
+		if !scope.Allows(batch.FundingAgencyID) {
+			continue
+		}
+		consumers := make([]inventory.Consumer, 0, len(batch.Consumers))
+		for _, consumer := range batch.Consumers {
+			if scope.Allows(consumer.AgencyID) {
+				consumers = append(consumers, consumer)
+			}
+		}
+		batch.Consumers = consumers
+		batch.Settlements = involved(batch.Settlements)
+		batches = append(batches, batch)
+		closing.CostCents += batch.ChargedCents
+		closing.RevenueCents += batch.RevenueCents
+	}
+	closing.Batches = batches
+	closing.ProfitCents = closing.RevenueCents - closing.CostCents
+	closing.Settlements = involved(closing.Settlements)
+	return closing
 }

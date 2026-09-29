@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
 	"github.com/jackc/pgx/v5/pgconn"
+	acct "github.com/murandido/m-80-backend/internal/account"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/utils"
@@ -73,6 +74,31 @@ func (h *AccountNicknameHandler) CreateAccountNickname(w http.ResponseWriter, r 
 
 	if err := h.Validator.Struct(req); err != nil {
 		utils.SendError(w, r, http.StatusBadRequest, "Validation failed: "+err.Error())
+		return
+	}
+
+	var account data.Account
+	if err := h.DB.First(&account, "id = ?", accountID).Error; err != nil {
+		utils.SendError(w, r, http.StatusNotFound, "Account not found")
+		return
+	}
+
+	// An account with a holder shares its aliases with the holder and the holder's other
+	// accounts (internal/account/nicknames.go). Only an old holderless one keeps its own.
+	if account.HolderID != nil {
+		var nickname data.AccountNickname
+		err := h.DB.Transaction(func(tx *gorm.DB) error {
+			if err := acct.ShareNickname(tx, *account.HolderID, req.Nickname); err != nil {
+				return err
+			}
+			return tx.Where("account_id = ? AND LOWER(nickname) = LOWER(?)", accountID, req.Nickname).
+				First(&nickname).Error
+		})
+		if err != nil {
+			sendSharedNicknameError(w, r, err)
+			return
+		}
+		utils.SendJSON(w, r, http.StatusCreated, "Nickname created successfully", toAccountNicknameResponse(nickname))
 		return
 	}
 
@@ -265,7 +291,20 @@ func (h *AccountNicknameHandler) DeleteAccountNickname(w http.ResponseWriter, r 
 		return
 	}
 
-	if err := h.DB.Delete(&nickname).Error; err != nil {
+	var account data.Account
+	if err := h.DB.First(&account, "id = ?", accountID).Error; err != nil {
+		utils.SendError(w, r, http.StatusNotFound, "Account not found")
+		return
+	}
+
+	// Removing an alias from one of a holder's accounts removes it from the whole row.
+	err := h.DB.Transaction(func(tx *gorm.DB) error {
+		if account.HolderID != nil {
+			return acct.UnshareNickname(tx, *account.HolderID, nickname.Nickname)
+		}
+		return tx.Delete(&nickname).Error
+	})
+	if err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to delete nickname: "+err.Error())
 		return
 	}

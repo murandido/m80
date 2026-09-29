@@ -29,13 +29,24 @@ func RegisterPeopleRoutes(r chi.Router, db *gorm.DB) {
 		// update person
 		r.Put("/{id}", peopleHandler.UpdatePerson)
 
-		// delete person
+		// the administrator of every account the holder has - one per holder
+		r.Put("/{id}/administrator", peopleHandler.SetHolderAdministrator)
+
+		// delete person: the holder and their accounts - deleted where nothing refers to them,
+		// archived otherwise
+		r.Get("/{id}/delete-preview", peopleHandler.PreviewDeletePerson)
 		r.Delete("/{id}", peopleHandler.DeletePerson)
 
 		// merge two people into one. Admin-only, like the legacy import: it rewrites
 		// who owns an account and then deletes a record for good, with no undo.
 		r.With(requireAdmin).Get("/{id}/merge-preview", peopleHandler.PreviewMergePerson)
 		r.With(requireAdmin).Post("/{id}/merge", peopleHandler.MergePerson)
+
+		// merge a whole row of the accounts screen into this holder: the person (or the
+		// holderless account) and every loyalty account that repeats a program. Admin-only
+		// for the same reason.
+		r.With(requireAdmin).Get("/{id}/merge-row-preview", peopleHandler.PreviewMergeRow)
+		r.With(requireAdmin).Post("/{id}/merge-row", peopleHandler.MergeRow)
 
 		// nicknames sub-resource
 		RegisterPersonNicknameRoutes(r, db)

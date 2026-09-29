@@ -40,7 +40,7 @@ func (b *Bot) handleMessageEdit(ctx context.Context, evt *events.Message, text s
 // issuance: every field the message carries is applied, and one it no longer
 // carries is cleared - see alteracaoFields.Full.
 func (b *Bot) handleEditedEmissao(ctx context.Context, evt *events.Message, text string, startedAt time.Time) {
-	user, allowed := b.authorizeSender(evt, "edicao")
+	user, scope, allowed := b.authorizeSender(evt, "edicao")
 	if !allowed {
 		return
 	}
@@ -81,6 +81,11 @@ func (b *Bot) handleEditedEmissao(ctx context.Context, evt *events.Message, text
 		return
 	}
 
+	if !scope.Allows(issuance.AgencyID) {
+		b.refuse(ctx, evt, startedAt, errIssuanceOutOfScope(msg.ProgramLocator).Error())
+		return
+	}
+
 	if issuance.CancelledAt != nil {
 		b.refuse(ctx, evt, startedAt, operatorErrorf(nil,
 			"A emissão %s está cancelada e não pode ser corrigida", msg.ProgramLocator).Error())
@@ -92,7 +97,7 @@ func (b *Bot) handleEditedEmissao(ctx context.Context, evt *events.Message, text
 		// resolveEmissao already turns a full message into resolved ids, aliases
 		// and all - reusing it is what keeps an edited EMISSAO meaning exactly
 		// what the original one meant.
-		input, err := resolveEmissao(tx, msg)
+		input, err := resolveEmissao(tx, msg, scope)
 		if err != nil {
 			return err
 		}

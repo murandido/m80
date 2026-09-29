@@ -117,7 +117,22 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 	// clear the password hash before send to the frontend
 	fullUser.Password = ""
 
-	utils.SendJSON(w, r, http.StatusOK, "Data successfully recovered", fullUser)
+	grants, err := loadUserAgencyIDs(h.DB, []string{fullUser.ID})
+	if err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch the user's agencies")
+		return
+	}
+	agencyIDs := grants[fullUser.ID]
+	if agencyIDs == nil {
+		agencyIDs = []string{}
+	}
+
+	// Embedding keeps every field the panel already reads exactly where it was; agency_ids
+	// is added alongside rather than by switching to schemas.UserResponse, whose shape differs.
+	utils.SendJSON(w, r, http.StatusOK, "Data successfully recovered", struct {
+		data.User
+		AgencyIDs []string `json:"agency_ids"`
+	}{fullUser, agencyIDs})
 }
 
 // UpdateMe lets the authenticated user change their own name, phone and password.

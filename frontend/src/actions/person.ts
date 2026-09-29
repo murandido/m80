@@ -11,8 +11,9 @@ import {
   deletePersonNicknameSchema,
   deletePersonSchema,
   getPeopleOptionsSchema,
-  mergePersonPreviewSchema,
-  mergePersonSchema,
+  mergeRowPreviewSchema,
+  mergeRowSchema,
+  type MergeRowSource,
   updatePersonSchema,
 } from "@/schemas/person"
 import { z } from "zod"
@@ -265,28 +266,35 @@ export async function deletePersonAction(personId: string) {
     const parsed = deletePersonSchema.response.safeParse(json)
 
     if (!res.ok) {
-      // e.g. 422 "Não é possível excluir pessoa vinculada a uma conta"
-      return { error: parsed.data?.message || "Erro ao deletar pessoa." }
+      // e.g. 422 "Esta pessoa ainda é administradora das contas de ..."
+      return { error: parsed.data?.message || "Erro ao excluir." }
     }
 
-    return { success: true }
+    return { success: true as const, removal: parsed.data?.data ?? null }
   } catch {
     return { error: "Erro de conexão com o servidor." }
   }
 }
 
-export async function previewMergePersonAction(keepId: string, sourceId: string) {
+function mergeRowSourceParams(source: MergeRowSource): Record<string, string> {
+  return source.kind === "person"
+    ? { source_person_id: source.id }
+    : { source_account_id: source.id }
+}
+
+export async function previewMergeRowAction(keepId: string, source: MergeRowSource) {
   const cookieStore = await cookies()
   const token = cookieStore.get("auth_token")?.value
+  const query = new URLSearchParams(mergeRowSourceParams(source))
 
   try {
     const res = await fetch(
-      `${env.BACKEND_URL}/api/v1/people/${keepId}/merge-preview?source_id=${sourceId}`,
+      `${env.BACKEND_URL}/api/v1/people/${keepId}/merge-row-preview?${query.toString()}`,
       { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" },
     )
 
     const json = await res.json()
-    const parsed = mergePersonPreviewSchema.response.safeParse(json)
+    const parsed = mergeRowPreviewSchema.response.safeParse(json)
 
     if (!res.ok || !parsed.data?.data) {
       return { error: parsed.data?.message || "Erro ao calcular a prévia." }
@@ -298,34 +306,84 @@ export async function previewMergePersonAction(keepId: string, sourceId: string)
   }
 }
 
-// Absorbs sourceId into keepId and deletes it. There is no undo, which is why the panel
-// only calls this after showing the preview above.
-export async function mergePersonAction(
+// Absorbs a whole row into keepId's: the person (or holderless account), and every loyalty
+// account in a program keepId already has. One transaction on the backend and no undo, which
+// is why the panel shows the preview above first.
+export async function mergeRowAction(
   keepId: string,
-  sourceId: string,
+  source: MergeRowSource,
   keepNickname: boolean,
 ) {
   const cookieStore = await cookies()
   const token = cookieStore.get("auth_token")?.value
 
   try {
-    const res = await fetch(`${env.BACKEND_URL}/api/v1/people/${keepId}/merge`, {
+    const res = await fetch(`${env.BACKEND_URL}/api/v1/people/${keepId}/merge-row`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ source_id: sourceId, keep_nickname: keepNickname }),
+      body: JSON.stringify({ ...mergeRowSourceParams(source), keep_nickname: keepNickname }),
     })
 
     const json = await res.json()
-    const parsed = mergePersonSchema.response.safeParse(json)
+    const parsed = mergeRowSchema.response.safeParse(json)
 
     if (!res.ok) {
-      return { error: parsed.data?.message || "Erro ao mesclar os cadastros." }
+      return { error: parsed.data?.message || "Erro ao mesclar." }
     }
 
     return { success: true as const, warning: parsed.data?.data?.warning ?? "" }
+  } catch {
+    return { error: "Erro de conexão com o servidor." }
+  }
+}
+
+// Sets the administrator of every account the holder has - one per holder, the way the
+// backend keeps it (internal/account/administrators.go). An empty id clears it.
+export async function setHolderAdministratorAction(holderId: string, administratorId: string) {
+  const cookieStore = await cookies()
+  const token = cookieStore.get("auth_token")?.value
+
+  try {
+    const res = await fetch(`${env.BACKEND_URL}/api/v1/people/${holderId}/administrator`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ administrator_id: administratorId || null }),
+    })
+
+    if (!res.ok) {
+      const json = await res.json().catch(() => null)
+      return { error: json?.message || "Erro ao definir o administrador." }
+    }
+
+    return { success: true as const }
+  } catch {
+    return { error: "Erro de conexão com o servidor." }
+  }
+}
+
+// What deleting the holder would do, without doing it - the row's confirmation reads it.
+export async function previewDeletePersonAction(personId: string) {
+  const cookieStore = await cookies()
+  const token = cookieStore.get("auth_token")?.value
+
+  try {
+    const res = await fetch(`${env.BACKEND_URL}/api/v1/people/${personId}/delete-preview`, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    })
+    const json = await res.json()
+    const parsed = deletePersonSchema.response.safeParse(json)
+
+    if (!res.ok || !parsed.data?.data) {
+      return { error: parsed.data?.message || "Erro ao calcular a prévia." }
+    }
+    return { removal: parsed.data.data }
   } catch {
     return { error: "Erro de conexão com o servidor." }
   }

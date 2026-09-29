@@ -12,7 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/murandido/m-80-backend/internal/api/middleware"
+	"github.com/murandido/m-80-backend/internal/access"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/events"
@@ -30,8 +30,14 @@ func seedClientSale(t *testing.T, tx *gorm.DB, clientID string, amountCents int,
 	t.Helper()
 
 	issuance, _ := seedIssuance(t, tx)
+	// A sale and its client share an agency, so the issuance moves to the client's.
+	var client data.Client
+	if err := tx.First(&client, "id = ?", clientID).Error; err != nil || client.AgencyID == nil {
+		t.Fatalf("failed to read the client's agency: %v", err)
+	}
 	// 1000 points at a price per thousand of amountCents is worth amountCents.
 	err := tx.Model(&issuance).UpdateColumns(map[string]any{
+		"agency_id":             *client.AgencyID,
 		"points":                1000,
 		"value_of_the_thousand": amountCents,
 		"created_at":            issuedAt,
@@ -47,7 +53,10 @@ func seedClientSale(t *testing.T, tx *gorm.DB, clientID string, amountCents int,
 
 func seedClient(t *testing.T, tx *gorm.DB) data.Client {
 	t.Helper()
-	client := data.Client{Name: "Cliente " + uuid.New().String()[:8]}
+	// The main agency: seedSaleFixture tests put their sales there, and a client can only be
+	// linked to a sale of its own agency.
+	agencyID := defaultAgency(t, tx).ID
+	client := data.Client{Name: "Cliente " + uuid.New().String()[:8], AgencyID: &agencyID}
 	create(t, tx, &client)
 	return client
 }
@@ -58,7 +67,7 @@ func callCreateClientPayment(t *testing.T, tx *gorm.DB, body string) *httptest.R
 	actor := createUser(t, tx, "Operador "+uuid.New().String()[:8])
 
 	req := httptest.NewRequest(http.MethodPost, "/sales/client-payments", strings.NewReader(body))
-	req = req.WithContext(context.WithValue(req.Context(), middleware.UserContextKey, actor))
+	req = req.WithContext(asUser(req.Context(), actor))
 
 	rec := httptest.NewRecorder()
 	handler.CreateClientPayment(rec, req)
@@ -241,7 +250,7 @@ func callDeleteClientPayment(t *testing.T, tx *gorm.DB, paymentID string) *httpt
 	routeCtx := chi.NewRouteContext()
 	routeCtx.URLParams.Add("paymentID", paymentID)
 	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, routeCtx)
-	req = req.WithContext(context.WithValue(ctx, middleware.UserContextKey, actor))
+	req = req.WithContext(asUser(ctx, actor))
 
 	rec := httptest.NewRecorder()
 	handler.DeleteClientPayment(rec, req)
@@ -351,7 +360,7 @@ func TestGetClientPayments_ListsUndoneAndWhereTheMoneyIs(t *testing.T) {
 		kept := recordClientPayment(t, tx, `{"client_id":"`+client.ID+`","amount_cents":15000,"paid_on":"2026-09-11"}`)
 
 		handler := NewSaleHandler(tx, events.NewBroker())
-		req := httptest.NewRequest(http.MethodGet, "/sales/client-payments?client_id="+client.ID, nil)
+		req := withScope(httptest.NewRequest(http.MethodGet, "/sales/client-payments?client_id="+client.ID, nil), access.FullScope())
 		rec := httptest.NewRecorder()
 		handler.GetClientPayments(rec, req)
 		if rec.Code != http.StatusOK {

@@ -11,7 +11,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/smiles"
 	"github.com/murandido/m-80-backend/internal/smilessync"
@@ -101,6 +100,7 @@ func seedSmilesAccount(t *testing.T, tx *gorm.DB) (data.Account, data.User) {
 	//nolint:gosec // G101: fixed test fixtures, not real credentials
 	login, password := "12345678900", "senha-da-conta"
 	account := data.Account{
+		HolderID:           testHolder(t, tx),
 		LoyaltyProgramID:   program.ID,
 		OwnsPointInventory: true,
 		TracksStatement:    true,
@@ -116,7 +116,7 @@ func smilesRequest(method, accountID, userID, body string) *http.Request {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", accountID)
 	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
-	ctx = context.WithValue(ctx, middleware.UserContextKey, data.User{ID: userID, Role: data.RoleAdmin})
+	ctx = asUser(ctx, data.User{ID: userID, Role: data.RoleAdmin})
 	return req.WithContext(ctx)
 }
 

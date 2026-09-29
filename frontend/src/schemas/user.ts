@@ -19,6 +19,9 @@ export const userSchema = z.object({
   name: z.string(),
   phone: z.string(),
   role: userRoleSchema,
+  // The agencies the user may see. Always empty for a dev, whose role covers every agency.
+  // Defaulted so a response from an API that predates the field still parses.
+  agency_ids: z.array(z.string()).default([]),
   created_at: z.string(),
 })
 
@@ -56,6 +59,9 @@ export const updateUserSchema = {
         .max(20, "A senha pode ter no máximo 20 caracteres"),
     ]),
     role: userRoleSchema,
+    // Only a dev may send it - the API refuses it from anyone else - so it stays undefined,
+    // and out of the request, when an admin edits.
+    agency_ids: z.array(z.string()).optional(),
   }),
   response: z.object({
     success: z.boolean(),
@@ -92,6 +98,8 @@ export const createUserSchema = {
       .min(6, "A senha precisa ter no mínimo 6 caracteres")
       .max(20, "A senha pode ter no máximo 20 caracteres"),
     role: userRoleSchema,
+    // See updateUserSchema: only a dev sends it.
+    agency_ids: z.array(z.string()).optional(),
   }),
   response: z.object({
     success: z.boolean(),

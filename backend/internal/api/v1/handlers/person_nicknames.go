@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
 	"github.com/jackc/pgx/v5/pgconn"
+	acct "github.com/murandido/m-80-backend/internal/account"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/utils"
@@ -78,19 +79,18 @@ func (h *PersonNicknameHandler) CreatePersonNickname(w http.ResponseWriter, r *h
 		return
 	}
 
-	nickname := data.PersonNickname{
-		PersonID: personID,
-		Nickname: req.Nickname,
-	}
-
-	if err := h.DB.Create(&nickname).Error; err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == postgresUniqueViolation {
-			utils.SendError(w, r, http.StatusUnprocessableEntity, "Apelido já está em uso")
-			return
+	// The alias reaches every account the person holds too (see internal/account/nicknames.go),
+	// all in one transaction so a conflict on any of them leaves nothing half-written.
+	var nickname data.PersonNickname
+	err := h.DB.Transaction(func(tx *gorm.DB) error {
+		if err := acct.ShareNickname(tx, personID, req.Nickname); err != nil {
+			return err
 		}
-
-		utils.SendError(w, r, http.StatusInternalServerError, "Failed to create nickname: "+err.Error())
+		return tx.Where("person_id = ? AND LOWER(nickname) = LOWER(?)", personID, req.Nickname).
+			First(&nickname).Error
+	})
+	if err != nil {
+		sendSharedNicknameError(w, r, err)
 		return
 	}
 
@@ -258,10 +258,29 @@ func (h *PersonNicknameHandler) DeletePersonNickname(w http.ResponseWriter, r *h
 		return
 	}
 
-	if err := h.DB.Delete(&nickname).Error; err != nil {
+	// Leaves the person's accounts as well: the alias is one thing across the holder's row.
+	if err := h.DB.Transaction(func(tx *gorm.DB) error {
+		return acct.UnshareNickname(tx, personID, nickname.Nickname)
+	}); err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to delete nickname: "+err.Error())
 		return
 	}
 
 	utils.SendJSON(w, r, http.StatusOK, "Nickname deleted successfully", nil)
+}
+
+// sendSharedNicknameError turns a conflict on any side of a shared alias into the 422 the
+// panel shows next to the field, naming where the alias is already in use.
+func sendSharedNicknameError(w http.ResponseWriter, r *http.Request, err error) {
+	var taken *acct.NicknameTakenError
+	if errors.As(err, &taken) {
+		utils.SendError(w, r, http.StatusUnprocessableEntity, taken.Error())
+		return
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == postgresUniqueViolation {
+		utils.SendError(w, r, http.StatusUnprocessableEntity, "Apelido já está em uso")
+		return
+	}
+	utils.SendError(w, r, http.StatusInternalServerError, "Failed to save nickname: "+err.Error())
 }

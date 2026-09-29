@@ -28,6 +28,7 @@ import {
   SALES_URL_KEYS,
   type SalesSearchParams,
 } from "../period-params"
+import { defaultAgencyId } from "@/lib/default-agency"
 
 export const metadata: Metadata = {
   title: "Fornecedores",
@@ -100,7 +101,7 @@ export default async function SalesSuppliersPage({
     agency_ids:
       filters.agency_ids ||
       filters.agency_id ||
-      (agencies ?? []).find((a) => a.is_default)?.id ||
+      defaultAgencyId(agencies) ||
       ALL_AGENCIES,
   }
 

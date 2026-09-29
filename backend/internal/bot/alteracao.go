@@ -23,7 +23,7 @@ const auditActionUpdated = "updated"
 // through exactly the same gates as an EMISSAO, for the same reasons - see
 // authorizeSender.
 func (b *Bot) handleAlteracao(ctx context.Context, evt *events.Message, text string, startedAt time.Time) {
-	user, allowed := b.authorizeSender(evt, "alteracao")
+	user, scope, allowed := b.authorizeSender(evt, "alteracao")
 	if !allowed {
 		return
 	}
@@ -44,8 +44,11 @@ func (b *Bot) handleAlteracao(ctx context.Context, evt *events.Message, text str
 		if err != nil {
 			return err
 		}
+		if !scope.Allows(issuance.AgencyID) {
+			return errIssuanceOutOfScope(msg.ProgramLocator)
+		}
 
-		fields, err := resolveAlteracao(tx, msg, issuance)
+		fields, err := resolveAlteracao(tx, msg, issuance, scope)
 		if err != nil {
 			return err
 		}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/murandido/m-80-backend/internal/access"
 	"github.com/murandido/m-80-backend/internal/bot/humanizer"
 	"github.com/murandido/m-80-backend/internal/data"
 	issuancesvc "github.com/murandido/m-80-backend/internal/issuance"
@@ -26,7 +27,7 @@ import (
 // bot merely happens to be in should not get a reaction telling them the bot is
 // reading - the same reasoning as cmdRegistrarChat's silent branches.
 func (b *Bot) handleEmissao(ctx context.Context, evt *events.Message, text string, startedAt time.Time) {
-	user, allowed := b.authorizeSender(evt, "emissao")
+	user, scope, allowed := b.authorizeSender(evt, "emissao")
 	if !allowed {
 		return
 	}
@@ -43,9 +44,14 @@ func (b *Bot) handleEmissao(ctx context.Context, evt *events.Message, text strin
 	// unpersistable, or the panel fills up with orphans nobody asked for.
 	var created data.Issuance
 	err = b.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		input, err := resolveEmissao(tx, msg)
+		input, err := resolveEmissao(tx, msg, scope)
 		if err != nil {
 			return err
+		}
+		if input.AgencyID == nil {
+			if input.AgencyID, err = defaultAgencyFor(tx, scope); err != nil {
+				return err
+			}
 		}
 
 		created, err = issuancesvc.Create(tx, input, user.ID)
@@ -114,29 +120,59 @@ func successReaction(outcome traveosOutcome) string {
 // group the bot merely happens to be in learns that it reads.
 //
 // flow only labels the log lines.
-func (b *Bot) authorizeSender(evt *events.Message, flow string) (*data.User, bool) {
+func (b *Bot) authorizeSender(evt *events.Message, flow string) (*data.User, access.AgencyScope, bool) {
 	chatJID := evt.Info.Chat.String()
 
 	listening, err := b.isListeningTo(chatJID)
 	if err != nil {
 		b.Logger.Errorf("%s: failed to check listened_chats for %s: %v", flow, chatJID, err)
-		return nil, false
+		return nil, access.AgencyScope{}, false
 	}
 	if !listening {
 		b.Logger.Infof("%s: chat %s is not approved for monitoring, ignoring", flow, chatJID)
-		return nil, false
+		return nil, access.AgencyScope{}, false
 	}
 
 	user, err := b.resolveSenderUser(evt)
 	if err != nil {
 		b.Logger.Errorf("%s: failed to resolve sender %s: %v", flow, evt.Info.Sender, err)
-		return nil, false
+		return nil, access.AgencyScope{}, false
 	}
 	if user == nil {
 		b.Logger.Infof("%s: sender %s is not a known user, ignoring", flow, evt.Info.Sender)
-		return nil, false
+		return nil, access.AgencyScope{}, false
 	}
-	return user, true
+
+	// The bot acts on behalf of a panel user, so it is bound by the same agencies the panel
+	// binds them to - otherwise WhatsApp would be the way around every grant. A failure to
+	// read them is an outage, not a verdict, and stays silent like the gates above.
+	scope, err := access.LoadAgencyScope(b.DB, *user)
+	if err != nil {
+		b.Logger.Errorf("%s: failed to load the agencies of %s: %v", flow, user.Name, err)
+		return nil, access.AgencyScope{}, false
+	}
+	return user, scope, true
+}
+
+// defaultAgencyFor is the agency a new EMISSAO lands on when line 4 names none. It is settled
+// here rather than left to issuancesvc.Create's fallback, which is the main agency - one the
+// sender may not be allowed to see, so the issuance would vanish from their own panel.
+func defaultAgencyFor(tx *gorm.DB, scope access.AgencyScope) (*string, error) {
+	agencyID, err := access.ResolveDefaultAgency(tx, scope)
+	if errors.Is(err, access.ErrNoAgencyAccess) {
+		return nil, operatorErrorf(err, "Você não tem acesso a nenhuma agência")
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &agencyID, nil
+}
+
+// errIssuanceOutOfScope builds the refusal for an issuance the sender may not touch. It reads
+// exactly like the one for a locator that matches nothing, so the group learns nothing about
+// another agency's bookings.
+func errIssuanceOutOfScope(locator string) error {
+	return operatorErrorf(nil, "Não encontrei nenhuma emissão com o localizador %q", locator)
 }
 
 // isListeningTo reports whether the chat was approved by an admin and is
