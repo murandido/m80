@@ -333,13 +333,20 @@ mesmo com o A correto.
 ```bash
 cd /opt/m80/backend
 sed -i 's/^API_DOMAIN_PROD=.*/API_DOMAIN_PROD="<domínio>"/' .env
-IMAGE_TAG=latest docker compose --profile prod up -d --force-recreate caddy-prod
+IMAGE_TAG=$(sed -n 's/^CURRENT_TAG=//p' /opt/m80/deploy/.deploy-state) \
+  docker compose --profile prod up -d --force-recreate --no-deps caddy-prod
 ```
 
 O `--force-recreate` é o que faz um **Caddyfile alterado** valer, aqui ou depois de um deploy que o
 mudou. O `up -d` do deploy não recria o Caddy: a config dele no Compose não mudou, e o bind mount de
 um arquivo só segue preso ao inode antigo que o `git checkout` substituiu. Os certificados ficam no
 volume `caddy_data` e sobrevivem ao recreate.
+
+**O `--no-deps` e a tag do `.deploy-state` não são opcionais.** Sem `--no-deps`, o Compose recria
+junto o painel e a API na tag que você passou — e `latest` na máquina pode ser uma imagem velha,
+porque o deploy publica por SHA. Foi assim que a API caiu em 28/09/2026: `IMAGE_TAG=latest` subiu
+uma API que não conhecia a migration mais nova do banco, e ela ficou reiniciando até voltar para o
+SHA. Depois de qualquer `up` à mão, confira imagem e status de todos com `docker ps`.
 
 Duas consequências: o cookie de sessão é por hostname, então **todo mundo precisa logar de novo**; e
 `VPS_HOST`/`VPS_KNOWN_HOSTS` (passo 10) guardam o hostname antigo. Mantenha o DNS antigo apontando
