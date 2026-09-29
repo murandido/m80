@@ -63,6 +63,9 @@ export function SaleStatusButton({ sale, onToggle, disabled }: SaleStatusButtonP
     sale.client_payment_cents > 0 &&
     sale.paid_cents - sale.client_payment_cents <= 0
   const inert = status === "cancelled" || status === "no-value"
+  // A partly paid sale is where a client's lump sum ran out: only another client payment
+  // moves it, and the backend refuses the switch on it too.
+  const locked = coveredByClientPayment || status === "partial"
 
   const paidShare =
     sale.amount_cents > 0
@@ -84,7 +87,7 @@ export function SaleStatusButton({ sale, onToggle, disabled }: SaleStatusButtonP
         (sale.client_payment_paid_on ? ` em ${formatShortDay(sale.client_payment_paid_on)}` : "") +
         " — desfaça no Histórico"
       : "Clique para voltar a A Pagar",
-    partial: `${Math.round(paidShare)}% pago — clique para quitar o restante`,
+    partial: `${Math.round(paidShare)}% pago — só um novo pagamento parcial altera`,
     unpaid: "Clique para marcar como pago",
     refund: "Clique para registrar a devolução ao cliente",
     cancelled: "Emissão cancelada, nada a receber ou devolver",
@@ -95,7 +98,7 @@ export function SaleStatusButton({ sale, onToggle, disabled }: SaleStatusButtonP
     <button
       type="button"
       onClick={() => onToggle(status !== "paid")}
-      disabled={disabled || inert || coveredByClientPayment}
+      disabled={disabled || inert || locked}
       title={hint}
       aria-label={`${label}. ${hint}`}
       className={cn(
@@ -104,7 +107,7 @@ export function SaleStatusButton({ sale, onToggle, disabled }: SaleStatusButtonP
         status === "paid" && "bg-emerald-600 hover:bg-emerald-700",
         status === "unpaid" && "bg-red-600 hover:bg-red-700",
         // The dark half is what is still owed; the yellow fill grows with what came in.
-        status === "partial" && "bg-[#7a5a00] hover:brightness-110",
+        status === "partial" && "bg-[#7a5a00]",
         status === "refund" && "bg-slate-500 hover:bg-slate-600",
         inert && "bg-slate-200 text-slate-500",
         disabled && !inert && "opacity-60",

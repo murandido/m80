@@ -19,7 +19,9 @@ export async function createClientAction(
         Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify({
-        name: data.name,
+        // The API stores names in upper case anyway; sending them that way keeps the
+        // request and the stored value the same string.
+        name: data.name?.trim().toUpperCase(),
         phone: data.phone || undefined,
         agency_id: data.agency_id,
       }),
@@ -61,7 +63,9 @@ export async function updateClientAction(
         Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify({
-        name: data.name,
+        // The API stores names in upper case anyway; sending them that way keeps the
+        // request and the stored value the same string.
+        name: data.name?.trim().toUpperCase(),
         phone: data.phone || undefined,
         agency_id: data.agency_id,
       }),

@@ -23,6 +23,9 @@ export const SALES_FILTER_KEYS = [
   "administrator_id",
   "issuer_id",
   "client_id",
+  // client_ids is the clients view's multi-valued client choice, comma-separated, and may
+  // carry NO_CLIENT for the sales nobody was linked to.
+  "client_ids",
   "paid",
   // group_by is the suppliers view's choice between one row per account and one row per
   // account administrator. It rides with the filters so it reaches the backend, the sticky
@@ -59,10 +62,34 @@ export function resolveSalesFilters(params: SalesSearchParams): SalesFilterState
     account_id: params.account_id ?? "",
     administrator_id: params.administrator_id ?? "",
     issuer_id: params.issuer_id ?? "",
-    client_id: params.client_id ?? "",
+    // client_id is the single client an older link or a remembered filter cookie still
+    // carries. It is read into client_ids and never sent on, so the backend only ever
+    // sees one of the two.
+    client_id: "",
+    client_ids: params.client_ids || params.client_id || "",
     paid: params.paid ?? "",
     group_by: params.group_by ?? "",
   }
+}
+
+// NO_CLIENT is the "Sem cliente registrado" entry of the client filter. Has to match
+// noClientToken in backend/internal/api/v1/handlers/sales.go.
+export const NO_CLIENT = "none"
+
+export function parseClientIds(value: string): string[] {
+  return value.split(",").filter(Boolean)
+}
+
+export function serializeClientIds(ids: string[]): string {
+  return ids.join(",")
+}
+
+// singleClientId is the client when the filter picked exactly one real client - the case
+// where the screen can speak about that client (what they owe, whose payment the footer
+// registers). "Sem cliente registrado" is not a client.
+export function singleClientId(clientIds: string): string {
+  const ids = parseClientIds(clientIds)
+  return ids.length === 1 && ids[0] !== NO_CLIENT ? ids[0] : ""
 }
 
 // GROUP_BY_ADMINISTRATOR has to match groupByAdministrator in

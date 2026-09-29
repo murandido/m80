@@ -9,7 +9,7 @@ import { getSessionUser } from "@/lib/session"
 import { readStickyFilters, stickySearchParams } from "@/lib/sticky-filters"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
-import { getSalesSchema, type Sale } from "@/schemas/sale"
+import { getClientPaymentsSchema, getSalesSchema, type Sale } from "@/schemas/sale"
 import { getClientsSchema, type Client } from "@/schemas/client"
 import { getAgenciesSchema, type Agency } from "@/schemas/agency"
 import { SalesViewToggle } from "@/components/sales/sales-view-toggle"
@@ -17,12 +17,14 @@ import { SalesFilterBar } from "@/components/sales/sales-filter-bar"
 import { SalesPeriodFilter } from "@/components/sales/sales-period-filter"
 import { SalesClientsTable } from "@/components/sales/sales-clients-table"
 import { SalesHelpPopover } from "@/components/sales/sales-help-popover"
+import { ClientReportButton } from "@/components/sales/client-report-button"
 import { LiveRefresh } from "@/components/layout/live-refresh"
 import {
   buildSalesQuery,
   resolveSalesFilters,
   resolveSalesPeriod,
   SALES_URL_KEYS,
+  singleClientId,
   type SalesSearchParams,
 } from "./period-params"
 import { defaultAgencyId } from "@/lib/default-agency"
@@ -63,7 +65,11 @@ export default async function SalesClientsPage({
   }
   const query = buildSalesQuery(period, filters)
 
-  const [user, sales, clients, agencies] = await Promise.all([
+  // One client filtered: the table closes with what that client owes, and their credit is
+  // part of the answer - money already handed over that no sale has taken yet.
+  const filteredClientId = singleClientId(filters.client_ids)
+
+  const [user, sales, clients, agencies, clientCreditCents] = await Promise.all([
     getSessionUser(),
     fetchList<Sale>(
       `${api}/sales?${query.toString()}`,
@@ -76,6 +82,7 @@ export default async function SalesClientsPage({
       getAgenciesSchema.response,
       authHeader,
     ),
+    filteredClientId ? fetchClientCredit(api, filteredClientId, authHeader) : null,
   ])
 
   // The backend falls back to the user's default agency when agency_id is absent; resolving
@@ -110,6 +117,7 @@ export default async function SalesClientsPage({
                 Exportar
               </a>
             </Button>
+            <ClientReportButton query={query.toString()} />
             <SalesHelpPopover />
           </div>
         </div>
@@ -141,18 +149,39 @@ export default async function SalesClientsPage({
           </Alert>
         ) : (
           <SalesClientsTable
-            // Remounted when the client filter changes, so the footer's client follows it.
-            key={filters.client_id}
             sales={sales}
             // A sale's client belongs to the sale's agency, so the pickers offer only the
             // clients of the agency this list is showing.
             clients={(clients ?? []).filter((c) => c.agency_id === effectiveFilters.agency_id)}
             agencyId={effectiveFilters.agency_id}
-            clientFilter={filters.client_id}
+            clientFilter={filters.client_ids}
+            clientCreditCents={clientCreditCents}
+            dateFrom={period.date_from}
+            dateTo={period.date_to}
             paidFilter={filters.paid}
           />
         )}
       </div>
     </div>
   )
+}
+
+// The client's credit, or null when it could not be read - the total row then shows the
+// debt alone rather than a credit of zero that nobody checked.
+async function fetchClientCredit(
+  api: string,
+  clientId: string,
+  authHeader: Record<string, string>,
+): Promise<number | null> {
+  try {
+    const res = await fetch(
+      `${api}/sales/client-payments?client_id=${encodeURIComponent(clientId)}`,
+      { headers: authHeader, cache: "no-store" },
+    )
+    const parsed = getClientPaymentsSchema.response.safeParse(await res.json())
+    if (!res.ok || !parsed.success) return null
+    return parsed.data.data?.credit_cents ?? null
+  } catch {
+    return null
+  }
 }

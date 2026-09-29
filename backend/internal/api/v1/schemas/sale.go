@@ -61,7 +61,8 @@ type ClientPaymentSingleResponse struct {
 }
 
 // ClientPaymentHistoryResponse is a client's payments, undone ones included, and the
-// credit they leave - what GET /sales/client-payments returns.
+// credit they leave - what GET /sales/client-payments returns. Asked for several clients
+// at once, it is their payments in the period and the credit they hold between them.
 type ClientPaymentHistoryResponse struct {
 	// CreditCents is what the active payments brought in and no sale took.
 	CreditCents int                        `json:"credit_cents" example:"20000"`
@@ -70,7 +71,11 @@ type ClientPaymentHistoryResponse struct {
 
 // ClientPaymentHistoryItem is one lump sum and where its money is now.
 type ClientPaymentHistoryItem struct {
-	ID            string    `json:"id"`
+	ID string `json:"id"`
+	// ClientID and ClientName say whose payment it is, which the history of several
+	// clients at once has to show on every line.
+	ClientID      string    `json:"client_id"`
+	ClientName    string    `json:"client_name"`
 	AmountCents   int       `json:"amount_cents" example:"120000"`
 	PaidOn        string    `json:"paid_on" example:"2026-09-14"`
 	CreatedByName string    `json:"created_by_name"`

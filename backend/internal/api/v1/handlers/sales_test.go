@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -300,6 +301,46 @@ func TestGetSales_FiltersByIssuanceDimensions(t *testing.T) {
 			}
 			if findSale(sales, otherSale.ID) != nil {
 				t.Errorf("%s: a non-matching sale leaked through", tc.name)
+			}
+		}
+	})
+}
+
+func TestGetSales_FiltersBySeveralClientsOrNone(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		main := defaultAgency(t, tx)
+		_, firstSale := seedSaleFixture(t, tx, main.ID)
+		_, secondSale := seedSaleFixture(t, tx, main.ID)
+		_, thirdSale := seedSaleFixture(t, tx, main.ID)
+		_, unlinkedSale := seedSaleFixture(t, tx, main.ID)
+
+		first, second, third := seedClient(t, tx), seedClient(t, tx), seedClient(t, tx)
+		for saleID, clientID := range map[string]string{
+			firstSale.ID: first.ID, secondSale.ID: second.ID, thirdSale.ID: third.ID,
+		} {
+			if err := tx.Model(&data.Sale{}).Where("id = ?", saleID).Update("client_id", clientID).Error; err != nil {
+				t.Fatalf("failed to link client: %v", err)
+			}
+		}
+
+		all := []string{firstSale.ID, secondSale.ID, thirdSale.ID, unlinkedSale.ID}
+		for _, tc := range []struct {
+			name, query string
+			want        []string
+		}{
+			{"one", "client_ids=" + first.ID, []string{firstSale.ID}},
+			{"several", "client_ids=" + first.ID + "," + second.ID, []string{firstSale.ID, secondSale.ID}},
+			{"none", "client_ids=none", []string{unlinkedSale.ID}},
+			{"none and one", "client_ids=none," + third.ID, []string{thirdSale.ID, unlinkedSale.ID}},
+			{"client_ids wins over client_id", "client_id=" + first.ID + "&client_ids=" + second.ID, []string{secondSale.ID}},
+			{"garbage matches nothing", "client_ids=not-a-uuid", nil},
+		} {
+			sales := callGetSales(t, tx, tc.query)
+			for _, id := range all {
+				wanted := slices.Contains(tc.want, id)
+				if got := findSale(sales, id) != nil; got != wanted {
+					t.Errorf("%s: sale %s listed=%v, want %v", tc.name, id, got, wanted)
+				}
 			}
 		}
 	})

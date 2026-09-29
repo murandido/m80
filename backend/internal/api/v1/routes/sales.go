@@ -22,6 +22,9 @@ func RegisterSaleRoutes(r chi.Router, db *gorm.DB, broker *events.Broker) {
 		// export filtered sales as an .xlsx spreadsheet
 		r.Get("/export", saleHandler.GetSalesExport)
 
+		// the payment statement sent to a client, with the clients view's filters
+		r.Get("/clients/report", saleHandler.GetClientReportPDF)
+
 		// aggregated balance per account (Visão Fornecedores)
 		r.With(middleware.RequireAdmin()).Get("/suppliers", saleHandler.GetSupplierBalances)
 

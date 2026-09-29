@@ -22,6 +22,8 @@ interface ClientComboboxProps {
   // The filter bars omit it: creating a client there would filter the list down to a
   // client that by definition has no sales yet.
   onCreate?: (name: string) => void
+  // Reports the list opening and closing, for a table that highlights the row being edited.
+  onOpenChange?: (open: boolean) => void
 }
 
 function matches(client: Client, query: string): boolean {
@@ -42,8 +44,14 @@ export function ClientCombobox({
   disabled,
   className,
   onCreate,
+  onOpenChange,
 }: ClientComboboxProps) {
-  const [open, setOpen] = useState(false)
+  const [open, setOpenState] = useState(false)
+
+  function setOpen(next: boolean) {
+    setOpenState(next)
+    onOpenChange?.(next)
+  }
   const [query, setQuery] = useState("")
 
   const selected = clients.find((c) => c.id === value)
