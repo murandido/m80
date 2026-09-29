@@ -83,25 +83,7 @@ func (f holderAccountFilter) search(alias string) (string, []any) {
 }
 
 // holderRowsQuery builds the union the listing pages over and its bound arguments.
-// holderPending narrows the listing to one of the to-do lists the accounts screen reports:
-// accounts with no holder, holders with two live accounts in one program, and holders whose
-// accounts disagree about who administers them.
-type holderPending struct {
-	holderless        bool
-	duplicatePrograms bool
-	adminConflicts    bool
-}
-
-// Both are about a holder's live accounts, and both are what the page's banner counts.
-const (
-	holderHasDuplicateProgram = `EXISTS (SELECT 1 FROM accounts AS dup
-		WHERE dup.holder_id = people.id AND dup.deleted_at IS NULL
-		GROUP BY dup.loyalty_program_id HAVING COUNT(*) > 1)`
-	holderHasAdminConflict = `(SELECT COUNT(DISTINCT adm.administrator_id) FROM accounts AS adm
-		WHERE adm.holder_id = people.id AND adm.deleted_at IS NULL AND adm.administrator_id IS NOT NULL) > 1`
-)
-
-func holderRowsQuery(params listQuery, filter holderAccountFilter, complete *bool, pending holderPending) (string, []any) {
+func holderRowsQuery(params listQuery, filter holderAccountFilter, complete *bool) (string, []any) {
 	var personWhere, orphanWhere []string
 	var personArgs, orphanArgs []any
 
@@ -147,26 +129,10 @@ func holderRowsQuery(params listQuery, filter holderAccountFilter, complete *boo
 		}
 	}
 
-	// holderless_only is the to-do list for making accounts.holder_id NOT NULL: only the
-	// accounts still missing a holder, and nobody else.
-	if pending.holderless {
-		personWhere = append(personWhere, "false")
-	}
-	if pending.duplicatePrograms {
-		personWhere = append(personWhere, holderHasDuplicateProgram)
-	}
-	if pending.adminConflicts {
-		personWhere = append(personWhere, holderHasAdminConflict)
-	}
-
 	// Orphan rows: one account each - archived ones included. They are invisible everywhere
 	// else in the panel, but a NOT NULL on holder_id counts every row in the table, so they
 	// need a holder as much as the living ones do.
 	orphanWhere = append(orphanWhere, "accounts.holder_id IS NULL")
-	if pending.duplicatePrograms || pending.adminConflicts {
-		// Both are about a holder's accounts; a row with no holder has neither.
-		orphanWhere = append(orphanWhere, "false")
-	}
 	if filter.programID != "" {
 		orphanWhere = append(orphanWhere, "accounts.loyalty_program_id = ?")
 		orphanArgs = append(orphanArgs, filter.programID)
@@ -214,9 +180,6 @@ type holderRowKey struct {
 // @Param        loyalty_program_id  query  string  false  "Somente titulares com conta neste programa"
 // @Param        category            query  string  false  "Somente titulares com conta nesta categoria"  Enums(unidentified, standard, injunction)
 // @Param        complete            query  bool    false  "true: titular e todas as contas completos; false: algo incompleto"
-// @Param        holderless_only     query  bool    false  "Somente as contas sem titular (inclusive arquivadas), que impedem o NOT NULL em accounts.holder_id"
-// @Param        duplicate_programs_only  query  bool  false  "Somente titulares com duas contas vivas no mesmo programa"
-// @Param        admin_conflicts_only     query  bool  false  "Somente titulares cujas contas têm administradores diferentes"
 // @Param        page                query  int     false  "Página (padrão 1)"
 // @Param        limit               query  int     false  "Itens por página (padrão 20, máximo 100)"
 // @Success      200  {object}  schemas.AccountHolderPaginatedResponse
@@ -230,12 +193,7 @@ func (h *AccountHandler) ListAccountHolders(w http.ResponseWriter, r *http.Reque
 		category:  r.URL.Query().Get("category"),
 		like:      likePattern(params.Q),
 	}
-	pending := holderPending{
-		holderless:        r.URL.Query().Get("holderless_only") == "true",
-		duplicatePrograms: r.URL.Query().Get("duplicate_programs_only") == "true",
-		adminConflicts:    r.URL.Query().Get("admin_conflicts_only") == "true",
-	}
-	rowsSQL, args := holderRowsQuery(params, filter, parseOptionalBool(r.URL.Query().Get("complete")), pending)
+	rowsSQL, args := holderRowsQuery(params, filter, parseOptionalBool(r.URL.Query().Get("complete")))
 
 	var total int64
 	if err := h.DB.Raw("SELECT COUNT(*) FROM ("+rowsSQL+") AS holder_rows", args...).
@@ -259,33 +217,11 @@ func (h *AccountHandler) ListAccountHolders(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Unfiltered on purpose: it is how far the table is from taking a NOT NULL on holder_id,
-	// which the page reports whatever the operator happens to be searching for.
-	var holderless int64
-	if err := h.DB.Unscoped().Model(&data.Account{}).Where("holder_id IS NULL").Count(&holderless).Error; err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Failed to count accounts")
-		return
-	}
-
-	// Unfiltered too, for the same banner.
-	var duplicatePrograms, adminConflicts int64
-	if err := h.DB.Raw("SELECT COUNT(*) FROM people WHERE people.deleted_at IS NULL AND " + holderHasDuplicateProgram).Scan(&duplicatePrograms).Error; err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Failed to count accounts")
-		return
-	}
-	if err := h.DB.Raw("SELECT COUNT(*) FROM people WHERE people.deleted_at IS NULL AND " + holderHasAdminConflict).Scan(&adminConflicts).Error; err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Failed to count accounts")
-		return
-	}
-
 	utils.SendJSON(w, r, http.StatusOK, "Accounts fetched successfully", schemas.AccountHolderPaginatedData{
-		Rows:                   rows,
-		Total:                  total,
-		Page:                   params.Page,
-		Limit:                  params.Limit,
-		HolderlessTotal:        holderless,
-		DuplicateProgramsTotal: duplicatePrograms,
-		AdminConflictsTotal:    adminConflicts,
+		Rows:  rows,
+		Total: total,
+		Page:  params.Page,
+		Limit: params.Limit,
 	})
 }
 

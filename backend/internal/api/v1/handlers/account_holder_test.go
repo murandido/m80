@@ -145,35 +145,3 @@ func TestListAccountHolders_PaginatesRowsNotAccounts(t *testing.T) {
 		}
 	})
 }
-
-func TestListAccountHolders_FlagsRepeatedProgramsAndAdminConflicts(t *testing.T) {
-	runInTx(t, func(tx *gorm.DB) {
-		world := seedHolderWorld(t, tx)
-
-		// Ana gets a second live Smiles, and her Azul a different administrator than her Smiles.
-		secondLogin := "a-smiles-2-" + world.marker
-		create(t, tx, &data.Account{LoyaltyProgramID: world.smiles.ID, HolderID: &world.fulana.ID, Login: &secondLogin})
-		otherAdmin := seedPerson(t, tx, "Carla "+world.marker)
-		if err := tx.Model(&data.Account{}).
-			Where("holder_id = ? AND loyalty_program_id = ?", world.fulana.ID, world.azul.ID).
-			UpdateColumn("administrator_id", otherAdmin.ID).Error; err != nil {
-			t.Fatal(err)
-		}
-
-		dup := callListAccountHolders(t, tx, url.Values{"q": {world.marker}, "duplicate_programs_only": {"true"}})
-		if dup.Total != 1 || dup.Rows[0].Holder == nil || dup.Rows[0].Holder.ID != world.fulana.ID {
-			t.Fatalf("duplicate_programs_only: got %d rows, want only Ana", dup.Total)
-		}
-		if dup.DuplicateProgramsTotal < 1 {
-			t.Errorf("duplicate_programs_total: got %d", dup.DuplicateProgramsTotal)
-		}
-
-		conflicts := callListAccountHolders(t, tx, url.Values{"q": {world.marker}, "admin_conflicts_only": {"true"}})
-		if conflicts.Total != 1 || conflicts.Rows[0].Holder.ID != world.fulana.ID {
-			t.Fatalf("admin_conflicts_only: got %d rows, want only Ana", conflicts.Total)
-		}
-		if conflicts.AdminConflictsTotal < 1 {
-			t.Errorf("admin_conflicts_total: got %d", conflicts.AdminConflictsTotal)
-		}
-	})
-}

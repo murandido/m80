@@ -146,13 +146,6 @@ type AccountHolderPaginatedData struct {
 	Total int64              `json:"total"`
 	Page  int                `json:"page"`
 	Limit int                `json:"limit"`
-	// HolderlessTotal counts every account without a holder, archived included and filters
-	// ignored: what still stands between accounts.holder_id and a NOT NULL.
-	HolderlessTotal int64 `json:"holderless_total"`
-	// DuplicateProgramsTotal counts holders with two live accounts in one program, and
-	// AdminConflictsTotal holders whose accounts name different administrators. Both unfiltered.
-	DuplicateProgramsTotal int64 `json:"duplicate_programs_total"`
-	AdminConflictsTotal    int64 `json:"admin_conflicts_total"`
 }
 
 // AccountHolderPaginatedResponse is the GET /accounts/holders route response

@@ -222,23 +222,6 @@ export const listAccountHoldersSchema = {
         total: z.number(),
         page: z.number(),
         limit: z.number(),
-        // Every account without a holder, archived included and filters ignored: what still
-        // stands between accounts.holder_id and a NOT NULL. Defaulted for an API published
-        // before it existed.
-        holderless_total: z
-          .number()
-          .nullish()
-          .transform((value) => value ?? 0),
-        // Holders with two live accounts in one program, and holders whose accounts name
-        // different administrators - the other two to-do lists. Defaulted the same way.
-        duplicate_programs_total: z
-          .number()
-          .nullish()
-          .transform((value) => value ?? 0),
-        admin_conflicts_total: z
-          .number()
-          .nullish()
-          .transform((value) => value ?? 0),
       })
       .nullish(),
   }),
