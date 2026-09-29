@@ -20,8 +20,13 @@ export const userSchema = z.object({
   phone: z.string(),
   role: userRoleSchema,
   // The agencies the user may see. Always empty for a dev, whose role covers every agency.
-  // Defaulted so a response from an API that predates the field still parses.
-  agency_ids: z.array(z.string()).default([]),
+  // Defaulted so a response from an API that predates the field still parses - and null
+  // too, not just absent: a Go nil slice serializes as null, and one embedded user sending
+  // it failed the whole issuance list.
+  agency_ids: z
+    .array(z.string())
+    .nullish()
+    .transform((value) => value ?? []),
   created_at: z.string(),
 })
 
