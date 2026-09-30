@@ -145,3 +145,49 @@ func TestListAccountHolders_PaginatesRowsNotAccounts(t *testing.T) {
 		}
 	})
 }
+
+// Searching an administrator's name returns every holder whose account they run. The
+// administrator is the one being looked for, so her own row comes first, even though
+// alphabetically the holders she administers ("Ana …") come before her ("Bruno …").
+func TestListAccountHolders_SearchPutsTheNamedPersonFirst(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		world := seedHolderWorld(t, tx)
+
+		page := callListAccountHolders(t, tx, url.Values{"q": {world.beltrano.Name}})
+		if len(page.Rows) != 2 {
+			t.Fatalf("rows: got %d, want Bruno and the Ana he administers", len(page.Rows))
+		}
+		if page.Rows[0].Holder == nil || page.Rows[0].Holder.ID != world.beltrano.ID {
+			t.Errorf("first row: got %+v, want Bruno himself", page.Rows[0].Holder)
+		}
+		if page.Rows[1].Holder == nil || page.Rows[1].Holder.ID != world.fulana.ID {
+			t.Errorf("second row: got %+v, want Ana, matched through her account's administrator", page.Rows[1].Holder)
+		}
+	})
+}
+
+// The same name, typed as it is, beats one that starts with it, which beats one with a word
+// starting with it, which beats one that merely contains it - whatever the chosen order,
+// which only settles rows that matched the same way.
+func TestListAccountHolders_SearchRanksExactThenPrefixThenContains(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		term := "rk" + uuid.New().String()[:8]
+		contains := seedPerson(t, tx, "Zz"+term)
+		wordPrefix := seedPerson(t, tx, "Maria "+term+"son")
+		prefix := seedPerson(t, tx, term+" Souza")
+		exact := seedPerson(t, tx, term)
+
+		for _, order := range []string{"name_asc", "name_desc", "created_desc"} {
+			page := callListAccountHolders(t, tx, url.Values{"q": {term}, "order": {order}})
+			want := []string{exact.ID, prefix.ID, wordPrefix.ID, contains.ID}
+			if len(page.Rows) != len(want) {
+				t.Fatalf("%s: rows: got %d, want %d", order, len(page.Rows), len(want))
+			}
+			for i, id := range want {
+				if page.Rows[i].Holder == nil || page.Rows[i].Holder.ID != id {
+					t.Errorf("%s: row %d: got %+v, want %s", order, i, page.Rows[i].Holder, id)
+				}
+			}
+		}
+	})
+}

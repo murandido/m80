@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -82,10 +83,70 @@ func (f holderAccountFilter) search(alias string) (string, []any) {
 	return clause, []any{f.like, f.like, f.like, f.like, f.like}
 }
 
+// With a search, a row is ranked by how it matched before the chosen order applies. The
+// search reaches through a person's accounts - login, program, alias and administrator - so
+// searching an administrator's name returns every holder whose account they run, and sorted
+// by name alone the administrator herself could land at the bottom of her own search. The
+// person whose own name is the term comes first, then names that start with it, then names
+// with a word that starts with it, then names or aliases that merely contain it, and last
+// the rows that matched only through something else.
+const (
+	holderRankExact = iota
+	holderRankPrefix
+	holderRankWordPrefix
+	holderRankContains
+	holderRankOther
+)
+
+// equalsUnaccented compares a column with the bound term ignoring case and accents - the
+// exact-match counterpart of unaccentedLike.
+func equalsUnaccented(column string) string {
+	return "unaccent(lower(" + column + ")) = unaccent(lower(?))"
+}
+
+// personRank renders the rank of a person row and its bound arguments. fingerprint is the
+// CPF the term normalizes to, when it is one: a whole CPF names exactly one person.
+func personRank(q, fingerprint string) (string, []any) {
+	exact := equalsUnaccented("people.name") +
+		" OR EXISTS (SELECT 1 FROM person_nicknames WHERE person_nicknames.person_id = people.id AND " +
+		equalsUnaccented("person_nicknames.nickname") + ")"
+	args := []any{q, q}
+	if fingerprint != "" {
+		exact += " OR people.cpf_fingerprint = ?"
+		args = append(args, fingerprint)
+	}
+
+	sql := fmt.Sprintf(`CASE
+		WHEN %s THEN %d
+		WHEN %s THEN %d
+		WHEN %s THEN %d
+		WHEN %s OR %s THEN %d
+		ELSE %d END`,
+		exact, holderRankExact,
+		unaccentedLike("people.name"), holderRankPrefix,
+		unaccentedLike("people.name"), holderRankWordPrefix,
+		unaccentedLike("people.name"), nicknameMatch("person_nicknames", "person_id", "people", false), holderRankContains,
+		holderRankOther)
+	like := likePattern(q)
+	args = append(args, q+"%", "% "+q+"%", like, like)
+	return sql, args
+}
+
+// orphanRank renders the rank of an account with no holder: first when its login or one of
+// its aliases is the term, with the rows that matched through anything else otherwise.
+func orphanRank(q string) string {
+	return fmt.Sprintf(`CASE WHEN %s OR EXISTS (SELECT 1 FROM account_nicknames
+		WHERE account_nicknames.account_id = accounts.id AND account_nicknames.deleted_at IS NULL
+		  AND %s) THEN %d ELSE %d END`,
+		equalsUnaccented("accounts.login"), equalsUnaccented("account_nicknames.nickname"),
+		holderRankExact, holderRankOther)
+}
+
 // holderRowsQuery builds the union the listing pages over and its bound arguments.
 func holderRowsQuery(params listQuery, filter holderAccountFilter, complete *bool) (string, []any) {
 	var personWhere, orphanWhere []string
 	var personArgs, orphanArgs []any
+	var searchedFingerprint string
 
 	// Person rows. With a program or category chosen, only somebody holding a matching
 	// account qualifies - a person with no accounts has neither.
@@ -108,6 +169,7 @@ func holderRowsQuery(params listQuery, filter holderAccountFilter, complete *boo
 		if fingerprint, ok := searchFingerprint(params.Q); ok {
 			personSearch += " OR people.cpf_fingerprint = ?"
 			personSearchArgs = append(personSearchArgs, fingerprint)
+			searchedFingerprint = fingerprint
 		}
 
 		accountSearch, accountSearchArgs := filter.search("held")
@@ -154,14 +216,26 @@ func holderRowsQuery(params listQuery, filter holderAccountFilter, complete *boo
 		}
 	}
 
+	// Without a search every row ranks the same, and the chosen order alone applies.
+	personRankSQL, orphanRankSQL := "0", "0"
+	var personRankArgs, orphanRankArgs []any
+	if params.Q != "" {
+		personRankSQL, personRankArgs = personRank(params.Q, searchedFingerprint)
+		orphanRankSQL, orphanRankArgs = orphanRank(params.Q), []any{params.Q, params.Q}
+	}
+
 	// Archived people are gone from the panel (DeletePerson); their archived accounts too.
 	personWhere = append([]string{"people.deleted_at IS NULL"}, personWhere...)
-	personSQL := "SELECT '" + holderRowPerson + "' AS kind, people.id, people.name AS label, people.created_at FROM people" +
-		" WHERE " + strings.Join(personWhere, " AND ")
+	personSQL := "SELECT '" + holderRowPerson + "' AS kind, people.id, people.name AS label, people.created_at, " +
+		personRankSQL + " AS rank FROM people WHERE " + strings.Join(personWhere, " AND ")
 	orphanSQL := "SELECT '" + holderRowAccount + "' AS kind, accounts.id, " + holderRowOrphanLabel +
-		" AS label, accounts.created_at FROM accounts WHERE " + strings.Join(orphanWhere, " AND ")
+		" AS label, accounts.created_at, " + orphanRankSQL + " AS rank FROM accounts WHERE " + strings.Join(orphanWhere, " AND ")
 
-	return personSQL + " UNION ALL " + orphanSQL, append(personArgs, orphanArgs...)
+	// The rank's arguments sit in the select list, so they come before each side's WHERE.
+	args := append(personRankArgs, personArgs...)
+	args = append(args, orphanRankArgs...)
+	args = append(args, orphanArgs...)
+	return personSQL + " UNION ALL " + orphanSQL, args
 }
 
 type holderRowKey struct {
@@ -171,7 +245,7 @@ type holderRowKey struct {
 
 // ListAccountHolders handles the GET /accounts/holders route.
 // @Summary      Listar contas agrupadas por titular (paginado)
-// @Description  Uma linha por titular, com todas as contas de programa dele; pessoas sem conta e contas sem titular aparecem em linha própria. Os filtros escolhem linhas: a linha traz todas as contas não arquivadas do titular, não só as que casaram.
+// @Description  Uma linha por titular, com todas as contas de programa dele; pessoas sem conta e contas sem titular aparecem em linha própria. Os filtros escolhem linhas: a linha traz todas as contas não arquivadas do titular, não só as que casaram. Com busca, quem casa pelo próprio nome vem primeiro (nome igual, depois começando pelo termo, depois uma palavra começando pelo termo, depois contendo), e só então quem casou por outro campo ou pelas contas; a ordem escolhida desempata dentro de cada faixa.
 // @Tags         Contas
 // @Produce      json
 // @Security     BearerAuth
@@ -203,7 +277,9 @@ func (h *AccountHandler) ListAccountHolders(w http.ResponseWriter, r *http.Reque
 	}
 
 	var keys []holderRowKey
-	pageSQL := "SELECT kind, id FROM (" + rowsSQL + ") AS holder_rows ORDER BY " +
+	// rank first: with a search, how a row matched outweighs the chosen order, which then
+	// settles the rows that matched the same way (see holderRankExact).
+	pageSQL := "SELECT kind, id FROM (" + rowsSQL + ") AS holder_rows ORDER BY rank ASC, " +
 		orderClause(params.Order, holderRowOrder, holderRowOrder["name_asc"]) + " LIMIT ? OFFSET ?"
 	if err := h.DB.Raw(pageSQL, append(args, params.Limit, (params.Page-1)*params.Limit)...).
 		Scan(&keys).Error; err != nil {
