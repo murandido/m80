@@ -83,39 +83,18 @@ func (h *AccountNicknameHandler) CreateAccountNickname(w http.ResponseWriter, r 
 		return
 	}
 
-	// An account with a holder shares its aliases with the holder and the holder's other
-	// accounts (internal/account/nicknames.go). Only an old holderless one keeps its own.
-	if account.HolderID != nil {
-		var nickname data.AccountNickname
-		err := h.DB.Transaction(func(tx *gorm.DB) error {
-			if err := acct.ShareNickname(tx, *account.HolderID, req.Nickname); err != nil {
-				return err
-			}
-			return tx.Where("account_id = ? AND LOWER(nickname) = LOWER(?)", accountID, req.Nickname).
-				First(&nickname).Error
-		})
-		if err != nil {
-			sendSharedNicknameError(w, r, err)
-			return
+	// An account's aliases are its holder's, shared with the holder's other accounts
+	// (internal/account/nicknames.go) - every account has a holder since migration 75.
+	var nickname data.AccountNickname
+	err := h.DB.Transaction(func(tx *gorm.DB) error {
+		if err := acct.ShareNickname(tx, *account.HolderID, req.Nickname); err != nil {
+			return err
 		}
-		utils.SendJSON(w, r, http.StatusCreated, "Nickname created successfully", toAccountNicknameResponse(nickname))
-		return
-	}
-
-	nickname := data.AccountNickname{
-		AccountID:        accountID,
-		LoyaltyProgramID: req.LoyaltyProgramID,
-		Nickname:         req.Nickname,
-	}
-
-	if err := h.DB.Create(&nickname).Error; err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == postgresUniqueViolation {
-			utils.SendError(w, r, http.StatusUnprocessableEntity, "Apelido já está em uso neste programa")
-			return
-		}
-
-		utils.SendError(w, r, http.StatusInternalServerError, "Failed to create nickname: "+err.Error())
+		return tx.Where("account_id = ? AND LOWER(nickname) = LOWER(?)", accountID, req.Nickname).
+			First(&nickname).Error
+	})
+	if err != nil {
+		sendSharedNicknameError(w, r, err)
 		return
 	}
 
@@ -299,10 +278,7 @@ func (h *AccountNicknameHandler) DeleteAccountNickname(w http.ResponseWriter, r 
 
 	// Removing an alias from one of a holder's accounts removes it from the whole row.
 	err := h.DB.Transaction(func(tx *gorm.DB) error {
-		if account.HolderID != nil {
-			return acct.UnshareNickname(tx, *account.HolderID, nickname.Nickname)
-		}
-		return tx.Delete(&nickname).Error
+		return acct.UnshareNickname(tx, *account.HolderID, nickname.Nickname)
 	})
 	if err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to delete nickname: "+err.Error())

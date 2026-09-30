@@ -74,13 +74,13 @@ func TestListAccountHolders_GroupsAccountsUnderTheirHolder(t *testing.T) {
 
 		// name_asc: "Ana …" then "Bruno …".
 		ana, bruno := page.Rows[0], page.Rows[1]
-		if ana.Holder == nil || ana.Holder.ID != world.fulana.ID {
+		if ana.Holder.ID == "" || ana.Holder.ID != world.fulana.ID {
 			t.Fatalf("first row: got %+v, want Ana", ana.Holder)
 		}
 		if len(ana.Accounts) != 2 {
 			t.Errorf("Ana's accounts: got %d, want 2", len(ana.Accounts))
 		}
-		if bruno.Holder == nil || bruno.Holder.ID != world.beltrano.ID || len(bruno.Accounts) != 0 {
+		if bruno.Holder.ID == "" || bruno.Holder.ID != world.beltrano.ID || len(bruno.Accounts) != 0 {
 			t.Errorf("second row: want Bruno with no accounts, got %+v / %d accounts", bruno.Holder, len(bruno.Accounts))
 		}
 	})
@@ -108,7 +108,7 @@ func TestListAccountHolders_SearchReachesAccountColumns(t *testing.T) {
 		world := seedHolderWorld(t, tx)
 
 		page := callListAccountHolders(t, tx, url.Values{"q": {"a-azul-" + world.marker}})
-		if page.Total != 1 || page.Rows[0].Holder == nil || page.Rows[0].Holder.ID != world.fulana.ID {
+		if page.Total != 1 || page.Rows[0].Holder.ID == "" || page.Rows[0].Holder.ID != world.fulana.ID {
 			t.Fatalf("search by login: got total=%d, want Ana's row", page.Total)
 		}
 	})
@@ -140,7 +140,7 @@ func TestListAccountHolders_PaginatesRowsNotAccounts(t *testing.T) {
 		}
 
 		second := callListAccountHolders(t, tx, url.Values{"q": {world.marker}, "limit": {"1"}, "page": {"2"}})
-		if len(second.Rows) != 1 || second.Rows[0].Holder == nil || second.Rows[0].Holder.ID != world.beltrano.ID {
+		if len(second.Rows) != 1 || second.Rows[0].Holder.ID == "" || second.Rows[0].Holder.ID != world.beltrano.ID {
 			t.Fatalf("page 2: want Bruno's row")
 		}
 	})
@@ -157,10 +157,10 @@ func TestListAccountHolders_SearchPutsTheNamedPersonFirst(t *testing.T) {
 		if len(page.Rows) != 2 {
 			t.Fatalf("rows: got %d, want Bruno and the Ana he administers", len(page.Rows))
 		}
-		if page.Rows[0].Holder == nil || page.Rows[0].Holder.ID != world.beltrano.ID {
+		if page.Rows[0].Holder.ID == "" || page.Rows[0].Holder.ID != world.beltrano.ID {
 			t.Errorf("first row: got %+v, want Bruno himself", page.Rows[0].Holder)
 		}
-		if page.Rows[1].Holder == nil || page.Rows[1].Holder.ID != world.fulana.ID {
+		if page.Rows[1].Holder.ID == "" || page.Rows[1].Holder.ID != world.fulana.ID {
 			t.Errorf("second row: got %+v, want Ana, matched through her account's administrator", page.Rows[1].Holder)
 		}
 	})
@@ -184,7 +184,7 @@ func TestListAccountHolders_SearchRanksExactThenPrefixThenContains(t *testing.T)
 				t.Fatalf("%s: rows: got %d, want %d", order, len(page.Rows), len(want))
 			}
 			for i, id := range want {
-				if page.Rows[i].Holder == nil || page.Rows[i].Holder.ID != id {
+				if page.Rows[i].Holder.ID == "" || page.Rows[i].Holder.ID != id {
 					t.Errorf("%s: row %d: got %+v, want %s", order, i, page.Rows[i].Holder, id)
 				}
 			}

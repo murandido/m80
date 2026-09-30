@@ -18,10 +18,6 @@ type personListResponse struct {
 	Data []schemas.PersonResponse `json:"data"`
 }
 
-type personPaginatedResponse struct {
-	Data schemas.PersonPaginatedData `json:"data"`
-}
-
 func callGetPeople(t *testing.T, tx *gorm.DB, query string) []schemas.PersonResponse {
 	t.Helper()
 	rec := httptest.NewRecorder()
@@ -33,21 +29,6 @@ func callGetPeople(t *testing.T, tx *gorm.DB, query string) []schemas.PersonResp
 	var resp personListResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("failed to decode GetPeople response: %v", err)
-	}
-	return resp.Data
-}
-
-func callListPeople(t *testing.T, tx *gorm.DB, query string) schemas.PersonPaginatedData {
-	t.Helper()
-	rec := httptest.NewRecorder()
-	NewPeopleHandler(tx).ListPeople(rec, httptest.NewRequest(http.MethodGet, "/people/manage?"+query, nil))
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("ListPeople status: got %d, want 200 (body: %s)", rec.Code, rec.Body.String())
-	}
-	var resp personPaginatedResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("failed to decode ListPeople response: %v", err)
 	}
 	return resp.Data
 }
@@ -199,42 +180,6 @@ func TestGetPeople_SearchesNicknamesIgnoringAccents(t *testing.T) {
 		found := callGetPeople(t, tx, "q="+url.QueryEscape("conceicao-"+suffix))
 		if len(found) != 1 || found[0].ID != person.ID {
 			t.Fatalf("searching the unaccented nickname returned %d rows, want exactly the seeded person", len(found))
-		}
-	})
-}
-
-func TestListPeople_PaginatesAndCountsTheFilteredSet(t *testing.T) {
-	runInTx(t, func(tx *gorm.DB) {
-		prefix, _ := seedPeopleForSorting(t, tx)
-
-		first := callListPeople(t, tx, "q="+prefix+"&limit=2&page=1")
-		if first.Total != 3 {
-			t.Errorf("total: got %d, want 3 — the count must apply the same filter as the page", first.Total)
-		}
-		if len(first.People) != 2 {
-			t.Fatalf("page 1: got %d people, want 2", len(first.People))
-		}
-		if first.People[0].Name != prefix+"ana" {
-			t.Errorf("page 1 starts at %q, want %q", first.People[0].Name, prefix+"ana")
-		}
-
-		second := callListPeople(t, tx, "q="+prefix+"&limit=2&page=2")
-		if len(second.People) != 1 {
-			t.Fatalf("page 2: got %d people, want 1", len(second.People))
-		}
-		if second.People[0].Name != prefix+"carla" {
-			t.Errorf("page 2 holds %q, want %q", second.People[0].Name, prefix+"carla")
-		}
-	})
-}
-
-func TestListPeople_ClampsTheLimitAndFallsBackOnGarbage(t *testing.T) {
-	runInTx(t, func(tx *gorm.DB) {
-		if got := callListPeople(t, tx, "limit=5000"); got.Limit != listMaxLimit {
-			t.Errorf("limit=5000: got %d, want it clamped to %d", got.Limit, listMaxLimit)
-		}
-		if got := callListPeople(t, tx, "limit=abc&page=-3"); got.Limit != listDefaultLimit || got.Page != 1 {
-			t.Errorf("garbage paging: got limit=%d page=%d, want %d and 1", got.Limit, got.Page, listDefaultLimit)
 		}
 	})
 }

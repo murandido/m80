@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/google/uuid"
@@ -16,10 +17,6 @@ import (
 // The three listings that gained a paginated /manage sibling. Each one keeps its
 // unpaginated route because a picker somewhere reads it whole, so every test here
 // checks both halves: the page is a window, and the plain route still is not.
-
-type accountPaginatedResponse struct {
-	Data schemas.AccountPaginatedData `json:"data"`
-}
 
 type clientPaginatedResponse struct {
 	Data schemas.ClientPaginatedData `json:"data"`
@@ -41,16 +38,6 @@ func decodeOK(t *testing.T, rec *httptest.ResponseRecorder, name string, into an
 	if err := json.Unmarshal(rec.Body.Bytes(), into); err != nil {
 		t.Fatalf("failed to decode the %s response: %v", name, err)
 	}
-}
-
-func callAccountsPage(t *testing.T, tx *gorm.DB, query string) schemas.AccountPaginatedData {
-	t.Helper()
-	rec := httptest.NewRecorder()
-	NewAccountHandler(tx).ListAccounts(rec, httptest.NewRequest(http.MethodGet, "/accounts/manage?"+query, nil))
-
-	var resp accountPaginatedResponse
-	decodeOK(t, rec, "ListAccounts", &resp)
-	return resp.Data
 }
 
 func callManageClients(t *testing.T, tx *gorm.DB, query string) schemas.ClientPaginatedData {
@@ -105,56 +92,6 @@ func seedAccountsForPaging(t *testing.T, tx *gorm.DB) (prefix string, programID 
 		create(t, tx, &account)
 	}
 	return prefix, program.ID
-}
-
-func TestListAccounts_PaginatesAndCountsTheFilteredSet(t *testing.T) {
-	runInTx(t, func(tx *gorm.DB) {
-		prefix, _ := seedAccountsForPaging(t, tx)
-
-		first := callAccountsPage(t, tx, "q="+prefix+"&limit=2&page=1")
-		if first.Total != 3 {
-			t.Errorf("total: got %d, want 3 - the count must apply the same filter as the page", first.Total)
-		}
-		if len(first.Accounts) != 2 {
-			t.Fatalf("page 1: got %d accounts, want 2", len(first.Accounts))
-		}
-
-		second := callAccountsPage(t, tx, "q="+prefix+"&limit=2&page=2")
-		if second.Total != 3 {
-			t.Errorf("page 2 total: got %d, want 3 - the total is of the filtered set, not of the page", second.Total)
-		}
-		if len(second.Accounts) != 1 {
-			t.Fatalf("page 2: got %d accounts, want 1", len(second.Accounts))
-		}
-
-		// The window must not overlap or skip: three distinct accounts across two pages.
-		seen := map[string]bool{}
-		for _, account := range append(first.Accounts, second.Accounts...) {
-			if seen[account.ID] {
-				t.Fatalf("account %s appears on both pages - the ordering is not total", account.ID)
-			}
-			seen[account.ID] = true
-		}
-	})
-}
-
-// The other dimensions have to survive the split, because the management screen sends
-// them alongside the page and a filter silently dropped there is a screen quietly
-// showing the wrong set.
-func TestListAccounts_KeepsTheDimensionFilters(t *testing.T) {
-	runInTx(t, func(tx *gorm.DB) {
-		prefix, programID := seedAccountsForPaging(t, tx)
-
-		byProgram := callAccountsPage(t, tx, "loyalty_program_id="+programID)
-		if byProgram.Total != 3 {
-			t.Fatalf("filtering by programme: got %d, want the 3 seeded accounts", byProgram.Total)
-		}
-
-		none := callAccountsPage(t, tx, "q="+prefix+"&category="+data.AccountCategoryInjunction)
-		if none.Total != 0 {
-			t.Fatalf("category filter: got %d, want 0 - none of the seeds is under injunction", none.Total)
-		}
-	})
 }
 
 // /accounts stays whole on purpose: it feeds the pickers on the issuances grid, both
@@ -288,8 +225,12 @@ func TestListLoyaltyDocuments_PaginatesAndKeepsTheActiveFilter(t *testing.T) {
 func TestPaginatedListings_ClampTheLimitAndFallBackOnGarbage(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		cases := map[string]func(string) (int, int){
-			"accounts": func(q string) (int, int) {
-				got := callAccountsPage(t, tx, q)
+			"account-holders": func(q string) (int, int) {
+				values, err := url.ParseQuery(q)
+				if err != nil {
+					t.Fatal(err)
+				}
+				got := callListAccountHolders(t, tx, values)
 				return got.Page, got.Limit
 			},
 			"clients": func(q string) (int, int) {

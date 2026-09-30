@@ -19,10 +19,6 @@ func RegisterPeopleRoutes(r chi.Router, db *gorm.DB) {
 		// get people — the whole list, for the pickers
 		r.Get("/", peopleHandler.GetPeople)
 
-		// paginated listing for the management screen. Chi resolves a static
-		// segment ahead of a param, so this never gets read as /people/{id}.
-		r.Get("/manage", peopleHandler.ListPeople)
-
 		// get person
 		r.Get("/{id}", peopleHandler.GetPerson)
 
@@ -37,14 +33,9 @@ func RegisterPeopleRoutes(r chi.Router, db *gorm.DB) {
 		r.Get("/{id}/delete-preview", peopleHandler.PreviewDeletePerson)
 		r.Delete("/{id}", peopleHandler.DeletePerson)
 
-		// merge two people into one. Admin-only, like the legacy import: it rewrites
-		// who owns an account and then deletes a record for good, with no undo.
-		r.With(requireAdmin).Get("/{id}/merge-preview", peopleHandler.PreviewMergePerson)
-		r.With(requireAdmin).Post("/{id}/merge", peopleHandler.MergePerson)
-
-		// merge a whole row of the accounts screen into this holder: the person (or the
-		// holderless account) and every loyalty account that repeats a program. Admin-only
-		// for the same reason.
+		// merge a whole row of the accounts screen into this holder: the other holder and every
+		// loyalty account that repeats a program. Admin-only: it moves issuance history between
+		// accounts and deletes records for good, with no undo.
 		r.With(requireAdmin).Get("/{id}/merge-row-preview", peopleHandler.PreviewMergeRow)
 		r.With(requireAdmin).Post("/{id}/merge-row", peopleHandler.MergeRow)
 

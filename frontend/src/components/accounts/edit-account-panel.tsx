@@ -33,7 +33,6 @@ import { LoyaltyProgram } from "@/schemas/loyalty-program"
 import { updateAccountAction } from "@/actions/account"
 import { PersonCombobox } from "@/components/people/person-combobox"
 import { LoyaltyProgramCombobox } from "@/components/loyalty-programs/loyalty-program-combobox"
-import { AccountNicknames } from "./account-nicknames"
 
 type FormData = z.infer<typeof updateAccountSchema.request>
 
@@ -51,7 +50,11 @@ function toFormValues(account: Account): FormData {
     login: account.login ?? "",
     password: account.password ?? "",
     holder_id: account.holder_id ?? "",
-    administrator_id: account.administrator_id ?? "",
+    // Left empty on purpose: the administrator is the holder's and is set in the Titular
+    // section. Sending the account's own value back on every save would make the API apply it
+    // to all of the holder's accounts (internal/account/administrators.go) - silently picking
+    // a side whenever they disagreed. Empty is dropped by stripEmptyFields.
+    administrator_id: "",
     category: account.category,
     waives_redemption_fee: account.waives_redemption_fee,
     owns_point_inventory: account.owns_point_inventory,
@@ -473,61 +476,12 @@ export function EditAccountPanel({
                 />
               </div>
 
-              {/* The administrator is the holder's (one for all their accounts) and is
-                  chosen in the Titular section; only an account without a holder has its own. */}
-              {account.holder_id ? (
-                <p className="text-xs text-slate-500">
-                  O administrador é do titular e vale para todos os programas dele. Escolha-o na
-                  seção Titular.
-                </p>
-              ) : (
-                <>
-                  {/* administrator_id */}
-                  <div className="flex flex-col gap-1 text-sm">
-                    <Controller
-                      name="administrator_id"
-                      control={form.control}
-                      render={({ field, fieldState }) => (
-                        <>
-                          <FieldLabel htmlFor="edit-account-administrator-id">
-                            Administrador
-                          </FieldLabel>
-                          <PersonCombobox
-                            people={people}
-                            value={field.value ?? ""}
-                            onChange={field.onChange}
-                            disabled={isPending}
-                            placeholder="Buscar administrador por nome ou apelido..."
-                          />
-                          {fieldState.invalid && (
-                            <FieldError errors={[fieldState.error]} />
-                          )}
-                        </>
-                      )}
-                    />
-                  </div>
-
-                </>
-              )}
-
-              <Separator />
-              <h3 className="text-xs font-semibold tracking-wide text-slate-500 uppercase">
-                Apelidos
-              </h3>
-              {/* A holder's aliases are one list for the holder and every program - they are
-                  edited once, under the holder, rather than per account. */}
-              {account.holder_id ? (
-                <p className="text-xs text-slate-500">
-                  Os apelidos são do titular e valem para todos os programas dele. Edite-os na
-                  seção Titular.
-                </p>
-              ) : (
-                <AccountNicknames
-                  accountId={account.id}
-                  loyaltyProgramId={account.loyalty_program_id}
-                  nicknames={account.nicknames}
-                />
-              )}
+              {/* The administrator and the aliases are the holder's - one for all of their
+                  accounts - and are edited once, in the Titular section. */}
+              <p className="text-xs text-slate-500">
+                O administrador e os apelidos são do titular e valem para todos os programas dele.
+                Edite-os na seção Titular.
+              </p>
 
               <Separator />
 

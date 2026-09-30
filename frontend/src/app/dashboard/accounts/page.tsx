@@ -5,10 +5,8 @@ import { env } from "@/lib/env"
 import { fetchList, fetchPage } from "@/lib/fetch-list"
 import { ListPagination } from "@/components/shared/list-pagination"
 import {
-  getAccountOptionsSchema,
   listAccountHoldersSchema,
   type AccountHolderPage,
-  type AccountOption,
   type AccountHolderRow as AccountHolderRowData,
 } from "@/schemas/account"
 import { getPeopleOptionsSchema, PersonOption } from "@/schemas/person"
@@ -74,9 +72,9 @@ export default async function AccountsPage({
   accountsQuery.set("page", String(params.page))
   accountsQuery.set("limit", String(PAGE_LIMIT))
 
-  // One wave instead of four sequential round trips: none of these lists depends
+  // One wave instead of three sequential round trips: none of these lists depends
   // on another, and the page cannot paint until the slowest of them is in.
-  const [rowsPage, peopleResult, loyaltyProgramsResult, orphanAccountsResult] = await Promise.all([
+  const [rowsPage, peopleResult, loyaltyProgramsResult] = await Promise.all([
     // /accounts/holders pages over holders, not accounts: a holder with three programs
     // is one row, so the page size is what the operator actually sees.
     fetchPage<AccountHolderRowData, AccountHolderPage>(
@@ -97,17 +95,6 @@ export default async function AccountsPage({
       getLoyaltyProgramsSchema.response,
       authHeader,
     ),
-    // Accounts nobody holds are rows of their own, and the merge picker offers them next to
-    // the people. Unfiltered by the current search for the same reason the people are: the
-    // duplicate is usually the row the search does not show. Archived ones included, since
-    // they block the NOT NULL on holder_id too and merging is how they get a holder.
-    canMerge
-      ? fetchList<AccountOption>(
-          `${env.BACKEND_URL}/api/v1/accounts?view=picker&include_archived=true`,
-          getAccountOptionsSchema.response,
-          authHeader,
-        )
-      : Promise.resolve(null),
   ])
 
   // A failed list renders as an empty one: every consumer below is a row list or a
@@ -115,9 +102,6 @@ export default async function AccountsPage({
   const rows: AccountHolderRowData[] = rowsPage.items
   const people: PersonOption[] = peopleResult ?? []
   const loyaltyPrograms: LoyaltyProgram[] = loyaltyProgramsResult ?? []
-  const orphanAccounts: AccountOption[] = (orphanAccountsResult ?? []).filter(
-    (account) => !account.holder_id,
-  )
 
   return (
     <div className="p-6 sm:p-8">
@@ -173,11 +157,10 @@ export default async function AccountsPage({
           ) : (
             rows.map((row) => (
               <AccountHolderRow
-                key={row.holder?.id ?? row.accounts[0]?.id}
+                key={row.holder.id}
                 row={row}
                 people={people}
                 loyaltyPrograms={loyaltyPrograms}
-                orphanAccounts={orphanAccounts}
                 canMerge={canMerge}
               />
             ))
