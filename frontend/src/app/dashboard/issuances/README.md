@@ -4,6 +4,40 @@ Documento-resumo da página `/dashboard/issuances` para quando a UI for refeita:
 faz, como se comporta e **o que precisa ser preservado** num redesign. A implementação vive
 em `frontend/src/components/issuances/` (a rota em si só busca dados).
 
+## Na `ca-mode`: board de cards + painel (protótipo)
+Nesta branch a tela não é a planilha: é um **board de cards** com um **painel lateral de formulário**
+(tela cheia no celular), desenhado pelo designer. O código vive em `components/issuances/board/`.
+Os arquivos da planilha continuam no repositório, sem uso, para os merges da main não conflitarem.
+Tudo abaixo desta seção descreve a planilha.
+
+- **Ponto de troca:** `components/issuances/issuances-screen.tsx` renderiza `IssuanceBoardScreen`.
+  O layout da página é um grid só (`board/board-layout.module.css`). O título e a busca vêm do
+  `page.tsx`, o resto vem do board, e `:has(.panel)` abre espaço para o painel.
+- **Estado:** `board/use-issuance-board.ts`, portado do grid (rascunho → POST, fila de patches
+  durante o POST, PATCH otimista, SSE + `reconcileRows`, criação inline de conta, cancelar,
+  excluir, sync). Ficaram de fora a máquina de célula, a colagem e o undo global.
+- **Prévia antes dos valores:** com "Autocompletar dados" ligado, um **rascunho** com cia que
+  autocompleta e os campos de `hasAirlineMinimumFields` chama `POST /issuances/lookup`
+  (`backend/internal/issuance/lookup.go`). A prévia consulta os provedores na mesma ordem e com
+  as mesmas regras do `Sync`, **sem gravar a emissão**. A Traveos pode importar. Ela preenche
+  origem, destino, data e passageiro, e os valores nunca travam. Depois do save, o sweep de sync
+  grava o itinerário de verdade. Esse sweep nunca roda ao lado de uma prévia da mesma linha (com
+  a Traveos seriam duas importações) e pula a combinação que a prévia já viu falhar.
+- **"Cia que autocompleta"** é `direct_booking_enabled || (traveos_supported && traveos_airline_id)`,
+  igual ao `resolveProviders` do backend. O `autocomplete.ts` da planilha só conhece a metade da
+  Traveos.
+- **Teclado:** Ctrl+Enter abre uma nova emissão. Enter confirma o campo e vai ao próximo. As setas
+  andam entre os cards e o Esc minimiza o painel (voltando o foco ao card). `/` no Programa pula
+  para a Cia, e no localizador do programa pula para o da cia. Ctrl+Alt+C e Ctrl+Alt+X copiam a
+  mensagem e o cálculo, e Ctrl+Shift+⌫ exclui.
+- **Divergências conscientes do design:** o link "Visualizar informações completas/simplificadas"
+  sempre nomeia a *outra* visão. Conta aparece na visão do autocompletar, mas não dispara a busca.
+  "Último nome" só aparece quando a cia exige. A cor do card é a do programa, e cancelado fica
+  cinza. Data da emissão, Nº da compra, taxa de resgate e status manual foram encaixados no
+  formulário.
+- **Simular Emissão:** calculadora de milheiro (pontos, milheiro e taxas → total + linha de
+  cálculo). Não salva nada.
+
 ## Propósito
 Uma **planilha turbinada** para cadastrar emissões de milhas **rápido, só com teclado** —
 edição inline célula a célula, com autosave. Deve continuar parecendo e operando como uma
