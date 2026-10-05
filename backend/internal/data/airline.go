@@ -14,6 +14,10 @@ type Airline struct {
 	TraveosSupported       bool   `gorm:"column:traveos_supported;not null;default:false" json:"traveos_supported"`
 	RequiresLastName       bool   `gorm:"column:requires_last_name;not null;default:false" json:"requires_last_name"`
 	RequiresPurchaseNumber bool   `gorm:"column:requires_purchase_number;not null;default:false" json:"requires_purchase_number"`
+	// RequiresOrigin says the carrier identifies a booking by the origin as well as the
+	// locator (GOL, Azul). Without it the lookup cannot be asked; for every other
+	// carrier the origin is just a field of the issuance.
+	RequiresOrigin bool `gorm:"column:requires_origin;not null;default:false" json:"requires_origin"`
 	// TraveosAirlineID is the carrier's id in Traveos' catalog, required by every
 	// emission request. Nil means nobody mapped it yet - a different state from
 	// TraveosSupported being false, which is a deliberate choice not to use Traveos.

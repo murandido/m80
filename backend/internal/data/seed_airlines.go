@@ -29,6 +29,7 @@ type airlineSeedRecord struct {
 	TraveosSupported       bool   `json:"traveos_supported"`
 	RequiresLastName       bool   `json:"requires_last_name"`
 	RequiresPurchaseNumber bool   `json:"requires_purchase_number"`
+	RequiresOrigin         bool   `json:"requires_origin"`
 	// Aliases are the names and codes this carrier is already known by in the
 	// database - old IATA codes, longer legal names, and the typos that got typed
 	// in by hand. Listing them is what lets the seeder recognise an existing row
@@ -46,7 +47,7 @@ type airlineSeedRecord struct {
 // makes every sync refuse before it reaches the vendor.
 //
 // So a row that already exists is corrected rather than skipped - including
-// requires_last_name and requires_purchase_number, which decide what the bot
+// requires_last_name, requires_purchase_number and requires_origin, which decide what the bot
 // demands on line 2 of an EMISSAO and what the sync demands before spending a
 // real emission. Those are part of what the catalog is authoritative about: which
 // carriers need a surname is a fact about the airline, not a per-installation
@@ -131,6 +132,7 @@ func createSeededAirline(tx *gorm.DB, record airlineSeedRecord) error {
 		TraveosSupported:       record.TraveosSupported,
 		RequiresLastName:       record.RequiresLastName,
 		RequiresPurchaseNumber: record.RequiresPurchaseNumber,
+		RequiresOrigin:         record.RequiresOrigin,
 	}
 	if err := tx.Create(&airline).Error; err != nil {
 		return fmt.Errorf("creating airline %s: %w", record.Code, err)
@@ -190,6 +192,12 @@ func reconcileSeededAirline(tx *gorm.DB, record airlineSeedRecord, existing *Air
 		changes["requires_purchase_number"] = record.RequiresPurchaseNumber
 		described = append(described,
 			fmt.Sprintf("requires_purchase_number → %t", record.RequiresPurchaseNumber))
+	}
+	// Same reasoning for the origin: whether the airline reads it to find a booking is
+	// a fact about its integration, and too strict holds up a lookup that would work.
+	if existing.RequiresOrigin != record.RequiresOrigin {
+		changes["requires_origin"] = record.RequiresOrigin
+		described = append(described, fmt.Sprintf("requires_origin → %t", record.RequiresOrigin))
 	}
 
 	if len(changes) == 0 {

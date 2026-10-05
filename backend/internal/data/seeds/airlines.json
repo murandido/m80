@@ -19,6 +19,7 @@
     "traveos_airline_id": 2,
     "brand_color": "#54B1E3",
     "traveos_supported": true,
+    "requires_origin": true,
     "aliases": [
       "AD",
       "AZ",
@@ -31,6 +32,7 @@
     "traveos_airline_id": 3,
     "brand_color": "#FF5E00",
     "traveos_supported": true,
+    "requires_origin": true,
     "requires_last_name": true,
     "aliases": [
       "G3",

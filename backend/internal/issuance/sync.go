@@ -334,7 +334,7 @@ func fetchOrImport(
 	// This sits after the search rather than before it: a booking that is already on
 	// the vendor's side is read from their list, and none of these fields are used to
 	// do it. Only the path that actually spends something is gated.
-	if err := ValidateAirlineRequirements(airline, issuance.MainPassengerName, issuance.LatamPurchaseNumber); err != nil {
+	if err := ValidateAirlineRequirements(airline, issuance.BookingLastName(), issuance.LatamPurchaseNumber); err != nil {
 		return nil, err
 	}
 
@@ -373,7 +373,9 @@ func bookingRequest(issuance data.Issuance, airline data.Airline, force bool) (b
 		// at: there is no way to tell a compound surname from a given name plus
 		// surname, and stripping the wrong token is worse than sending what the
 		// operator typed.
-		LastName:        derefOrEmpty(issuance.MainPassengerName),
+		// The surname typed for the lookup wins over the passenger name, which the
+		// first sync replaces with the full name - see data.Issuance.BookingLastName.
+		LastName:        derefOrEmpty(issuance.BookingLastName()),
 		PurchaseNumber:  derefOrEmpty(issuance.LatamPurchaseNumber),
 		VendorAirlineID: airline.TraveosAirlineID,
 		Force:           force,

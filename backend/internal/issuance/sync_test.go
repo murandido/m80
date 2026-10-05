@@ -227,6 +227,39 @@ func TestFetchOrImportPassesTheAirlineIDAndTheOperatorsFields(t *testing.T) {
 	}
 }
 
+func TestTheSurnameTypedForTheLookupWinsOverThePassengerName(t *testing.T) {
+	// After the first sync main_passenger_name holds the full name; the surname the
+	// operator typed for the lookup is what a refetch has to send.
+	issuance := testIssuance()
+	full := "MARCO ANTONIO PRADO FERREIRA"
+	surname := "FERREIRA"
+	issuance.MainPassengerName = &full
+	issuance.PassengerLastName = &surname
+	provider := &fakeProvider{fetchResults: []*booking.Booking{existingBooking()}}
+
+	if _, err := fetchOrImport(context.Background(), provider, issuance, testAirline(), false); err != nil {
+		t.Fatalf("fetchOrImport: %v", err)
+	}
+	if provider.requested.LastName != "FERREIRA" {
+		t.Errorf("lastName = %q, want the surname typed for the lookup", provider.requested.LastName)
+	}
+}
+
+func TestABlankLookupSurnameFallsBackToThePassengerName(t *testing.T) {
+	// The bot and every issuance written before the column never set it.
+	issuance := testIssuance()
+	blank := "  "
+	issuance.PassengerLastName = &blank
+	provider := &fakeProvider{fetchResults: []*booking.Booking{existingBooking()}}
+
+	if _, err := fetchOrImport(context.Background(), provider, issuance, testAirline(), false); err != nil {
+		t.Fatalf("fetchOrImport: %v", err)
+	}
+	if provider.requested.LastName != "PRADO FERREIRA" {
+		t.Errorf("lastName = %q, want main_passenger_name", provider.requested.LastName)
+	}
+}
+
 func TestFetchOrImportPrefersTheAirlineLocator(t *testing.T) {
 	provider := &fakeProvider{fetchResults: []*booking.Booking{nil, existingBooking()}}
 	issuance := testIssuance()

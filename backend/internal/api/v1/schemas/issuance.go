@@ -22,10 +22,13 @@ type CreateIssuanceRequest struct {
 	// AgencyID defaults to the agency where is_default=true when omitted.
 	AgencyID *string `json:"agency_id" validate:"omitempty,uuid"`
 	// IssuerID defaults to the authenticated (JWT) user when omitted.
-	IssuerID            *string        `json:"issuer_id" validate:"omitempty,uuid"`
-	AirlineLocator      *string        `json:"airline_locator" validate:"omitempty"`
-	LatamPurchaseNumber *string        `json:"latam_purchase_number" validate:"omitempty"`
-	MainPassengerName   *string        `json:"main_passenger_name" validate:"omitempty"`
+	IssuerID            *string `json:"issuer_id" validate:"omitempty,uuid"`
+	AirlineLocator      *string `json:"airline_locator" validate:"omitempty"`
+	LatamPurchaseNumber *string `json:"latam_purchase_number" validate:"omitempty"`
+	MainPassengerName   *string `json:"main_passenger_name" validate:"omitempty"`
+	// PassengerLastName is the surname typed for the airline's lookup. Optional: when
+	// absent the lookup falls back to main_passenger_name.
+	PassengerLastName   *string        `json:"passenger_last_name" validate:"omitempty"`
 	TripType            *string        `json:"trip_type" validate:"omitempty,oneof=one_way round_trip multi_leg"`
 	OriginIATACode      *string        `json:"origin_iata_code" validate:"omitempty"`
 	DestinationIATACode *string        `json:"destination_iata_code" validate:"omitempty"`
@@ -50,13 +53,16 @@ type UpdateIssuanceRequest struct {
 	AccountID        *string `json:"account_id" validate:"omitempty,uuid"`
 	// AccountNicknameID is only read when AccountID is also present - the two are
 	// updated as a unit. See UpdateIssuance for why.
-	AccountNicknameID   *string        `json:"account_nickname_id" validate:"omitempty,uuid"`
-	AgencyID            *string        `json:"agency_id" validate:"omitempty,uuid"`
-	IssuerID            *string        `json:"issuer_id" validate:"omitempty,uuid"`
-	ProgramLocator      *string        `json:"program_locator" validate:"omitempty"`
-	AirlineLocator      *string        `json:"airline_locator" validate:"omitempty"`
-	LatamPurchaseNumber *string        `json:"latam_purchase_number" validate:"omitempty"`
-	MainPassengerName   *string        `json:"main_passenger_name" validate:"omitempty"`
+	AccountNicknameID   *string `json:"account_nickname_id" validate:"omitempty,uuid"`
+	AgencyID            *string `json:"agency_id" validate:"omitempty,uuid"`
+	IssuerID            *string `json:"issuer_id" validate:"omitempty,uuid"`
+	ProgramLocator      *string `json:"program_locator" validate:"omitempty"`
+	AirlineLocator      *string `json:"airline_locator" validate:"omitempty"`
+	LatamPurchaseNumber *string `json:"latam_purchase_number" validate:"omitempty"`
+	MainPassengerName   *string `json:"main_passenger_name" validate:"omitempty"`
+	// PassengerLastName is the surname typed for the airline's lookup. Optional: when
+	// absent the lookup falls back to main_passenger_name.
+	PassengerLastName   *string        `json:"passenger_last_name" validate:"omitempty"`
 	TripType            *string        `json:"trip_type" validate:"omitempty,oneof=one_way round_trip multi_leg"`
 	OriginIATACode      *string        `json:"origin_iata_code" validate:"omitempty"`
 	DestinationIATACode *string        `json:"destination_iata_code" validate:"omitempty"`
@@ -126,6 +132,7 @@ type IssuanceResponse struct {
 	AirlineLocator      *string                  `json:"airline_locator"`
 	LatamPurchaseNumber *string                  `json:"latam_purchase_number"`
 	MainPassengerName   *string                  `json:"main_passenger_name"`
+	PassengerLastName   *string                  `json:"passenger_last_name"`
 	TripType            *string                  `json:"trip_type"`
 	OriginIATACode      *string                  `json:"origin_iata_code"`
 	OriginAirport       *AirportResponse         `json:"origin_airport,omitempty"`

@@ -1,6 +1,7 @@
 package data
 
 import (
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -18,14 +19,18 @@ type Issuance struct {
 	AirlineLocator      *string         `gorm:"column:airline_locator" json:"airline_locator"`
 	LatamPurchaseNumber *string         `gorm:"column:latam_purchase_number" json:"latam_purchase_number"`
 	MainPassengerName   *string         `gorm:"column:main_passenger_name" json:"main_passenger_name"`
-	TripType            *string         `gorm:"column:trip_type;type:trip_type" json:"trip_type"`
-	OriginIATACode      *string         `gorm:"column:origin_iata_code" json:"origin_iata_code"`
-	OriginAirport       *Airport        `gorm:"foreignKey:OriginIATACode;references:IATACode" json:"origin_airport,omitempty"`
-	DestinationIATACode *string         `gorm:"column:destination_iata_code" json:"destination_iata_code"`
-	DestinationAirport  *Airport        `gorm:"foreignKey:DestinationIATACode;references:IATACode" json:"destination_airport,omitempty"`
-	Points              int             `gorm:"not null" json:"points"`
-	ValueOfTheThousand  int             `gorm:"column:value_of_the_thousand;not null" json:"value_of_the_thousand"`
-	Taxes               *int            `json:"taxes"`
+	// PassengerLastName is the surname typed for the airline's lookup. Separate from
+	// MainPassengerName, which the sync overwrites with the full name - see
+	// BookingLastName.
+	PassengerLastName   *string  `gorm:"column:passenger_last_name" json:"passenger_last_name"`
+	TripType            *string  `gorm:"column:trip_type;type:trip_type" json:"trip_type"`
+	OriginIATACode      *string  `gorm:"column:origin_iata_code" json:"origin_iata_code"`
+	OriginAirport       *Airport `gorm:"foreignKey:OriginIATACode;references:IATACode" json:"origin_airport,omitempty"`
+	DestinationIATACode *string  `gorm:"column:destination_iata_code" json:"destination_iata_code"`
+	DestinationAirport  *Airport `gorm:"foreignKey:DestinationIATACode;references:IATACode" json:"destination_airport,omitempty"`
+	Points              int      `gorm:"not null" json:"points"`
+	ValueOfTheThousand  int      `gorm:"column:value_of_the_thousand;not null" json:"value_of_the_thousand"`
+	Taxes               *int     `json:"taxes"`
 	// CostOfTheThousand is the buy side of the same trade ValueOfTheThousand is the
 	// sell side of: what the agency pays the account's administrator per thousand
 	// miles, in centavos. Nil means the cost has not been agreed yet, which is not
@@ -137,4 +142,15 @@ func (i *Issuance) BeforeCreate(tx *gorm.DB) error {
 		i.ID = uuid.New().String()
 	}
 	return nil
+}
+
+// BookingLastName is the surname the airline is asked with: the one typed for the
+// lookup when there is one, else the main passenger's name - which the bot fills with
+// just the surname, and the sync with the full name (booking.SurnameCandidates copes
+// with both).
+func (i Issuance) BookingLastName() *string {
+	if i.PassengerLastName != nil && strings.TrimSpace(*i.PassengerLastName) != "" {
+		return i.PassengerLastName
+	}
+	return i.MainPassengerName
 }
