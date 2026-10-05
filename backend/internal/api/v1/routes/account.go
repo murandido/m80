@@ -20,11 +20,8 @@ func RegisterAccountRoutes(r chi.Router, db *gorm.DB) {
 		// the sales screens and the importer
 		r.Get("/", accountHandler.GetAccounts)
 
-		// paginated listing for the management screen. Chi resolves a static
-		// segment ahead of a param, so this never gets read as /accounts/{id}.
-		r.Get("/manage", accountHandler.ListAccounts)
-
-		// the management screen: one row per holder with all of their accounts
+		// the management screen: one row per holder with all of their accounts. Chi resolves
+		// a static segment ahead of a param, so this never gets read as /accounts/{id}.
 		r.Get("/holders", accountHandler.ListAccountHolders)
 
 		// get account
@@ -35,11 +32,6 @@ func RegisterAccountRoutes(r chi.Router, db *gorm.DB) {
 
 		// delete account
 		r.Delete("/{id}", accountHandler.DeleteAccount)
-
-		// merge two accounts into one. Admin-only: it moves issuance history from one
-		// account to another and then removes a record for good, with no undo.
-		r.With(requireAdmin).Get("/{id}/merge-preview", accountHandler.PreviewMergeAccount)
-		r.With(requireAdmin).Post("/{id}/merge", accountHandler.MergeAccount)
 
 		// nicknames sub-resource
 		RegisterAccountNicknameRoutes(r, db)

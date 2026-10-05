@@ -40,40 +40,11 @@ type PersonListResponse struct {
 	Data    []PersonResponse `json:"data"`
 }
 
-// PersonPaginatedData is the data payload for the paginated people listing.
-type PersonPaginatedData struct {
-	People []PersonResponse `json:"people"`
-	Total  int64            `json:"total"`
-	Page   int              `json:"page"`
-	Limit  int              `json:"limit"`
-}
-
-// PersonPaginatedResponse is the GET /people/manage route response
-type PersonPaginatedResponse struct {
-	Success bool                `json:"success" example:"true"`
-	Message string              `json:"message" example:"Pessoas listadas com sucesso"`
-	Data    PersonPaginatedData `json:"data"`
-}
-
 // PersonSingleResponse is the response from single-person routes
 type PersonSingleResponse struct {
 	Success bool           `json:"success" example:"true"`
 	Message string         `json:"message" example:"Pessoa encontrada"`
 	Data    PersonResponse `json:"data"`
-}
-
-// MergePersonPreviewSingleResponse is the GET /people/{id}/merge-preview route response
-type MergePersonPreviewSingleResponse struct {
-	Success bool                       `json:"success" example:"true"`
-	Message string                     `json:"message" example:"Prévia calculada com sucesso"`
-	Data    MergePersonPreviewResponse `json:"data"`
-}
-
-// MergePersonResultSingleResponse is the POST /people/{id}/merge route response
-type MergePersonResultSingleResponse struct {
-	Success bool                      `json:"success" example:"true"`
-	Message string                    `json:"message" example:"Cadastros mesclados com sucesso"`
-	Data    MergePersonResultResponse `json:"data"`
 }
 
 // MergeRowPreviewSingleResponse is the GET /people/{id}/merge-row-preview route response
@@ -118,25 +89,10 @@ type AccountListResponse struct {
 	Data    []AccountResponse `json:"data"`
 }
 
-// AccountPaginatedData is the data payload for the paginated account listing.
-type AccountPaginatedData struct {
-	Accounts []AccountResponse `json:"accounts"`
-	Total    int64             `json:"total"`
-	Page     int               `json:"page"`
-	Limit    int               `json:"limit"`
-}
-
-// AccountPaginatedResponse is the GET /accounts/manage route response
-type AccountPaginatedResponse struct {
-	Success bool                 `json:"success" example:"true"`
-	Message string               `json:"message" example:"Contas listadas com sucesso"`
-	Data    AccountPaginatedData `json:"data"`
-}
-
 // AccountHolderRow is one row of the accounts screen: a holder and every loyalty account
-// they hold. Holder is null on a row that is a single account with no holder.
+// they hold.
 type AccountHolderRow struct {
-	Holder   *PersonResponse   `json:"holder"`
+	Holder   PersonResponse    `json:"holder"`
 	Accounts []AccountResponse `json:"accounts"`
 }
 
@@ -146,13 +102,6 @@ type AccountHolderPaginatedData struct {
 	Total int64              `json:"total"`
 	Page  int                `json:"page"`
 	Limit int                `json:"limit"`
-	// HolderlessTotal counts every account without a holder, archived included and filters
-	// ignored: what still stands between accounts.holder_id and a NOT NULL.
-	HolderlessTotal int64 `json:"holderless_total"`
-	// DuplicateProgramsTotal counts holders with two live accounts in one program, and
-	// AdminConflictsTotal holders whose accounts name different administrators. Both unfiltered.
-	DuplicateProgramsTotal int64 `json:"duplicate_programs_total"`
-	AdminConflictsTotal    int64 `json:"admin_conflicts_total"`
 }
 
 // AccountHolderPaginatedResponse is the GET /accounts/holders route response
@@ -392,13 +341,6 @@ type ErrorResponse struct {
 	Success bool   `json:"success" example:"false"`
 	Message string `json:"message" example:"Mensagem de erro"`
 	Data    any    `json:"data" swaggertype:"object"`
-}
-
-// MergeAccountPreviewSingleResponse is the GET /accounts/{id}/merge-preview route response
-type MergeAccountPreviewSingleResponse struct {
-	Success bool                        `json:"success" example:"true"`
-	Message string                      `json:"message" example:"Prévia calculada com sucesso"`
-	Data    MergeAccountPreviewResponse `json:"data"`
 }
 
 // PromoRecipeListResponse is the GET /promo-recipes route response

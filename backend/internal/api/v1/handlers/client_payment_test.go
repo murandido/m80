@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -386,6 +387,68 @@ func TestGetClientPayments_ListsUndoneAndWhereTheMoneyIs(t *testing.T) {
 	})
 }
 
+// Without a client, the history is every client's payments received in the period, newest
+// first, each one saying whose it is.
+func TestGetClientPayments_AcrossClientsInThePeriod(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		first, second := seedClient(t, tx), seedClient(t, tx)
+		seedClientSale(t, tx, first.ID, 10000, time.Now().Add(-time.Hour))
+		before := recordClientPayment(t, tx, `{"client_id":"`+first.ID+`","amount_cents":1000,"paid_on":"2026-08-31"}`)
+		older := recordClientPayment(t, tx, `{"client_id":"`+first.ID+`","amount_cents":2000,"paid_on":"2026-09-02"}`)
+		newer := recordClientPayment(t, tx, `{"client_id":"`+second.ID+`","amount_cents":3000,"paid_on":"2026-09-05"}`)
+
+		call := func(query string) schemas.ClientPaymentHistoryResponse {
+			t.Helper()
+			handler := NewSaleHandler(tx, events.NewBroker())
+			req := withScope(httptest.NewRequest(http.MethodGet, "/sales/client-payments?"+query, nil), access.FullScope())
+			rec := httptest.NewRecorder()
+			handler.GetClientPayments(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("%s: status %d (body: %s)", query, rec.Code, rec.Body.String())
+			}
+			var resp struct {
+				Data schemas.ClientPaymentHistoryResponse `json:"data"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("failed to decode response: %v", err)
+			}
+			return resp.Data
+		}
+		ours := func(history schemas.ClientPaymentHistoryResponse) []string {
+			ids := []string{}
+			for _, payment := range history.Payments {
+				if payment.ClientID == first.ID || payment.ClientID == second.ID {
+					ids = append(ids, payment.ID)
+				}
+			}
+			return ids
+		}
+
+		all := call("date_from=2026-09-01&date_to=2026-09-30")
+		if got := ours(all); !slices.Equal(got, []string{newer, older}) {
+			t.Fatalf("period: got %v, want [%s %s] (and not %s)", got, newer, older, before)
+		}
+		for _, payment := range all.Payments {
+			if payment.ID == newer && payment.ClientName != second.Name {
+				t.Errorf("client_name: got %q, want %q", payment.ClientName, second.Name)
+			}
+		}
+
+		picked := call("client_ids=" + second.ID + "&date_from=2026-09-01&date_to=2026-09-30")
+		if len(picked.Payments) != 1 || picked.Payments[0].ID != newer {
+			t.Errorf("client_ids: got %+v", picked.Payments)
+		}
+		// 3000 of the second client's that no sale took.
+		if picked.CreditCents != 3000 {
+			t.Errorf("credit: got %d, want 3000", picked.CreditCents)
+		}
+
+		if none := call("client_ids=none"); len(none.Payments) != 0 || none.CreditCents != 0 {
+			t.Errorf("no-client pick: got %+v", none)
+		}
+	})
+}
+
 // A spread line comes back on the next replay, so the per-sale statement may not delete it.
 func TestDeleteSalePayment_RefusesASpreadLine(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
@@ -538,29 +601,32 @@ func TestDeleteClient_RefusesAClientWithPayments(t *testing.T) {
 	})
 }
 
-// A sale partly paid by the client and settled by hand: the switch takes back only the
-// hand-made line, and the sale goes back to what the client payment covers.
-func TestUpdateSale_SwitchTakesBackOnlyItsOwnLine(t *testing.T) {
+// A sale partly paid by the client is where the lump sum ran out: the switch may neither
+// settle it (money that never came in) nor clear it (the trace of the money that did). Only
+// another client payment moves it.
+func TestUpdateSale_RefusesTheSwitchOnAPartlyPaidSale(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		client := seedClient(t, tx)
 		partial := seedClientSale(t, tx, client.ID, 10000, time.Now().Add(-time.Hour))
 		recordClientPayment(t, tx, clientPaymentBody(client.ID, 6000))
 
-		if rec := callUpdateSale(t, tx, partial.ID, `{"paid":true}`); rec.Code != http.StatusOK {
-			t.Fatalf("settle status: got %d (body: %s)", rec.Code, rec.Body.String())
-		}
-		if got := paidCentsOf(t, tx, partial.ID); got != 10000 {
-			t.Fatalf("settled: got %d, want 10000", got)
-		}
-
-		if rec := callUpdateSale(t, tx, partial.ID, `{"paid":false}`); rec.Code != http.StatusOK {
-			t.Fatalf("reopen status: got %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+		for _, body := range []string{`{"paid":true}`, `{"paid":false}`} {
+			if rec := callUpdateSale(t, tx, partial.ID, body); rec.Code != http.StatusConflict {
+				t.Errorf("%s: got %d, want 409 (body: %s)", body, rec.Code, rec.Body.String())
+			}
 		}
 		if got := paidCentsOf(t, tx, partial.ID); got != 6000 {
-			t.Errorf("reopened: got %d, want the client's 6000 back where they were", got)
+			t.Errorf("paid: got %d, want the client's 6000 untouched", got)
 		}
-		if rec := callUpdateSale(t, tx, partial.ID, `{"paid":false}`); rec.Code != http.StatusConflict {
-			t.Errorf("reopen again: got %d, want 409 - nothing of the switch's left", rec.Code)
+
+		// The note is not the switch, and stays editable.
+		if rec := callUpdateSale(t, tx, partial.ID, `{"note":"falta o resto"}`); rec.Code != http.StatusOK {
+			t.Errorf("note: got %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+		}
+
+		recordClientPayment(t, tx, clientPaymentBody(client.ID, 4000))
+		if got := paidCentsOf(t, tx, partial.ID); got != 10000 {
+			t.Errorf("after the second payment: got %d, want 10000", got)
 		}
 	})
 }

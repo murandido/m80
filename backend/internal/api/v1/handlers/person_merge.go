@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -9,7 +8,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	acct "github.com/murandido/m-80-backend/internal/account"
-	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/utils"
 	"gorm.io/gorm"
@@ -24,8 +22,8 @@ import (
 //
 // Merging is what closes that: only three columns in the whole schema point at people
 // (accounts.holder_id, accounts.administrator_id, person_nicknames.person_id), so
-// repointing them empties the absorbed row and the real DELETE that DeletePerson already
-// does starts working on it.
+// repointing them empties the absorbed row and it can be deleted for real. The panel reaches
+// this through the row merge (person_merge_row.go); this file holds the person half of it.
 
 // personCarriedField is an optional column the merge can carry over from the absorbed
 // person, with the label the preview shows. Name is absent on purpose: whoever survives
@@ -94,144 +92,6 @@ func readMergeIDs(w http.ResponseWriter, r *http.Request, sourceID string) (stri
 	}
 
 	return keepID, sourceID, true
-}
-
-// PreviewMergePerson handles the GET /people/{id}/merge-preview route.
-// @Summary      Prévia da mesclagem de proprietários
-// @Description  Conta o que a mesclagem vai mover do cadastro absorvido para o que fica. Não escreve nada.
-// @Tags         Pessoas
-// @Produce      json
-// @Security     BearerAuth
-// @Param        id         path   string  true  "UUID de quem fica"
-// @Param        source_id  query  string  true  "UUID de quem será absorvido"
-// @Success      200  {object}  schemas.MergePersonPreviewSingleResponse "Prévia calculada com sucesso"
-// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
-// @Failure      403  {object}  schemas.ErrorResponse "Não autorizado"
-// @Failure      404  {object}  schemas.ErrorResponse "Pessoa não encontrada"
-// @Failure      422  {object}  schemas.ErrorResponse "Cadastros iguais"
-// @Router       /people/{id}/merge-preview [get]
-func (h *PeopleHandler) PreviewMergePerson(w http.ResponseWriter, r *http.Request) {
-	keepID, dropID, ok := readMergeIDs(w, r, r.URL.Query().Get("source_id"))
-	if !ok {
-		return
-	}
-
-	var keep, drop data.Person
-	if err := h.DB.First(&keep, "id = ?", keepID).Error; err != nil {
-		sendPersonLookupError(w, r, err)
-		return
-	}
-	if err := h.DB.First(&drop, "id = ?", dropID).Error; err != nil {
-		sendPersonLookupError(w, r, err)
-		return
-	}
-
-	// Unscoped: an archived account still holds holder_id, and those are exactly the rows
-	// that make the absorbed person undeletable today. Counting only the living ones would
-	// promise a merge smaller than the one that runs.
-	var accounts, nicknames int64
-	if err := h.DB.Unscoped().Model(&data.Account{}).
-		Where("holder_id = ? OR administrator_id = ?", dropID, dropID).
-		Count(&accounts).Error; err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Failed to count accounts: "+err.Error())
-		return
-	}
-	if err := h.DB.Model(&data.PersonNickname{}).
-		Where("person_id = ?", dropID).
-		Count(&nicknames).Error; err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Failed to count nicknames: "+err.Error())
-		return
-	}
-
-	preview := schemas.MergePersonPreviewResponse{
-		Accounts:     accounts,
-		Nicknames:    nicknames,
-		FieldsToFill: carryPersonFields(&keep, &drop),
-	}
-
-	// Whether the absorbed name can become an alias is the one thing the panel cannot work
-	// out on its own: the alias may already belong to a third person.
-	if nickname, free, err := nicknameFromName(h.DB, keep, drop); err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Failed to check the nickname: "+err.Error())
-		return
-	} else if free {
-		preview.NicknameFromName = nickname
-	}
-
-	utils.SendJSON(w, r, http.StatusOK, "Prévia calculada com sucesso", preview)
-}
-
-// MergePerson handles the POST /people/{id}/merge route.
-// @Summary      Mesclar proprietários
-// @Description  Move contas, apelidos e campos vazios do cadastro absorvido para o que fica, e então apaga o absorvido de verdade. Não tem desfazer.
-// @Tags         Pessoas
-// @Accept       json
-// @Produce      json
-// @Security     BearerAuth
-// @Param        id       path  string                      true  "UUID de quem fica"
-// @Param        request  body  schemas.MergePersonRequest  true  "Cadastro a absorver"
-// @Success      200  {object}  schemas.MergePersonResultSingleResponse "Cadastros mesclados com sucesso"
-// @Failure      400  {object}  schemas.ErrorResponse "Payload inválido"
-// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
-// @Failure      403  {object}  schemas.ErrorResponse "Não autorizado"
-// @Failure      404  {object}  schemas.ErrorResponse "Pessoa não encontrada"
-// @Failure      422  {object}  schemas.ErrorResponse "Cadastros iguais"
-// @Router       /people/{id}/merge [post]
-func (h *PeopleHandler) MergePerson(w http.ResponseWriter, r *http.Request) {
-	var req schemas.MergePersonRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.SendError(w, r, http.StatusBadRequest, "Invalid request payload: "+err.Error())
-		return
-	}
-	if err := h.Validator.Struct(req); err != nil {
-		utils.SendError(w, r, http.StatusBadRequest, "Validation failed: "+err.Error())
-		return
-	}
-
-	keepID, dropID, ok := readMergeIDs(w, r, req.SourceID)
-	if !ok {
-		return
-	}
-
-	// Default on: the duplicate exists because a name went unrecognised, so absorbing it
-	// without teaching the survivor that name just means the next EMISSAO recreates it.
-	keepNickname := req.KeepNickname == nil || *req.KeepNickname
-
-	var warning string
-	err := h.DB.Transaction(func(tx *gorm.DB) error {
-		var pair []data.Person
-		if err := lockMergePair(tx, &pair, keepID, dropID); err != nil {
-			return err
-		}
-		if len(pair) != 2 {
-			return gorm.ErrRecordNotFound
-		}
-
-		keep, drop := pair[0], pair[1]
-		if keep.ID != keepID {
-			keep, drop = drop, keep
-		}
-
-		mergeWarning, err := mergePeopleTx(tx, keep, drop, keepNickname)
-		warning = mergeWarning
-		return err
-	})
-
-	if err != nil {
-		sendPersonLookupError(w, r, err)
-		return
-	}
-
-	var merged data.Person
-	if err := h.DB.Preload("Nicknames").First(&merged, "id = ?", keepID).Error; err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Failed to load the merged person: "+err.Error())
-		return
-	}
-
-	utils.SendJSON(w, r, http.StatusOK, "Cadastros mesclados com sucesso", schemas.MergePersonResultResponse{
-		Person:  toPersonResponse(merged),
-		Warning: warning,
-	})
 }
 
 // mergePeopleTx repoints everything that references drop onto keep, fills in what keep is

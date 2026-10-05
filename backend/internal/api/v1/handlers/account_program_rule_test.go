@@ -59,3 +59,28 @@ func TestCreateAccount_ArchivedAccountDoesNotBlockTheProgram(t *testing.T) {
 		}
 	})
 }
+
+// The database says it too since migration 76, so a write that skips the API's check - a
+// race, a hand-written fix - still cannot leave a holder with two live accounts in a program.
+func TestDatabase_RefusesASecondLiveAccountInAProgram(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		program := seedProgram(t, tx)
+		holder := seedPerson(t, tx, "Holder")
+		first := data.Account{LoyaltyProgramID: program.ID, HolderID: &holder.ID}
+		create(t, tx, &first)
+
+		// A savepoint, so the refused insert does not abort the test's transaction.
+		err := tx.Transaction(func(sp *gorm.DB) error {
+			return sp.Create(&data.Account{LoyaltyProgramID: program.ID, HolderID: &holder.ID}).Error
+		})
+		if err == nil {
+			t.Fatal("the database accepted a second live account in the same program")
+		}
+
+		// Archiving the first makes room, which is how an operator replaces an account.
+		if err := tx.Delete(&first).Error; err != nil {
+			t.Fatal(err)
+		}
+		create(t, tx, &data.Account{LoyaltyProgramID: program.ID, HolderID: &holder.ID})
+	})
+}

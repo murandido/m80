@@ -35,6 +35,7 @@ func toAirlineResponse(airline data.Airline) schemas.AirlineResponse {
 		DirectBookingEnabled:   airline.DirectBookingEnabled,
 		RequiresLastName:       airline.RequiresLastName,
 		RequiresPurchaseNumber: airline.RequiresPurchaseNumber,
+		RequiresOrigin:         airline.RequiresOrigin,
 		TraveosAirlineID:       airline.TraveosAirlineID,
 		BrandColor:             airline.BrandColor,
 		CreatedAt:              airline.CreatedAt,
@@ -86,6 +87,9 @@ func (h *AirlineHandler) CreateAirline(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.RequiresPurchaseNumber != nil {
 		airline.RequiresPurchaseNumber = *req.RequiresPurchaseNumber
+	}
+	if req.RequiresOrigin != nil {
+		airline.RequiresOrigin = *req.RequiresOrigin
 	}
 	airline.TraveosAirlineID = req.TraveosAirlineID
 	airline.BrandColor = req.BrandColor
@@ -242,6 +246,9 @@ func (h *AirlineHandler) UpdateAirline(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.RequiresPurchaseNumber != nil {
 		airline.RequiresPurchaseNumber = *req.RequiresPurchaseNumber
+	}
+	if req.RequiresOrigin != nil {
+		airline.RequiresOrigin = *req.RequiresOrigin
 	}
 	// Assigned unconditionally, unlike the fields above: these two are the only
 	// nullable ones, and the panel - the sole client of this route - always sends

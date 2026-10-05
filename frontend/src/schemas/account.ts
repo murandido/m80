@@ -201,12 +201,11 @@ export const getAccountSchema = {
   }),
 }
 
-// GET /accounts/holders: the accounts screen, one row per holder with every loyalty account
-// they hold. holder is null on a row that is a single account nobody holds - older data the
-// API no longer lets anyone create. A person holding nothing (an administrator, say) comes
-// back with an empty accounts list.
+// GET /accounts/holders: the accounts screen, one row per holder with every live loyalty
+// account they hold. A person holding nothing (an administrator, say) comes back with an empty
+// accounts list; an account always has a holder (accounts.holder_id is NOT NULL).
 export const accountHolderRowSchema = z.object({
-  holder: personSchema.nullable(),
+  holder: personSchema,
   accounts: z.array(accountSchema),
 })
 
@@ -222,23 +221,6 @@ export const listAccountHoldersSchema = {
         total: z.number(),
         page: z.number(),
         limit: z.number(),
-        // Every account without a holder, archived included and filters ignored: what still
-        // stands between accounts.holder_id and a NOT NULL. Defaulted for an API published
-        // before it existed.
-        holderless_total: z
-          .number()
-          .nullish()
-          .transform((value) => value ?? 0),
-        // Holders with two live accounts in one program, and holders whose accounts name
-        // different administrators - the other two to-do lists. Defaulted the same way.
-        duplicate_programs_total: z
-          .number()
-          .nullish()
-          .transform((value) => value ?? 0),
-        admin_conflicts_total: z
-          .number()
-          .nullish()
-          .transform((value) => value ?? 0),
       })
       .nullish(),
   }),
@@ -311,50 +293,6 @@ export const createAccountNicknameSchema = {
     data: accountNicknameSchema.nullish(),
   }),
 }
-
-export const deleteAccountNicknameSchema = {
-  response: z.object({
-    message: z.string(),
-    data: z.null().nullish(),
-  }),
-}
-
-export const checkAccountNicknameAvailabilitySchema = {
-  response: z.object({
-    success: z.boolean(),
-    message: z.string(),
-    data: z.object({ available: z.boolean() }).nullish(),
-  }),
-}
-
-// The counts the panel shows before folding a holder's second account in a program into
-// the first - irreversible. issuances includes the ones in the grid's trash.
-export const mergeAccountPreviewSchema = {
-  response: z.object({
-    success: z.boolean(),
-    message: z.string(),
-    data: z
-      .object({
-        issuances: z.number(),
-        nicknames: z.number(),
-        fields_to_fill: z.array(z.string()).nullish(),
-        colliding_nicknames: z.array(z.string()).nullish(),
-      })
-      .nullish(),
-  }),
-}
-
-export const mergeAccountSchema = {
-  response: z.object({
-    success: z.boolean(),
-    message: z.string(),
-    data: accountSchema.nullish(),
-  }),
-}
-
-export type MergeAccountPreview = NonNullable<
-  z.infer<typeof mergeAccountPreviewSchema.response>["data"]
->
 
 // One person on an account's beneficiary ledger. The CPF is never returned in full because
 // it is never stored in full: cpf_masked is built from the number at write time, and

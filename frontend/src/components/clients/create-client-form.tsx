@@ -102,10 +102,13 @@ export function CreateClientForm({ agencies }: { agencies: Agency[] }) {
                         <InputGroup className="bg-slate-200">
                           <InputGroupInput
                             {...field}
+                            // Names are stored in upper case (the API normalizes them); typing
+                            // them that way means the form shows what will be saved.
+                            onChange={(event) => field.onChange(event.target.value.toUpperCase())}
                             id="name"
                             type="text"
                             aria-invalid={fieldState.invalid}
-                            placeholder="João Silva"
+                            placeholder="JOÃO SILVA"
                             disabled={isPending}
                           />
                           <InputGroupAddon align="inline-end">

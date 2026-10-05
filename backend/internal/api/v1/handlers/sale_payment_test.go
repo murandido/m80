@@ -418,29 +418,21 @@ func TestUpdateSale_LegacyPaidFlagSettlesAndClearsTheStatement(t *testing.T) {
 	})
 }
 
-func TestUpdateSale_LegacyPaidFlagTopsUpAPartialPayment(t *testing.T) {
+// A partly paid sale is left to the next payment: the switch may not top it up, whether
+// the part came from a client payment or from the per-sale statement.
+func TestUpdateSale_LegacyPaidFlagRefusesAPartialPayment(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		sale := seedPricedSale(t, tx)
 
 		if rec := callCreatePayment(t, tx, sale.ID, payment(40000)); rec.Code != http.StatusCreated {
 			t.Fatalf("payment: got %d (body: %s)", rec.Code, rec.Body.String())
 		}
-		if rec := callUpdateSale(t, tx, sale.ID, `{"paid":true}`); rec.Code != http.StatusOK {
-			t.Fatalf("marking paid: got %d (body: %s)", rec.Code, rec.Body.String())
+		if rec := callUpdateSale(t, tx, sale.ID, `{"paid":true}`); rec.Code != http.StatusConflict {
+			t.Fatalf("marking paid: got %d, want 409 (body: %s)", rec.Code, rec.Body.String())
 		}
 
-		// The switch means "it is settled now", so it records what was missing - not a
-		// second payment for the whole value.
-		lines := callGetPayments(t, tx, sale.ID)
-		if len(lines) != 2 {
-			t.Fatalf("statement has %d lines, want 2", len(lines))
-		}
-		total := 0
-		for _, line := range lines {
-			total += line.AmountCents
-		}
-		if total != pricedSaleAmount {
-			t.Errorf("statement totals %d, want exactly the sale's value %d", total, pricedSaleAmount)
+		if lines := callGetPayments(t, tx, sale.ID); len(lines) != 1 || lines[0].AmountCents != 40000 {
+			t.Errorf("statement = %+v, want only the 40000 that came in", lines)
 		}
 	})
 }

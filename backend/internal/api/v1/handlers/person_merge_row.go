@@ -5,8 +5,6 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/go-chi/chi/v5"
-	acct "github.com/murandido/m-80-backend/internal/account"
 	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
@@ -21,11 +19,6 @@ import (
 // longer has a per-account merge to finish the job - so the row merge does both, in one
 // transaction, on top of the same two merges the older screens used (mergeAccountsTx and
 // mergePeopleTx).
-//
-// The source can also be an account with no holder: those show up as rows of their own, and
-// absorbing one into a holder is how an old orphan finally gets one.
-
-var errAccountHasHolder = errors.New("account already has a holder")
 
 // rowAccountPlan is what the merge does with each of the absorbed row's live accounts:
 // fold it into the survivor's account in the same program, or just hand it to the survivor.
@@ -64,45 +57,23 @@ func planRowAccounts(db *gorm.DB, keepPersonID string, dropAccounts []data.Accou
 	return plan, nil
 }
 
-// readRowSource validates the request's source and returns which kind it is.
-func readRowSource(w http.ResponseWriter, r *http.Request, personID, accountID string) (string, bool) {
-	switch {
-	case personID != "" && accountID != "":
-		utils.SendError(w, r, http.StatusBadRequest, "Informe só um cadastro a absorver")
-		return "", false
-	case personID != "":
-		_, _, ok := readMergeIDs(w, r, personID)
-		return holderRowPerson, ok
-	case accountID != "":
-		return holderRowAccount, true
-	default:
-		utils.SendError(w, r, http.StatusBadRequest, "Informe o cadastro que será absorvido")
-		return "", false
-	}
-}
-
 // PreviewMergeRow handles the GET /people/{id}/merge-row-preview route.
 // @Summary      Prévia da mesclagem de linhas da tela de contas
-// @Description  Mostra o que absorver outra linha (pessoa ou conta sem titular) neste titular vai fazer: contas do mesmo programa que serão mescladas, contas que só mudam de titular e campos herdados. Não escreve nada.
+// @Description  Mostra o que absorver outra linha neste titular vai fazer: contas do mesmo programa que serão mescladas, contas que só mudam de titular e campos herdados. Não escreve nada.
 // @Tags         Pessoas
 // @Produce      json
 // @Security     BearerAuth
 // @Param        id                 path   string  true   "UUID do titular que fica"
-// @Param        source_person_id   query  string  false  "UUID da pessoa a absorver"
-// @Param        source_account_id  query  string  false  "UUID da conta sem titular a absorver"
+// @Param        source_person_id   query  string  true   "UUID do titular a absorver"
 // @Success      200  {object}  schemas.MergeRowPreviewSingleResponse "Prévia calculada com sucesso"
-// @Failure      400  {object}  schemas.ErrorResponse "Origem ausente ou duplicada"
+// @Failure      400  {object}  schemas.ErrorResponse "Origem ausente"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      403  {object}  schemas.ErrorResponse "Não autorizado"
-// @Failure      404  {object}  schemas.ErrorResponse "Pessoa ou conta não encontrada"
-// @Failure      422  {object}  schemas.ErrorResponse "Mesmo cadastro, ou conta que já tem titular"
+// @Failure      404  {object}  schemas.ErrorResponse "Titular não encontrado"
+// @Failure      422  {object}  schemas.ErrorResponse "Mesmo cadastro"
 // @Router       /people/{id}/merge-row-preview [get]
 func (h *PeopleHandler) PreviewMergeRow(w http.ResponseWriter, r *http.Request) {
-	keepID := chi.URLParam(r, "id")
-	sourcePersonID := r.URL.Query().Get("source_person_id")
-	sourceAccountID := r.URL.Query().Get("source_account_id")
-
-	kind, ok := readRowSource(w, r, sourcePersonID, sourceAccountID)
+	keepID, sourcePersonID, ok := readMergeIDs(w, r, r.URL.Query().Get("source_person_id"))
 	if !ok {
 		return
 	}
@@ -118,49 +89,34 @@ func (h *PeopleHandler) PreviewMergeRow(w http.ResponseWriter, r *http.Request) 
 		FieldsToFill:   []string{},
 	}
 
+	var drop data.Person
+	if err := h.DB.First(&drop, "id = ?", sourcePersonID).Error; err != nil {
+		sendPersonLookupError(w, r, err)
+		return
+	}
 	var dropAccounts []data.Account
-	if kind == holderRowPerson {
-		var drop data.Person
-		if err := h.DB.First(&drop, "id = ?", sourcePersonID).Error; err != nil {
-			sendPersonLookupError(w, r, err)
-			return
-		}
-		if err := h.DB.Where("holder_id = ?", drop.ID).Find(&dropAccounts).Error; err != nil {
-			utils.SendError(w, r, http.StatusInternalServerError, "Failed to load accounts: "+err.Error())
-			return
-		}
-		if err := h.DB.Unscoped().Model(&data.Account{}).
-			Where("administrator_id = ?", drop.ID).Count(&preview.Administered).Error; err != nil {
-			utils.SendError(w, r, http.StatusInternalServerError, "Failed to count accounts: "+err.Error())
-			return
-		}
-		if err := h.DB.Model(&data.PersonNickname{}).
-			Where("person_id = ?", drop.ID).Count(&preview.Nicknames).Error; err != nil {
-			utils.SendError(w, r, http.StatusInternalServerError, "Failed to count nicknames: "+err.Error())
-			return
-		}
-		preview.FieldsToFill = carryPersonFields(&keep, &drop)
-		nickname, free, err := nicknameFromName(h.DB, keep, drop)
-		if err != nil {
-			utils.SendError(w, r, http.StatusInternalServerError, "Failed to check the nickname: "+err.Error())
-			return
-		}
-		if free {
-			preview.NicknameFromName = nickname
-		}
-	} else {
-		// Unscoped: an archived account without a holder blocks the NOT NULL on holder_id
-		// as much as a live one, and merging is how it gets one.
-		var orphan data.Account
-		if err := h.DB.Unscoped().First(&orphan, "id = ?", sourceAccountID).Error; err != nil {
-			sendRowMergeError(w, r, err)
-			return
-		}
-		if orphan.HolderID != nil {
-			sendRowMergeError(w, r, errAccountHasHolder)
-			return
-		}
-		dropAccounts = []data.Account{orphan}
+	if err := h.DB.Where("holder_id = ?", drop.ID).Find(&dropAccounts).Error; err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to load accounts: "+err.Error())
+		return
+	}
+	if err := h.DB.Unscoped().Model(&data.Account{}).
+		Where("administrator_id = ?", drop.ID).Count(&preview.Administered).Error; err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to count accounts: "+err.Error())
+		return
+	}
+	if err := h.DB.Model(&data.PersonNickname{}).
+		Where("person_id = ?", drop.ID).Count(&preview.Nicknames).Error; err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to count nicknames: "+err.Error())
+		return
+	}
+	preview.FieldsToFill = carryPersonFields(&keep, &drop)
+	nickname, free, err := nicknameFromName(h.DB, keep, drop)
+	if err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to check the nickname: "+err.Error())
+		return
+	}
+	if free {
+		preview.NicknameFromName = nickname
 	}
 
 	plan, err := planRowAccounts(h.DB, keep.ID, dropAccounts)
@@ -208,8 +164,8 @@ func (h *PeopleHandler) PreviewMergeRow(w http.ResponseWriter, r *http.Request) 
 // @Failure      400  {object}  schemas.ErrorResponse "Payload inválido"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      403  {object}  schemas.ErrorResponse "Não autorizado"
-// @Failure      404  {object}  schemas.ErrorResponse "Pessoa ou conta não encontrada"
-// @Failure      422  {object}  schemas.ErrorResponse "Mesmo cadastro, ou conta que já tem titular"
+// @Failure      404  {object}  schemas.ErrorResponse "Titular não encontrado"
+// @Failure      422  {object}  schemas.ErrorResponse "Mesmo cadastro"
 // @Router       /people/{id}/merge-row [post]
 func (h *PeopleHandler) MergeRow(w http.ResponseWriter, r *http.Request) {
 	userCtx, ok := r.Context().Value(middleware.UserContextKey).(data.User)
@@ -228,45 +184,28 @@ func (h *PeopleHandler) MergeRow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	kind, ok := readRowSource(w, r, req.SourcePersonID, req.SourceAccountID)
+	keepID, sourcePersonID, ok := readMergeIDs(w, r, req.SourcePersonID)
 	if !ok {
 		return
 	}
-	keepID := chi.URLParam(r, "id")
 	keepNickname := req.KeepNickname == nil || *req.KeepNickname
 
 	var warning string
 	err := h.DB.Transaction(func(tx *gorm.DB) error {
-		var keep, dropPerson data.Person
+		var pair []data.Person
+		if err := lockMergePair(tx, &pair, keepID, sourcePersonID); err != nil {
+			return err
+		}
+		if len(pair) != 2 {
+			return gorm.ErrRecordNotFound
+		}
+		keep, dropPerson := pair[0], pair[1]
+		if keep.ID != keepID {
+			keep, dropPerson = dropPerson, keep
+		}
 		var dropAccounts []data.Account
-
-		if kind == holderRowPerson {
-			var pair []data.Person
-			if err := lockMergePair(tx, &pair, keepID, req.SourcePersonID); err != nil {
-				return err
-			}
-			if len(pair) != 2 {
-				return gorm.ErrRecordNotFound
-			}
-			keep, dropPerson = pair[0], pair[1]
-			if keep.ID != keepID {
-				keep, dropPerson = dropPerson, keep
-			}
-			if err := tx.Where("holder_id = ?", dropPerson.ID).Find(&dropAccounts).Error; err != nil {
-				return err
-			}
-		} else {
-			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&keep, "id = ?", keepID).Error; err != nil {
-				return err
-			}
-			var orphan data.Account
-			if err := tx.Unscoped().Clauses(clause.Locking{Strength: "UPDATE"}).First(&orphan, "id = ?", req.SourceAccountID).Error; err != nil {
-				return err
-			}
-			if orphan.HolderID != nil {
-				return errAccountHasHolder
-			}
-			dropAccounts = []data.Account{orphan}
+		if err := tx.Where("holder_id = ?", dropPerson.ID).Find(&dropAccounts).Error; err != nil {
+			return err
 		}
 
 		plan, err := planRowAccounts(tx.Clauses(clause.Locking{Strength: "UPDATE"}), keep.ID, dropAccounts)
@@ -282,31 +221,11 @@ func (h *PeopleHandler) MergeRow(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		if kind == holderRowPerson {
-			// Hands every remaining account (the moved ones, archived ones, and the ones the
-			// absorbed person administers) to the survivor, then deletes the absorbed person.
-			mergeWarning, err := mergePeopleTx(tx, keep, dropPerson, keepNickname)
-			warning = mergeWarning
-			return err
-		}
-
-		for _, account := range plan.moved {
-			account.HolderID = &keep.ID
-			// UpdateColumns, not Save: Account.BeforeSave re-encrypts the password.
-			// Unscoped: the orphan may be archived, and it stays archived - it only gains a holder.
-			if err := tx.Unscoped().Model(&data.Account{}).Where("id = ?", account.ID).UpdateColumns(map[string]any{
-				"holder_id": keep.ID,
-				"complete":  account.ComputeComplete(),
-			}).Error; err != nil {
-				return err
-			}
-		}
-		// The orphan's aliases join the row's list, and the row's reach the orphan; so does
-		// the row's administrator.
-		if err := acct.AlignHolderAdministrator(tx, keep.ID); err != nil {
-			return err
-		}
-		return acct.UnifyHolderNicknames(tx, keep.ID)
+		// Hands every remaining account (the moved ones, archived ones, and the ones the
+		// absorbed person administers) to the survivor, then deletes the absorbed person.
+		mergeWarning, err := mergePeopleTx(tx, keep, dropPerson, keepNickname)
+		warning = mergeWarning
+		return err
 	})
 
 	if err != nil {
@@ -320,10 +239,8 @@ func (h *PeopleHandler) MergeRow(w http.ResponseWriter, r *http.Request) {
 // sendRowMergeError maps the row merge's failures onto the statuses the panel expects.
 func sendRowMergeError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
-	case errors.Is(err, errAccountHasHolder):
-		utils.SendError(w, r, http.StatusUnprocessableEntity, "Essa conta já tem titular")
 	case errors.Is(err, gorm.ErrRecordNotFound):
-		utils.SendError(w, r, http.StatusNotFound, "Pessoa ou conta não encontrada")
+		utils.SendError(w, r, http.StatusNotFound, "Titular não encontrado")
 	default:
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to merge: "+err.Error())
 	}

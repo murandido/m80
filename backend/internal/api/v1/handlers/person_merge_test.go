@@ -1,50 +1,24 @@
 package handlers
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
 	"gorm.io/gorm"
 )
 
-// callMergePerson drives MergePerson directly, injecting the chi {id} param and the
-// authenticated admin the same way the real middleware chain would.
+// The person-only merge endpoint went with the owners screen; mergePeopleTx lives on inside
+// the row merge (person_merge_row.go), so these tests drive it through there. A body in the
+// old {"source_id": ...} shape is translated, which keeps each test reading as it did.
 func callMergePerson(tx *gorm.DB, keepID, body string) *httptest.ResponseRecorder {
-	handler := NewPeopleHandler(tx)
-	handler.Validator = validator.New()
-
-	req := httptest.NewRequest(http.MethodPost, "/people/"+keepID+"/merge", strings.NewReader(body))
-	rec := httptest.NewRecorder()
-	handler.MergePerson(rec, withMergeContext(req, keepID))
-	return rec
-}
-
-func callPreviewMergePerson(tx *gorm.DB, keepID, sourceID string) *httptest.ResponseRecorder {
-	handler := NewPeopleHandler(tx)
-
-	req := httptest.NewRequest(http.MethodGet, "/people/"+keepID+"/merge-preview?source_id="+sourceID, nil)
-	rec := httptest.NewRecorder()
-	handler.PreviewMergePerson(rec, withMergeContext(req, keepID))
-	return rec
-}
-
-func withMergeContext(req *http.Request, id string) *http.Request {
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", id)
-	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
-	ctx = asUser(ctx, data.User{
-		ID: uuid.New().String(), Role: data.RoleAdmin,
-	})
-	return req.WithContext(ctx)
+	body = strings.Replace(body, `"source_id"`, `"source_person_id"`, 1)
+	return callMergeRow(tx, keepID, uuid.New().String(), body)
 }
 
 func seedPerson(t *testing.T, tx *gorm.DB, name string) data.Person {
@@ -66,19 +40,31 @@ func seedProgram(t *testing.T, tx *gorm.DB) data.LoyaltyProgram {
 	return program
 }
 
-func mergePersonResult(t *testing.T, rec *httptest.ResponseRecorder) schemas.MergePersonResultResponse {
+type mergedPerson struct {
+	Person  schemas.PersonResponse
+	Warning string
+}
+
+// mergePersonResult checks the merge answered 200 and reads the survivor back, with its
+// aliases, the way the old endpoint used to return it.
+func mergePersonResult(t *testing.T, tx *gorm.DB, keepID string, rec *httptest.ResponseRecorder) mergedPerson {
 	t.Helper()
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: got %d, want 200 (body: %s)", rec.Code, rec.Body.String())
 	}
 
 	var resp struct {
-		Data schemas.MergePersonResultResponse `json:"data"`
+		Data schemas.MergeRowResultResponse `json:"data"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
-	return resp.Data
+
+	var survivor data.Person
+	if err := tx.Preload("Nicknames").First(&survivor, "id = ?", keepID).Error; err != nil {
+		t.Fatalf("reloading the survivor: %v", err)
+	}
+	return mergedPerson{Person: toPersonResponse(survivor), Warning: resp.Data.Warning}
 }
 
 func TestMergePerson_AbsorbedPersonIsReallyGone(t *testing.T) {
@@ -143,7 +129,7 @@ func TestMergePerson_CarriesBlankFieldsAndKeepsItsOwn(t *testing.T) {
 		drop := data.Person{Name: "Heraldo R.", CPF: &dropCPF, Email: &dropEmail, City: &dropCity}
 		create(t, tx, &drop)
 
-		result := mergePersonResult(t, callMergePerson(tx, keep.ID, `{"source_id":"`+drop.ID+`"}`))
+		result := mergePersonResult(t, tx, keep.ID, callMergePerson(tx, keep.ID, `{"source_id":"`+drop.ID+`"}`))
 
 		// The CPF proves the ordering: idx_people_cpf is unique, so it can only land here
 		// because the absorbed row was deleted first.
@@ -168,7 +154,7 @@ func TestMergePerson_MovesNicknamesAndRegistersTheAbsorbedName(t *testing.T) {
 		drop := seedPerson(t, tx, "Heraldo R. "+uuid.New().String()[:8])
 		create(t, tx, &data.PersonNickname{PersonID: drop.ID, Nickname: "hudinho" + uuid.New().String()[:8]})
 
-		result := mergePersonResult(t, callMergePerson(tx, keep.ID, `{"source_id":"`+drop.ID+`"}`))
+		result := mergePersonResult(t, tx, keep.ID, callMergePerson(tx, keep.ID, `{"source_id":"`+drop.ID+`"}`))
 
 		if len(result.Person.Nicknames) != 2 {
 			t.Fatalf("nicknames: got %d, want 2 (the moved one plus the absorbed name)", len(result.Person.Nicknames))
@@ -197,7 +183,7 @@ func TestMergePerson_WarnsWhenTheAbsorbedNameIsTaken(t *testing.T) {
 		stranger := seedPerson(t, tx, "Outra Pessoa")
 		create(t, tx, &data.PersonNickname{PersonID: stranger.ID, Nickname: drop.Name})
 
-		result := mergePersonResult(t, callMergePerson(tx, keep.ID, `{"source_id":"`+drop.ID+`"}`))
+		result := mergePersonResult(t, tx, keep.ID, callMergePerson(tx, keep.ID, `{"source_id":"`+drop.ID+`"}`))
 
 		if result.Warning == "" {
 			t.Error("expected a warning about the taken nickname")
@@ -220,7 +206,7 @@ func TestMergePerson_KeepNicknameFalseSkipsTheAlias(t *testing.T) {
 		keep := seedPerson(t, tx, "Heraldo Ribeiro")
 		drop := seedPerson(t, tx, "Heraldo R. "+uuid.New().String()[:8])
 
-		result := mergePersonResult(t, callMergePerson(tx, keep.ID,
+		result := mergePersonResult(t, tx, keep.ID, callMergePerson(tx, keep.ID,
 			`{"source_id":"`+drop.ID+`","keep_nickname":false}`))
 
 		if len(result.Person.Nicknames) != 0 {
@@ -253,7 +239,7 @@ func TestMergePerson_MissingRecordIs404(t *testing.T) {
 	})
 }
 
-func TestPreviewMergePerson_CountsWithoutWriting(t *testing.T) {
+func TestPreviewMergeRow_PersonCountsWithoutWriting(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		keep := seedPerson(t, tx, "Heraldo Ribeiro")
 		dropCity := "Salvador"
@@ -265,29 +251,20 @@ func TestPreviewMergePerson_CountsWithoutWriting(t *testing.T) {
 		create(t, tx, &account)
 		create(t, tx, &data.PersonNickname{PersonID: drop.ID, Nickname: "hudinho" + uuid.New().String()[:8]})
 
-		rec := callPreviewMergePerson(tx, keep.ID, drop.ID)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("status: got %d, want 200 (body: %s)", rec.Code, rec.Body.String())
-		}
+		preview := callPreviewMergeRow(t, tx, keep.ID, "source_person_id="+drop.ID)
 
-		var resp struct {
-			Data schemas.MergePersonPreviewResponse `json:"data"`
+		// The survivor has no account in the program, so the absorbed one just changes holder.
+		if preview.AccountsMoved != 1 {
+			t.Errorf("accounts moved: got %d, want 1", preview.AccountsMoved)
 		}
-		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-			t.Fatalf("failed to decode response: %v", err)
+		if preview.Nicknames != 1 {
+			t.Errorf("nicknames: got %d, want 1", preview.Nicknames)
 		}
-
-		if resp.Data.Accounts != 1 {
-			t.Errorf("accounts: got %d, want 1", resp.Data.Accounts)
+		if len(preview.FieldsToFill) != 1 || preview.FieldsToFill[0] != "cidade" {
+			t.Errorf("fields_to_fill: got %v, want [cidade]", preview.FieldsToFill)
 		}
-		if resp.Data.Nicknames != 1 {
-			t.Errorf("nicknames: got %d, want 1", resp.Data.Nicknames)
-		}
-		if len(resp.Data.FieldsToFill) != 1 || resp.Data.FieldsToFill[0] != "cidade" {
-			t.Errorf("fields_to_fill: got %v, want [cidade]", resp.Data.FieldsToFill)
-		}
-		if resp.Data.NicknameFromName != drop.Name {
-			t.Errorf("nickname_from_name: got %q, want %q", resp.Data.NicknameFromName, drop.Name)
+		if preview.NicknameFromName != drop.Name {
+			t.Errorf("nickname_from_name: got %q, want %q", preview.NicknameFromName, drop.Name)
 		}
 
 		var stillThere int64

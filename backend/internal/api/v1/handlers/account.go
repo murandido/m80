@@ -419,7 +419,6 @@ func accountListQuery(db *gorm.DB, params listQuery, programID, category string,
 // @Param        loyalty_program_id  query  string  false  "UUID do programa de fidelidade"
 // @Param        category            query  string  false  "Categoria da conta"  Enums(unidentified, standard, injunction)
 // @Param        complete            query  bool    false  "Somente contas completas (true) ou incompletas (false)"
-// @Param        include_archived    query  bool    false  "Inclui as contas arquivadas — usado pela tela de mesclagem, que precisa alcançá-las"
 // @Success      200  {object}  schemas.AccountListResponse
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao buscar contas"
@@ -427,20 +426,10 @@ func accountListQuery(db *gorm.DB, params listQuery, programID, category string,
 func (h *AccountHandler) GetAccounts(w http.ResponseWriter, r *http.Request) {
 	var accounts []data.Account
 
-	db := h.DB
-	// Only the merge picker asks for this. Archiving was the only way to get rid of a
-	// duplicate before merging existed, so the duplicates that most need absorbing are
-	// exactly the archived ones - and their issuances are still sitting on them. Nothing
-	// new is exposed: the issuances grid already receives archived accounts embedded in
-	// old rows, which is why AccountResponse carries deleted_at at all.
-	if archived := parseOptionalBool(r.URL.Query().Get("include_archived")); archived != nil && *archived {
-		db = db.Unscoped()
-	}
-
 	picker := r.URL.Query().Get("view") == "picker"
 
 	query := accountListQuery(
-		db,
+		h.DB,
 		parseListQuery(r),
 		r.URL.Query().Get("loyalty_program_id"),
 		r.URL.Query().Get("category"),
@@ -498,73 +487,6 @@ func (h *AccountHandler) GetAccounts(w http.ResponseWriter, r *http.Request) {
 	fillLastSynced(h.DB, resp)
 
 	utils.SendJSON(w, r, http.StatusOK, "Accounts fetched successfully", resp)
-}
-
-// ListAccounts handles the GET /accounts/manage route.
-// @Summary      Listar contas (paginado)
-// @Description  Listagem paginada para a tela de gestão. A rota /accounts continua devolvendo tudo, porque é ela que alimenta os seletores da grid de emissões, das vendas, do relatório de fornecedores e da importação.
-// @Tags         Contas
-// @Produce      json
-// @Security     BearerAuth
-// @Param        q                   query  string  false  "Busca por login, titular, administrador, programa ou apelido"
-// @Param        order               query  string  false  "Ordenação"  Enums(name_asc, name_desc, created_desc, created_asc)
-// @Param        loyalty_program_id  query  string  false  "UUID do programa de fidelidade"
-// @Param        category            query  string  false  "Categoria da conta"  Enums(unidentified, standard, injunction)
-// @Param        complete            query  bool    false  "Somente contas completas (true) ou incompletas (false)"
-// @Param        page                query  int     false  "Página (padrão 1)"
-// @Param        limit               query  int     false  "Itens por página (padrão 20, máximo 100)"
-// @Success      200  {object}  schemas.AccountPaginatedResponse
-// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
-// @Failure      500  {object}  schemas.ErrorResponse "Erro ao buscar contas"
-// @Router       /accounts/manage [get]
-func (h *AccountHandler) ListAccounts(w http.ResponseWriter, r *http.Request) {
-	params := parseListQuery(r)
-	query := accountListQuery(
-		h.DB,
-		params,
-		r.URL.Query().Get("loyalty_program_id"),
-		r.URL.Query().Get("category"),
-		parseOptionalBool(r.URL.Query().Get("complete")),
-	)
-
-	// The count runs on the same filtered query as the page, so the total the
-	// pagination control shows can never disagree with what it is paginating.
-	var total int64
-	if err := query.Count(&total).Error; err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Failed to count accounts")
-		return
-	}
-
-	var accounts []data.Account
-	if err := paginate(query.Session(&gorm.Session{}), params).
-		Preload("Nicknames").Preload("LoyaltyProgram").
-		Find(&accounts).Error; err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch accounts")
-		return
-	}
-
-	// Only for the rows on screen. This is the one listing whose per-row extra is a
-	// second query over the beneficiary ledger, so paging it is not just less JSON -
-	// it is less counting.
-	usage, err := h.cpfUsage(accounts)
-	if err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Failed to compute the CPF usage")
-		return
-	}
-
-	items := make([]schemas.AccountResponse, 0, len(accounts))
-	for _, account := range accounts {
-		items = append(items, toAccountResponseWithUsage(account, usage[account.ID]))
-	}
-	fillExpectedBalances(h.DB, items)
-	fillLastSynced(h.DB, items)
-
-	utils.SendJSON(w, r, http.StatusOK, "Accounts fetched successfully", schemas.AccountPaginatedData{
-		Accounts: items,
-		Total:    total,
-		Page:     params.Page,
-		Limit:    params.Limit,
-	})
 }
 
 // cpfUsage computes the beneficiary-cap consumption of a whole listing at once. The

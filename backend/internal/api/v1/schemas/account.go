@@ -180,22 +180,6 @@ type AccountPickerResponse struct {
 	DeletedAt       *time.Time `json:"deleted_at,omitempty"`
 }
 
-// MergeAccountRequest names the account to absorb into the one in the URL.
-type MergeAccountRequest struct {
-	SourceID string `json:"source_id" validate:"required,uuid"`
-}
-
-// MergeAccountPreviewResponse is what a merge would move, counted before it runs.
-type MergeAccountPreviewResponse struct {
-	// Issuances includes the soft-deleted ones: they hold account_id like any other.
-	Issuances    int64    `json:"issuances"`
-	Nicknames    int64    `json:"nicknames"`
-	FieldsToFill []string `json:"fields_to_fill"`
-	// CollidingNicknames are the absorbed aliases the surviving account already answers
-	// to. They are archived instead of moved, so the panel warns about them by name.
-	CollidingNicknames []string `json:"colliding_nicknames"`
-}
-
 // AccountRemovalResponse says whether DELETE /accounts/{id} deleted the account for real or,
 // because it carries history, archived it.
 type AccountRemovalResponse struct {

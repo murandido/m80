@@ -22,6 +22,11 @@ import {
 } from "@/components/sales/sales-column-filters"
 import { undoClientPaymentAction, updateSaleAction } from "@/actions/sale"
 import { createClientAction } from "@/actions/client"
+import {
+  parseClientIds,
+  serializeClientIds,
+  singleClientId,
+} from "@/app/dashboard/sales/period-params"
 import { formatCurrencyBRL } from "@/lib/currency"
 import { cn } from "@/lib/utils"
 import type { Client } from "@/schemas/client"
@@ -33,9 +38,15 @@ interface SalesClientsTableProps {
   // The agency the list shows. A client created from a row belongs to it, since a sale
   // and its client share an agency.
   agencyId: string
-  // The column filters, as the server applied them.
+  // The column filters, as the server applied them. clientFilter is client_ids as the URL
+  // carries it: comma-separated, possibly with NO_CLIENT.
   clientFilter: string
   paidFilter: string
+  // The filtered client's credit, when exactly one client is filtered and it could be read.
+  clientCreditCents: number | null
+  // The period on screen, which the history across clients is narrowed to.
+  dateFrom: string
+  dateTo: string
 }
 
 // One grid for the header, every row and the footer, so the columns line up without a
@@ -88,18 +99,33 @@ export function SalesClientsTable({
   agencyId,
   clientFilter,
   paidFilter,
+  clientCreditCents,
+  dateFrom,
+  dateTo,
 }: SalesClientsTableProps) {
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const [, startTransition] = useTransition()
   const [savingIds, setSavingIds] = useState<Set<string>>(new Set())
+  // The row whose client or note popover is open. Those popovers render in a portal, so
+  // :focus-within on the row cannot tell that the row is the one being edited.
+  const [editingSaleId, setEditingSaleId] = useState<string | null>(null)
   // Clients created from a row's combobox. The refresh that follows brings them in the
   // `clients` prop, but the combobox has to be able to show the new name immediately.
   const [createdClients, setCreatedClients] = useState<Client[]>([])
   // The footer's client. Starts on the filtered client, since filtering by one client and
   // then registering what they paid is the usual order.
-  const [payingClientId, setPayingClientId] = useState(clientFilter)
+  const [payingClientId, setPayingClientId] = useState(singleClientId(clientFilter))
+  // The footer's client follows the filter when it changes. Adjusted during render rather
+  // than by remounting the table on every filter change: a remount closes the client
+  // filter's popover after each tick, and picking several clients is what it is for.
+  const [followedFilter, setFollowedFilter] = useState(clientFilter)
+  if (followedFilter !== clientFilter) {
+    setFollowedFilter(clientFilter)
+    setPayingClientId(singleClientId(clientFilter))
+  }
+  const selectedClientIds = useMemo(() => parseClientIds(clientFilter), [clientFilter])
 
   const clientOptions = useMemo(() => {
     const known = new Set(clients.map((c) => c.id))
@@ -159,11 +185,19 @@ export function SalesClientsTable({
 
   // The URL is authoritative here (useStickyFilters puts remembered filters back into it
   // on arrival), so a column filter only has to change its own key.
-  function setFilter(key: "client_id" | "paid", value: string) {
+  function setFilter(key: "client_ids" | "paid", value: string) {
     const params = new URLSearchParams(searchParams.toString())
     if (value) params.set(key, value)
     else params.delete(key)
+    // The single client_id an older link carried is folded into client_ids on arrival; left
+    // in the URL it would come back the moment the multi-select is emptied.
+    params.delete("client_id")
     router.replace(`${pathname}?${params.toString()}`)
+  }
+
+  function trackEditing(saleId: string) {
+    return (open: boolean) =>
+      setEditingSaleId((current) => (open ? saleId : current === saleId ? null : current))
   }
 
   function markSaving(saleId: string, saving: boolean) {
@@ -327,6 +361,13 @@ export function SalesClientsTable({
 
   const payingClient = clientOptions.find((c) => c.id === payingClientId)
 
+  // Only with one client filtered: summed over several, "what is owed" would be nobody's
+  // debt. Signed, like the balance itself - a refund still to go back to the client lowers
+  // what they owe, which is how the conversation with them goes.
+  const filteredClientId = singleClientId(clientFilter)
+  const filteredClient = clientOptions.find((c) => c.id === filteredClientId)
+  const owedCents = optimisticSales.reduce((sum, sale) => sum + sale.balance_cents, 0)
+
   return (
     <div className="@container flex flex-col gap-3">
       {/* The narrow layout has no header row to hang the column filters on. */}
@@ -334,8 +375,8 @@ export function SalesClientsTable({
         <ClientColumnFilter
           label="Cliente"
           clients={clientOptions}
-          value={clientFilter}
-          onChange={(value) => setFilter("client_id", value)}
+          value={selectedClientIds}
+          onChange={(ids) => setFilter("client_ids", serializeClientIds(ids))}
         />
         <StatusColumnFilter
           label="Situação"
@@ -365,8 +406,8 @@ export function SalesClientsTable({
             Cliente
             <ClientColumnFilter
               clients={clientOptions}
-              value={clientFilter}
-              onChange={(value) => setFilter("client_id", value)}
+              value={selectedClientIds}
+              onChange={(ids) => setFilter("client_ids", serializeClientIds(ids))}
             />
           </span>
           <span role="columnheader" className="flex items-center justify-center gap-1.5">
@@ -403,6 +444,10 @@ export function SalesClientsTable({
                 // rather than a border so it cannot shift the cells by a pixel.
                 "shadow-[inset_3px_0_0_0_var(--tw-shadow-color)]",
                 STATUS_RULE[status],
+                // Darker than the white rows around it, so the eye can follow the row the
+                // pointer is on, and darker still while one of its popovers is open.
+                "transition-colors hover:bg-slate-100",
+                editingSaleId === sale.id && "bg-slate-300/60 hover:bg-slate-300/60",
                 isSaving && "opacity-60",
               )}
             >
@@ -434,6 +479,7 @@ export function SalesClientsTable({
                   value={sale.client_id ?? ""}
                   onChange={(clientId) => handleClientChange(sale, clientId)}
                   onCreate={(name) => handleClientCreate(sale, name)}
+                  onOpenChange={trackEditing(sale.id)}
                   disabled={isSaving}
                   className="border-transparent"
                 />
@@ -449,12 +495,38 @@ export function SalesClientsTable({
                 <SaleNoteCell
                   note={sale.note}
                   onSave={(note) => handleNote(sale, note)}
+                  onOpenChange={trackEditing(sale.id)}
                   disabled={isSaving}
                 />
               </div>
             </div>
           )
         })}
+
+        {filteredClientId && optimisticSales.length > 0 && (
+          <div
+            role="row"
+            className={cn(ROW_GRID, "bg-slate-200 text-sm font-medium text-slate-900")}
+          >
+            <span role="cell" className="col-span-2 @4xl:col-span-2">
+              Total devido{filteredClient ? ` por ${filteredClient.name}` : ""}
+            </span>
+            <span
+              role="cell"
+              className={cn(
+                "text-right font-semibold tabular-nums @4xl:text-center",
+                owedCents > 0 ? "text-red-700" : "text-emerald-700",
+              )}
+            >
+              {formatCurrencyBRL(owedCents)}
+            </span>
+            <span role="cell" className="col-span-2 text-xs font-normal text-slate-600 @4xl:col-span-3">
+              {clientCreditCents !== null && clientCreditCents > 0
+                ? `Crédito do cliente: ${formatCurrencyBRL(clientCreditCents)} (entra nas próximas emissões)`
+                : "Soma do que falta receber nas emissões listadas, descontadas as devoluções."}
+            </span>
+          </div>
+        )}
 
         {/* Sticky so the way to register what a client paid stays in reach however long
             the period's list is. */}
@@ -484,6 +556,7 @@ export function SalesClientsTable({
             <ClientPaymentsHistoryPopover
               clientId={payingClientId}
               clientName={payingClient?.name}
+              across={{ clientIds: selectedClientIds, agencyId, dateFrom, dateTo }}
               onUndone={handleClientPaymentUndoneFromHistory}
             />
           </div>

@@ -141,8 +141,9 @@ motivo no `title`:
 
 | Sempre | Só se a cia exigir |
 |---|---|
-| Localizador (do programa ou da cia), Origem | Passageiro principal (`requires_last_name`) |
-| Pontos, Valor milheiro, Conta | Nº da compra (`requires_purchase_number`) |
+| Localizador (do programa ou da cia) | Origem (`requires_origin` — GOL, Azul) |
+| Pontos, Valor milheiro, Conta | Passageiro principal (`requires_last_name`) |
+| | Nº da compra (`requires_purchase_number`) |
 
 - **Taxas não entra** — é anulável, a linha salva sem ela.
 - **Pontos / Valor milheiro / Conta** não são exigências da Traveos: são o que
@@ -151,9 +152,13 @@ motivo no `title`:
   acende aquele cabeçalho e o `title` explica.
 - **Cia sem integração** (`traveos_supported` off ou sem `traveos_airline_id`): nenhum vermelho, e
   um aviso âmbar na toolbar — preencher tudo não faria a linha autocompletar.
-- **Origem é exigência só do frontend.** O backend não a valida e mandaria `""` para a Traveos;
-  sem ela o autocomplete simplesmente nunca dispara, sem erro nenhum. É o caso que mais justifica
-  o realce.
+- **Origem só para quem a lê** (`airlines.requires_origin`, reconciliado pelo seed): entre as
+  integrações, só GOL e Azul acham a reserva pela origem. Nessas, o backend não a valida e mandaria
+  `""`. Sem ela, o autocomplete simplesmente nunca dispara, sem erro nenhum. É o caso que mais
+  justifica o realce.
+- **Sobrenome para a busca:** `issuances.passenger_last_name`, quando preenchido, é o sobrenome
+  mandado para a cia. Se não, vale o `main_passenger_name` (`data.Issuance.BookingLastName`). O
+  sync sobrescreve o passageiro principal com o nome completo, mas nunca toca nesse campo.
 
 ## Performance
 Hoje a grade usa **um único contexto React**; mover a seleção re-renderiza todas as células

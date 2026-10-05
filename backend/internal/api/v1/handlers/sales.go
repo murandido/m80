@@ -15,6 +15,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
+	"github.com/google/uuid"
 	"github.com/murandido/m-80-backend/internal/access"
 	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
@@ -298,12 +299,13 @@ func applySaleListFilters(query *gorm.DB, r *http.Request) *gorm.DB {
 		"issuances.loyalty_program_id": "loyalty_program_id",
 		"issuances.account_id":         "account_id",
 		"issuances.issuer_id":          "issuer_id",
-		"sales.client_id":              "client_id",
 	} {
 		if value := q.Get(param); value != "" {
 			query = query.Where(column+" = ?", value)
 		}
 	}
+
+	query = applySaleClientFilter(query, r)
 
 	if value := q.Get("paid"); value != "" {
 		if paid, err := strconvParseBool(value); err == nil {
@@ -324,6 +326,53 @@ func applySaleListFilters(query *gorm.DB, r *http.Request) *gorm.DB {
 	return query
 }
 
+// noClientToken is the "Sem cliente registrado" entry of the clients view's filter. It is
+// not a uuid on purpose, so it can never collide with a client. Has to match NO_CLIENT in
+// frontend/src/app/dashboard/sales/period-params.ts.
+const noClientToken = "none"
+
+// applySaleClientFilter narrows the listing to the chosen clients. client_ids is the
+// multi-valued choice and may carry noClientToken for the sales nobody was linked to;
+// client_id is the single choice an older panel tab (or a remembered filter cookie) still
+// sends, and only applies when client_ids is absent.
+//
+// Entries that are not uuids are dropped here: compared against the uuid column they would
+// fail the whole query instead of matching nothing. A list that parses down to nothing
+// matches nothing, rather than silently widening into every client.
+func applySaleClientFilter(query *gorm.DB, r *http.Request) *gorm.DB {
+	q := r.URL.Query()
+	raw := strings.TrimSpace(q.Get("client_ids"))
+	if raw == "" {
+		if value := q.Get("client_id"); value != "" {
+			return query.Where("sales.client_id = ?", value)
+		}
+		return query
+	}
+
+	withoutClient := false
+	ids := make([]string, 0, 4)
+	for _, id := range splitIDs(raw) {
+		if id == noClientToken {
+			withoutClient = true
+			continue
+		}
+		if _, err := uuid.Parse(id); err == nil {
+			ids = append(ids, id)
+		}
+	}
+
+	switch {
+	case withoutClient && len(ids) > 0:
+		return query.Where("(sales.client_id IN ? OR sales.client_id IS NULL)", ids)
+	case withoutClient:
+		return query.Where("sales.client_id IS NULL")
+	case len(ids) > 0:
+		return query.Where("sales.client_id IN ?", ids)
+	default:
+		return query.Where("1 = 0")
+	}
+}
+
 // GetSales handles the GET /sales route.
 // @Summary      Listar vendas (Visão Clientes)
 // @Description  Lista as vendas com os dados da emissão associada. Sem agency_id, filtra pela agência principal (is_default=true). cancelled_at preenchido significa que a venda foi reaberta pelo cancelamento da emissão. Emissões deletadas não têm venda e nunca aparecem aqui.
@@ -336,7 +385,8 @@ func applySaleListFilters(query *gorm.DB, r *http.Request) *gorm.DB {
 // @Param        loyalty_program_id  query  string  false  "UUID do programa de fidelidade"
 // @Param        account_id          query  string  false  "UUID da conta"
 // @Param        issuer_id           query  string  false  "UUID do emissor (usuário)"
-// @Param        client_id           query  string  false  "UUID do cliente vinculado"
+// @Param        client_id           query  string  false  "UUID do cliente vinculado (ignorado quando client_ids vem)"
+// @Param        client_ids          query  string  false  "UUIDs de clientes separados por vírgula; 'none' inclui as vendas sem cliente"
 // @Param        paid                query  boolean false  "Filtra por vendas pagas (true) ou em aberto (false)"
 // @Success      200  {object}  schemas.SaleListResponse
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
@@ -383,7 +433,8 @@ func (h *SaleHandler) GetSales(w http.ResponseWriter, r *http.Request) {
 // @Param        loyalty_program_id  query  string  false  "UUID do programa de fidelidade"
 // @Param        account_id          query  string  false  "UUID da conta"
 // @Param        issuer_id           query  string  false  "UUID do emissor (usuário)"
-// @Param        client_id           query  string  false  "UUID do cliente vinculado"
+// @Param        client_id           query  string  false  "UUID do cliente vinculado (ignorado quando client_ids vem)"
+// @Param        client_ids          query  string  false  "UUIDs de clientes separados por vírgula; 'none' inclui as vendas sem cliente"
 // @Param        paid                query  boolean false  "Filtra por vendas pagas (true) ou em aberto (false)"
 // @Success      200  {file}    binary  "Planilha .xlsx das vendas filtradas"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
@@ -455,7 +506,7 @@ func (h *SaleHandler) GetSalesExport(w http.ResponseWriter, r *http.Request) {
 // @Failure      400  {object}  schemas.ErrorResponse "Payload inválido ou nenhum campo informado"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      404  {object}  schemas.ErrorResponse "Venda não encontrada"
-// @Failure      409  {object}  schemas.ErrorResponse "paid=false numa venda paga por pagamento do cliente"
+// @Failure      409  {object}  schemas.ErrorResponse "paid=false numa venda paga por pagamento do cliente, ou paid numa venda parcialmente paga"
 // @Failure      422  {object}  schemas.ErrorResponse "Cliente não encontrado"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao atualizar venda"
 // @Router       /sales/{id} [patch]
@@ -538,6 +589,21 @@ func (h *SaleHandler) UpdateSale(w http.ResponseWriter, r *http.Request) {
 	if len(updates) == 0 && req.Paid == nil {
 		utils.SendError(w, r, http.StatusBadRequest, "No fields to update")
 		return
+	}
+
+	// A partly paid sale is where a client's lump sum ran out. Settling it by hand, or
+	// clearing it, would move money the operator never received or wipe the trace of the
+	// payment that did arrive - only another client payment is allowed to move it.
+	if req.Paid != nil {
+		partial, err := salePartlyPaid(h.DB, sale.ID)
+		if err != nil {
+			utils.SendError(w, r, http.StatusInternalServerError, "Failed to update sale: "+err.Error())
+			return
+		}
+		if partial {
+			utils.SendError(w, r, http.StatusConflict, "Essa venda está parcialmente paga; só um novo pagamento do cliente pode alterá-la")
+			return
+		}
 	}
 
 	// The switch only takes back what the switch (or the old per-sale statement) put on the

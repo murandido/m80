@@ -79,15 +79,31 @@ export async function createClientPaymentAction(
   }
 }
 
-// Fetched on demand when the history is opened, not with the page: it is one client's
-// history, and the page is a period of every client's sales.
-export async function getClientPaymentsAction(clientId: string) {
+// Which history to open: one client's whole history, or - with no single client - the
+// payments of the agency's clients (or of the filtered ones) received in the period.
+export type ClientPaymentsQuery =
+  | { clientId: string }
+  | { clientIds: string[]; agencyId: string; dateFrom: string; dateTo: string }
+
+// Fetched on demand when the history is opened, not with the page: the page is a period of
+// sales, and the history is a different list that nobody needs until they ask for it.
+export async function getClientPaymentsAction(query: ClientPaymentsQuery) {
   const cookieStore = await cookies()
   const token = cookieStore.get("auth_token")?.value
 
+  const params = new URLSearchParams()
+  if ("clientId" in query) {
+    params.set("client_id", query.clientId)
+  } else {
+    if (query.clientIds.length > 0) params.set("client_ids", query.clientIds.join(","))
+    if (query.agencyId) params.set("agency_id", query.agencyId)
+    if (query.dateFrom) params.set("date_from", query.dateFrom)
+    if (query.dateTo) params.set("date_to", query.dateTo)
+  }
+
   try {
     const res = await fetch(
-      `${env.BACKEND_URL}/api/v1/sales/client-payments?client_id=${encodeURIComponent(clientId)}`,
+      `${env.BACKEND_URL}/api/v1/sales/client-payments?${params.toString()}`,
       { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" },
     )
 

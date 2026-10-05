@@ -2,27 +2,18 @@ package handlers
 
 import (
 	"encoding/json"
-	"errors"
-	"net/http"
 	"time"
 
-	acct "github.com/murandido/m-80-backend/internal/account"
-	"github.com/murandido/m-80-backend/internal/api/middleware"
-	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
-	"github.com/murandido/m-80-backend/internal/utils"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
-// Same story as person_merge.go, one level up: the bot opens an account whenever an
-// EMISSAO names one it does not recognise, so a forgotten alias leaves the same loyalty
-// account in the panel twice. Archiving the duplicate is all the panel can do today, and
-// it does not help - the archived row keeps holding issuances.account_id, and its issuances
-// stay split off from the account everybody actually uses.
-//
-// Merging moves the issuances and the aliases onto the surviving account, which empties
-// the duplicate and lets it be removed for real rather than archived.
+// Folding one loyalty account into another: what the row merge (person_merge_row.go) does
+// with each pair of accounts the two holders have in the same program. The issuances and the
+// aliases move onto the surviving account, which empties the duplicate and lets it be removed
+// for real. There is no standalone endpoint any more - a holder cannot have two live accounts
+// in one program (migration 76), so the only duplicates left are across two holders.
 
 // auditActionUpdated is what a merge writes on every issuance it moves. There is no
 // "merged" action and adding one would mean ALTER TYPE on the audit_action enum, which
@@ -30,174 +21,9 @@ import (
 // the issuance changed - and the panel's history already renders the before/after shape.
 const auditActionUpdated = "updated"
 
-// PreviewMergeAccount handles the GET /accounts/{id}/merge-preview route.
-// @Summary      Prévia da mesclagem de contas
-// @Description  Conta o que a mesclagem vai mover da conta absorvida para a que fica. Não escreve nada.
-// @Tags         Contas
-// @Produce      json
-// @Security     BearerAuth
-// @Param        id         path   string  true  "UUID da conta que fica"
-// @Param        source_id  query  string  true  "UUID da conta que será absorvida"
-// @Success      200  {object}  schemas.MergeAccountPreviewSingleResponse "Prévia calculada com sucesso"
-// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
-// @Failure      403  {object}  schemas.ErrorResponse "Não autorizado"
-// @Failure      404  {object}  schemas.ErrorResponse "Conta não encontrada"
-// @Failure      422  {object}  schemas.ErrorResponse "Contas iguais ou de programas diferentes"
-// @Router       /accounts/{id}/merge-preview [get]
-func (h *AccountHandler) PreviewMergeAccount(w http.ResponseWriter, r *http.Request) {
-	keepID, dropID, ok := readMergeIDs(w, r, r.URL.Query().Get("source_id"))
-	if !ok {
-		return
-	}
-
-	// Unscoped on both: absorbing a duplicate that somebody already archived is the most
-	// likely case, since archiving is the only thing the panel offers today.
-	var keep, drop data.Account
-	if err := h.DB.Unscoped().First(&keep, "id = ?", keepID).Error; err != nil {
-		sendAccountMergeError(w, r, err)
-		return
-	}
-	if err := h.DB.Unscoped().First(&drop, "id = ?", dropID).Error; err != nil {
-		sendAccountMergeError(w, r, err)
-		return
-	}
-	if keep.LoyaltyProgramID != drop.LoyaltyProgramID {
-		utils.SendError(w, r, http.StatusUnprocessableEntity, errDifferentPrograms)
-		return
-	}
-
-	// Unscoped again: a soft-deleted issuance holds account_id exactly like a live one, so
-	// it moves too - and a preview that ignored it would understate the merge.
-	var issuances, nicknames int64
-	if err := h.DB.Unscoped().Model(&data.Issuance{}).
-		Where("account_id = ?", dropID).Count(&issuances).Error; err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Failed to count issuances: "+err.Error())
-		return
-	}
-	if err := h.DB.Model(&data.AccountNickname{}).
-		Where("account_id = ?", dropID).Count(&nicknames).Error; err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Failed to count nicknames: "+err.Error())
-		return
-	}
-
-	colliding, err := collidingNicknames(h.DB, keepID, dropID)
-	if err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Failed to check the nicknames: "+err.Error())
-		return
-	}
-
-	utils.SendJSON(w, r, http.StatusOK, "Prévia calculada com sucesso", schemas.MergeAccountPreviewResponse{
-		Issuances:          issuances,
-		Nicknames:          nicknames,
-		FieldsToFill:       accountFieldsToFill(keep, drop),
-		CollidingNicknames: colliding,
-	})
-}
-
-// MergeAccount handles the POST /accounts/{id}/merge route.
-// @Summary      Mesclar contas
-// @Description  Move emissões, apelidos e titular/administrador da conta absorvida para a que fica, e então apaga a absorvida de verdade. Não tem desfazer.
-// @Tags         Contas
-// @Accept       json
-// @Produce      json
-// @Security     BearerAuth
-// @Param        id       path  string                       true  "UUID da conta que fica"
-// @Param        request  body  schemas.MergeAccountRequest  true  "Conta a absorver"
-// @Success      200  {object}  schemas.AccountSingleResponse "Contas mescladas com sucesso"
-// @Failure      400  {object}  schemas.ErrorResponse "Payload inválido"
-// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
-// @Failure      403  {object}  schemas.ErrorResponse "Não autorizado"
-// @Failure      404  {object}  schemas.ErrorResponse "Conta não encontrada"
-// @Failure      422  {object}  schemas.ErrorResponse "Contas iguais ou de programas diferentes"
-// @Router       /accounts/{id}/merge [post]
-func (h *AccountHandler) MergeAccount(w http.ResponseWriter, r *http.Request) {
-	userCtx, ok := r.Context().Value(middleware.UserContextKey).(data.User)
-	if !ok {
-		utils.SendError(w, r, http.StatusUnauthorized, "Não autenticado")
-		return
-	}
-
-	var req schemas.MergeAccountRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.SendError(w, r, http.StatusBadRequest, "Invalid request payload: "+err.Error())
-		return
-	}
-	if err := h.Validator.Struct(req); err != nil {
-		utils.SendError(w, r, http.StatusBadRequest, "Validation failed: "+err.Error())
-		return
-	}
-
-	keepID, dropID, ok := readMergeIDs(w, r, req.SourceID)
-	if !ok {
-		return
-	}
-
-	var differentPrograms bool
-	err := h.DB.Transaction(func(tx *gorm.DB) error {
-		var pair []data.Account
-		if err := lockMergePair(tx.Unscoped(), &pair, keepID, dropID); err != nil {
-			return err
-		}
-		if len(pair) != 2 {
-			return gorm.ErrRecordNotFound
-		}
-
-		keep, drop := pair[0], pair[1]
-		if keep.ID != keepID {
-			keep, drop = drop, keep
-		}
-		if keep.LoyaltyProgramID != drop.LoyaltyProgramID {
-			differentPrograms = true
-			return errMergeRefused
-		}
-		// The survivor gains issuances and aliases; an archived one must not.
-		if keep.DeletedAt.Valid {
-			return &acct.ArchivedError{What: "A conta que fica foi excluída"}
-		}
-
-		if err := mergeAccountsTx(tx, keep, drop, userCtx.ID); err != nil {
-			return err
-		}
-		// The absorbed account's aliases are now the survivor's; its holder answers to them too.
-		var merged data.Account
-		if err := tx.First(&merged, "id = ?", keep.ID).Error; err != nil {
-			return err
-		}
-		if merged.HolderID != nil {
-			if err := acct.AlignHolderAdministrator(tx, *merged.HolderID); err != nil {
-				return err
-			}
-			return acct.UnifyHolderNicknames(tx, *merged.HolderID)
-		}
-		return nil
-	})
-
-	if err != nil {
-		if differentPrograms {
-			utils.SendError(w, r, http.StatusUnprocessableEntity, errDifferentPrograms)
-			return
-		}
-		if sendAccountRuleError(w, r, err) {
-			return
-		}
-		sendAccountMergeError(w, r, err)
-		return
-	}
-
-	var merged data.Account
-	if err := h.DB.Preload("Nicknames").Preload("LoyaltyProgram").
-		First(&merged, "id = ?", keepID).Error; err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Failed to load the merged account: "+err.Error())
-		return
-	}
-
-	utils.SendJSON(w, r, http.StatusOK, "Contas mescladas com sucesso", toAccountResponse(merged))
-}
-
-// mergeAccountsTx folds drop into keep: aliases, issuances and the holder/administrator keep
-// is missing, and then deletes drop for real. The caller has already locked both rows and
-// checked they belong to the same program - the single merge and the holder-row merge
-// (person_merge_row.go) each do that their own way, and this is the part they share.
+// mergeAccountsTx folds drop into keep: aliases, issuances and the administrator keep is
+// missing, and then deletes drop for real. The caller has already locked both rows and checked
+// they belong to the same program (planRowAccounts pairs them by program).
 func mergeAccountsTx(tx *gorm.DB, keep, drop data.Account, actorID string) error {
 	if err := archiveCollidingNicknames(tx, keep.ID, drop.ID); err != nil {
 		return err
@@ -218,11 +44,8 @@ func mergeAccountsTx(tx *gorm.DB, keep, drop data.Account, actorID string) error
 
 	// UpdateColumns, not Save: Account.BeforeSave re-encrypts the password, and this
 	// write has no business anywhere near it.
+	// Only the administrator can be missing: every account has a holder since migration 75.
 	updates := map[string]any{}
-	if keep.HolderID == nil && drop.HolderID != nil {
-		keep.HolderID = drop.HolderID
-		updates["holder_id"] = *drop.HolderID
-	}
 	if keep.AdministratorID == nil && drop.AdministratorID != nil {
 		keep.AdministratorID = drop.AdministratorID
 		updates["administrator_id"] = *drop.AdministratorID
@@ -239,11 +62,6 @@ func mergeAccountsTx(tx *gorm.DB, keep, drop data.Account, actorID string) error
 	// operator is trying to get out of. Nothing points at the row by now.
 	return tx.Unscoped().Delete(&data.Account{}, "id = ?", drop.ID).Error
 }
-
-const errDifferentPrograms = "Só é possível mesclar contas do mesmo programa"
-
-// errMergeRefused unwinds the transaction on a rule the caller already has a message for.
-var errMergeRefused = errors.New("merge refused")
 
 // collidingNicknames are the absorbed account's live aliases that the surviving one
 // already answers to. Compared case-insensitively because that is how the bot matches
@@ -316,25 +134,4 @@ func moveIssuances(tx *gorm.DB, keepID, dropID, actorID string) error {
 		})
 	}
 	return tx.CreateInBatches(&entries, 100).Error
-}
-
-// accountFieldsToFill lists what the surviving account would inherit, for the preview.
-func accountFieldsToFill(keep, drop data.Account) []string {
-	filled := make([]string, 0, 2)
-	if keep.HolderID == nil && drop.HolderID != nil {
-		filled = append(filled, "titular")
-	}
-	if keep.AdministratorID == nil && drop.AdministratorID != nil {
-		filled = append(filled, "administrador")
-	}
-	return filled
-}
-
-// sendAccountMergeError turns a missing row into a 404 and anything else into a 500.
-func sendAccountMergeError(w http.ResponseWriter, r *http.Request, err error) {
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		utils.SendError(w, r, http.StatusNotFound, "Conta não encontrada")
-		return
-	}
-	utils.SendError(w, r, http.StatusInternalServerError, "Failed to merge accounts: "+err.Error())
 }

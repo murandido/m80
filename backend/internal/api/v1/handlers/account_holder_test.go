@@ -74,13 +74,13 @@ func TestListAccountHolders_GroupsAccountsUnderTheirHolder(t *testing.T) {
 
 		// name_asc: "Ana …" then "Bruno …".
 		ana, bruno := page.Rows[0], page.Rows[1]
-		if ana.Holder == nil || ana.Holder.ID != world.fulana.ID {
+		if ana.Holder.ID == "" || ana.Holder.ID != world.fulana.ID {
 			t.Fatalf("first row: got %+v, want Ana", ana.Holder)
 		}
 		if len(ana.Accounts) != 2 {
 			t.Errorf("Ana's accounts: got %d, want 2", len(ana.Accounts))
 		}
-		if bruno.Holder == nil || bruno.Holder.ID != world.beltrano.ID || len(bruno.Accounts) != 0 {
+		if bruno.Holder.ID == "" || bruno.Holder.ID != world.beltrano.ID || len(bruno.Accounts) != 0 {
 			t.Errorf("second row: want Bruno with no accounts, got %+v / %d accounts", bruno.Holder, len(bruno.Accounts))
 		}
 	})
@@ -108,7 +108,7 @@ func TestListAccountHolders_SearchReachesAccountColumns(t *testing.T) {
 		world := seedHolderWorld(t, tx)
 
 		page := callListAccountHolders(t, tx, url.Values{"q": {"a-azul-" + world.marker}})
-		if page.Total != 1 || page.Rows[0].Holder == nil || page.Rows[0].Holder.ID != world.fulana.ID {
+		if page.Total != 1 || page.Rows[0].Holder.ID == "" || page.Rows[0].Holder.ID != world.fulana.ID {
 			t.Fatalf("search by login: got total=%d, want Ana's row", page.Total)
 		}
 	})
@@ -140,40 +140,54 @@ func TestListAccountHolders_PaginatesRowsNotAccounts(t *testing.T) {
 		}
 
 		second := callListAccountHolders(t, tx, url.Values{"q": {world.marker}, "limit": {"1"}, "page": {"2"}})
-		if len(second.Rows) != 1 || second.Rows[0].Holder == nil || second.Rows[0].Holder.ID != world.beltrano.ID {
+		if len(second.Rows) != 1 || second.Rows[0].Holder.ID == "" || second.Rows[0].Holder.ID != world.beltrano.ID {
 			t.Fatalf("page 2: want Bruno's row")
 		}
 	})
 }
 
-func TestListAccountHolders_FlagsRepeatedProgramsAndAdminConflicts(t *testing.T) {
+// Searching an administrator's name returns every holder whose account they run. The
+// administrator is the one being looked for, so her own row comes first, even though
+// alphabetically the holders she administers ("Ana …") come before her ("Bruno …").
+func TestListAccountHolders_SearchPutsTheNamedPersonFirst(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		world := seedHolderWorld(t, tx)
 
-		// Ana gets a second live Smiles, and her Azul a different administrator than her Smiles.
-		secondLogin := "a-smiles-2-" + world.marker
-		create(t, tx, &data.Account{LoyaltyProgramID: world.smiles.ID, HolderID: &world.fulana.ID, Login: &secondLogin})
-		otherAdmin := seedPerson(t, tx, "Carla "+world.marker)
-		if err := tx.Model(&data.Account{}).
-			Where("holder_id = ? AND loyalty_program_id = ?", world.fulana.ID, world.azul.ID).
-			UpdateColumn("administrator_id", otherAdmin.ID).Error; err != nil {
-			t.Fatal(err)
+		page := callListAccountHolders(t, tx, url.Values{"q": {world.beltrano.Name}})
+		if len(page.Rows) != 2 {
+			t.Fatalf("rows: got %d, want Bruno and the Ana he administers", len(page.Rows))
 		}
+		if page.Rows[0].Holder.ID == "" || page.Rows[0].Holder.ID != world.beltrano.ID {
+			t.Errorf("first row: got %+v, want Bruno himself", page.Rows[0].Holder)
+		}
+		if page.Rows[1].Holder.ID == "" || page.Rows[1].Holder.ID != world.fulana.ID {
+			t.Errorf("second row: got %+v, want Ana, matched through her account's administrator", page.Rows[1].Holder)
+		}
+	})
+}
 
-		dup := callListAccountHolders(t, tx, url.Values{"q": {world.marker}, "duplicate_programs_only": {"true"}})
-		if dup.Total != 1 || dup.Rows[0].Holder == nil || dup.Rows[0].Holder.ID != world.fulana.ID {
-			t.Fatalf("duplicate_programs_only: got %d rows, want only Ana", dup.Total)
-		}
-		if dup.DuplicateProgramsTotal < 1 {
-			t.Errorf("duplicate_programs_total: got %d", dup.DuplicateProgramsTotal)
-		}
+// The same name, typed as it is, beats one that starts with it, which beats one with a word
+// starting with it, which beats one that merely contains it - whatever the chosen order,
+// which only settles rows that matched the same way.
+func TestListAccountHolders_SearchRanksExactThenPrefixThenContains(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		term := "rk" + uuid.New().String()[:8]
+		contains := seedPerson(t, tx, "Zz"+term)
+		wordPrefix := seedPerson(t, tx, "Maria "+term+"son")
+		prefix := seedPerson(t, tx, term+" Souza")
+		exact := seedPerson(t, tx, term)
 
-		conflicts := callListAccountHolders(t, tx, url.Values{"q": {world.marker}, "admin_conflicts_only": {"true"}})
-		if conflicts.Total != 1 || conflicts.Rows[0].Holder.ID != world.fulana.ID {
-			t.Fatalf("admin_conflicts_only: got %d rows, want only Ana", conflicts.Total)
-		}
-		if conflicts.AdminConflictsTotal < 1 {
-			t.Errorf("admin_conflicts_total: got %d", conflicts.AdminConflictsTotal)
+		for _, order := range []string{"name_asc", "name_desc", "created_desc"} {
+			page := callListAccountHolders(t, tx, url.Values{"q": {term}, "order": {order}})
+			want := []string{exact.ID, prefix.ID, wordPrefix.ID, contains.ID}
+			if len(page.Rows) != len(want) {
+				t.Fatalf("%s: rows: got %d, want %d", order, len(page.Rows), len(want))
+			}
+			for i, id := range want {
+				if page.Rows[i].Holder.ID == "" || page.Rows[i].Holder.ID != id {
+					t.Errorf("%s: row %d: got %+v, want %s", order, i, page.Rows[i].Holder, id)
+				}
+			}
 		}
 	})
 }

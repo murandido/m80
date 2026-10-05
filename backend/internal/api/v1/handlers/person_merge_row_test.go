@@ -140,25 +140,3 @@ func TestMergeRow_MergesThePersonAndTheRepeatedProgram(t *testing.T) {
 		}
 	})
 }
-
-func TestMergeRow_RefusesAnAccountThatHasAHolder(t *testing.T) {
-	runInTx(t, func(tx *gorm.DB) {
-		world := seedRowMergeWorld(t, tx)
-
-		rec := callMergeRow(tx, world.keepPerson.ID, world.user.ID, `{"source_account_id":"`+world.dropAzul.ID+`"}`)
-		if rec.Code != http.StatusUnprocessableEntity {
-			t.Fatalf("status: got %d, want 422", rec.Code)
-		}
-	})
-}
-
-func TestMergeRow_RefusesBothSourcesAtOnce(t *testing.T) {
-	runInTx(t, func(tx *gorm.DB) {
-		world := seedRowMergeWorld(t, tx)
-
-		body := `{"source_person_id":"` + world.dropPerson.ID + `","source_account_id":"` + world.dropAzul.ID + `"}`
-		if rec := callMergeRow(tx, world.keepPerson.ID, world.user.ID, body); rec.Code != http.StatusBadRequest {
-			t.Fatalf("status: got %d, want 400", rec.Code)
-		}
-	})
-}

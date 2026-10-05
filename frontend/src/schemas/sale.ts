@@ -72,6 +72,10 @@ export const clientPaymentAllocationSchema = z.object({
 // no longer covers any sale.
 export const clientPaymentHistoryItemSchema = z.object({
   id: z.string(),
+  // Whose payment it is - shown when the history covers several clients. Optional so a
+  // response from an API that predates it still parses.
+  client_id: z.string().optional(),
+  client_name: z.string().optional(),
   amount_cents: z.number(),
   paid_on: z.string(),
   created_by_name: z.string(),

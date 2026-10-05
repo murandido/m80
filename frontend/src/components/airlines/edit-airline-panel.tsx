@@ -39,6 +39,7 @@ export function EditAirlinePanel({ airline, isOpen, onSaved }: EditAirlinePanelP
     direct_booking_enabled: airline.direct_booking_enabled,
     requires_last_name: airline.requires_last_name,
     requires_purchase_number: airline.requires_purchase_number,
+    requires_origin: airline.requires_origin,
     traveos_airline_id: airline.traveos_airline_id?.toString() ?? "",
     brand_color: airline.brand_color ?? "",
   }
@@ -307,6 +308,49 @@ export function EditAirlinePanel({ airline, isOpen, onSaved }: EditAirlinePanelP
                   render={({ field }) => (
                     <>
                       <FieldLabel>Exige número da compra</FieldLabel>
+                      <div className="flex gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => field.onChange(true)}
+                          disabled={isPending}
+                          className={cn(
+                            "flex-1 transition-colors duration-150",
+                            field.value
+                              ? "bg-slate-800 text-white hover:bg-slate-900"
+                              : "border border-slate-300 bg-white text-slate-600 hover:bg-slate-100",
+                          )}
+                        >
+                          Sim
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => field.onChange(false)}
+                          disabled={isPending}
+                          className={cn(
+                            "flex-1 transition-colors duration-150",
+                            !field.value
+                              ? "bg-slate-800 text-white hover:bg-slate-900"
+                              : "border border-slate-300 bg-white text-slate-600 hover:bg-slate-100",
+                          )}
+                        >
+                          Não
+                        </Button>
+                      </div>
+                    </>
+                  )}
+                />
+              </div>
+
+              {/* requires_origin */}
+              <div className="flex flex-col gap-1 text-sm">
+                <Controller
+                  name="requires_origin"
+                  control={form.control}
+                  render={({ field }) => (
+                    <>
+                      <FieldLabel>Exige origem</FieldLabel>
                       <div className="flex gap-2">
                         <Button
                           type="button"

@@ -153,8 +153,8 @@ var peopleOrder = map[string]string{
 	"created_asc":  "people.created_at ASC",
 }
 
-// peopleListQuery applies the search and ordering shared by /people and /people/manage,
-// so the picker and the management screen can never disagree about what a term matches.
+// peopleListQuery applies the search and ordering of /people, which feeds every holder,
+// administrator and passenger picker in the panel.
 func peopleListQuery(db *gorm.DB, params listQuery, complete *bool) *gorm.DB {
 	query := db.Model(&data.Person{})
 
@@ -212,7 +212,7 @@ func searchFingerprint(term string) (string, bool) {
 
 // GetPeople handles the GET /people route.
 // @Summary      Listar pessoas
-// @Description  Retorna todas as pessoas cadastradas no sistema. Sem paginação — é a rota que alimenta os seletores de titular, administrador e passageiro. Para a tela de gestão, use /people/manage.
+// @Description  Retorna todas as pessoas cadastradas no sistema. Sem paginação — é a rota que alimenta os seletores de titular, administrador e passageiro. A tela de contas usa /accounts/holders.
 // @Tags         Pessoas
 // @Produce      json
 // @Security     BearerAuth
@@ -257,56 +257,6 @@ func (h *PeopleHandler) GetPeople(w http.ResponseWriter, r *http.Request) {
 	}
 
 	utils.SendJSON(w, r, http.StatusOK, "People fetched successfully", resp)
-}
-
-// ListPeople handles the GET /people/manage route.
-// @Summary      Listar pessoas (paginado)
-// @Description  Listagem paginada para a tela de gestão. A rota /people continua devolvendo tudo, porque é ela que alimenta os seletores de titular, administrador e passageiro.
-// @Tags         Pessoas
-// @Produce      json
-// @Security     BearerAuth
-// @Param        q      query  string  false  "Busca por nome, e-mail, telefone, cidade ou apelido. O CPF é buscado por igualdade e exige os 11 dígitos, porque a coluna é cifrada."
-// @Param        order  query  string  false  "Ordenação"  Enums(name_asc, name_desc, created_desc, created_asc)
-// @Param        page   query  int     false  "Página (padrão 1)"
-// @Param        limit  query  int     false  "Itens por página (padrão 20, máximo 100)"
-// @Param        complete  query  bool  false  "Somente pessoas completas (true) ou incompletas (false)"
-// @Success      200  {object}  schemas.PersonPaginatedResponse
-// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
-// @Failure      500  {object}  schemas.ErrorResponse "Erro ao buscar pessoas"
-// @Router       /people/manage [get]
-func (h *PeopleHandler) ListPeople(w http.ResponseWriter, r *http.Request) {
-	params := parseListQuery(r)
-	query := peopleListQuery(h.DB, params, parseOptionalBool(r.URL.Query().Get("complete")))
-
-	// The count runs on the same filtered query as the page, so the total the
-	// pagination control shows can never disagree with what it is paginating.
-	var total int64
-	if err := query.Count(&total).Error; err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Failed to count people")
-		return
-	}
-
-	var people []data.Person
-	if err := query.Session(&gorm.Session{}).
-		Preload("Nicknames").
-		Offset((params.Page - 1) * params.Limit).
-		Limit(params.Limit).
-		Find(&people).Error; err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch people")
-		return
-	}
-
-	items := make([]schemas.PersonResponse, 0, len(people))
-	for _, person := range people {
-		items = append(items, toPersonResponse(person))
-	}
-
-	utils.SendJSON(w, r, http.StatusOK, "People fetched successfully", schemas.PersonPaginatedData{
-		People: items,
-		Total:  total,
-		Page:   params.Page,
-		Limit:  params.Limit,
-	})
 }
 
 // GetPerson handles the GET /people/{id} route

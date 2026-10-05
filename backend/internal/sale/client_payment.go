@@ -146,6 +146,24 @@ func CreditOf(tx *gorm.DB, clientID string) (int, error) {
 	return credit, err
 }
 
+// CreditOfClients is CreditOf summed over several clients, in one query - the history of a
+// whole agency would otherwise cost a round trip per client.
+func CreditOfClients(tx *gorm.DB, clientIDs []string) (int, error) {
+	if len(clientIDs) == 0 {
+		return 0, nil
+	}
+	var credit int
+	err := tx.Raw(`
+		SELECT
+			COALESCE((SELECT SUM(amount_cents) FROM client_payments
+				WHERE client_id IN ? AND deleted_at IS NULL), 0)
+			- COALESCE((SELECT SUM(sp.amount_cents) FROM sale_payments sp
+				JOIN client_payments cp ON cp.id = sp.client_payment_id
+				WHERE cp.client_id IN ? AND cp.deleted_at IS NULL), 0)`,
+		clientIDs, clientIDs).Scan(&credit).Error
+	return credit, err
+}
+
 type spreadKey struct {
 	clientPaymentID string
 	saleID          string
