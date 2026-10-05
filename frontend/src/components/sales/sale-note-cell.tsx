@@ -12,6 +12,8 @@ interface SaleNoteCellProps {
   // null clears the note.
   onSave: (note: string | null) => void
   disabled?: boolean
+  // Lets the table highlight the row while its note is being edited.
+  onOpenChange?: (open: boolean) => void
 }
 
 const MAX_NOTE_LENGTH = 1000
@@ -19,17 +21,18 @@ const MAX_NOTE_LENGTH = 1000
 // The sale's free-text line about its money. Edited in a popover rather than inline so a
 // note longer than the cell still has room, and so a stray keystroke while scanning the
 // table cannot rewrite one.
-export function SaleNoteCell({ note, onSave, disabled }: SaleNoteCellProps) {
+export function SaleNoteCell({ note, onSave, disabled, onOpenChange }: SaleNoteCellProps) {
   const [open, setOpen] = useState(false)
   const [text, setText] = useState(note ?? "")
 
   function handleOpenChange(next: boolean) {
     setOpen(next)
+    onOpenChange?.(next)
     if (next) setText(note ?? "")
   }
 
   function save(value: string | null) {
-    setOpen(false)
+    handleOpenChange(false)
     const next = value?.trim() || null
     if (next !== (note || null)) onSave(next)
   }

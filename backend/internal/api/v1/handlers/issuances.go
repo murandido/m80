@@ -110,6 +110,7 @@ func toIssuanceResponse(issuance data.Issuance) schemas.IssuanceResponse {
 		AirlineLocator:      issuance.AirlineLocator,
 		LatamPurchaseNumber: issuance.LatamPurchaseNumber,
 		MainPassengerName:   issuance.MainPassengerName,
+		PassengerLastName:   issuance.PassengerLastName,
 		TripType:            issuance.TripType,
 		OriginIATACode:      issuance.OriginIATACode,
 		DestinationIATACode: issuance.DestinationIATACode,
@@ -748,6 +749,7 @@ func (h *IssuanceHandler) CreateIssuance(w http.ResponseWriter, r *http.Request)
 		AirlineLocator:      req.AirlineLocator,
 		LatamPurchaseNumber: req.LatamPurchaseNumber,
 		MainPassengerName:   req.MainPassengerName,
+		PassengerLastName:   req.PassengerLastName,
 		TripType:            req.TripType,
 		OriginIATACode:      req.OriginIATACode,
 		DestinationIATACode: req.DestinationIATACode,
@@ -934,6 +936,9 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 	if req.MainPassengerName != nil {
 		issuance.MainPassengerName = req.MainPassengerName
 	}
+	if req.PassengerLastName != nil {
+		issuance.PassengerLastName = req.PassengerLastName
+	}
 	if req.TripType != nil {
 		issuance.TripType = req.TripType
 	}
@@ -1024,7 +1029,7 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 			if err := tx.First(&airline, "id = ?", issuance.AirlineID).Error; err != nil {
 				return err
 			}
-			if err := issuancesvc.ValidateAirlineRequirements(airline, issuance.MainPassengerName, issuance.LatamPurchaseNumber); err != nil {
+			if err := issuancesvc.ValidateAirlineRequirements(airline, issuance.BookingLastName(), issuance.LatamPurchaseNumber); err != nil {
 				return err
 			}
 		}

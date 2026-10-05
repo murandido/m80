@@ -1,12 +1,14 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/murandido/m-80-backend/internal/access"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
@@ -103,6 +105,52 @@ func TestCreateClient_NameIsUniqueWithinAnAgency(t *testing.T) {
 		// Last: the unique violation aborts the test's outer transaction.
 		if code := create(first.ID); code != http.StatusUnprocessableEntity {
 			t.Errorf("same name, same agency: got %d, want 422", code)
+		}
+	})
+}
+
+func TestCreateAndUpdateClient_StoreTheNameInUpperCase(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		agency := seedNamedAgency(t, tx, "Upper")
+		suffix := uuid.New().String()[:8]
+
+		post := func(name string) *httptest.ResponseRecorder {
+			body := `{"name": "` + name + `", "agency_id": "` + agency.ID + `"}`
+			req := withScope(httptest.NewRequest(http.MethodPost, "/clients", strings.NewReader(body)), access.FullScope())
+			rec := httptest.NewRecorder()
+			NewClientHandler(tx).CreateClient(rec, req)
+			return rec
+		}
+
+		rec := post("  joão silva " + suffix + " ")
+		var created struct {
+			Data schemas.ClientResponse `json:"data"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil || rec.Code != http.StatusCreated {
+			t.Fatalf("create: got %d (%s)", rec.Code, rec.Body.String())
+		}
+		if want := "JOÃO SILVA " + strings.ToUpper(suffix); created.Data.Name != want {
+			t.Errorf("created name: got %q, want %q", created.Data.Name, want)
+		}
+
+		req := httptest.NewRequest(http.MethodPut, "/clients/"+created.Data.ID, strings.NewReader(`{"name": "maria `+suffix+`"}`))
+		routeCtx := chi.NewRouteContext()
+		routeCtx.URLParams.Add("id", created.Data.ID)
+		req = withScope(req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeCtx)), access.FullScope())
+		rec = httptest.NewRecorder()
+		NewClientHandler(tx).UpdateClient(rec, req)
+		var persisted data.Client
+		if err := tx.First(&persisted, "id = ?", created.Data.ID).Error; err != nil || rec.Code != http.StatusOK {
+			t.Fatalf("update: got %d (%s), err %v", rec.Code, rec.Body.String(), err)
+		}
+		if want := "MARIA " + strings.ToUpper(suffix); persisted.Name != want {
+			t.Errorf("updated name: got %q, want %q", persisted.Name, want)
+		}
+
+		// Last: the same person typed in lower case is the same client, and the unique
+		// violation aborts the test's outer transaction.
+		if rec := post("maria " + suffix); rec.Code != http.StatusUnprocessableEntity {
+			t.Errorf("same name in another case: got %d, want 422", rec.Code)
 		}
 	})
 }

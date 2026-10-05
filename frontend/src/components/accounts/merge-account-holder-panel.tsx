@@ -4,14 +4,7 @@ import { useEffect, useMemo, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import { MergePanel, PreviewLines } from "@/components/shared/merge-panel"
 import { mergeRowAction, previewMergeRowAction } from "@/actions/person"
-import { AccountOption } from "@/schemas/account"
-import { LoyaltyProgram } from "@/schemas/loyalty-program"
-import {
-  MergeRowPreview,
-  MergeRowSource,
-  Person,
-  PersonOption,
-} from "@/schemas/person"
+import { MergeRowPreview, Person, PersonOption } from "@/schemas/person"
 import { PersonCombobox } from "@/components/people/person-combobox"
 
 interface MergeAccountHolderPanelProps {
@@ -19,22 +12,8 @@ interface MergeAccountHolderPanelProps {
   // Every holder, unfiltered: the duplicate the operator is after is often exactly the one
   // the current search hid, since the two are registered under different names.
   people: PersonOption[]
-  // The accounts nobody holds, which are rows of their own and can be absorbed too.
-  orphanAccounts: AccountOption[]
-  loyaltyPrograms: LoyaltyProgram[]
   isOpen: boolean
   onMerged: () => void
-}
-
-// Orphan accounts are offered in the same picker as people, so they are dressed as one.
-// The prefix keeps the two id spaces apart and tells handleConfirm which kind was picked.
-const ORPHAN_PREFIX = "account:"
-
-function toSource(pickedId: string): MergeRowSource | null {
-  if (!pickedId) return null
-  return pickedId.startsWith(ORPHAN_PREFIX)
-    ? { kind: "account", id: pickedId.slice(ORPHAN_PREFIX.length) }
-    : { kind: "person", id: pickedId }
 }
 
 function plural(count: number, one: string, many: string): string {
@@ -80,8 +59,6 @@ function previewLines(preview: MergeRowPreview): string[] {
 export function MergeAccountHolderPanel({
   holder,
   people,
-  orphanAccounts,
-  loyaltyPrograms,
   isOpen,
   onMerged,
 }: MergeAccountHolderPanelProps) {
@@ -92,30 +69,10 @@ export function MergeAccountHolderPanel({
   const [error, setError] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
 
-  const candidates = useMemo<PersonOption[]>(() => {
-    const programName = new Map(
-      loyaltyPrograms.map((program) => [program.id, program.name]),
-    )
-    const orphans = orphanAccounts.map((account) => {
-      const id = `${ORPHAN_PREFIX}${account.id}`
-      const label =
-        account.login ?? account.nicknames[0]?.nickname ?? "Conta sem login"
-      return {
-        id,
-        name: `${label} (${programName.get(account.loyalty_program_id) ?? "programa"}, sem titular${account.deleted_at ? ", arquivada" : ""})`,
-        nicknames: account.nicknames.map((nickname) => ({
-          id: nickname.id,
-          person_id: id,
-          nickname: nickname.nickname,
-          created_at: "",
-        })),
-      }
-    })
-    return [
-      ...people.filter((candidate) => candidate.id !== holder.id),
-      ...orphans,
-    ]
-  }, [people, orphanAccounts, loyaltyPrograms, holder.id])
+  const candidates = useMemo(
+    () => people.filter((candidate) => candidate.id !== holder.id),
+    [people, holder.id],
+  )
 
   const picked = candidates.find((candidate) => candidate.id === pickedId)
 
@@ -133,11 +90,10 @@ export function MergeAccountHolderPanel({
   }
 
   useEffect(() => {
-    const source = toSource(pickedId)
-    if (!source) return
+    if (!pickedId) return
 
     let current = true
-    previewMergeRowAction(holder.id, source).then((result) => {
+    previewMergeRowAction(holder.id, pickedId).then((result) => {
       if (!current) return
       if (result.error) {
         setError(result.error)
@@ -161,11 +117,10 @@ export function MergeAccountHolderPanel({
   }
 
   function handleConfirm() {
-    const source = toSource(pickedId)
-    if (!source) return
+    if (!pickedId) return
 
     startTransition(async () => {
-      const result = await mergeRowAction(holder.id, source, keepNickname)
+      const result = await mergeRowAction(holder.id, pickedId, keepNickname)
       if (result.error) {
         setError(result.error)
         return

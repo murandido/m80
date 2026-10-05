@@ -47,12 +47,12 @@ export function isAutocompleteCandidate(
 }
 
 export function hasAirlineMinimumFields(row: IssuanceRow, airline: Airline): boolean {
-  // The locator and the origin are what identify the booking at the airline. The
-  // locator column is never empty on a saved row, but a row can be saved before the
-  // origin is typed.
+  // The locator is what identifies the booking at the airline, and for some carriers
+  // (requires_origin: GOL, Azul) the origin too. The locator column is never empty on a
+  // saved row, but a row can be saved before the origin is typed.
   const locator = (row.airline_locator || row.program_locator || "").trim()
   if (!locator) return false
-  if (!(row.origin_iata_code ?? "").trim()) return false
+  if (airline.requires_origin && !(row.origin_iata_code ?? "").trim()) return false
 
   if (airline.requires_last_name && !(row.main_passenger_name ?? "").trim()) return false
 
@@ -141,10 +141,11 @@ export function autocompleteHintFor(
     })
   }
 
-  // Frontend-only: the backend never validates the origin and would send "" to the vendor.
-  // So without it the autocomplete simply never fires, with no error to explain it - which
-  // is exactly the confusion this hint exists to remove.
-  if (blank(row.origin_iata_code)) {
+  // Only for the carriers whose lookup reads the origin (requires_origin). The backend
+  // never validates it and would send "" to the airline, so without it the autocomplete
+  // simply never fires, with no error to explain it - which is exactly the confusion this
+  // hint exists to remove.
+  if (airline.requires_origin && blank(row.origin_iata_code)) {
     requirements.push({
       column: ORIGIN_COLUMN_INDEX,
       reason: "A Traveos precisa do aeroporto de origem para localizar o bilhete.",

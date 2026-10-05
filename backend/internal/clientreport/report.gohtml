@@ -1,0 +1,173 @@
+{{- /*
+The client payment statement, in the subset WeasyPrint 61.2 renders - the same rules
+internal/supplierreport/report.gohtml and internal/ticket/ticket.gohtml document: no
+CSS grid (rows are display: table), no oklch()/color-mix()/@media, only the Liberation
+fonts the pdf-service container has.
+
+It goes to the client, so it says plainly what was bought, what was paid and what is
+still owed, and sets only that last figure large.
+
+Unlike the supplier summary the paper is plain A4: a client's statement can run long,
+and WeasyPrint breaks a table across pages cleanly with page-break-inside: avoid on
+the rows.
+*/ -}}
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Controle de pagamentos</title>
+<style>
+  @page { size: A4; margin: 14mm 12mm 14mm 12mm; }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    font-family: "Liberation Sans", Arial, Helvetica, sans-serif;
+    font-size: 10px;
+    line-height: 1.4;
+    color: #1e293b;
+    background: #ffffff;
+  }
+
+  .docHeader { border-bottom: 1.5px solid #cbd5e1; padding-bottom: 8px; margin-bottom: 14px; }
+  .docTitle { font-size: 16px; font-weight: 700; }
+  .docMeta { font-size: 10px; color: #64748b; margin-top: 2px; }
+
+  .section + .section { margin-top: 26px; page-break-before: auto; }
+
+  .clientBand {
+    background: #0f172a;
+    color: #f8fafc;
+    border-radius: 6px;
+    padding: 9px 14px;
+    font-size: 14px;
+    font-weight: 700;
+    /* A client's name alone at the foot of a page, with their statement on the next,
+       reads like a section with nothing in it. */
+    page-break-after: avoid;
+  }
+
+  .lines { width: 100%; display: table; margin-top: 8px; border-collapse: collapse; }
+  .line { display: table-row; page-break-inside: avoid; }
+  .line > span {
+    display: table-cell;
+    padding: 4px 6px 4px 0;
+    border-bottom: 1px solid #eef2f7;
+    vertical-align: middle;
+  }
+  .lineHead > span {
+    font-size: 8px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: #94a3b8;
+    border-bottom: none;
+    padding-bottom: 2px;
+  }
+
+  .colDate { width: 11%; color: #64748b; }
+  .colLocator { width: 12%; font-weight: 700; }
+  .colPassenger { width: 23%; }
+  .colAmount { width: 12%; text-align: right; }
+  .colPaid { width: 12%; text-align: right; color: #64748b; }
+  .colBalance { width: 13%; text-align: right; font-weight: 700; }
+  .colStatus { width: 17%; text-align: right; padding-right: 0; }
+
+  .cancelled .colLocator, .cancelled .colAmount { text-decoration: line-through; color: #94a3b8; }
+
+  .tag {
+    font-size: 8px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    border-radius: 3px;
+    padding: 1px 5px;
+  }
+  .tag-paid { background: #d1fae5; color: #065f46; }
+  .tag-partial { background: #fef3c7; color: #92400e; }
+  .tag-unpaid { background: #fee2e2; color: #991b1b; }
+  .tag-refund { background: #e2e8f0; color: #334155; }
+  .tag-cancelled, .tag-novalue { background: #f1f5f9; color: #64748b; }
+
+  .totals > span {
+    padding-top: 6px;
+    font-weight: 700;
+    border-bottom: none;
+    border-top: 1.5px solid #cbd5e1;
+  }
+
+  .balance {
+    margin-top: 10px;
+    padding: 9px 14px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 700;
+    background: #fee2e2;
+    color: #7f1d1d;
+  }
+  .balance.settled { background: #d1fae5; color: #064e3b; }
+  .balance .amount { font-size: 16px; }
+  .credit { margin-top: 4px; font-size: 10px; color: #475569; }
+
+  .empty { color: #94a3b8; font-style: italic; }
+</style>
+</head>
+<body>
+
+<div class="docHeader">
+  <div class="docTitle">Controle de pagamentos{{ if .AgencyName }} · {{ .AgencyName }}{{ end }}</div>
+  <div class="docMeta">Período: {{ .PeriodLabel }} · Gerado em {{ .GeneratedAt }}</div>
+</div>
+
+{{ range .Sections }}
+<div class="section">
+  <div class="clientBand">{{ .ClientName }}</div>
+
+  <div class="lines">
+    <div class="line lineHead">
+      <span class="colDate">Data</span>
+      <span class="colLocator">Localizador</span>
+      <span class="colPassenger">Passageiro</span>
+      <span class="colAmount">Valor</span>
+      <span class="colPaid">Pago</span>
+      <span class="colBalance">Em aberto</span>
+      <span class="colStatus">Situação</span>
+    </div>
+
+    {{ range .Lines }}
+    <div class="line{{ if .Cancelled }} cancelled{{ end }}">
+      <span class="colDate">{{ .Date }}</span>
+      <span class="colLocator">{{ .Locator }}</span>
+      <span class="colPassenger">{{ .Passenger }}</span>
+      <span class="colAmount">{{ .Amount }}</span>
+      <span class="colPaid">{{ .Paid }}</span>
+      <span class="colBalance">{{ .Balance }}</span>
+      <span class="colStatus"><span class="tag tag-{{ .StatusKind }}">{{ .Status }}</span></span>
+    </div>
+    {{ else }}
+    <div class="line">
+      <span class="colDate empty">Nenhuma emissão no período.</span>
+    </div>
+    {{ end }}
+
+    <div class="line totals">
+      <span class="colDate">Total</span>
+      <span class="colLocator"></span>
+      <span class="colPassenger"></span>
+      <span class="colAmount">{{ .TotalAmount }}</span>
+      <span class="colPaid">{{ .TotalPaid }}</span>
+      <span class="colBalance">{{ .TotalBalance }}</span>
+      <span class="colStatus"></span>
+    </div>
+  </div>
+
+  <div class="balance{{ if .Settled }} settled{{ end }}">
+    {{ if .Settled }}Nada em aberto{{ else }}Total em aberto{{ end }} <span class="amount">{{ .TotalBalance }}</span>
+    {{ if .Credit }}<div class="credit">Crédito disponível para as próximas emissões: {{ .Credit }}</div>{{ end }}
+  </div>
+</div>
+{{ end }}
+
+</body>
+</html>

@@ -8,6 +8,9 @@ export const airlineSchema = z.object({
   direct_booking_enabled: z.boolean(),
   requires_last_name: z.boolean(),
   requires_purchase_number: z.boolean(),
+  // The airline identifies a booking by the origin too (GOL, Azul) - the lookup cannot
+  // run without it. Every other carrier finds the booking by the locator alone.
+  requires_origin: z.boolean(),
   traveos_airline_id: z.number().nullish(),
   brand_color: z.string().nullish(),
   created_at: z.string(),
@@ -66,6 +69,7 @@ export const createAirlineSchema = {
     direct_booking_enabled: z.boolean(),
     requires_last_name: z.boolean(),
     requires_purchase_number: z.boolean(),
+    requires_origin: z.boolean(),
     traveos_airline_id: traveosAirlineIdField,
     brand_color: brandColorField,
   }),
@@ -84,6 +88,7 @@ export const updateAirlineSchema = {
     direct_booking_enabled: z.boolean(),
     requires_last_name: z.boolean(),
     requires_purchase_number: z.boolean(),
+    requires_origin: z.boolean(),
     traveos_airline_id: traveosAirlineIdField,
     brand_color: brandColorField,
   }),

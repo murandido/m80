@@ -151,8 +151,8 @@ export const checkNicknameAvailabilitySchema = {
 }
 
 
-// What merging a whole row of the accounts screen would do: the person (or holderless
-// account) absorbed, plus every loyalty account in a program the surviving holder already has.
+// What merging a whole row of the accounts screen would do: the other holder absorbed, plus
+// every loyalty account in a program the surviving holder already has.
 export const mergeRowPreviewSchema = {
   response: z.object({
     success: z.boolean(),
@@ -190,6 +190,3 @@ export const mergeRowSchema = {
     data: z.object({ warning: z.string() }).nullish(),
   }),
 }
-
-// The row being absorbed: another holder, or an account nobody holds.
-export type MergeRowSource = { kind: "person"; id: string } | { kind: "account"; id: string }

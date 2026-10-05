@@ -13,7 +13,6 @@ import {
   getPeopleOptionsSchema,
   mergeRowPreviewSchema,
   mergeRowSchema,
-  type MergeRowSource,
   updatePersonSchema,
 } from "@/schemas/person"
 import { z } from "zod"
@@ -276,16 +275,10 @@ export async function deletePersonAction(personId: string) {
   }
 }
 
-function mergeRowSourceParams(source: MergeRowSource): Record<string, string> {
-  return source.kind === "person"
-    ? { source_person_id: source.id }
-    : { source_account_id: source.id }
-}
-
-export async function previewMergeRowAction(keepId: string, source: MergeRowSource) {
+export async function previewMergeRowAction(keepId: string, sourceId: string) {
   const cookieStore = await cookies()
   const token = cookieStore.get("auth_token")?.value
-  const query = new URLSearchParams(mergeRowSourceParams(source))
+  const query = new URLSearchParams({ source_person_id: sourceId })
 
   try {
     const res = await fetch(
@@ -306,12 +299,12 @@ export async function previewMergeRowAction(keepId: string, source: MergeRowSour
   }
 }
 
-// Absorbs a whole row into keepId's: the person (or holderless account), and every loyalty
-// account in a program keepId already has. One transaction on the backend and no undo, which
+// Absorbs a whole row into keepId's: the other holder, and every loyalty account in a
+// program keepId already has. One transaction on the backend and no undo, which
 // is why the panel shows the preview above first.
 export async function mergeRowAction(
   keepId: string,
-  source: MergeRowSource,
+  sourceId: string,
   keepNickname: boolean,
 ) {
   const cookieStore = await cookies()
@@ -324,7 +317,7 @@ export async function mergeRowAction(
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ ...mergeRowSourceParams(source), keep_nickname: keepNickname }),
+      body: JSON.stringify({ source_person_id: sourceId, keep_nickname: keepNickname }),
     })
 
     const json = await res.json()

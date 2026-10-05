@@ -29,9 +29,8 @@ func TestManageListingsAreRoutedAheadOfTheIDParam(t *testing.T) {
 		path     string
 		want     string
 	}{
-		{"accounts", RegisterAccountRoutes, "/accounts/manage", "/accounts/manage"},
+		{"account holders", RegisterAccountRoutes, "/accounts/holders", "/accounts/holders"},
 		{"clients", RegisterClientRoutes, "/clients/manage", "/clients/manage"},
-		{"people", RegisterPeopleRoutes, "/people/manage", "/people/manage"},
 		{"airports", RegisterAirportRoutes, "/airports/manage", "/airports/manage"},
 		{
 			// This one has no /{id} GET to lose to, but it does have /{id} on PUT and

@@ -61,7 +61,7 @@ func TestListAccountHolders_HidesArchivedPeople(t *testing.T) {
 
 		page := callListAccountHolders(t, tx, url.Values{"q": {world.marker}})
 		for _, row := range page.Rows {
-			if row.Holder != nil && row.Holder.ID == world.beltrano.ID {
+			if row.Holder.ID == world.beltrano.ID {
 				t.Fatal("an archived person is still a row")
 			}
 		}

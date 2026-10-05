@@ -174,6 +174,19 @@ func TestSeedAirlinesPopulatesAnEmptyCatalog(t *testing.T) {
 			t.Error("AZUL seeded with requires_last_name; it is the one that does not need it")
 		}
 
+		// Only the two carriers read directly with the origin need it; demanding it of
+		// the rest held up a lookup that never reads it.
+		for _, code := range []string{"GOL", "AZUL"} {
+			if airline := airlineByCode(t, tx, code); !airline.RequiresOrigin {
+				t.Errorf("%s seeded without requires_origin", code)
+			}
+		}
+		for _, code := range []string{"LATAM", "AA", "AVIANCA", "TAP", "COPA", "AIRFRANCE", "IBERIA"} {
+			if airline := airlineByCode(t, tx, code); airline.RequiresOrigin {
+				t.Errorf("%s seeded with requires_origin; its lookup does not read the origin", code)
+			}
+		}
+
 		// The colours come from Traveos' own catalog, so a ticket prints in the
 		// airline's colour before that carrier has ever been synced.
 		if gol := airlineByCode(t, tx, "GOL"); gol.BrandColor == nil || *gol.BrandColor != "#FF5E00" {

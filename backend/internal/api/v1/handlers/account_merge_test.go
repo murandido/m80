@@ -1,44 +1,39 @@
 package handlers
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
 	"gorm.io/gorm"
 )
 
+// The per-account merge endpoint went once the database stopped allowing two live accounts in
+// one program for a holder; mergeAccountsTx lives on inside the row merge, which folds the
+// absorbed holder's account into the survivor's in the same program. These tests drive it
+// through there: keepID and the source_id in body are accounts, and the merge runs between
+// their holders. keep_nickname is off so only the accounts' own aliases are in play.
 func callMergeAccount(tx *gorm.DB, keepID, actorID, body string) *httptest.ResponseRecorder {
-	handler := NewAccountHandler(tx)
-	handler.Validator = validator.New()
+	var request struct {
+		SourceID string `json:"source_id"`
+	}
+	_ = json.Unmarshal([]byte(body), &request)
 
-	req := httptest.NewRequest(http.MethodPost, "/accounts/"+keepID+"/merge", strings.NewReader(body))
+	holderOf := func(accountID string) string {
+		var account data.Account
+		if err := tx.Unscoped().First(&account, "id = ?", accountID).Error; err != nil {
+			return uuid.New().String()
+		}
+		return *account.HolderID
+	}
 
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", keepID)
-	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
-	ctx = asUser(ctx, data.User{ID: actorID, Role: data.RoleAdmin})
-
-	rec := httptest.NewRecorder()
-	handler.MergeAccount(rec, req.WithContext(ctx))
-	return rec
-}
-
-func callPreviewMergeAccount(tx *gorm.DB, keepID, sourceID string) *httptest.ResponseRecorder {
-	handler := NewAccountHandler(tx)
-
-	req := httptest.NewRequest(http.MethodGet, "/accounts/"+keepID+"/merge-preview?source_id="+sourceID, nil)
-	rec := httptest.NewRecorder()
-	handler.PreviewMergeAccount(rec, withMergeContext(req, keepID))
-	return rec
+	return callMergeRow(tx, holderOf(keepID), actorID,
+		`{"source_person_id":"`+holderOf(request.SourceID)+`","keep_nickname":false}`)
 }
 
 // accountMergeWorld is the pair of duplicated accounts a merge acts on, plus the cast an
@@ -260,8 +255,9 @@ func TestMergeAccount_MovesAliasesAndInheritsTheAdministrator(t *testing.T) {
 }
 
 // An account belongs to one program, and its issuances were flown on that program's miles.
-// Moving them under another program would be inventing history.
-func TestMergeAccount_RefusesDifferentPrograms(t *testing.T) {
+// Absorbing a holder whose account is in another program only hands that account over - it
+// is never folded into one of a different program.
+func TestMergeAccount_NeverFoldsDifferentPrograms(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		world := seedAccountMergeWorld(t, tx)
 		other := seedProgram(t, tx)
@@ -269,53 +265,23 @@ func TestMergeAccount_RefusesDifferentPrograms(t *testing.T) {
 		create(t, tx, &stranger)
 
 		rec := callMergeAccount(tx, world.keep.ID, world.user.ID, `{"source_id":"`+stranger.ID+`"}`)
-
-		if rec.Code != http.StatusUnprocessableEntity {
-			t.Fatalf("status: got %d, want 422 (body: %s)", rec.Code, rec.Body.String())
-		}
-		var left int64
-		if err := tx.Unscoped().Model(&data.Account{}).Where("id = ?", stranger.ID).Count(&left).Error; err != nil {
-			t.Fatalf("counting the refused account: %v", err)
-		}
-		if left != 1 {
-			t.Error("the refused merge still deleted the account")
-		}
-	})
-}
-
-// Archiving is all the panel offers today, so the duplicate the operator wants gone is
-// usually already archived. Absorbing it has to work anyway - that is the point.
-func TestMergeAccount_AbsorbsAnArchivedDuplicate(t *testing.T) {
-	runInTx(t, func(tx *gorm.DB) {
-		world := seedAccountMergeWorld(t, tx)
-		issuance := world.issue(t, tx, world.drop.ID)
-		if err := tx.Delete(&data.Account{}, "id = ?", world.drop.ID).Error; err != nil {
-			t.Fatalf("archiving the duplicate: %v", err)
-		}
-
-		rec := callMergeAccount(tx, world.keep.ID, world.user.ID, `{"source_id":"`+world.drop.ID+`"}`)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status: got %d, want 200 (body: %s)", rec.Code, rec.Body.String())
 		}
 
-		var moved data.Issuance
-		if err := tx.First(&moved, "id = ?", issuance.ID).Error; err != nil {
-			t.Fatalf("reloading the issuance: %v", err)
+		var survived data.Account
+		if err := tx.First(&survived, "id = ?", stranger.ID).Error; err != nil {
+			t.Fatalf("the account of another program was deleted: %v", err)
 		}
-		if moved.AccountID != world.keep.ID {
-			t.Errorf("account_id: got %q, want %q", moved.AccountID, world.keep.ID)
+		if *survived.HolderID != *world.keep.HolderID {
+			t.Errorf("holder: got %s, want the survivor's", *survived.HolderID)
 		}
 	})
 }
 
-func TestPreviewMergeAccount_CountsWithoutWriting(t *testing.T) {
+func TestPreviewMergeRow_AccountPairCountsWithoutWriting(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		world := seedAccountMergeWorld(t, tx)
-		admin := seedPerson(t, tx, "Heraldo Ribeiro")
-		if err := tx.Model(&data.Account{}).Where("id = ?", world.drop.ID).
-			UpdateColumn("administrator_id", admin.ID).Error; err != nil {
-			t.Fatalf("setting the administrator: %v", err)
-		}
 
 		world.issue(t, tx, world.drop.ID)
 		deleted := world.issue(t, tx, world.drop.ID)
@@ -331,29 +297,17 @@ func TestPreviewMergeAccount_CountsWithoutWriting(t *testing.T) {
 			AccountID: world.drop.ID, LoyaltyProgramID: world.program.ID, Nickname: strings.ToUpper(shared),
 		})
 
-		rec := callPreviewMergeAccount(tx, world.keep.ID, world.drop.ID)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("status: got %d, want 200 (body: %s)", rec.Code, rec.Body.String())
-		}
+		preview := callPreviewMergeRow(t, tx, *world.keep.HolderID, "source_person_id="+*world.drop.HolderID)
 
-		var resp struct {
-			Data schemas.MergeAccountPreviewResponse `json:"data"`
+		if len(preview.AccountsMerged) != 1 {
+			t.Fatalf("accounts merged: got %d, want the one pair", len(preview.AccountsMerged))
 		}
-		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-			t.Fatalf("failed to decode response: %v", err)
+		pair := preview.AccountsMerged[0]
+		if pair.Issuances != 2 {
+			t.Errorf("issuances: got %d, want 2 (the live one and the soft-deleted one)", pair.Issuances)
 		}
-
-		if resp.Data.Issuances != 2 {
-			t.Errorf("issuances: got %d, want 2 (the live one and the soft-deleted one)", resp.Data.Issuances)
-		}
-		if resp.Data.Nicknames != 1 {
-			t.Errorf("nicknames: got %d, want 1", resp.Data.Nicknames)
-		}
-		if len(resp.Data.CollidingNicknames) != 1 {
-			t.Errorf("colliding_nicknames: got %v, want one entry", resp.Data.CollidingNicknames)
-		}
-		if len(resp.Data.FieldsToFill) != 1 || resp.Data.FieldsToFill[0] != "administrador" {
-			t.Errorf("fields_to_fill: got %v, want [administrador]", resp.Data.FieldsToFill)
+		if len(pair.CollidingNicknames) != 1 {
+			t.Errorf("colliding_nicknames: got %v, want one entry", pair.CollidingNicknames)
 		}
 
 		var stillThere int64
@@ -381,34 +335,19 @@ func callListAccounts(tx *gorm.DB, query string) []schemas.AccountResponse {
 	return envelope.Data
 }
 
-// Archiving was the only way to get rid of a duplicate before merging existed, so the
-// accounts that most need absorbing are the archived ones - and the picker cannot offer
-// what the listing hides.
-func TestGetAccounts_IncludeArchivedReachesTheDuplicateThatWasArchived(t *testing.T) {
+// Every picker reads this listing, so an archived account must never come back from it:
+// nothing new may point at one (internal/account/live.go).
+func TestGetAccounts_HidesArchivedAccounts(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		world := seedAccountMergeWorld(t, tx)
 		if err := tx.Delete(&data.Account{}, "id = ?", world.drop.ID).Error; err != nil {
 			t.Fatalf("archiving the duplicate: %v", err)
 		}
 
-		found := func(accounts []schemas.AccountResponse) bool {
-			for _, account := range accounts {
-				if account.ID == world.drop.ID {
-					return true
-				}
+		for _, account := range callListAccounts(tx, "") {
+			if account.ID == world.drop.ID {
+				t.Fatal("the listing returned an archived account; every picker would show it")
 			}
-			return false
-		}
-
-		if found(callListAccounts(tx, "")) {
-			t.Error("the plain listing returned an archived account; every picker would show it")
-		}
-		if !found(callListAccounts(tx, "include_archived=true")) {
-			t.Error("include_archived=true did not return the archived account")
-		}
-		// false must behave like absent, or the flag would be on whenever it is mentioned.
-		if found(callListAccounts(tx, "include_archived=false")) {
-			t.Error("include_archived=false returned an archived account")
 		}
 	})
 }

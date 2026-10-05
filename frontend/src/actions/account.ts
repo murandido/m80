@@ -13,15 +13,11 @@ import {
 import { formatAccountAlias } from "@/components/issuances/account-entry"
 import {
   accountBeneficiaryMutationSchema,
-  checkAccountNicknameAvailabilitySchema,
   getAccountAdministratorSchema,
   getAccountBeneficiariesSchema,
   createAccountNicknameSchema,
   createAccountSchema,
-  deleteAccountNicknameSchema,
   deleteAccountSchema,
-  mergeAccountPreviewSchema,
-  mergeAccountSchema,
   updateAccountSchema,
 } from "@/schemas/account"
 import { createPersonSchema } from "@/schemas/person"
@@ -236,65 +232,6 @@ export async function createAccountNicknameAction(
   }
 }
 
-export async function deleteAccountNicknameAction(
-  accountId: string,
-  nicknameId: string,
-) {
-  const cookieStore = await cookies()
-  const token = cookieStore.get("auth_token")?.value
-
-  try {
-    const res = await fetch(
-      `${env.BACKEND_URL}/api/v1/accounts/${accountId}/nicknames/${nicknameId}`,
-      {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
-      },
-    )
-
-    const json = await res.json()
-    const parsed = deleteAccountNicknameSchema.response.safeParse(json)
-
-    if (!res.ok) {
-      return { error: parsed.data?.message || "Erro ao remover apelido." }
-    }
-
-    return { success: true }
-  } catch {
-    return { error: "Erro de conexão com o servidor." }
-  }
-}
-
-// Explicit return type is required here: without it, Next.js infers a merged
-// type for this "use server" export where both `error` and `available` end up
-// optional, breaking `"error" in result` narrowing at call sites.
-export async function checkAccountNicknameAvailabilityAction(
-  nickname: string,
-  loyaltyProgramId: string,
-): Promise<{ error: string } | { available: boolean }> {
-  const cookieStore = await cookies()
-  const token = cookieStore.get("auth_token")?.value
-
-  try {
-    const res = await fetch(
-      `${env.BACKEND_URL}/api/v1/accounts/nicknames/availability?nickname=${encodeURIComponent(nickname)}&loyalty_program_id=${encodeURIComponent(loyaltyProgramId)}`,
-      { headers: { Authorization: `Bearer ${token}` } },
-    )
-
-    const json = await res.json()
-    const parsed = checkAccountNicknameAvailabilitySchema.response.safeParse(json)
-    const available = parsed.success ? parsed.data.data?.available : undefined
-
-    if (!res.ok || available === undefined) {
-      return { error: "Erro ao verificar disponibilidade do apelido." }
-    }
-
-    return { available }
-  } catch {
-    return { error: "Erro de conexão com o servidor." }
-  }
-}
-
 export async function deleteAccountAction(accountId: string) {
   const cookieStore = await cookies()
   const token = cookieStore.get("auth_token")?.value
@@ -451,59 +388,6 @@ export async function attachAdministratorToAccountAction(
   }
 
   return { attached: true as const }
-}
-
-export async function previewMergeAccountAction(keepId: string, sourceId: string) {
-  const cookieStore = await cookies()
-  const token = cookieStore.get("auth_token")?.value
-
-  try {
-    const res = await fetch(
-      `${env.BACKEND_URL}/api/v1/accounts/${keepId}/merge-preview?source_id=${sourceId}`,
-      { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" },
-    )
-
-    const json = await res.json()
-    const parsed = mergeAccountPreviewSchema.response.safeParse(json)
-
-    if (!res.ok || !parsed.data?.data) {
-      return { error: parsed.data?.message || "Erro ao calcular a prévia." }
-    }
-
-    return { preview: parsed.data.data }
-  } catch {
-    return { error: "Erro de conexão com o servidor." }
-  }
-}
-
-// Absorbs sourceId into keepId and deletes it for real - how a holder's second account in
-// a program is folded into the first. The panel shows the preview before calling it.
-export async function mergeAccountAction(keepId: string, sourceId: string) {
-  const cookieStore = await cookies()
-  const token = cookieStore.get("auth_token")?.value
-
-  try {
-    const res = await fetch(`${env.BACKEND_URL}/api/v1/accounts/${keepId}/merge`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ source_id: sourceId }),
-    })
-
-    const json = await res.json()
-    const parsed = mergeAccountSchema.response.safeParse(json)
-
-    if (!res.ok) {
-      // e.g. 422 "Só é possível mesclar contas do mesmo programa"
-      return { error: parsed.data?.message || "Erro ao mesclar as contas." }
-    }
-
-    return { success: true as const }
-  } catch {
-    return { error: "Erro de conexão com o servidor." }
-  }
 }
 
 // --- Beneficiaries: the manual half of the CPF control ---------------------------------

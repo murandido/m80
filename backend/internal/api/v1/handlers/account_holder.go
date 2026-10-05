@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -15,29 +16,13 @@ import (
 //
 // People stay what they are in the schema - the bot, the sales screens and the
 // administrator's payment report all read them - so this is only a different way of paging
-// the same two tables. A row is either a person (with whatever accounts they hold, possibly
-// none: an administrator who holds nothing still needs somewhere to be edited) or an
-// account that has no holder, which the API no longer lets anybody create but which older
-// data still carries.
+// the same two tables. A row is a live person with whatever accounts they hold, possibly none:
+// an administrator who holds nothing still needs somewhere to be edited. Every account has a
+// holder (accounts.holder_id is NOT NULL since migration 75), so no account is left outside a
+// row.
 
-const (
-	holderRowPerson  = "person"
-	holderRowAccount = "account"
-)
-
-// holderRowOrphanLabel is how an orphan account is named in the listing: login, then its oldest
-// alias - the same chain the panel falls back on when there is no holder to show.
-const holderRowOrphanLabel = `COALESCE(
-	NULLIF(accounts.login, ''),
-	(SELECT nickname FROM account_nicknames
-		WHERE account_nicknames.account_id = accounts.id
-		  AND account_nicknames.deleted_at IS NULL
-		ORDER BY account_nicknames.created_at ASC
-		LIMIT 1)
-)`
-
-// holderRowOrder is the whitelist of sort keys over the union below; the client's string
-// only ever indexes it.
+// holderRowOrder is the whitelist of sort keys over the rows below; the client's string only
+// ever indexes it.
 var holderRowOrder = map[string]string{
 	"name_asc":     `label COLLATE "pt-BR-x-icu" ASC NULLS LAST, created_at ASC, id`,
 	"name_desc":    `label COLLATE "pt-BR-x-icu" DESC NULLS LAST, created_at ASC, id`,
@@ -82,28 +67,61 @@ func (f holderAccountFilter) search(alias string) (string, []any) {
 	return clause, []any{f.like, f.like, f.like, f.like, f.like}
 }
 
-// holderRowsQuery builds the union the listing pages over and its bound arguments.
-// holderPending narrows the listing to one of the to-do lists the accounts screen reports:
-// accounts with no holder, holders with two live accounts in one program, and holders whose
-// accounts disagree about who administers them.
-type holderPending struct {
-	holderless        bool
-	duplicatePrograms bool
-	adminConflicts    bool
-}
-
-// Both are about a holder's live accounts, and both are what the page's banner counts.
+// With a search, a row is ranked by how it matched before the chosen order applies. The
+// search reaches through a person's accounts - login, program, alias and administrator - so
+// searching an administrator's name returns every holder whose account they run, and sorted
+// by name alone the administrator herself could land at the bottom of her own search. The
+// person whose own name is the term comes first, then names that start with it, then names
+// with a word that starts with it, then names or aliases that merely contain it, and last
+// the rows that matched only through something else.
 const (
-	holderHasDuplicateProgram = `EXISTS (SELECT 1 FROM accounts AS dup
-		WHERE dup.holder_id = people.id AND dup.deleted_at IS NULL
-		GROUP BY dup.loyalty_program_id HAVING COUNT(*) > 1)`
-	holderHasAdminConflict = `(SELECT COUNT(DISTINCT adm.administrator_id) FROM accounts AS adm
-		WHERE adm.holder_id = people.id AND adm.deleted_at IS NULL AND adm.administrator_id IS NOT NULL) > 1`
+	holderRankExact = iota
+	holderRankPrefix
+	holderRankWordPrefix
+	holderRankContains
+	holderRankOther
 )
 
-func holderRowsQuery(params listQuery, filter holderAccountFilter, complete *bool, pending holderPending) (string, []any) {
-	var personWhere, orphanWhere []string
-	var personArgs, orphanArgs []any
+// equalsUnaccented compares a column with the bound term ignoring case and accents - the
+// exact-match counterpart of unaccentedLike.
+func equalsUnaccented(column string) string {
+	return "unaccent(lower(" + column + ")) = unaccent(lower(?))"
+}
+
+// personRank renders the rank of a person row and its bound arguments. fingerprint is the
+// CPF the term normalizes to, when it is one: a whole CPF names exactly one person.
+func personRank(q, fingerprint string) (string, []any) {
+	exact := equalsUnaccented("people.name") +
+		" OR EXISTS (SELECT 1 FROM person_nicknames WHERE person_nicknames.person_id = people.id AND " +
+		equalsUnaccented("person_nicknames.nickname") + ")"
+	args := []any{q, q}
+	if fingerprint != "" {
+		exact += " OR people.cpf_fingerprint = ?"
+		args = append(args, fingerprint)
+	}
+
+	sql := fmt.Sprintf(`CASE
+		WHEN %s THEN %d
+		WHEN %s THEN %d
+		WHEN %s THEN %d
+		WHEN %s OR %s THEN %d
+		ELSE %d END`,
+		exact, holderRankExact,
+		unaccentedLike("people.name"), holderRankPrefix,
+		unaccentedLike("people.name"), holderRankWordPrefix,
+		unaccentedLike("people.name"), nicknameMatch("person_nicknames", "person_id", "people", false), holderRankContains,
+		holderRankOther)
+	like := likePattern(q)
+	args = append(args, q+"%", "% "+q+"%", like, like)
+	return sql, args
+}
+
+// holderRowsQuery builds the rows the listing pages over - one per live person - and their
+// bound arguments.
+func holderRowsQuery(params listQuery, filter holderAccountFilter, complete *bool) (string, []any) {
+	var personWhere []string
+	var personArgs []any
+	var searchedFingerprint string
 
 	// Person rows. With a program or category chosen, only somebody holding a matching
 	// account qualifies - a person with no accounts has neither.
@@ -126,6 +144,7 @@ func holderRowsQuery(params listQuery, filter holderAccountFilter, complete *boo
 		if fingerprint, ok := searchFingerprint(params.Q); ok {
 			personSearch += " OR people.cpf_fingerprint = ?"
 			personSearchArgs = append(personSearchArgs, fingerprint)
+			searchedFingerprint = fingerprint
 		}
 
 		accountSearch, accountSearchArgs := filter.search("held")
@@ -147,65 +166,24 @@ func holderRowsQuery(params listQuery, filter holderAccountFilter, complete *boo
 		}
 	}
 
-	// holderless_only is the to-do list for making accounts.holder_id NOT NULL: only the
-	// accounts still missing a holder, and nobody else.
-	if pending.holderless {
-		personWhere = append(personWhere, "false")
-	}
-	if pending.duplicatePrograms {
-		personWhere = append(personWhere, holderHasDuplicateProgram)
-	}
-	if pending.adminConflicts {
-		personWhere = append(personWhere, holderHasAdminConflict)
-	}
-
-	// Orphan rows: one account each - archived ones included. They are invisible everywhere
-	// else in the panel, but a NOT NULL on holder_id counts every row in the table, so they
-	// need a holder as much as the living ones do.
-	orphanWhere = append(orphanWhere, "accounts.holder_id IS NULL")
-	if pending.duplicatePrograms || pending.adminConflicts {
-		// Both are about a holder's accounts; a row with no holder has neither.
-		orphanWhere = append(orphanWhere, "false")
-	}
-	if filter.programID != "" {
-		orphanWhere = append(orphanWhere, "accounts.loyalty_program_id = ?")
-		orphanArgs = append(orphanArgs, filter.programID)
-	}
-	if filter.category != "" {
-		orphanWhere = append(orphanWhere, "accounts.category = ?")
-		orphanArgs = append(orphanArgs, filter.category)
-	}
+	// Without a search every row ranks the same, and the chosen order alone applies.
+	rankSQL := "0"
+	var rankArgs []any
 	if params.Q != "" {
-		search, searchArgs := filter.search("accounts")
-		orphanWhere = append(orphanWhere, search)
-		orphanArgs = append(orphanArgs, searchArgs...)
-	}
-	if complete != nil {
-		// An account with no holder is incomplete by definition (Account.ComputeComplete
-		// requires one), so "complete" can never match it.
-		if *complete {
-			orphanWhere = append(orphanWhere, "false")
-		}
+		rankSQL, rankArgs = personRank(params.Q, searchedFingerprint)
 	}
 
 	// Archived people are gone from the panel (DeletePerson); their archived accounts too.
 	personWhere = append([]string{"people.deleted_at IS NULL"}, personWhere...)
-	personSQL := "SELECT '" + holderRowPerson + "' AS kind, people.id, people.name AS label, people.created_at FROM people" +
-		" WHERE " + strings.Join(personWhere, " AND ")
-	orphanSQL := "SELECT '" + holderRowAccount + "' AS kind, accounts.id, " + holderRowOrphanLabel +
-		" AS label, accounts.created_at FROM accounts WHERE " + strings.Join(orphanWhere, " AND ")
-
-	return personSQL + " UNION ALL " + orphanSQL, append(personArgs, orphanArgs...)
-}
-
-type holderRowKey struct {
-	Kind string
-	ID   string
+	// The rank's arguments sit in the select list, so they come before the WHERE's.
+	return "SELECT people.id, people.name AS label, people.created_at, " + rankSQL +
+			" AS rank FROM people WHERE " + strings.Join(personWhere, " AND "),
+		append(rankArgs, personArgs...)
 }
 
 // ListAccountHolders handles the GET /accounts/holders route.
 // @Summary      Listar contas agrupadas por titular (paginado)
-// @Description  Uma linha por titular, com todas as contas de programa dele; pessoas sem conta e contas sem titular aparecem em linha própria. Os filtros escolhem linhas: a linha traz todas as contas não arquivadas do titular, não só as que casaram.
+// @Description  Uma linha por titular vivo, com todas as contas de programa dele; pessoas sem conta também aparecem. Os filtros escolhem linhas: a linha traz todas as contas não arquivadas do titular, não só as que casaram. Com busca, quem casa pelo próprio nome vem primeiro (nome igual, depois começando pelo termo, depois uma palavra começando pelo termo, depois contendo), e só então quem casou por outro campo ou pelas contas; a ordem escolhida desempata dentro de cada faixa.
 // @Tags         Contas
 // @Produce      json
 // @Security     BearerAuth
@@ -214,9 +192,6 @@ type holderRowKey struct {
 // @Param        loyalty_program_id  query  string  false  "Somente titulares com conta neste programa"
 // @Param        category            query  string  false  "Somente titulares com conta nesta categoria"  Enums(unidentified, standard, injunction)
 // @Param        complete            query  bool    false  "true: titular e todas as contas completos; false: algo incompleto"
-// @Param        holderless_only     query  bool    false  "Somente as contas sem titular (inclusive arquivadas), que impedem o NOT NULL em accounts.holder_id"
-// @Param        duplicate_programs_only  query  bool  false  "Somente titulares com duas contas vivas no mesmo programa"
-// @Param        admin_conflicts_only     query  bool  false  "Somente titulares cujas contas têm administradores diferentes"
 // @Param        page                query  int     false  "Página (padrão 1)"
 // @Param        limit               query  int     false  "Itens por página (padrão 20, máximo 100)"
 // @Success      200  {object}  schemas.AccountHolderPaginatedResponse
@@ -230,12 +205,7 @@ func (h *AccountHandler) ListAccountHolders(w http.ResponseWriter, r *http.Reque
 		category:  r.URL.Query().Get("category"),
 		like:      likePattern(params.Q),
 	}
-	pending := holderPending{
-		holderless:        r.URL.Query().Get("holderless_only") == "true",
-		duplicatePrograms: r.URL.Query().Get("duplicate_programs_only") == "true",
-		adminConflicts:    r.URL.Query().Get("admin_conflicts_only") == "true",
-	}
-	rowsSQL, args := holderRowsQuery(params, filter, parseOptionalBool(r.URL.Query().Get("complete")), pending)
+	rowsSQL, args := holderRowsQuery(params, filter, parseOptionalBool(r.URL.Query().Get("complete")))
 
 	var total int64
 	if err := h.DB.Raw("SELECT COUNT(*) FROM ("+rowsSQL+") AS holder_rows", args...).
@@ -244,96 +214,54 @@ func (h *AccountHandler) ListAccountHolders(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	var keys []holderRowKey
-	pageSQL := "SELECT kind, id FROM (" + rowsSQL + ") AS holder_rows ORDER BY " +
+	var personIDs []string
+	// rank first: with a search, how a row matched outweighs the chosen order, which then
+	// settles the rows that matched the same way (see holderRankExact).
+	pageSQL := "SELECT id FROM (" + rowsSQL + ") AS holder_rows ORDER BY rank ASC, " +
 		orderClause(params.Order, holderRowOrder, holderRowOrder["name_asc"]) + " LIMIT ? OFFSET ?"
 	if err := h.DB.Raw(pageSQL, append(args, params.Limit, (params.Page-1)*params.Limit)...).
-		Scan(&keys).Error; err != nil {
+		Scan(&personIDs).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch accounts")
 		return
 	}
 
-	rows, err := h.loadHolderRows(keys)
+	rows, err := h.loadHolderRows(personIDs)
 	if err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch accounts")
 		return
 	}
 
-	// Unfiltered on purpose: it is how far the table is from taking a NOT NULL on holder_id,
-	// which the page reports whatever the operator happens to be searching for.
-	var holderless int64
-	if err := h.DB.Unscoped().Model(&data.Account{}).Where("holder_id IS NULL").Count(&holderless).Error; err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Failed to count accounts")
-		return
-	}
-
-	// Unfiltered too, for the same banner.
-	var duplicatePrograms, adminConflicts int64
-	if err := h.DB.Raw("SELECT COUNT(*) FROM people WHERE people.deleted_at IS NULL AND " + holderHasDuplicateProgram).Scan(&duplicatePrograms).Error; err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Failed to count accounts")
-		return
-	}
-	if err := h.DB.Raw("SELECT COUNT(*) FROM people WHERE people.deleted_at IS NULL AND " + holderHasAdminConflict).Scan(&adminConflicts).Error; err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Failed to count accounts")
-		return
-	}
-
 	utils.SendJSON(w, r, http.StatusOK, "Accounts fetched successfully", schemas.AccountHolderPaginatedData{
-		Rows:                   rows,
-		Total:                  total,
-		Page:                   params.Page,
-		Limit:                  params.Limit,
-		HolderlessTotal:        holderless,
-		DuplicateProgramsTotal: duplicatePrograms,
-		AdminConflictsTotal:    adminConflicts,
+		Rows:  rows,
+		Total: total,
+		Page:  params.Page,
+		Limit: params.Limit,
 	})
 }
 
-// loadHolderRows hydrates a page of row keys, in the order given: the people with their
-// aliases, and every live account under them (or the orphan itself) in one query, so the
-// CPF counter and the balances are computed once for the page as ListAccounts does.
-func (h *AccountHandler) loadHolderRows(keys []holderRowKey) ([]schemas.AccountHolderRow, error) {
-	rows := make([]schemas.AccountHolderRow, 0, len(keys))
-	if len(keys) == 0 {
+// loadHolderRows hydrates a page of people, in the order given: each with their aliases, and
+// every live account under them in one query, so the CPF counter and the balances are
+// computed once for the page.
+func (h *AccountHandler) loadHolderRows(personIDs []string) ([]schemas.AccountHolderRow, error) {
+	rows := make([]schemas.AccountHolderRow, 0, len(personIDs))
+	if len(personIDs) == 0 {
 		return rows, nil
 	}
 
-	var personIDs, orphanIDs []string
-	for _, key := range keys {
-		if key.Kind == holderRowPerson {
-			personIDs = append(personIDs, key.ID)
-		} else {
-			orphanIDs = append(orphanIDs, key.ID)
-		}
+	var found []data.Person
+	if err := h.DB.Preload("Nicknames").Where("id IN ?", personIDs).Find(&found).Error; err != nil {
+		return nil, err
 	}
-
-	people := map[string]data.Person{}
-	if len(personIDs) > 0 {
-		var found []data.Person
-		if err := h.DB.Preload("Nicknames").Where("id IN ?", personIDs).Find(&found).Error; err != nil {
-			return nil, err
-		}
-		for _, person := range found {
-			people[person.ID] = person
-		}
+	people := make(map[string]data.Person, len(found))
+	for _, person := range found {
+		people[person.ID] = person
 	}
 
 	// Oldest first inside a row, so a holder's accounts do not reshuffle between loads.
 	var accounts []data.Account
-	if len(personIDs) > 0 {
-		if err := h.DB.Preload("Nicknames").Preload("LoyaltyProgram").
-			Where("holder_id IN ?", personIDs).Order("created_at ASC").Find(&accounts).Error; err != nil {
-			return nil, err
-		}
-	}
-	// Unscoped: an orphan row may be an archived account (see holderRowsQuery).
-	if len(orphanIDs) > 0 {
-		var orphans []data.Account
-		if err := h.DB.Unscoped().Preload("Nicknames").Preload("LoyaltyProgram").
-			Where("id IN ?", orphanIDs).Find(&orphans).Error; err != nil {
-			return nil, err
-		}
-		accounts = append(accounts, orphans...)
+	if err := h.DB.Preload("Nicknames").Preload("LoyaltyProgram").
+		Where("holder_id IN ?", personIDs).Order("created_at ASC").Find(&accounts).Error; err != nil {
+		return nil, err
 	}
 
 	usage, err := h.cpfUsage(accounts)
@@ -348,34 +276,22 @@ func (h *AccountHandler) loadHolderRows(keys []holderRowKey) ([]schemas.AccountH
 	fillLastSynced(h.DB, responses)
 
 	byHolder := map[string][]schemas.AccountResponse{}
-	byID := map[string]schemas.AccountResponse{}
 	for _, response := range responses {
-		byID[response.ID] = response
-		if response.HolderID != nil {
-			byHolder[*response.HolderID] = append(byHolder[*response.HolderID], response)
-		}
+		byHolder[*response.HolderID] = append(byHolder[*response.HolderID], response)
 	}
 
-	for _, key := range keys {
-		if key.Kind == holderRowPerson {
-			person, ok := people[key.ID]
-			if !ok {
-				// Deleted between the page query and this one - drop the row rather than
-				// render a holder with no name.
-				continue
-			}
-			holder := toPersonResponse(person)
-			held := byHolder[key.ID]
-			if held == nil {
-				held = []schemas.AccountResponse{}
-			}
-			rows = append(rows, schemas.AccountHolderRow{Holder: &holder, Accounts: held})
+	for _, id := range personIDs {
+		person, ok := people[id]
+		if !ok {
+			// Deleted between the page query and this one - drop the row rather than render
+			// a holder with no name.
 			continue
 		}
-
-		if account, ok := byID[key.ID]; ok {
-			rows = append(rows, schemas.AccountHolderRow{Accounts: []schemas.AccountResponse{account}})
+		held := byHolder[id]
+		if held == nil {
+			held = []schemas.AccountResponse{}
 		}
+		rows = append(rows, schemas.AccountHolderRow{Holder: toPersonResponse(person), Accounts: held})
 	}
 
 	return rows, nil

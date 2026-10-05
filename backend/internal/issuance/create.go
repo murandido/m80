@@ -35,6 +35,7 @@ type CreateInput struct {
 	AirlineLocator      *string
 	LatamPurchaseNumber *string
 	MainPassengerName   *string
+	PassengerLastName   *string
 	TripType            *string
 	OriginIATACode      *string
 	DestinationIATACode *string
@@ -97,6 +98,7 @@ func Create(db *gorm.DB, in CreateInput, actorID string) (data.Issuance, error) 
 		AirlineLocator:      in.AirlineLocator,
 		LatamPurchaseNumber: in.LatamPurchaseNumber,
 		MainPassengerName:   in.MainPassengerName,
+		PassengerLastName:   in.PassengerLastName,
 		TripType:            in.TripType,
 		OriginIATACode:      in.OriginIATACode,
 		DestinationIATACode: in.DestinationIATACode,
@@ -137,7 +139,7 @@ func Create(db *gorm.DB, in CreateInput, actorID string) (data.Issuance, error) 
 		// Only when the issuance is born already complete - an incomplete one is
 		// expected to have gaps. See ValidateAirlineRequirements.
 		if in.Complete {
-			if err := ValidateAirlineRequirements(airline, in.MainPassengerName, in.LatamPurchaseNumber); err != nil {
+			if err := ValidateAirlineRequirements(airline, issuance.BookingLastName(), in.LatamPurchaseNumber); err != nil {
 				return err
 			}
 		}

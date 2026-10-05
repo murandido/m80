@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
@@ -85,7 +86,7 @@ func (h *ClientHandler) CreateClient(w http.ResponseWriter, r *http.Request) {
 	}
 
 	client := data.Client{
-		Name:     req.Name,
+		Name:     normalizeClientName(req.Name),
 		Phone:    req.Phone,
 		AgencyID: req.AgencyID,
 	}
@@ -270,8 +271,8 @@ func (h *ClientHandler) UpdateClient(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Name != "" {
-		client.Name = req.Name
+	if name := normalizeClientName(req.Name); name != "" {
+		client.Name = name
 	}
 
 	if req.Phone != nil {
@@ -331,4 +332,11 @@ func (h *ClientHandler) DeleteClient(w http.ResponseWriter, r *http.Request) {
 	}
 
 	utils.SendJSON(w, r, http.StatusOK, "Client deleted successfully", nil)
+}
+
+// normalizeClientName is how a client's name is stored: trimmed and in upper case, always.
+// One spelling per person is what keeps "joão silva" and "JOÃO SILVA" from becoming two
+// clients - the unique index compares bytes, not people.
+func normalizeClientName(name string) string {
+	return strings.ToUpper(strings.TrimSpace(name))
 }

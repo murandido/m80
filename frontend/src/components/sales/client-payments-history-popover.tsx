@@ -4,6 +4,7 @@ import { useState } from "react"
 import { History } from "lucide-react"
 import { toast } from "sonner"
 import { getClientPaymentsAction, undoClientPaymentAction } from "@/actions/sale"
+import { NO_CLIENT } from "@/app/dashboard/sales/period-params"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Spinner } from "@/components/ui/spinner"
@@ -12,8 +13,17 @@ import { cn } from "@/lib/utils"
 import type { ClientPaymentHistory, ClientPaymentHistoryItem } from "@/schemas/sale"
 
 interface ClientPaymentsHistoryPopoverProps {
+  // The client whose whole history to show. Empty shows every filtered client's payments
+  // received in the period instead - see `across`.
   clientId: string
   clientName: string | undefined
+  across: {
+    // The client filter's ids; empty is every client of the agency.
+    clientIds: string[]
+    agencyId: string
+    dateFrom: string
+    dateTo: string
+  }
   // Called after a payment is undone, so the table picks up the sales it moved and drops
   // the undo it was still offering for that payment.
   onUndone: (clientPaymentId: string) => void
@@ -26,11 +36,13 @@ function formatPaidOn(day: string): string {
 }
 
 // The client's lump sums, oldest first like the table, with where each one's money sits.
+// With no single client it is the period's payments across clients, newest first.
 // It is the way back from a wrong amount: undoing a payment here takes it off every sale
 // and out of the credit, and the row stays, struck through, to say what happened.
 export function ClientPaymentsHistoryPopover({
   clientId,
   clientName,
+  across,
   onUndone,
 }: ClientPaymentsHistoryPopoverProps) {
   const [open, setOpen] = useState(false)
@@ -43,7 +55,9 @@ export function ClientPaymentsHistoryPopover({
 
   async function load() {
     setLoading(true)
-    const response = await getClientPaymentsAction(clientId)
+    const response = await getClientPaymentsAction(
+      clientId ? { clientId } : across,
+    )
     setLoading(false)
     if ("error" in response) {
       toast.error(response.error)
@@ -79,14 +93,20 @@ export function ClientPaymentsHistoryPopover({
     void load()
   }
 
+  const realClientIds = across.clientIds.filter((id) => id !== NO_CLIENT)
+  const title = clientId
+    ? (clientName ?? "Cliente")
+    : realClientIds.length === 0
+      ? "Todos os clientes · no período"
+      : `${realClientIds.length} ${realClientIds.length === 1 ? "cliente" : "clientes"} · no período`
+
   return (
     <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger asChild>
         <Button
           type="button"
           variant="outline"
-          disabled={!clientId}
-          title={clientId ? undefined : "Escolha o cliente primeiro"}
+          title={clientId ? undefined : "Pagamentos recebidos no período"}
           className="w-full bg-white font-normal text-slate-600"
         >
           <History className="h-4 w-4" />
@@ -95,7 +115,7 @@ export function ClientPaymentsHistoryPopover({
       </PopoverTrigger>
       <PopoverContent className="w-96 p-0" align="end">
         <div className="flex items-baseline justify-between gap-3 border-b px-3 py-2">
-          <p className="truncate text-sm font-medium">{clientName ?? "Cliente"}</p>
+          <p className="truncate text-sm font-medium">{title}</p>
           {history && (
             <p className="shrink-0 text-xs text-slate-500">
               Crédito:{" "}
@@ -114,7 +134,9 @@ export function ClientPaymentsHistoryPopover({
 
         {history && history.payments.length === 0 && (
           <p className="text-muted-foreground px-3 py-6 text-center text-sm">
-            Nenhum pagamento registrado para esse cliente.
+            {clientId
+              ? "Nenhum pagamento registrado para esse cliente."
+              : "Nenhum pagamento recebido no período."}
           </p>
         )}
 
@@ -147,6 +169,11 @@ export function ClientPaymentsHistoryPopover({
                       </Button>
                     )}
                   </div>
+                  {!clientId && payment.client_name && (
+                    <p className="truncate text-xs font-medium text-slate-700">
+                      {payment.client_name}
+                    </p>
+                  )}
                   <p className="text-xs text-slate-500">
                     {undone
                       ? `Desfeito por ${payment.deleted_by_name ?? "alguém"} · lançado por ${payment.created_by_name}`

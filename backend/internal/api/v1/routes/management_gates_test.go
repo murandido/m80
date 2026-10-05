@@ -59,33 +59,24 @@ func TestManagementRouteGates(t *testing.T) {
 			openPath:   "/loyalty-programs",
 		},
 		{
-			// Merging rewrites who owns an account and then deletes a record for good.
+			// Merging a row rewrites who owns accounts and then deletes records for good.
 			// The rest of /people stays open: the pickers on the issuances grid read it.
-			name:       "person merge is admin only",
+			name:       "row merge is admin only",
 			register:   RegisterPeopleRoutes,
 			method:     http.MethodPost,
-			path:       "/people/00000000-0000-0000-0000-000000000000/merge",
+			path:       "/people/00000000-0000-0000-0000-000000000000/merge-row",
 			refused:    []string{data.RoleUser},
 			openMethod: http.MethodGet,
 			openPath:   "/people",
 		},
 		{
-			name:       "person merge preview is admin only",
+			name:       "row merge preview is admin only",
 			register:   RegisterPeopleRoutes,
 			method:     http.MethodGet,
-			path:       "/people/00000000-0000-0000-0000-000000000000/merge-preview",
+			path:       "/people/00000000-0000-0000-0000-000000000000/merge-row-preview",
 			refused:    []string{data.RoleUser},
 			openMethod: http.MethodGet,
 			openPath:   "/people",
-		},
-		{
-			name:       "account merge is admin only",
-			register:   RegisterAccountRoutes,
-			method:     http.MethodPost,
-			path:       "/accounts/00000000-0000-0000-0000-000000000000/merge",
-			refused:    []string{data.RoleUser},
-			openMethod: http.MethodGet,
-			openPath:   "/accounts",
 		},
 		{
 			// Correcting a beneficiary is the operator's daily work and stays open; only
@@ -97,15 +88,6 @@ func TestManagementRouteGates(t *testing.T) {
 			refused:    []string{data.RoleUser},
 			openMethod: http.MethodGet,
 			openPath:   "/accounts/00000000-0000-0000-0000-000000000000/beneficiaries",
-		},
-		{
-			name:       "account merge preview is admin only",
-			register:   RegisterAccountRoutes,
-			method:     http.MethodGet,
-			path:       "/accounts/00000000-0000-0000-0000-000000000000/merge-preview",
-			refused:    []string{data.RoleUser},
-			openMethod: http.MethodGet,
-			openPath:   "/accounts",
 		},
 		{
 			name:       "airport management listing is dev only",

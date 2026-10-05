@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
@@ -230,18 +232,26 @@ func (h *SaleHandler) CreateClientPayment(w http.ResponseWriter, r *http.Request
 
 // GetClientPayments handles GET /sales/client-payments
 // @Summary      Histórico de pagamentos do cliente
-// @Description  Lista os pagamentos do cliente, do mais antigo para o mais recente, incluindo os desfeitos, com as vendas em que cada um está abatido e o crédito que sobra.
+// @Description  Com client_id, lista os pagamentos do cliente, do mais antigo para o mais recente, incluindo os desfeitos, com as vendas em que cada um está abatido e o crédito que sobra. Sem client_id, lista os pagamentos de todos os clientes da agência (ou dos de client_ids) recebidos no período, do mais recente para o mais antigo, e o crédito somado deles.
 // @Tags         Vendas
 // @Produce      json
 // @Security     BearerAuth
-// @Param        client_id query string true "UUID do cliente"
+// @Param        client_id  query string false "UUID do cliente"
+// @Param        client_ids query string false "Sem client_id: UUIDs de clientes separados por vírgula (padrão: todos da agência)"
+// @Param        agency_id  query string false "Sem client_id: UUID da agência (padrão: a agência principal)"
+// @Param        date_from  query string false "Sem client_id: primeiro dia de recebimento (YYYY-MM-DD), inclusivo"
+// @Param        date_to    query string false "Sem client_id: último dia de recebimento (YYYY-MM-DD), inclusivo"
 // @Success      200  {object}  schemas.ClientPaymentHistorySingleResponse
-// @Failure      400  {object}  schemas.ErrorResponse "client_id ausente ou inválido"
+// @Failure      400  {object}  schemas.ErrorResponse "client_id inválido"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao buscar os pagamentos"
 // @Router       /sales/client-payments [get]
 func (h *SaleHandler) GetClientPayments(w http.ResponseWriter, r *http.Request) {
 	clientID := r.URL.Query().Get("client_id")
+	if clientID == "" {
+		h.getClientPaymentsAcrossClients(w, r)
+		return
+	}
 	if err := h.Validator.Var(clientID, "required,uuid"); err != nil {
 		utils.SendError(w, r, http.StatusBadRequest, "client_id inválido")
 		return
@@ -260,18 +270,93 @@ func (h *SaleHandler) GetClientPayments(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	h.sendClientPaymentHistory(w, r, payments, []string{clientID})
+}
+
+// getClientPaymentsAcrossClients is the history with no single client chosen: every
+// client of the agency, or the ones the filter picked, narrowed to the payments received
+// in the period. The period is what keeps it readable - a whole agency's history, since
+// the first payment, is not something anyone scrolls through. Newest first, since the
+// question it answers is "what came in lately".
+func (h *SaleHandler) getClientPaymentsAcrossClients(w http.ResponseWriter, r *http.Request) {
+	agencyID, err := resolveAgencyFilter(h.DB, r)
+	if err != nil {
+		sendAgencyFilterError(w, r, err)
+		return
+	}
+
+	q := r.URL.Query()
+	clients := h.DB.Model(&data.Client{}).Where("agency_id = ?", agencyID)
+	if raw := strings.TrimSpace(q.Get("client_ids")); raw != "" {
+		ids := make([]string, 0, 4)
+		for _, id := range splitIDs(raw) {
+			if _, err := uuid.Parse(id); err == nil {
+				ids = append(ids, id)
+			}
+		}
+		// Only "Sem cliente registrado" (or garbage) was picked: nobody's payments.
+		if len(ids) == 0 {
+			h.sendClientPaymentHistory(w, r, nil, nil)
+			return
+		}
+		clients = clients.Where("id IN ?", ids)
+	}
+	var clientIDs []string
+	if err := clients.Pluck("id", &clientIDs).Error; err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch the client payments")
+		return
+	}
+	if len(clientIDs) == 0 {
+		h.sendClientPaymentHistory(w, r, nil, nil)
+		return
+	}
+
+	// paid_on is a calendar day with no time zone, so the period's days compare as they are
+	// - unlike issuances.created_at, which parseDateRange has to shift into UTC.
+	query := h.DB.Preload("CreatedBy").Preload("DeletedBy").Where("client_id IN ?", clientIDs)
+	if day, err := time.Parse("2006-01-02", q.Get("date_from")); err == nil {
+		query = query.Where("paid_on >= ?", day)
+	}
+	if day, err := time.Parse("2006-01-02", q.Get("date_to")); err == nil {
+		query = query.Where("paid_on <= ?", day)
+	}
+
+	var payments []data.ClientPayment
+	if err := query.Order("paid_on DESC, created_at DESC, id").Find(&payments).Error; err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch the client payments")
+		return
+	}
+
+	h.sendClientPaymentHistory(w, r, payments, clientIDs)
+}
+
+// sendClientPaymentHistory adds to the payments where each one's money sits, whose it is,
+// and the credit the clients hold, and answers with the history.
+func (h *SaleHandler) sendClientPaymentHistory(w http.ResponseWriter, r *http.Request, payments []data.ClientPayment, clientIDs []string) {
+	resp := schemas.ClientPaymentHistoryResponse{
+		Payments: make([]schemas.ClientPaymentHistoryItem, 0, len(payments)),
+	}
+	if len(payments) == 0 && len(clientIDs) == 0 {
+		utils.SendJSON(w, r, http.StatusOK, "Client payments retrieved successfully", resp)
+		return
+	}
+
+	paymentIDs := make([]string, 0, len(payments))
+	for _, payment := range payments {
+		paymentIDs = append(paymentIDs, payment.ID)
+	}
+
 	var allocations []struct {
 		ClientPaymentID string
 		SaleID          string
 		ProgramLocator  string
 		AmountCents     int
 	}
-	err = h.DB.Table("sale_payments").
+	err := h.DB.Table("sale_payments").
 		Select("sale_payments.client_payment_id, sale_payments.sale_id, issuances.program_locator, sale_payments.amount_cents").
-		Joins("JOIN client_payments ON client_payments.id = sale_payments.client_payment_id").
 		Joins("JOIN sales ON sales.id = sale_payments.sale_id").
 		Joins("JOIN issuances ON issuances.id = sales.issuance_id").
-		Where("client_payments.client_id = ?", clientID).
+		Where("sale_payments.client_payment_id IN ?", paymentIDs).
 		Order("issuances.created_at, sales.id").
 		Scan(&allocations).Error
 	if err != nil {
@@ -287,19 +372,27 @@ func (h *SaleHandler) GetClientPayments(w http.ResponseWriter, r *http.Request) 
 		})
 	}
 
-	credit, err := sale.CreditOf(h.DB, clientID)
+	var clients []data.Client
+	if err := h.DB.Select("id", "name").Where("id IN ?", clientIDs).Find(&clients).Error; err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch the client payments")
+		return
+	}
+	names := make(map[string]string, len(clients))
+	for _, client := range clients {
+		names[client.ID] = client.Name
+	}
+
+	resp.CreditCents, err = sale.CreditOfClients(h.DB, clientIDs)
 	if err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch the client payments")
 		return
 	}
 
-	resp := schemas.ClientPaymentHistoryResponse{
-		CreditCents: credit,
-		Payments:    make([]schemas.ClientPaymentHistoryItem, 0, len(payments)),
-	}
 	for _, payment := range payments {
 		item := schemas.ClientPaymentHistoryItem{
 			ID:          payment.ID,
+			ClientID:    payment.ClientID,
+			ClientName:  names[payment.ClientID],
 			AmountCents: payment.AmountCents,
 			PaidOn:      payment.PaidOn.Format("2006-01-02"),
 			CreatedAt:   payment.CreatedAt,
@@ -467,6 +560,24 @@ func settleSaleFromLegacyFlag(tx *gorm.DB, saleID string, paid bool, actorID str
 	}
 
 	return sale.Recalculate(tx, saleID)
+}
+
+// salePartlyPaid is the rule behind the panel's yellow button: a live sale worth something,
+// with some money on it and some still missing. It mirrors saleStatus on the panel, and
+// lives out here for the same reason rebalanceClient does.
+func salePartlyPaid(db *gorm.DB, saleID string) (bool, error) {
+	amount, err := sale.AmountOf(db, saleID)
+	if err != nil {
+		return false, err
+	}
+	if amount.Cancelled || amount.Cents <= 0 {
+		return false, nil
+	}
+	paidCents, err := sale.PaidCents(db, saleID)
+	if err != nil {
+		return false, err
+	}
+	return paidCents > 0 && sale.BalanceCents(amount, paidCents) > 0, nil
 }
 
 // rebalanceClient replays a client's payments after one of their sales changed hands. It

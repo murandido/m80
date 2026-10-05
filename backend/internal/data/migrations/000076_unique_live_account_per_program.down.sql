@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS idx_accounts_one_live_per_holder_program;
