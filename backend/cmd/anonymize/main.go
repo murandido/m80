@@ -452,6 +452,20 @@ func (a *anonymiser) issuances() error {
 	}
 	log.Printf("  issuances: %d header names without a passenger list", len(orphans))
 
+	// passenger_last_name is the surname an operator typed for the airline's lookup - a real
+	// person's name. Taken from the fake header name just written, so the two still agree
+	// the way they do in production: the lookup surname is the last word of the passenger.
+	result, err := a.tx.Exec(`
+		UPDATE issuances
+		   SET passenger_last_name = COALESCE(substring(main_passenger_name from '([^ ]+)\s*$'), 'SILVA')
+		 WHERE passenger_last_name IS NOT NULL AND passenger_last_name <> ''`)
+	if err != nil {
+		return err
+	}
+	if err := logAffected("issuances", "lookup surnames replaced", result); err != nil {
+		return err
+	}
+
 	if err := a.bookingReferences(); err != nil {
 		return err
 	}
@@ -459,7 +473,7 @@ func (a *anonymiser) issuances() error {
 	// Observations are free text an operator typed, so they can hold anything - a phone
 	// number, a passenger's real name, a payment detail. Whether an issuance *has* one is
 	// visible in the grid, so the column is replaced rather than emptied.
-	result, err := a.tx.Exec(`
+	result, err = a.tx.Exec(`
 		UPDATE issuances
 		   SET observation = 'Observação de exemplo (conteúdo original removido).'
 		 WHERE observation IS NOT NULL AND observation <> ''`)
