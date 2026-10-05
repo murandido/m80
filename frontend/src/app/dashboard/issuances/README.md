@@ -17,12 +17,19 @@ Tudo abaixo desta seção descreve a planilha.
   durante o POST, PATCH otimista, SSE + `reconcileRows`, criação inline de conta, cancelar,
   excluir, sync). Ficaram de fora a máquina de célula, a colagem e o undo global.
 - **Prévia antes dos valores:** com "Autocompletar dados" ligado, um **rascunho** com cia que
-  autocompleta e os campos de `hasAirlineMinimumFields` chama `POST /issuances/lookup`
+  autocompleta e os campos de `hasLookupFields` (`board/use-issuance-board.ts`) chama `POST /issuances/lookup`
   (`backend/internal/issuance/lookup.go`). A prévia consulta os provedores na mesma ordem e com
   as mesmas regras do `Sync`, **sem gravar a emissão**. A Traveos pode importar. Ela preenche
   origem, destino, data e passageiro, e os valores nunca travam. Depois do save, o sweep de sync
   grava o itinerário de verdade. Esse sweep nunca roda ao lado de uma prévia da mesma linha (com
   a Traveos seriam duas importações) e pula a combinação que a prévia já viu falhar.
+- **Campos da busca por cia:** origem só onde `airlines.requires_origin` está ligado (GOL e Azul),
+  e o campo **Sobrenome** (`issuances.passenger_last_name`) só na visão simplificada, com o
+  autocompletar ligado numa cia com `requires_last_name`. O Sobrenome é o que a cia recebe (`BookingLastName`); o Passageiro
+  principal fica com o nome completo que o sync devolve.
+- **Rascunhos** ficam no `localStorage` (`issuances:drafts`) e voltam depois de um F5. O aviso de
+  "sair da página" só aparece com um save em andamento. São por navegador, e duas abas com
+  rascunhos diferentes regravam a mesma chave.
 - **"Cia que autocompleta"** é `direct_booking_enabled || (traveos_supported && traveos_airline_id)`,
   igual ao `resolveProviders` do backend. O `autocomplete.ts` da planilha só conhece a metade da
   Traveos.
@@ -32,8 +39,8 @@ Tudo abaixo desta seção descreve a planilha.
   mensagem e o cálculo, e Ctrl+Shift+⌫ exclui.
 - **Divergências conscientes do design:** o link "Visualizar informações completas/simplificadas"
   sempre nomeia a *outra* visão. Conta aparece na visão do autocompletar, mas não dispara a busca.
-  "Último nome" só aparece quando a cia exige. A cor do card é a do programa, e cancelado fica
-  cinza. Data da emissão, Nº da compra, taxa de resgate e status manual foram encaixados no
+  A cor do card é a do programa, e cancelado fica cinza. O card é quadrado a partir de duas
+  colunas; no celular ele ocupa a largura toda. Data da emissão, Nº da compra, taxa de resgate e status manual foram encaixados no
   formulário.
 - **Simular Emissão:** calculadora de milheiro (pontos, milheiro e taxas → total + linha de
   cálculo). Não salva nada.

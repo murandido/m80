@@ -18,11 +18,14 @@ var ErrLookupAirlineNotFound = errors.New("airline not found")
 // LookupInput is what the panel knows about a booking before the issuance exists:
 // the fields a provider is asked with, and nothing else.
 type LookupInput struct {
-	AirlineID           string
-	ProgramLocator      string
-	AirlineLocator      *string
-	OriginIATACode      *string
-	MainPassengerName   *string
+	AirlineID         string
+	ProgramLocator    string
+	AirlineLocator    *string
+	OriginIATACode    *string
+	MainPassengerName *string
+	// PassengerLastName is the surname typed for the lookup; it wins over
+	// MainPassengerName, as on a saved issuance (data.Issuance.BookingLastName).
+	PassengerLastName   *string
 	LatamPurchaseNumber *string
 }
 
@@ -78,6 +81,7 @@ func Lookup(ctx context.Context, db *gorm.DB, registry *booking.Registry, input 
 		AirlineLocator:      input.AirlineLocator,
 		OriginIATACode:      input.OriginIATACode,
 		MainPassengerName:   input.MainPassengerName,
+		PassengerLastName:   input.PassengerLastName,
 		LatamPurchaseNumber: input.LatamPurchaseNumber,
 	}
 

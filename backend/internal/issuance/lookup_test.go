@@ -101,6 +101,26 @@ func TestLookupReadsTheBookingWithoutAnIssuance(t *testing.T) {
 	})
 }
 
+func TestLookupAsksWithTheSurnameTypedForIt(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		traveosID := 90
+		f := seedFixture(t, tx, data.Airline{TraveosSupported: true, TraveosAirlineID: &traveosID})
+		provider := &fakeProvider{fetchResults: []*booking.Booking{existingBooking()}}
+		input := lookupInput(f.Airline.ID)
+		full := "MARIA DA SILVA"
+		surname := "SILVA"
+		input.MainPassengerName = &full
+		input.PassengerLastName = &surname
+
+		if _, err := Lookup(context.Background(), tx, booking.NewRegistry(provider), input); err != nil {
+			t.Fatalf("Lookup: %v", err)
+		}
+		if provider.requested.LastName != "SILVA" {
+			t.Errorf("lastName = %q, want the surname typed for the lookup", provider.requested.LastName)
+		}
+	})
+}
+
 func TestLookupImportsAtTheVendorWhenOnlyItCanFetch(t *testing.T) {
 	// The vendor is a provider like any other here: a booking it does not have yet is
 	// imported, and the Sync after the save simply reads it.

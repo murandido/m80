@@ -483,19 +483,43 @@ export function IssuancePanel({
     />
   )
 
-  const lastNameField = (
+  const passengerField = (
     <TextField
       name="main_passenger_name"
-      label={
-        showLookupView ? "Último nome do passageiro" : "Passageiro principal"
-      }
+      label="Passageiro principal"
       value={row.main_passenger_name}
       uppercase
       onCommit={(value) => patch({ main_passenger_name: value || null })}
-      tint={showLookupView ? lookupTint(null) : itineraryTint}
-      readOnly={showLookupView ? lookupLocked : itineraryLocked}
+      tint={itineraryTint}
+      readOnly={itineraryLocked}
     />
   )
+
+  // The surname the airline is asked with, apart from the passenger's name: the sync
+  // replaces that with the full name, and a refetch would then ask with it. Only in the
+  // simplified view, and only where it means something - the autocomplete is on and this
+  // airline wants a surname. The full view is about the issuance, not the lookup.
+  const showSurname = Boolean(
+    autocompleteEnabled && airline?.requires_last_name && autocompletes,
+  )
+  const surnameField = (
+    <TextField
+      name="passenger_last_name"
+      label="Sobrenome"
+      value={row.passenger_last_name}
+      uppercase
+      onCommit={(value) => patch({ passenger_last_name: value || null })}
+      tint={lookupTint(null)}
+      readOnly={lookupLocked}
+    />
+  )
+
+  // Only what this airline is asked with: the origin for GOL and Azul (requires_origin),
+  // the surname where it is required.
+  const lookupInputs = [
+    airline?.requires_origin ? originField : null,
+    showSurname ? surnameField : null,
+  ].filter(Boolean)
 
   // ---- the view ---------------------------------------------------------------------
 
@@ -505,10 +529,12 @@ export function IssuancePanel({
       {locators}
       {program && airline && autocompletes && (
         <>
-          <FieldGroup>
-            {originField}
-            {airline.requires_last_name ? lastNameField : null}
-          </FieldGroup>
+          {lookupInputs.length > 0 && (
+            <FieldGroup>
+              {airline.requires_origin ? originField : null}
+              {showSurname ? surnameField : null}
+            </FieldGroup>
+          )}
           {accountField}
         </>
       )}
@@ -553,7 +579,7 @@ export function IssuancePanel({
           tint={itineraryTint}
           readOnly={itineraryLocked}
         />
-        {lastNameField}
+        {passengerField}
         {accountField}
         <ComboField
           name="agency"
@@ -852,7 +878,7 @@ export function IssuancePanel({
             <button
               type="button"
               onClick={() => setPreferLookupView((current) => !current)}
-              className="flex items-center gap-1.5 self-end text-sm text-slate-500 hover:text-slate-700"
+              className="flex cursor-pointer items-center gap-1.5 self-end rounded-sm text-sm text-slate-500 underline-offset-4 outline-none hover:text-slate-700 hover:underline focus-visible:text-slate-700 focus-visible:underline"
             >
               {showLookupView
                 ? "Visualizar informações completas"
@@ -1038,21 +1064,52 @@ function StatusPill({
     )
   }
 
+  // Both states on show, the way a switch reads: the one the issuance is in, coloured, and
+  // the other one beside it to click. A single pill with a menu behind it did not look
+  // like something that could be changed.
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button type="button" className={pillClass} title="Mudar o status">
-          {dot}
-          {STATUS_LABELS[row.status]}
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        {(["incomplete", "complete"] as const).map((status) => (
-          <DropdownMenuItem key={status} onClick={() => onChange(status)}>
+    <div
+      role="radiogroup"
+      aria-label="Status da emissão"
+      className="flex items-center rounded-full bg-white p-1 shadow-xs"
+    >
+      {(["incomplete", "complete"] as const).map((status) => {
+        const active = row.status === status
+        return (
+          <button
+            key={status}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            onClick={() => {
+              if (!active) onChange(status)
+            }}
+            title={
+              active
+                ? undefined
+                : `Marcar como ${STATUS_LABELS[status].toLowerCase()}`
+            }
+            className={cn(
+              "flex cursor-pointer items-center gap-1.5 rounded-full px-3 py-1 text-sm font-medium transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-sky-200",
+              active &&
+                status === "complete" &&
+                "bg-emerald-100 text-emerald-800",
+              active && status === "incomplete" && "bg-red-100 text-red-800",
+              !active &&
+                "text-slate-400 hover:bg-slate-100 hover:text-slate-700",
+            )}
+          >
+            <span
+              className={cn(
+                "h-2.5 w-2.5 rounded-full",
+                status === "complete" ? "bg-emerald-600" : "bg-red-600",
+                !active && "opacity-40",
+              )}
+            />
             {STATUS_LABELS[status]}
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
+          </button>
+        )
+      })}
+    </div>
   )
 }

@@ -11,7 +11,6 @@ import {
   makeDraftRow,
 } from "@/components/issuances/types"
 import { reconcileRows } from "@/components/issuances/reconcile-rows"
-import { hasAirlineMinimumFields } from "@/components/issuances/autocomplete"
 import { parseAccountEntry } from "@/components/issuances/account-entry"
 import { useAutocompletePreference } from "@/hooks/use-autocomplete-preference"
 import { useAirports } from "@/hooks/use-airports"
@@ -95,6 +94,7 @@ function draftHasTypedContent(row: IssuanceRow): boolean {
       row.latam_purchase_number,
       row.flight_date,
       row.main_passenger_name,
+      row.passenger_last_name,
       row.origin_iata_code,
       row.destination_iata_code,
       row.points,
@@ -110,6 +110,49 @@ function draftHasTypedContent(row: IssuanceRow): boolean {
 // filter change remounts it, and a half-typed draft lived only in the old instance's state.
 // The old instance publishes a live view while mounted and a snapshot on unmount.
 let readCarriedDrafts: () => IssuanceRow[] = () => []
+
+// Where this browser keeps the drafts between reloads. Per browser on purpose: a draft is
+// one operator's unfinished typing, not something another machine should be handed.
+const DRAFTS_STORAGE_KEY = "issuances:drafts"
+
+function readStoredDrafts(): IssuanceRow[] {
+  try {
+    const parsed: unknown = JSON.parse(
+      window.localStorage.getItem(DRAFTS_STORAGE_KEY) ?? "[]",
+    )
+    if (!Array.isArray(parsed)) return []
+    // Only what is recognisably a draft of ours: a row with an id is a saved issuance,
+    // which the server - not this storage - is the source of.
+    return parsed.filter(
+      (row): row is IssuanceRow =>
+        typeof row === "object" &&
+        row !== null &&
+        row.isDraft === true &&
+        row.id === null &&
+        typeof row.key === "string",
+    )
+  } catch {
+    // Storage blocked or a value from some older shape: start without it.
+    return []
+  }
+}
+
+function writeStoredDrafts(drafts: IssuanceRow[]) {
+  try {
+    if (drafts.length === 0) {
+      window.localStorage.removeItem(DRAFTS_STORAGE_KEY)
+      return
+    }
+    window.localStorage.setItem(
+      DRAFTS_STORAGE_KEY,
+      JSON.stringify(
+        drafts.map((row) => ({ ...row, saveStatus: "idle", hasError: false })),
+      ),
+    )
+  } catch {
+    // Without storage a draft still lives as long as the tab does.
+  }
+}
 
 function mergeById<T extends { id: string }>(fromServer: T[], extra: T[]): T[] {
   if (extra.length === 0) return fromServer
@@ -146,6 +189,31 @@ function bookingKey(row: IssuanceRow): string {
   ].join("|")
 }
 
+// The surname the airline is asked with: the one typed for the lookup, else the main
+// passenger's - the frontend twin of data.Issuance.BookingLastName.
+export function bookingLastName(row: IssuanceRow): string {
+  return (
+    (row.passenger_last_name ?? "").trim() ||
+    (row.main_passenger_name ?? "").trim()
+  )
+}
+
+// Whether the row carries what this airline is asked with. autocomplete.ts has the grid's
+// version, which only knows main_passenger_name.
+export function hasLookupFields(row: IssuanceRow, airline: Airline): boolean {
+  const locator = (row.airline_locator || row.program_locator || "").trim()
+  if (!locator) return false
+  if (airline.requires_origin && !(row.origin_iata_code ?? "").trim())
+    return false
+  if (airline.requires_last_name && !bookingLastName(row)) return false
+  if (
+    airline.requires_purchase_number &&
+    !(row.latam_purchase_number ?? "").trim()
+  )
+    return false
+  return true
+}
+
 // Everything a lookup is asked with. A failed attempt is remembered against this, so it is
 // not repeated until the operator changes one of them - a typo fixed in the surname or the
 // origin is exactly what should be tried again.
@@ -153,7 +221,7 @@ function attemptKey(row: IssuanceRow): string {
   return [
     bookingKey(row),
     (row.origin_iata_code ?? "").trim().toUpperCase(),
-    normalizeSearch(row.main_passenger_name ?? ""),
+    normalizeSearch(bookingLastName(row)),
   ].join("|")
 }
 
@@ -175,7 +243,7 @@ function isSyncCandidate(
   if (row.imported && row.traveos_attempted_at) return false
   const airline = airlines.find((candidate) => candidate.id === row.airline_id)
   if (!airline || !airlineAutocompletes(airline)) return false
-  return hasAirlineMinimumFields(row, airline)
+  return hasLookupFields(row, airline)
 }
 
 interface UseIssuanceBoardOptions {
@@ -262,15 +330,40 @@ export function useIssuanceBoard({
     }
   }, [])
 
-  // F5 or closing the tab is the one exit a draft cannot survive.
+  // Drafts outlive a reload too: they are written to this browser's storage on every change
+  // and put back when the board mounts. Read in an effect rather than in the initializer -
+  // the server renders without storage, and the first client render has to match it.
+  useEffect(() => {
+    const stored = readStoredDrafts()
+    if (stored.length === 0) return
+    setRows((prev) => {
+      const known = new Set(prev.map((row) => row.key))
+      const missing = stored.filter((row) => !known.has(row.key))
+      return missing.length > 0 ? [...prev, ...missing] : prev
+    })
+  }, [])
+
+  useEffect(() => {
+    writeStoredDrafts(
+      rows.filter(
+        (row) =>
+          row.isDraft &&
+          draftHasTypedContent(row) &&
+          // One whose create is in flight is left out: reloaded mid-POST, it would be
+          // created a second time from storage.
+          !creatingKeysRef.current.has(row.key),
+      ),
+    )
+  }, [rows])
+
+  // A draft survives a reload now; what does not is a save still travelling, whose
+  // outcome would never be seen.
   useEffect(() => {
     function warnAboutUnsavedWork(event: BeforeUnloadEvent) {
-      const hasUnsavedWork = rowsRef.current.some(
-        (row) =>
-          (row.isDraft && draftHasTypedContent(row)) ||
-          row.saveStatus === "saving",
-      )
-      if (!hasUnsavedWork) return
+      const saving =
+        creatingKeysRef.current.size > 0 ||
+        rowsRef.current.some((row) => row.saveStatus === "saving")
+      if (!saving) return
       event.preventDefault()
       event.returnValue = ""
     }
@@ -350,6 +443,7 @@ export function useIssuanceBoard({
           airline_locator: merged.airline_locator || undefined,
           latam_purchase_number: merged.latam_purchase_number || undefined,
           main_passenger_name: merged.main_passenger_name ?? undefined,
+          passenger_last_name: merged.passenger_last_name || undefined,
           origin_iata_code: merged.origin_iata_code ?? undefined,
           destination_iata_code: merged.destination_iata_code ?? undefined,
           taxes: merged.taxes ?? undefined,
@@ -685,10 +779,7 @@ export function useIssuanceBoard({
       const airline = referenceData.airlines.find(
         (candidate) => candidate.id === row.airline_id,
       )
-      if (
-        !airlineAutocompletes(airline) ||
-        !hasAirlineMinimumFields(row, airline!)
-      )
+      if (!airlineAutocompletes(airline) || !hasLookupFields(row, airline!))
         continue
       if (lookedUpRef.current.get(row.key) === bookingKey(row)) continue
       const attempt = attemptKey(row)
@@ -704,6 +795,7 @@ export function useIssuanceBoard({
         airline_locator: row.airline_locator?.trim() || undefined,
         origin_iata_code: row.origin_iata_code?.trim() || undefined,
         main_passenger_name: row.main_passenger_name?.trim() || undefined,
+        passenger_last_name: row.passenger_last_name?.trim() || undefined,
         latam_purchase_number: row.latam_purchase_number?.trim() || undefined,
       })
         .then((result) => {

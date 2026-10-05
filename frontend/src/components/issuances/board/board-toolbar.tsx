@@ -172,10 +172,22 @@ export function BoardFilters({
         <Label className="hidden text-slate-600 lg:block">Filtros</Label>
         <Popover>
           <PopoverTrigger asChild>
+            {/* Filled dark with a count when anything is filtered - the default "emitidas
+                por mim" included - so a short list never reads as "there is nothing". */}
             <Button
               type="button"
               variant="outline"
-              className="h-10 w-full justify-between gap-2 border-0 bg-slate-200 px-3 font-normal hover:bg-slate-300/70 lg:w-48"
+              aria-label={
+                summary.length > 0
+                  ? `Filtros: ${summary.length} ativo${summary.length > 1 ? "s" : ""}`
+                  : "Filtros"
+              }
+              className={cn(
+                "h-10 w-full justify-between gap-2 border-0 px-3 font-normal lg:w-48",
+                summary.length > 0
+                  ? "bg-slate-800 text-white hover:bg-slate-700 hover:text-white"
+                  : "bg-slate-200 hover:bg-slate-300/70",
+              )}
             >
               <span
                 className={cn(
@@ -185,7 +197,13 @@ export function BoardFilters({
               >
                 {summary.length > 0 ? summary.join(", ") : "Filtros"}
               </span>
-              <Filter className="h-4 w-4 shrink-0 text-slate-500" />
+              {summary.length > 0 ? (
+                <span className="flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-white px-1.5 text-xs font-semibold text-slate-800">
+                  {summary.length}
+                </span>
+              ) : (
+                <Filter className="h-4 w-4 shrink-0 text-slate-500" />
+              )}
             </Button>
           </PopoverTrigger>
           <PopoverContent

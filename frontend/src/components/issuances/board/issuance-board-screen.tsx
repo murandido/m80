@@ -193,12 +193,10 @@ export function IssuanceBoardScreen({
         <IssuanceBoard
           rows={board.rows}
           loyaltyPrograms={board.loyaltyPrograms}
-          accounts={board.accounts}
           agencies={board.agencies}
-          people={board.people}
+          users={board.users}
           openKey={panelOpen ? openKey : null}
           busyKeys={{ ...board.syncingRowKeys, ...board.lookingUpKeys }}
-          pendingAccountLabels={board.pendingAccountLabels}
           onOpen={openCard}
           onAdd={startNewIssuance}
         />
@@ -213,7 +211,9 @@ export function IssuanceBoardScreen({
             // A phone gets the whole screen; a desktop a panel beside the cards that stays
             // in view while the list scrolls.
             "fixed inset-0 z-40 overflow-y-auto bg-slate-200",
-            "lg:sticky lg:inset-auto lg:top-4 lg:z-auto lg:max-h-[calc(100svh-6rem)] lg:rounded-2xl",
+            // The full height of the screen, whatever the form holds: the header (3rem)
+            // and the page's padding above and below are what is left out.
+            "lg:sticky lg:inset-auto lg:top-8 lg:z-auto lg:h-[calc(100svh-7rem)] lg:rounded-2xl",
           )}
         >
           <IssuancePanel

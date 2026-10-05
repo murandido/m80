@@ -4,12 +4,10 @@ import { memo, useRef } from "react"
 import Color from "color"
 import { Building2, Hash, Loader2, Plane, Plus, UserRound } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { accountFallbackLabel } from "@/components/issuances/emissao-message"
 import type { IssuanceRow } from "@/components/issuances/types"
-import type { AccountOption } from "@/schemas/account"
 import type { Agency } from "@/schemas/agency"
 import type { LoyaltyProgram } from "@/schemas/loyalty-program"
-import type { PersonOption } from "@/schemas/person"
+import type { User } from "@/schemas/user"
 
 // How a card is coloured: the loyalty program's own colour, with the text in whichever of
 // white or near-black reads on it. Cancelled and unsaved cards opt out - grey for the
@@ -39,29 +37,13 @@ export function cardPalette(
   }
 }
 
-// The alias the row points at, or how an account with no alias is named everywhere else.
-export function accountLabelFor(
-  row: IssuanceRow,
-  accounts: AccountOption[],
-  people: PersonOption[],
-): string | null {
-  const account = accounts.find((candidate) => candidate.id === row.account_id)
-  if (!account) return null
-  const nickname = account.nicknames.find(
-    (entry) => entry.id === row.account_nickname_id,
-  )
-  return nickname?.nickname ?? accountFallbackLabel(account, people)
-}
-
 interface IssuanceBoardProps {
   rows: IssuanceRow[]
   loyaltyPrograms: LoyaltyProgram[]
-  accounts: AccountOption[]
   agencies: Agency[]
-  people: PersonOption[]
+  users: User[]
   openKey: string | null
   busyKeys: Record<string, true>
-  pendingAccountLabels: Record<string, string>
   onOpen: (key: string) => void
   onAdd: () => void
 }
@@ -69,12 +51,10 @@ interface IssuanceBoardProps {
 export function IssuanceBoard({
   rows,
   loyaltyPrograms,
-  accounts,
   agencies,
-  people,
+  users,
   openKey,
   busyKeys,
-  pendingAccountLabels,
   onOpen,
   onAdd,
 }: IssuanceBoardProps) {
@@ -126,7 +106,7 @@ export function IssuanceBoard({
     <div
       ref={gridRef}
       onKeyDown={handleKeyDown}
-      className="grid grid-cols-1 gap-3 sm:grid-cols-[repeat(auto-fill,minmax(9.5rem,1fr))] sm:gap-4"
+      className="grid grid-cols-1 gap-3 sm:grid-cols-[repeat(auto-fill,minmax(11rem,1fr))] sm:gap-3"
     >
       {rows.map((row, index) => (
         <IssuanceCard
@@ -139,9 +119,8 @@ export function IssuanceBoard({
           agencyName={
             agencies.find((agency) => agency.id === row.agency_id)?.name ?? null
           }
-          accountLabel={
-            pendingAccountLabels[row.key] ??
-            accountLabelFor(row, accounts, people)
+          issuerName={
+            users.find((user) => user.id === row.issuer_id)?.name ?? null
           }
           isOpen={row.key === openKey}
           isBusy={Boolean(busyKeys[row.key]) || Boolean(row.traveos_syncing_at)}
@@ -149,14 +128,14 @@ export function IssuanceBoard({
         />
       ))}
       {/* Padded like the cards' selection frame, so the "+" lines up with them. */}
-      <div className="h-full p-1">
+      <div className="p-2 sm:aspect-square">
         <button
           type="button"
           data-card
           onClick={onAdd}
           title="Nova emissão (Ctrl+Enter)"
           aria-label="Nova emissão"
-          className="focus-visible:ring-ring/50 flex min-h-24 w-full items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-300 transition-colors outline-none hover:bg-slate-50 hover:text-slate-400 focus-visible:ring-[3px] sm:h-full sm:min-h-36"
+          className="focus-visible:ring-ring/50 flex min-h-24 w-full items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-300 transition-colors outline-none hover:bg-slate-50 hover:text-slate-400 focus-visible:ring-[3px] sm:h-full"
         >
           <Plus className="h-14 w-14" strokeWidth={2.5} />
         </button>
@@ -170,7 +149,7 @@ interface IssuanceCardProps {
   number: number
   program: LoyaltyProgram | undefined
   agencyName: string | null
-  accountLabel: string | null
+  issuerName: string | null
   isOpen: boolean
   isBusy: boolean
   onOpen: (key: string) => void
@@ -181,7 +160,7 @@ const IssuanceCard = memo(function IssuanceCard({
   number,
   program,
   agencyName,
-  accountLabel,
+  issuerName,
   isOpen,
   isBusy,
   onOpen,
@@ -200,8 +179,10 @@ const IssuanceCard = memo(function IssuanceCard({
     // around the card rather than a change to the card itself.
     <div
       className={cn(
-        "h-full rounded-xl p-1 transition-colors",
-        isOpen ? "bg-slate-200" : "bg-transparent",
+        // Square from the second column on: a phone shows one card per row, where a
+        // square the width of the screen would hold four lines in a block of empty colour.
+        "rounded-2xl p-2 transition-colors sm:aspect-square",
+        isOpen ? "bg-slate-300/70" : "bg-transparent",
       )}
     >
       <button
@@ -216,7 +197,7 @@ const IssuanceCard = memo(function IssuanceCard({
           color: palette.foreground,
         }}
         className={cn(
-          "focus-visible:ring-ring/60 flex w-full flex-col gap-2 rounded-lg p-2.5 text-left text-sm outline-none focus-visible:ring-[3px] sm:h-full sm:text-xs",
+          "focus-visible:ring-ring/60 flex w-full flex-col gap-2 overflow-hidden rounded-lg p-2.5 text-left text-sm outline-none focus-visible:ring-[3px] sm:h-full sm:justify-between sm:gap-1 sm:text-xs",
           !palette.tinted && "border border-slate-200",
           row.hasError && "ring-2 ring-red-600",
         )}
@@ -244,11 +225,7 @@ const IssuanceCard = memo(function IssuanceCard({
           className={row.status === "cancelled" ? "line-through" : undefined}
         />
         <CardLine icon={Building2} tinted={palette.tinted} value={agencyName} />
-        <CardLine
-          icon={UserRound}
-          tinted={palette.tinted}
-          value={accountLabel}
-        />
+        <CardLine icon={UserRound} tinted={palette.tinted} value={issuerName} />
       </button>
     </div>
   )

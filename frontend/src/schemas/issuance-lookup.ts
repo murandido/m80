@@ -9,6 +9,7 @@ export const lookupIssuanceBookingSchema = {
     airline_locator: z.string().optional(),
     origin_iata_code: z.string().optional(),
     main_passenger_name: z.string().optional(),
+    passenger_last_name: z.string().optional(),
     latam_purchase_number: z.string().optional(),
   }),
   response: z.object({

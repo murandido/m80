@@ -55,6 +55,7 @@ func (h *IssuanceHandler) LookupIssuanceBooking(w http.ResponseWriter, r *http.R
 		AirlineLocator:      req.AirlineLocator,
 		OriginIATACode:      req.OriginIATACode,
 		MainPassengerName:   req.MainPassengerName,
+		PassengerLastName:   req.PassengerLastName,
 		LatamPurchaseNumber: req.LatamPurchaseNumber,
 	})
 	if err != nil {

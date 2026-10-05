@@ -8,6 +8,7 @@ type IssuanceLookupRequest struct {
 	AirlineLocator      *string `json:"airline_locator" validate:"omitempty"`
 	OriginIATACode      *string `json:"origin_iata_code" validate:"omitempty"`
 	MainPassengerName   *string `json:"main_passenger_name" validate:"omitempty"`
+	PassengerLastName   *string `json:"passenger_last_name" validate:"omitempty"`
 	LatamPurchaseNumber *string `json:"latam_purchase_number" validate:"omitempty"`
 }
 
