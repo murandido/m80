@@ -72,6 +72,14 @@ func MarkLoginFailure(db *gorm.DB, accountID string, cause error) error {
 	if err != nil {
 		return err
 	}
+	if state.State == data.AzulSyncNeedsReconnect {
+		// Still parked: the old key is dead, so flipping to error would put the account back in
+		// the ticker to fail on every round. It stays put until a login succeeds, and the reason
+		// is kept for the panel.
+		detail := "não reconectou sozinha (" + cause.Error() + "): confira a senha cadastrada e clique em Reconectar"
+		state.Detail = &detail
+		return upsertState(db, state)
+	}
 	state.ConsecutiveFailures++
 	detail := cause.Error()
 	state.Detail = &detail

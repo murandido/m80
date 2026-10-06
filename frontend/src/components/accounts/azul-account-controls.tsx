@@ -6,7 +6,7 @@ import Link from "next/link"
 import { formatDistanceToNow } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { toast } from "sonner"
-import { FileText, Link2, Loader2 } from "lucide-react"
+import { FileText, Link2, Loader2, Plug } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { connectAzulAccountAction } from "@/actions/statement"
 import { statementSyncStateSchema, type StatementSyncState } from "@/schemas/inventory"
@@ -195,12 +195,40 @@ export function AzulAccountControls({ account }: AzulAccountControlsProps) {
       })}`
     : null
 
+  // A connected account whose sync stopped: Azul refused the key (needs_reconnect) or the rounds
+  // keep failing (needs_attention). Either way the fix is a login, so offer it right here.
+  const syncState = status?.state ?? account.azul_sync_state
+  const needsLogin = syncState === "needs_reconnect" || syncState === "needs_attention"
+
   return (
     <div className="flex items-center justify-between gap-2 border-t border-slate-100 bg-slate-50 px-4 py-2">
       <div className="flex flex-col">
         <span className="text-sm font-medium text-slate-800">{balance}</span>
         {syncedAt && <span className="text-xs text-slate-500">{syncedAt}</span>}
+        {needsLogin && (
+          <span className="text-xs text-rose-700">
+            {syncState === "needs_reconnect"
+              ? "A Azul não reconhece mais a conta — atualize a senha"
+              : "Sincronização falhando — confira a senha"}
+          </span>
+        )}
       </div>
+      {needsLogin && (
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleConnect}
+          disabled={isConnecting}
+          className="ml-auto border-sky-700 text-sky-700 hover:border-sky-600 hover:bg-sky-600 hover:text-white"
+        >
+          {isConnecting ? (
+            <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Plug className="mr-1 h-3.5 w-3.5" />
+          )}
+          Reconectar
+        </Button>
+      )}
       <Button
         asChild
         variant="outline"

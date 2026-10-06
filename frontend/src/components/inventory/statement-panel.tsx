@@ -349,6 +349,7 @@ const SYNC_BADGE: Record<
     className: "border-amber-300 text-amber-800 dark:border-amber-800 dark:text-amber-300",
   },
   needs_attention: { label: "Precisa de atenção", variant: "destructive", className: "" },
+  needs_reconnect: { label: "Reconexão necessária", variant: "destructive", className: "" },
 }
 
 function AzulStatementPanel({
@@ -614,6 +615,13 @@ function SyncBadge({
         <p className="text-xs text-red-700 dark:text-red-400">
           O login falhou vezes demais seguidas — confira o login e a senha salvos na conta e
           reconecte.
+        </p>
+      )}
+      {/* Azul only: the stored key was refused, and the ticker stopped reading the account. */}
+      {state.state === "needs_reconnect" && (
+        <p className="text-xs text-red-700 dark:text-red-400">
+          A Azul não reconhece mais esta conta — provavelmente a senha mudou. Atualize a senha no
+          cadastro; o login é refeito sozinho ao salvar.
         </p>
       )}
       {/* Azul only: it is the one programme that reports a closing balance to check against. */}

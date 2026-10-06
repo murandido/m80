@@ -4,7 +4,7 @@ import "time"
 
 // The states one account's Azul statement sync can be in. Stored in English like every other
 // enum in the schema; the Portuguese labels live only on the panel. Mirrors the
-// azul_sync_state_kind enum in migration 54.
+// azul_sync_state_kind enum in migrations 54 and 80.
 const (
 	// AzulSyncPending is a connected account that has never been synced.
 	AzulSyncPending = "pending"
@@ -19,6 +19,11 @@ const (
 	// AzulSyncNeedsAttention is login having failed enough times that the stored credentials
 	// are suspect. It is the only state the panel raises for manual intervention.
 	AzulSyncNeedsAttention = "needs_attention"
+	// AzulSyncNeedsReconnect is the Azul API no longer recognising the stored customerKey
+	// (points/resume answers 404 - in practice a password change). Read rounds cannot fix it, so
+	// the ticker skips the account until a login stores a new key; the panel asks the operator to
+	// check the password. Added in migration 80.
+	AzulSyncNeedsReconnect = "needs_reconnect"
 )
 
 // AzulSyncState is one account's statement-sync lifecycle: which balance it last saw (so the

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/murandido/m-80-backend/internal/azulsync"
 	"github.com/murandido/m-80-backend/internal/events"
 	"github.com/murandido/m-80-backend/internal/health"
 )
@@ -18,7 +19,7 @@ import (
 func TestCORS_WithoutAnAllowlistDeniesEveryOrigin(t *testing.T) {
 	t.Setenv("CORS_ALLOWED_ORIGINS", "")
 
-	router := NewRouter(nil, events.NewBroker(), nil, health.NewMonitor(func() {}), nil)
+	router := NewRouter(nil, events.NewBroker(), nil, health.NewMonitor(func() {}), nil, testAzulConnector())
 
 	req := httptest.NewRequest(http.MethodOptions, "/health", nil)
 	req.Header.Set("Origin", "https://atacante.exemplo")
@@ -48,7 +49,7 @@ func TestCORS_AllowsEveryVerbTheRouterRegisters(t *testing.T) {
 	// middleware or any handler gets to run. The broker has to be real, though - the
 	// SSE route subscribes to it at request time. The health monitor likewise
 	// has to be real: the status handler reads its snapshot.
-	router := NewRouter(nil, events.NewBroker(), nil, health.NewMonitor(func() {}), nil)
+	router := NewRouter(nil, events.NewBroker(), nil, health.NewMonitor(func() {}), nil, testAzulConnector())
 
 	// One representative route per verb is enough - CORS is configured globally, not
 	// per route. The route is kept only to make a failure message actionable.
@@ -87,4 +88,10 @@ func TestCORS_AllowsEveryVerbTheRouterRegisters(t *testing.T) {
 			}
 		})
 	}
+}
+
+// testAzulConnector is a connector with no database or login behind it: the router only needs its
+// tracker to mount the Azul routes, and these tests never reach a connect.
+func testAzulConnector() *azulsync.Connector {
+	return azulsync.NewConnector(nil, azulsync.NewConnectTracker(), nil, nil)
 }

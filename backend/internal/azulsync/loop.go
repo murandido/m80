@@ -27,27 +27,38 @@ const (
 // It is created once in cmd/api and started behind AZUL_SYNC_ENABLED; with the flag off it is
 // never constructed, so the whole feature ships inert.
 type Loop struct {
-	db       *gorm.DB
-	reader   Reader
-	interval time.Duration
-	log      *slog.Logger
-	now      func() time.Time
+	db     *gorm.DB
+	reader Reader
+	// connector starts the one automatic login an account gets when Azul stops recognising its
+	// key. Nil leaves the account parked for the operator (the tests that do not exercise it).
+	connector ConnectStarter
+	interval  time.Duration
+	log       *slog.Logger
+	now       func() time.Time
 	// backoff is the extra wait after a pass hit the edge (403/429); it grows each time and
 	// resets to zero on a clean pass.
 	backoff time.Duration
 }
 
-// NewLoop builds the loop. A non-positive interval falls back to DefaultInterval.
-func NewLoop(db *gorm.DB, reader Reader, interval time.Duration) *Loop {
+// ConnectStarter is the slice of Connector the loop needs; an interface so the loop tests can count
+// the starts without a login service.
+type ConnectStarter interface {
+	Start(ctx context.Context, accountID string) error
+}
+
+// NewLoop builds the loop. A non-positive interval falls back to DefaultInterval. connector may be
+// nil.
+func NewLoop(db *gorm.DB, reader Reader, connector ConnectStarter, interval time.Duration) *Loop {
 	if interval <= 0 {
 		interval = DefaultInterval
 	}
 	return &Loop{
-		db:       db,
-		reader:   reader,
-		interval: interval,
-		log:      slog.Default(),
-		now:      time.Now,
+		db:        db,
+		reader:    reader,
+		connector: connector,
+		interval:  interval,
+		log:       slog.Default(),
+		now:       time.Now,
 	}
 }
 
@@ -83,6 +94,14 @@ func (l *Loop) runPass(ctx context.Context) time.Duration {
 		}
 		if err := SyncAccount(ctx, l.db, l.reader, account, l.now()); err != nil {
 			l.log.Warn("azulsync: account round failed", "account_id", account.ID, "err", err)
+			if errors.Is(err, ErrCustomerKeyRefused) {
+				// The key was refused and the account is now parked (needs_reconnect), so the next
+				// pass skips it. Try a login once with the stored password - the usual cause is a
+				// password change already saved on the account. If it fails it stays parked, and
+				// only the operator or a new password tries again: repeated logins with a wrong
+				// password are how an account gets locked.
+				l.reconnect(ctx, account.ID)
+			}
 			if errors.Is(err, azul.ErrEdgeBlocked) || errors.Is(err, azul.ErrRateLimited) {
 				// The edge is pushing back on the shared IP. Stop this pass and back off
 				// rather than march through the rest of the accounts making it worse.
@@ -96,6 +115,18 @@ func (l *Loop) runPass(ctx context.Context) time.Duration {
 
 	l.backoff = 0
 	return l.interval
+}
+
+// reconnect starts the automatic login for an account whose key was refused.
+func (l *Loop) reconnect(ctx context.Context, accountID string) {
+	if l.connector == nil {
+		return
+	}
+	if err := l.connector.Start(ctx, accountID); err != nil && !errors.Is(err, ErrAlreadyConnecting) {
+		l.log.Warn("azulsync: could not start the automatic reconnect", "account_id", accountID, "err", err)
+		return
+	}
+	l.log.Info("azulsync: customerKey refused; reconnecting once with the stored password", "account_id", accountID)
 }
 
 // sleep waits d, or returns early if the context is cancelled.
@@ -123,11 +154,16 @@ func growBackoff(current, interval time.Duration) time.Duration {
 // eligibleAccounts are the connected accounts that are tracked: they have "Acompanhar extrato"
 // on and a customerKey to read. Owning the point inventory is no longer the question - an
 // account administered for someone else still has a statement worth reading. Accounts without a
-// key stay pending until a connect fills it, and are not worth a round.
+// key stay pending until a connect fills it, and are not worth a round; neither are accounts
+// parked in needs_reconnect.
 func eligibleAccounts(db *gorm.DB) ([]data.Account, error) {
 	var accounts []data.Account
 	err := db.
 		Where("tracks_statement = ? AND azul_customer_key IS NOT NULL", true).
+		// A key Azul refused is not read again: no round can fix it, only a login (which puts
+		// the state back to pending). This is what stops the ticker hammering a dead key.
+		Where("NOT EXISTS (SELECT 1 FROM azul_sync_state s WHERE s.account_id = accounts.id AND s.state = ?)",
+			data.AzulSyncNeedsReconnect).
 		Find(&accounts).Error
 	return accounts, err
 }

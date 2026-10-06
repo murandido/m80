@@ -119,6 +119,10 @@ type AccountResponse struct {
 	// card can show "atualizado há…". Null until the first successful sync, or on accounts
 	// with no sync state row.
 	AzulLastSyncedAt *time.Time `json:"azul_last_synced_at"`
+	// AzulSyncState is the sync's current state (pending, ok, error, inconsistent,
+	// needs_attention, needs_reconnect), so the card can ask for a reconnect without a request
+	// of its own. Null for an account that is not connected or was never synced.
+	AzulSyncState *string `json:"azul_sync_state"`
 	// SmilesConnected is whether a session is stored for this account - i.e. whether the
 	// Smiles statement sync can read it. The session itself is never returned (it is
 	// json:"-" on the model), so this bit is how the panel knows to offer "Conectar" versus

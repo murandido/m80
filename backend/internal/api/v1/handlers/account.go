@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	acct "github.com/murandido/m-80-backend/internal/account"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
+	"github.com/murandido/m-80-backend/internal/azulsync"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/inventory"
 	"github.com/murandido/m-80-backend/internal/utils"
@@ -22,6 +24,15 @@ import (
 type AccountHandler struct {
 	DB        *gorm.DB
 	Validator *validator.Validate
+	// AzulConnector starts the background Azul login. Nil-able: without it, saving a password
+	// never reconnects anything.
+	AzulConnector AzulConnectStarter
+}
+
+// AzulConnectStarter is the slice of azulsync.Connector the account update needs. An interface so
+// the handler tests can count the starts without a login service.
+type AzulConnectStarter interface {
+	Start(ctx context.Context, accountID string) error
 }
 
 func NewAccountHandler(db *gorm.DB) *AccountHandler {
@@ -106,19 +117,23 @@ func fillLastSynced(db *gorm.DB, responses []schemas.AccountResponse) {
 
 	if len(azulIDs) > 0 {
 		var states []data.AzulSyncState
-		if err := db.Where("account_id IN ? AND last_synced_at IS NOT NULL", azulIDs).
+		if err := db.Where("account_id IN ?", azulIDs).
 			Find(&states).Error; err != nil {
 			slog.Error("could not load the azul sync states", "err", err)
 		} else {
-			lastSynced := make(map[string]time.Time, len(states))
+			byAccount := make(map[string]data.AzulSyncState, len(states))
 			for _, state := range states {
-				if state.LastSyncedAt != nil {
-					lastSynced[state.AccountID] = *state.LastSyncedAt
-				}
+				byAccount[state.AccountID] = state
 			}
 			for i := range responses {
-				if at, ok := lastSynced[responses[i].ID]; ok {
-					synced := at
+				state, ok := byAccount[responses[i].ID]
+				if !ok {
+					continue
+				}
+				kind := state.State
+				responses[i].AzulSyncState = &kind
+				if state.LastSyncedAt != nil {
+					synced := *state.LastSyncedAt
 					responses[i].AzulLastSyncedAt = &synced
 				}
 			}
@@ -570,6 +585,11 @@ func (h *AccountHandler) UpdateAccount(w http.ResponseWriter, r *http.Request) {
 	}
 
 	previousProgramID := account.LoyaltyProgramID
+	// Decrypted by AfterFind, so a resend of the same password can be told from a new one.
+	previousPassword := ""
+	if account.Password != nil {
+		previousPassword = *account.Password
+	}
 	if req.LoyaltyProgramID != nil {
 		account.LoyaltyProgramID = *req.LoyaltyProgramID
 	}
@@ -666,11 +686,39 @@ func (h *AccountHandler) UpdateAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.Password != nil && *req.Password != "" && *req.Password != previousPassword {
+		h.reconnectAzulAfterPasswordChange(r.Context(), account.ID)
+	}
+
 	updated := []schemas.AccountResponse{toAccountResponse(account)}
 	fillExpectedBalances(h.DB, updated)
 	fillLastSynced(h.DB, updated)
 
 	utils.SendJSON(w, r, http.StatusOK, "Account updated successfully", updated[0])
+}
+
+// reconnectAzulAfterPasswordChange starts the Azul login for an account whose customerKey Azul
+// refused (needs_reconnect), now that it has a new password: that is the fix the panel asked for,
+// so nobody should have to also remember to click Reconectar. Any other state is left alone - a
+// healthy account does not need a browser login because its password was edited. Failures only
+// log: the account was saved, and the panel shows the sync state on its own.
+func (h *AccountHandler) reconnectAzulAfterPasswordChange(ctx context.Context, accountID string) {
+	if h.AzulConnector == nil {
+		return
+	}
+	state, err := azulsync.LoadState(h.DB, accountID)
+	if err != nil {
+		slog.Error("account update: reading the Azul sync state", "account_id", accountID, "err", err)
+		return
+	}
+	if state.State != data.AzulSyncNeedsReconnect {
+		return
+	}
+	if err := h.AzulConnector.Start(ctx, accountID); err != nil && !errors.Is(err, azulsync.ErrAlreadyConnecting) {
+		slog.Warn("account update: could not start the Azul reconnect", "account_id", accountID, "err", err)
+		return
+	}
+	slog.Info("account update: password changed; reconnecting Azul", "account_id", accountID)
 }
 
 // DeleteAccount handles the DELETE /accounts/{id} route.

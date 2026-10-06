@@ -22,6 +22,11 @@ const windowDays = 31
 // died early) and just retried on the next tick.
 const failureThreshold = 5
 
+// ErrCustomerKeyRefused is the balance read answering 404: Azul no longer recognises the stored
+// customerKey. Distinct from a 404 anywhere else (the statement) because only this one parks the
+// account and is worth a login.
+var ErrCustomerKeyRefused = errors.New("azulsync: Azul no longer recognises the customerKey")
+
 // Reader is the slice of the azul client this package needs. An interface so the round can be
 // tested against a fake without a browser or the live edge; internal/azul.Client satisfies it.
 type Reader interface {
@@ -57,6 +62,14 @@ func SyncAccount(ctx context.Context, db *gorm.DB, reader Reader, account data.A
 	}
 
 	balance, err := reader.Balance(ctx, customerKey)
+	if errors.Is(err, azul.ErrNotFound) {
+		// Azul no longer knows this customerKey - in practice the holder changed the password and
+		// a new key was issued. No read round can fix that, so it is not counted as a failure.
+		if markErr := recordNeedsReconnect(db, state); markErr != nil {
+			return markErr
+		}
+		return fmt.Errorf("%w: %w", ErrCustomerKeyRefused, err)
+	}
 	if err != nil {
 		return recordFailure(db, state, err)
 	}
@@ -336,6 +349,18 @@ func recordPostponed(db *gorm.DB, state *data.AzulSyncState) error {
 func recordPending(db *gorm.DB, state *data.AzulSyncState) error {
 	state.State = data.AzulSyncPending
 	detail := "conta sem customerKey; aguardando login"
+	state.Detail = &detail
+	return upsertState(db, state)
+}
+
+// recordNeedsReconnect parks the account until a login stores a new customerKey: the ticker skips
+// it from then on (see eligibleAccounts). It clears the failure counter on purpose, like
+// smilessync.MarkNeedsMFA: this is a terminal state with exactly one exit, and letting it pile up
+// toward needs_attention would trade a precise message for a vague one.
+func recordNeedsReconnect(db *gorm.DB, state *data.AzulSyncState) error {
+	state.State = data.AzulSyncNeedsReconnect
+	state.ConsecutiveFailures = 0
+	detail := "a Azul não reconhece mais esta conta (a senha provavelmente mudou)"
 	state.Detail = &detail
 	return upsertState(db, state)
 }

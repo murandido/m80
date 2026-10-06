@@ -16,15 +16,15 @@ import (
 // from the database instead of an upload, plus the one-time connect action that discovers the
 // account's customerKey. Account-scoped because the account is what selects the window;
 // admin-only like the rest of the inventory.
-func RegisterAzulStatementRoutes(r chi.Router, db *gorm.DB) {
-	// One tracker per process, shared by both handlers: the connect handler marks an account in and
-	// out while its background login runs, and the statement handler reads it into the "conectando"
-	// badge. See azulsync.ConnectTracker.
-	tracker := azulsync.NewConnectTracker()
-
+//
+// The connector is the process-wide one built in cmd/api: its tracker is what the connect action
+// marks an account in and out of while its background login runs, and what the statement handler
+// reads into the "conectando" badge - shared with the ticker and the account update, which start
+// the same login. See azulsync.Connector.
+func RegisterAzulStatementRoutes(r chi.Router, db *gorm.DB, connector *azulsync.Connector) {
 	h := handlers.NewStatementHandler(db)
-	h.Tracker = tracker
-	connect := handlers.NewAzulConnectHandler(db, tracker)
+	h.Tracker = connector.Tracker
+	connect := handlers.NewAzulConnectHandler(connector)
 
 	r.Route("/accounts/{id}/azul-statement", func(r chi.Router) {
 		r.Use(middleware.RequireAdmin())

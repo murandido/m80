@@ -277,6 +277,9 @@ export const statementSyncKindSchema = z.enum([
   // Smiles only: the stored session was refused and only a new verification code fixes it.
   "needs_mfa",
   "needs_attention",
+  // Azul only: Azul no longer recognises the stored key (a password change). The ticker skips
+  // the account until a login stores a new one.
+  "needs_reconnect",
 ])
 
 export type StatementSyncKind = z.infer<typeof statementSyncKindSchema>
