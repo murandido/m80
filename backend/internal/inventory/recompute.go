@@ -179,6 +179,8 @@ func loadIssuanceActivity(db *gorm.DB, accountID string, frozenUntil time.Time) 
 				OccurredOn: returnedOn,
 				Points:     -returned,
 				Sequence:   len(rows) + i,
+				// Never took points out here, so there is no slice of its own to reverse.
+				WithoutBooking: row.CancellationOnly,
 			})
 		}
 	}

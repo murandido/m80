@@ -55,6 +55,11 @@ type Event struct {
 	// will differ from the old one by a few centavos. That is the costing being more
 	// correct, not less.
 	Sequence int
+	// WithoutBooking marks a refund for a booking the panel never had (a cancellation-only
+	// row). There is no slice to give back to, so the points rejoin the queue at the batch
+	// it is on that day instead - otherwise they would vanish from the costing while the
+	// account, and the expected balance, has them back.
+	WithoutBooking bool
 }
 
 // Allocation is one slice: this many of an issuance's points, paid for by this batch, at
@@ -82,7 +87,10 @@ func (a Allocation) Pending() bool { return a.BatchID == "" }
 //
 // Bookings and refunds share one pass because they share a timeline. Points returned on the
 // 16th are stock again on the 17th, and the queue rewinds to the batch that got them back
-// so the next booking finds them - at that batch's own rate, ahead of anything newer.
+// so the next booking finds them - at that batch's own rate, ahead of anything newer. A
+// refund whose booking the panel never had goes back to the batch the queue is on that
+// day, at that batch's rate: the nearest thing to "where it came from" when nobody recorded
+// where that was.
 //
 // A booking that outruns the available points still produces an Allocation, with an empty
 // BatchID. The costing never blocks an issuance: the bot writes bookings in real time, and
@@ -132,6 +140,32 @@ func Allocate(batches []Batch, events []Event, prior map[string][]Allocation) []
 	head := 0
 
 	for _, event := range timeline {
+		if event.Points < 0 && event.WithoutBooking {
+			allocation := Allocation{
+				IssuanceID: event.IssuanceID,
+				OccurredOn: event.OccurredOn,
+				Points:     event.Points,
+			}
+			// With no batch at all the return stays pending, and nets against whatever
+			// shortfall the account already has.
+			if len(queue) > 0 {
+				// head only ever sits past the end once every batch is exhausted; the newest
+				// batch then takes the points, and the queue steps back onto it.
+				if head >= len(queue) {
+					head = len(queue) - 1
+				}
+				batch := queue[head]
+				cost := proratedCents(batch.CostCents, -event.Points, batch.Points)
+				consumed[head] += event.Points
+				charged[head] -= cost
+				allocation.BatchID = batch.ID
+				allocation.CostCents = -cost
+			}
+			allocations = append(allocations, allocation)
+			held[event.IssuanceID] = append(held[event.IssuanceID], allocation)
+			continue
+		}
+
 		if event.Points < 0 {
 			returns := reverseAgainst(held[event.IssuanceID], -event.Points, event.OccurredOn)
 			for _, ret := range returns {
