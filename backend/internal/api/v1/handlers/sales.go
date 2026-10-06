@@ -1117,12 +1117,12 @@ func (h *SaleHandler) UpdateSupplierIssuances(w http.ResponseWriter, r *http.Req
 
 	updates := map[string]any{}
 	if _, ok := present["cost_of_the_thousand"]; ok {
-		// On an account that owns its points the rate is derived from the batches that
-		// paid for the booking, and accepting a typed one here would silently overwrite
-		// the costing on the next read - two answers to the same question, with the
-		// wrong one winning. The screen already hides the field; this is the guard that
-		// does not depend on the screen.
-		owned, err := h.issuancesOnInventoryAccounts(req.IssuanceIDs)
+		// Once the batches have paid for a booking its rate is derived from them, and
+		// accepting a typed one here would leave two answers to the same question. A
+		// booking the FIFO has not covered yet has no derived rate, so it is typed like any
+		// other. The screen only offers the field on those; this is the guard that does not
+		// depend on the screen.
+		owned, err := h.issuancesCostedByInventory(req.IssuanceIDs)
 		if err != nil {
 			utils.SendError(w, r, http.StatusInternalServerError, "Failed to check the accounts: "+err.Error())
 			return
@@ -1327,6 +1327,7 @@ func supplierStatementLine(row supplierIssuanceRow, kind string, date time.Time,
 		Taxes:               taxes,
 		CostOfTheThousand:   rate,
 		CostCents:           costCents,
+		CostFromInventory:   costCents != nil,
 		OwnsPointInventory:  row.OwnsPointInventory,
 		TaxesIncludedInCost: row.TaxesIncludedInCost,
 		Reviewed:            row.Reviewed,
@@ -1384,19 +1385,37 @@ func strconvParseBool(value string) (bool, error) {
 // supplierInventoryCosts reads the FIFO cost of every inventory-account issuance in the
 // statement, in one query.
 //
+// Each inventory account in the set is recomputed first. The allocations are derived data
+// that only the closing screen used to refresh, so a booking made since then had none and
+// showed no cost here at all - and with the field locked, there was nothing to do about it.
+//
 // A failure is logged and swallowed rather than propagated: without these figures the
 // statement falls back to the typed rate, which is what it did before the inventory
 // existed. Failing the whole request instead would take down a screen that ordinary
 // accounts - the overwhelming majority - do not need this for at all.
 func supplierInventoryCosts(db *gorm.DB, rows []supplierIssuanceRow) map[string]inventory.IssuanceCost {
 	issuanceIDs := make([]string, 0)
+	accountIDs := make([]string, 0)
+	seenAccount := map[string]struct{}{}
 	for _, row := range rows {
-		if row.OwnsPointInventory {
-			issuanceIDs = append(issuanceIDs, row.IssuanceID)
+		if !row.OwnsPointInventory {
+			continue
+		}
+		issuanceIDs = append(issuanceIDs, row.IssuanceID)
+		if _, seen := seenAccount[row.AccountID]; !seen {
+			seenAccount[row.AccountID] = struct{}{}
+			accountIDs = append(accountIDs, row.AccountID)
 		}
 	}
 	if len(issuanceIDs) == 0 {
 		return nil
+	}
+
+	for _, accountID := range accountIDs {
+		if err := inventory.Recompute(db, accountID); err != nil {
+			slog.Error("failed to recompute the points inventory for the supplier statement",
+				"account_id", accountID, "err", err)
+		}
 	}
 
 	costs, err := inventory.CostByIssuance(db, issuanceIDs)
@@ -1411,39 +1430,57 @@ func supplierInventoryCosts(db *gorm.DB, rows []supplierIssuanceRow) map[string]
 // chargedCents is what the inventory charged an issuance, or nil when this row is not
 // costed by it.
 //
-// Nil on an issuance the costing has not reached yet - one whose batch has not been
-// entered - so the line falls back to the typed rate instead of claiming a cost of zero.
+// Nil unless every point of the booking was charged to a batch. A booking still pending -
+// its batch not entered yet - falls back to the typed rate, which the screen then lets the
+// operator fill in, instead of claiming a cost of zero. A batch that genuinely cost nothing
+// is covered, and shows its zero.
 func chargedCents(costs map[string]inventory.IssuanceCost, row supplierIssuanceRow) *int {
 	if !row.OwnsPointInventory {
 		return nil
 	}
 	cost, ok := costs[row.IssuanceID]
-	if !ok || cost.ChargedCents == 0 {
+	if !ok || !cost.BookingCovered {
 		return nil
 	}
 	return &cost.ChargedCents
 }
 
 // refundedCents is what the inventory gave back on a cancellation, as a negative amount to
-// match the negative points on the refund line.
+// match the negative points on the refund line. Nil under the same rule as chargedCents.
 func refundedCents(costs map[string]inventory.IssuanceCost, row supplierIssuanceRow) *int {
 	if !row.OwnsPointInventory {
 		return nil
 	}
 	cost, ok := costs[row.IssuanceID]
-	if !ok || cost.RefundedCents == 0 {
+	if !ok || !cost.RefundCovered {
 		return nil
 	}
 	return &cost.RefundedCents
 }
 
-// issuancesOnInventoryAccounts counts how many of the given issuances belong to an account
-// whose points cost is derived from its own inventory.
-func (h *SaleHandler) issuancesOnInventoryAccounts(issuanceIDs []string) (int64, error) {
-	var count int64
+// issuancesCostedByInventory counts how many of the given issuances already have their cost
+// from the points inventory - fully charged to batches, on the booking or on the refund.
+// Those are the only ones a typed rate may not touch; an inventory booking the FIFO has not
+// covered is priced by hand like any other until its batch is entered.
+func (h *SaleHandler) issuancesCostedByInventory(issuanceIDs []string) (int, error) {
+	var owned []string
 	err := h.DB.Model(&data.Issuance{}).
 		Joins("JOIN accounts ON accounts.id = issuances.account_id").
 		Where("issuances.id IN ? AND accounts.owns_point_inventory", issuanceIDs).
-		Count(&count).Error
-	return count, err
+		Pluck("issuances.id", &owned).Error
+	if err != nil || len(owned) == 0 {
+		return 0, err
+	}
+
+	costs, err := inventory.CostByIssuance(h.DB, owned)
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	for _, cost := range costs {
+		if cost.BookingCovered || cost.RefundCovered {
+			count++
+		}
+	}
+	return count, nil
 }

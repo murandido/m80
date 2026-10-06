@@ -164,8 +164,14 @@ export const supplierIssuanceSchema = z.object({
   // whole centavo per thousand for display - see supplierLineAmount. Nullish because an
   // ordinary account has no batches, and because the backend may not send it yet.
   cost_cents: z.number().nullish(),
-  // Tells the screen the rate is derived and must not be offered for editing. Absent reads
-  // as false, which is what every account meant before the inventory existed.
+  // Tells the screen the rate came from the batches and must not be offered for editing.
+  // An inventory booking no batch covers yet is false here and is typed like any other.
+  // Absent reads as false, which is what every line meant before the inventory existed.
+  cost_from_inventory: z
+    .boolean()
+    .nullish()
+    .transform((value) => value ?? false),
+  // The account owns its points. No longer what locks the field - see cost_from_inventory.
   owns_point_inventory: z
     .boolean()
     .nullish()

@@ -18,6 +18,13 @@ type IssuanceCost struct {
 	ChargedCents int
 	// RefundedCents is what the reversals gave back, always negative or zero.
 	RefundedCents int
+	// BookingCovered says every point of the booking was charged to a batch. Only then is
+	// ChargedCents the cost: a booking still pending - wholly or in part - has no batch
+	// saying what those points cost, and zero would claim they were free. A batch that
+	// really cost nothing (a flight accrual) still counts as covered, at zero.
+	BookingCovered bool
+	// RefundCovered is the same question for the reversals.
+	RefundCovered bool
 }
 
 // CostByIssuance reads the exact cost of each of the given issuances, keyed by issuance id.
@@ -40,6 +47,10 @@ func CostByIssuance(db *gorm.DB, issuanceIDs []string) (map[string]IssuanceCost,
 		IssuanceID    string
 		ChargedCents  int
 		RefundedCents int
+		BookedSlices  int
+		BookedPending int
+		RefundSlices  int
+		RefundPending int
 	}
 	var rows []row
 
@@ -48,7 +59,11 @@ func CostByIssuance(db *gorm.DB, issuanceIDs []string) (map[string]IssuanceCost,
 	err := db.Model(&data.PointBatchAllocation{}).
 		Select(`issuance_id,
 		        COALESCE(SUM(CASE WHEN points >= 0 THEN cost_cents ELSE 0 END), 0) AS charged_cents,
-		        COALESCE(SUM(CASE WHEN points <  0 THEN cost_cents ELSE 0 END), 0) AS refunded_cents`).
+		        COALESCE(SUM(CASE WHEN points <  0 THEN cost_cents ELSE 0 END), 0) AS refunded_cents,
+		        COUNT(*) FILTER (WHERE points >= 0) AS booked_slices,
+		        COUNT(*) FILTER (WHERE points >= 0 AND batch_id IS NULL) AS booked_pending,
+		        COUNT(*) FILTER (WHERE points <  0) AS refund_slices,
+		        COUNT(*) FILTER (WHERE points <  0 AND batch_id IS NULL) AS refund_pending`).
 		Where("issuance_id IN ?", issuanceIDs).
 		Group("issuance_id").
 		Scan(&rows).Error
@@ -57,7 +72,12 @@ func CostByIssuance(db *gorm.DB, issuanceIDs []string) (map[string]IssuanceCost,
 	}
 
 	for _, r := range rows {
-		costs[r.IssuanceID] = IssuanceCost{ChargedCents: r.ChargedCents, RefundedCents: r.RefundedCents}
+		costs[r.IssuanceID] = IssuanceCost{
+			ChargedCents:   r.ChargedCents,
+			RefundedCents:  r.RefundedCents,
+			BookingCovered: r.BookedSlices > 0 && r.BookedPending == 0,
+			RefundCovered:  r.RefundSlices > 0 && r.RefundPending == 0,
+		}
 	}
 	return costs, nil
 }

@@ -447,6 +447,19 @@ export function SalesSuppliersTable({ balances, query, groupBy }: SalesSuppliers
     [visible],
   )
 
+  // The rate bulk control leaves out the lines whose cost came from the batches: the backend
+  // refuses a typed rate on those, and one of them in the list would fail the whole write.
+  const typedCostIssuanceIds = useMemo(
+    () => [
+      ...new Set(
+        visible.flatMap((b) =>
+          b.issuances.filter((i) => !i.cost_from_inventory).map((i) => i.issuance_id),
+        ),
+      ),
+    ],
+    [visible],
+  )
+
   // Counted over the visible lines, for the same reason the money totals are: the footer
   // must describe the rows on screen and nothing else.
   const reviewedSummary = useMemo(() => {
@@ -489,14 +502,18 @@ export function SalesSuppliersTable({ balances, query, groupBy }: SalesSuppliers
     })
   }
 
+  function bulkTargetIds(terms: PaymentTerms): string[] {
+    return terms.costOfTheThousand === undefined ? allIssuanceIds : typedCostIssuanceIds
+  }
+
   function askBulk(terms: PaymentTerms, summary: string) {
-    if (allIssuanceIds.length === 0) return
+    if (bulkTargetIds(terms).length === 0) return
     setPendingBulk({ terms, summary })
   }
 
   function confirmBulk() {
     if (!pendingBulk) return
-    commit(allIssuanceIds, pendingBulk.terms, (n) =>
+    commit(bulkTargetIds(pendingBulk.terms), pendingBulk.terms, (n) =>
       n === 1 ? "1 emissão atualizada." : `${n} emissões atualizadas.`,
     )
     setPendingBulk(null)
@@ -504,6 +521,7 @@ export function SalesSuppliersTable({ balances, query, groupBy }: SalesSuppliers
   }
 
   const bulkCents = parseCurrencyBRLInput(bulkText)
+  const bulkCount = pendingBulk ? bulkTargetIds(pendingBulk.terms).length : 0
 
   return (
     <div className="flex flex-col gap-3">
@@ -605,7 +623,7 @@ export function SalesSuppliersTable({ balances, query, groupBy }: SalesSuppliers
                       size="sm"
                       variant="outline"
                       className="h-6 px-2 text-xs"
-                      disabled={bulkCents === null || allIssuanceIds.length === 0}
+                      disabled={bulkCents === null || typedCostIssuanceIds.length === 0}
                       onClick={() =>
                         bulkCents !== null &&
                         askBulk(
@@ -732,8 +750,8 @@ export function SalesSuppliersTable({ balances, query, groupBy }: SalesSuppliers
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {pendingBulk?.summary} em {allIssuanceIds.length}{" "}
-              {allIssuanceIds.length === 1 ? "emissão" : "emissões"}?
+              {pendingBulk?.summary} em {bulkCount}{" "}
+              {bulkCount === 1 ? "emissão" : "emissões"}?
             </AlertDialogTitle>
             <AlertDialogDescription>
               Isto grava em todas as emissões filtradas no momento, substituindo o que já
@@ -1007,11 +1025,11 @@ function SupplierIssuanceRow({
       </TableCell>
 
       <TableCell className="text-right">
-        {/* On an account that owns its points the rate is derived from the batches that
-            paid for the booking, so it is shown rather than offered for editing - typing
-            over it would be overwritten by the next recompute, and the backend refuses it
-            anyway. The batches are edited in Estoque de pontos. */}
-        {line.owns_point_inventory ? (
+        {/* Once the batches have paid for the booking the rate is derived from them, so
+            it is shown rather than offered for editing - the backend refuses a typed one,
+            and the batches are edited in Estoque de pontos. A booking on the same account
+            that no batch covers yet has no derived rate, and is typed like any other. */}
+        {line.cost_from_inventory ? (
           <span
             className="tabular-nums text-slate-500"
             title="Vem do estoque de pontos da conta. Edite os lotes em Estoque de pontos."

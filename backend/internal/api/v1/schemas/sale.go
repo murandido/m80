@@ -230,8 +230,12 @@ type SupplierIssuanceResponse struct {
 	// the booking, and the figure the total is built from - CostOfTheThousand beside it is
 	// that same amount rounded to a whole centavo per thousand, for display.
 	CostCents *int `json:"cost_cents" example:"504245"`
-	// OwnsPointInventory tells the screen this line's cost is derived and must not be
-	// offered for editing.
+	// CostFromInventory tells the screen this line's cost came from the batches and must
+	// not be offered for editing. An inventory booking the FIFO has not covered yet is
+	// false here, and its rate is typed like any other.
+	CostFromInventory bool `json:"cost_from_inventory" example:"false"`
+	// OwnsPointInventory says the line belongs to an account whose points we bought. Kept
+	// for the panels still running the bundle that locked the field on this alone.
 	OwnsPointInventory bool `json:"owns_point_inventory" example:"false"`
 	// TaxesIncludedInCost says whether Taxes is part of what is paid for this line.
 	TaxesIncludedInCost bool `json:"taxes_included_in_cost" example:"true"`
