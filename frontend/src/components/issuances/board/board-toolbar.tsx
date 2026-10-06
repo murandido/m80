@@ -138,12 +138,22 @@ export function BoardFilters({
   if (filters.account_id) summary.push("Conta")
   if (filters.agency_id)
     summary.push(pick(agencies, filters.agency_id) ?? "Agência")
-  if (filters.issuer_id && filters.issuer_id !== ISSUERS_ALL) {
-    summary.push(
-      selectedIssuers.length === 1 && selectedIssuers[0] === currentUserId
-        ? "Emitidas por mim"
-        : `${selectedIssuers.length} emissores`,
-    )
+  // The screen opens on "issued by me" (the page's resolveFilters), so that is the resting
+  // state and not a filter worth flagging. Every issuer is a departure from it, and so is
+  // flagged - it widens the list, which is exactly what the operator should notice.
+  const allIssuers =
+    filters.issuer_id === "" ||
+    filters.issuer_id === ISSUERS_ALL ||
+    (users.length > 0 && selectedIssuers.length >= users.length)
+  const defaultIssuers = currentUserId
+    ? selectedIssuers.length === 1 && selectedIssuers[0] === currentUserId
+    : allIssuers
+  if (!defaultIssuers) {
+    if (allIssuers) summary.push("Todos os emissores")
+    else if (selectedIssuers.length === 0) summary.push("Nenhum emissor")
+    else if (selectedIssuers.length === 1)
+      summary.push(pick(users, selectedIssuers[0]) ?? "1 emissor")
+    else summary.push(`${selectedIssuers.length} emissores`)
   }
   const hasAnyFilter =
     hasSearch || FILTER_KEYS.some((key) => filters[key] !== "")
@@ -172,8 +182,8 @@ export function BoardFilters({
         <Label className="hidden text-slate-600 lg:block">Filtros</Label>
         <Popover>
           <PopoverTrigger asChild>
-            {/* Filled dark with a count when anything is filtered - the default "emitidas
-                por mim" included - so a short list never reads as "there is nothing". */}
+            {/* Filled dark with a count when the list is filtered away from the screen's
+                default (today, issued by me), so a different list never passes for it. */}
             <Button
               type="button"
               variant="outline"
