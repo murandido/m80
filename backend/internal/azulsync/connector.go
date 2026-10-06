@@ -15,7 +15,6 @@ import (
 // the automatic triggers (the ticker, a password change) just log them.
 var (
 	ErrAccountNotFound    = errors.New("azulsync: account not found")
-	ErrNotTracked         = errors.New("azulsync: account does not track its statement")
 	ErrMissingCredentials = errors.New("azulsync: account has no stored login and password")
 	ErrAlreadyConnecting  = errors.New("azulsync: a login is already running for this account")
 )
@@ -63,9 +62,8 @@ func (c *Connector) Start(ctx context.Context, accountID string) error {
 		}
 		return err
 	}
-	if !account.TracksStatement {
-		return ErrNotTracked
-	}
+	// Any account may connect: the balance is read for every connected account, and
+	// "Acompanhar extrato" only decides whether the statement is pulled on top of it.
 	if account.Login == nil || *account.Login == "" || account.Password == nil || *account.Password == "" {
 		return ErrMissingCredentials
 	}

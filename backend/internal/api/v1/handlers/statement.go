@@ -168,9 +168,10 @@ func (h *StatementHandler) loadAccount(w http.ResponseWriter, r *http.Request) (
 	return account, true
 }
 
-// statementAccount is the guard for reading a statement: connecting the account, the badge, the
-// lines, the export and the issuance links. It asks whether the account is tracked at all, which
-// is a different question from whether its points are ours to price.
+// statementAccount is the guard for reading a statement: the lines, the export and the issuance
+// links. It asks whether the account is tracked at all, which is a different question from
+// whether its points are ours to price. Connecting and the balance badge are open to every
+// account and do not go through it.
 func (h *StatementHandler) statementAccount(w http.ResponseWriter, r *http.Request) (data.Account, bool) {
 	account, ok := h.loadAccount(w, r)
 	if !ok {

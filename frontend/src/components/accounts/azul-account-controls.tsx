@@ -32,9 +32,8 @@ interface AzulAccountControlsProps {
 }
 
 // The Azul strip on the account card: connect the account (when it has no customerKey yet) or,
-// once connected, show the synced balance with "atualizado há…" and a link to the statement
-// page. Rendered only for Azul accounts that are set to track their statement - every other
-// account has no sync to offer.
+// once connected, show the synced balance with "atualizado há…" and, on an account that tracks
+// its statement, a link to the statement page. Rendered for every Azul account.
 //
 // The "conectando" state is owned by the server (the in-flight connect tracker), not by this
 // component: the card reads it back from GET /api/accounts/{id}/azul-status, so leaving the page,
@@ -52,10 +51,9 @@ export function AzulAccountControls({ account }: AzulAccountControlsProps) {
   // to pull the freshly synced balance into the card.
   const wasConnecting = useRef(false)
 
-  const isAzul = account.loyalty_program.code === AZUL_PROGRAM_CODE
-  // Tracking, not ownership: an account administered for someone else has a statement worth
-  // watching and no inventory to cost. See migration 64.
-  const enabled = isAzul && account.tracks_statement
+  // Every Azul account can connect: the balance is read for all of them. "Acompanhar extrato"
+  // only decides whether the statement link shows - see SyncAccount on the backend.
+  const enabled = account.loyalty_program.code === AZUL_PROGRAM_CODE
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -184,7 +182,9 @@ export function AzulAccountControls({ account }: AzulAccountControlsProps) {
     )
   }
 
-  const balancePoints = status?.last_balance_points ?? account.real_balance_points
+  // real_balance_points first: every round writes it, while last_balance_points only moves on a
+  // round that read the statement, so on an account that does not track it it is empty or stale.
+  const balancePoints = account.real_balance_points ?? status?.last_balance_points
   const balance =
     balancePoints != null ? `${formatPoints(balancePoints)} pts` : "Saldo ainda não sincronizado"
   const lastSyncedAt = status?.last_synced_at ?? account.azul_last_synced_at
@@ -229,17 +229,19 @@ export function AzulAccountControls({ account }: AzulAccountControlsProps) {
           Reconectar
         </Button>
       )}
-      <Button
-        asChild
-        variant="outline"
-        size="sm"
-        className="border-slate-800 text-slate-800 hover:border-cyan-600 hover:bg-cyan-600 hover:text-white"
-      >
-        <Link href={`/dashboard/accounts/${account.id}/statement`}>
-          <FileText className="mr-1 h-3.5 w-3.5" />
-          Ver extrato
-        </Link>
-      </Button>
+      {account.tracks_statement && (
+        <Button
+          asChild
+          variant="outline"
+          size="sm"
+          className="border-slate-800 text-slate-800 hover:border-cyan-600 hover:bg-cyan-600 hover:text-white"
+        >
+          <Link href={`/dashboard/accounts/${account.id}/statement`}>
+            <FileText className="mr-1 h-3.5 w-3.5" />
+            Ver extrato
+          </Link>
+        </Button>
+      )}
     </div>
   )
 }

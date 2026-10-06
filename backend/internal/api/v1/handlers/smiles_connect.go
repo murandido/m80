@@ -66,7 +66,7 @@ func NewSmilesConnectHandler(db *gorm.DB, tracker *smilessync.LoginTracker, guar
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      403  {object}  schemas.ErrorResponse "Requer admin"
 // @Failure      404  {object}  schemas.ErrorResponse "Conta não encontrada"
-// @Failure      422  {object}  schemas.ErrorResponse "Conta que não acompanha extrato, sem login/senha, ou credenciais recusadas"
+// @Failure      422  {object}  schemas.ErrorResponse "Conta sem login/senha, ou credenciais recusadas"
 // @Failure      429  {object}  schemas.ErrorResponse "A Smiles está limitando as tentativas"
 // @Failure      503  {object}  schemas.ErrorResponse "A Smiles não respondeu"
 // @Router       /accounts/{id}/smiles-connect [post]
@@ -328,9 +328,9 @@ func (h *SmilesConnectHandler) firstSync(ctx context.Context, accountID string) 
 	slog.Info("smiles connect: first sync done", "account_id", accountID)
 }
 
-// account loads the account and refuses the ones this feature does not apply to, answering the
-// request itself. It asks whether the account is tracked, not whether its points are ours: an
-// account administered for someone else has a statement worth reading and no inventory to cost.
+// account loads the account, answering the request itself when it does not exist. Any account
+// may connect: the balance is read for every connected account, and "Acompanhar extrato" only
+// decides whether the statement is pulled on top of it.
 func (h *SmilesConnectHandler) account(w http.ResponseWriter, r *http.Request) (data.Account, bool) {
 	var account data.Account
 	if err := h.DB.First(&account, "id = ?", chi.URLParam(r, "id")).Error; err != nil {
@@ -339,11 +339,6 @@ func (h *SmilesConnectHandler) account(w http.ResponseWriter, r *http.Request) (
 			return account, false
 		}
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch account: "+err.Error())
-		return account, false
-	}
-	if !account.TracksStatement {
-		utils.SendError(w, r, http.StatusUnprocessableEntity,
-			"Esta conta não acompanha extrato. Ligue \"Acompanhar extrato\" no cadastro dela.")
 		return account, false
 	}
 	return account, true

@@ -19,7 +19,7 @@ import (
 func TestCORS_WithoutAnAllowlistDeniesEveryOrigin(t *testing.T) {
 	t.Setenv("CORS_ALLOWED_ORIGINS", "")
 
-	router := NewRouter(nil, events.NewBroker(), nil, health.NewMonitor(func() {}), nil, testAzulConnector())
+	router := NewRouter(nil, events.NewBroker(), nil, health.NewMonitor(func() {}), nil, nil, testAzulConnector())
 
 	req := httptest.NewRequest(http.MethodOptions, "/health", nil)
 	req.Header.Set("Origin", "https://atacante.exemplo")
@@ -49,7 +49,7 @@ func TestCORS_AllowsEveryVerbTheRouterRegisters(t *testing.T) {
 	// middleware or any handler gets to run. The broker has to be real, though - the
 	// SSE route subscribes to it at request time. The health monitor likewise
 	// has to be real: the status handler reads its snapshot.
-	router := NewRouter(nil, events.NewBroker(), nil, health.NewMonitor(func() {}), nil, testAzulConnector())
+	router := NewRouter(nil, events.NewBroker(), nil, health.NewMonitor(func() {}), nil, nil, testAzulConnector())
 
 	// One representative route per verb is enough - CORS is configured globally, not
 	// per route. The route is kept only to make a failure message actionable.

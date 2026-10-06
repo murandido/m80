@@ -124,6 +124,59 @@ func TestSyncAccountSkipsTheStatementWhenTheBalanceHasNotMoved(t *testing.T) {
 	})
 }
 
+// An account that does not track its statement gets its balance (and its rotated session) and
+// nothing else, and leaves the statement's bookmark alone so switching tracking on later pulls the
+// window instead of skipping it as "unchanged".
+func TestSyncAccountReadsOnlyTheBalanceWhenNotTracked(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		account := seedAccount(t, tx, "refresh-1")
+		account.TracksStatement = false
+		reader := &fakeReader{
+			rotatedTo: "refresh-2",
+			balances:  []int{150000},
+			movements: []smiles.Transaction{
+				movement(recentDay(-3), -27400, smiles.CodeRedemption, "Product", "VOO", "IOTFQF"),
+			},
+		}
+
+		if err := SyncAccount(context.Background(), tx, reader, NewSessionGuard(), account, syncNow()); err != nil {
+			t.Fatalf("SyncAccount: %v", err)
+		}
+		if reader.statementCall != 0 {
+			t.Errorf("statement pulled %d times, want 0 (not tracked)", reader.statementCall)
+		}
+		if stored := storedSession(t, tx, account.ID); stored == nil || *stored != "refresh-2" {
+			t.Errorf("stored session = %v, want the rotated token", stored)
+		}
+		state := stateOf(t, tx, account.ID)
+		if state.State != data.SmilesSyncOK || state.LastSyncedAt == nil {
+			t.Errorf("state = %q synced=%v, want ok with a sync time", state.State, state.LastSyncedAt)
+		}
+		if state.LastBalanceMiles != nil {
+			t.Errorf("last balance = %v, want it untouched (nil)", *state.LastBalanceMiles)
+		}
+		var reloaded data.Account
+		if err := tx.First(&reloaded, "id = ?", account.ID).Error; err != nil {
+			t.Fatalf("reloading account: %v", err)
+		}
+		if reloaded.RealBalancePoints == nil || *reloaded.RealBalancePoints != 150000 {
+			t.Errorf("real balance = %v, want 150000", reloaded.RealBalancePoints)
+		}
+
+		// Tracking switched on with the balance unchanged: the window is still pulled.
+		reloaded.TracksStatement = true
+		if err := SyncAccount(context.Background(), tx, reader, NewSessionGuard(), reloaded, syncNow()); err != nil {
+			t.Fatalf("SyncAccount after tracking: %v", err)
+		}
+		if reader.statementCall == 0 {
+			t.Error("the statement was not pulled after tracking was switched on")
+		}
+		if len(linesOf(t, tx, account.ID)) != 1 {
+			t.Errorf("stored %d lines after tracking, want 1", len(linesOf(t, tx, account.ID)))
+		}
+	})
+}
+
 func TestSyncAccountPostponesOnATornRead(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		account := seedAccount(t, tx, "refresh-1")

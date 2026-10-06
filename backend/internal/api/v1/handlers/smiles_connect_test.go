@@ -270,7 +270,9 @@ func TestAnAccountWithoutCredentialsCannotConnect(t *testing.T) {
 	})
 }
 
-func TestAnAccountThatDoesNotTrackItsStatementIsRefused(t *testing.T) {
+// Connecting is open to every account: the balance is read for all of them, and "Acompanhar
+// extrato" only decides whether the statement is pulled on top of it.
+func TestAnAccountThatDoesNotTrackItsStatementCanStillConnect(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		account, user := seedSmilesAccount(t, tx)
 		if err := tx.Model(&data.Account{}).Where("id = ?", account.ID).
@@ -281,8 +283,8 @@ func TestAnAccountThatDoesNotTrackItsStatementIsRefused(t *testing.T) {
 
 		rec := httptest.NewRecorder()
 		handler.ConnectSmilesAccount(rec, smilesRequest(http.MethodPost, account.ID, user.ID, ""))
-		if rec.Code != http.StatusUnprocessableEntity {
-			t.Fatalf("status = %d, want 422 (body: %s)", rec.Code, rec.Body.String())
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
 		}
 	})
 }

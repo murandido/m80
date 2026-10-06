@@ -14,12 +14,13 @@ import (
 	"github.com/murandido/m-80-backend/internal/booking"
 	"github.com/murandido/m-80-backend/internal/events"
 	"github.com/murandido/m-80-backend/internal/health"
+	"github.com/murandido/m-80-backend/internal/latamsync"
 	"github.com/murandido/m-80-backend/internal/smilessync"
 	httpSwagger "github.com/swaggo/http-swagger"
 	"gorm.io/gorm"
 )
 
-func NewRouter(db *gorm.DB, broker *events.Broker, bookings *booking.Registry, monitor *health.Monitor, smilesGuard *smilessync.SessionGuard, azulConnector *azulsync.Connector) *chi.Mux {
+func NewRouter(db *gorm.DB, broker *events.Broker, bookings *booking.Registry, monitor *health.Monitor, smilesGuard *smilessync.SessionGuard, latamGuard *latamsync.SessionGuard, azulConnector *azulsync.Connector) *chi.Mux {
 	r := chi.NewRouter()
 
 	// Before Logger and the rate limiter, both of which read r.RemoteAddr and
@@ -52,7 +53,7 @@ func NewRouter(db *gorm.DB, broker *events.Broker, bookings *booking.Registry, m
 		))
 	}
 
-	r.Mount("/api/v1", v1.NewRouter(db, broker, bookings, monitor, smilesGuard, azulConnector))
+	r.Mount("/api/v1", v1.NewRouter(db, broker, bookings, monitor, smilesGuard, latamGuard, azulConnector))
 
 	return r
 }

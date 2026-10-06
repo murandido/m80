@@ -17,6 +17,8 @@ import (
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/events"
 	"github.com/murandido/m-80-backend/internal/health"
+	"github.com/murandido/m-80-backend/internal/latam"
+	"github.com/murandido/m-80-backend/internal/latamsync"
 	"github.com/murandido/m-80-backend/internal/promotion"
 	"github.com/murandido/m-80-backend/internal/smiles"
 	"github.com/murandido/m-80-backend/internal/smilessync"
@@ -244,8 +246,17 @@ func main() {
 		slog.Info("smiles statement sync enabled", "interval", interval.String())
 	}
 
+	// The LATAM balance read: renew each linked account's session and write its LATAM Pass
+	// balance. No switch, unlike the two statement syncs above: with no account linked a pass is
+	// one empty query, and linking one is itself the decision to read it. The client goes direct
+	// rather than through LATAM_PROXY_URL - the account hosts answer the Oracle range, only the
+	// booking ones refuse it (measured 2026-10-06). The guard is shared with the connect handler.
+	latamGuard := latamsync.NewSessionGuard()
+	latamAccounts := latam.NewAccountClient()
+	go latamsync.NewLoop(data.DB, latamAccounts, latamGuard, latamsync.DefaultInterval).Run(context.Background())
+
 	// config router
-	r := api.NewRouter(data.DB, broker, bookings, monitor, smilesGuard, azulConnector)
+	r := api.NewRouter(data.DB, broker, bookings, monitor, smilesGuard, latamGuard, azulConnector)
 
 	port := os.Getenv("PORT")
 	if port == "" {

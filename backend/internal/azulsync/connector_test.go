@@ -42,15 +42,6 @@ func TestConnectorStartRefusesWhatCannotLogIn(t *testing.T) {
 			t.Errorf("no credentials: err = %v, want ErrMissingCredentials", err)
 		}
 
-		notTracked := seedAccount(t, tx, "")
-		withCredentials(t, tx, notTracked)
-		if err := tx.Model(&data.Account{}).Where("id = ?", notTracked.ID).Update("tracks_statement", false).Error; err != nil {
-			t.Fatalf("flipping tracking: %v", err)
-		}
-		if err := connector.Start(context.Background(), notTracked.ID); !errors.Is(err, ErrNotTracked) {
-			t.Errorf("not tracked: err = %v, want ErrNotTracked", err)
-		}
-
 		if err := connector.Start(context.Background(), "00000000-0000-0000-0000-000000000000"); !errors.Is(err, ErrAccountNotFound) {
 			t.Errorf("unknown account: err = %v, want ErrAccountNotFound", err)
 		}
@@ -61,6 +52,26 @@ func TestConnectorStartRefusesWhatCannotLogIn(t *testing.T) {
 		connector.Tracker.Begin(busy.ID)
 		if err := connector.Start(context.Background(), busy.ID); !errors.Is(err, ErrAlreadyConnecting) {
 			t.Errorf("in flight: err = %v, want ErrAlreadyConnecting", err)
+		}
+	})
+}
+
+// Connecting is open to every account: the balance is read for all of them, and "Acompanhar
+// extrato" only decides whether the statement is pulled on top of it.
+func TestConnectorStartsAnAccountThatDoesNotTrackItsStatement(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		connector := NewConnector(tx, NewConnectTracker(), &fakeLogin{}, nil)
+		notTracked := seedAccount(t, tx, "")
+		withCredentials(t, tx, notTracked)
+		if err := tx.Model(&data.Account{}).Where("id = ?", notTracked.ID).Update("tracks_statement", false).Error; err != nil {
+			t.Fatalf("flipping tracking: %v", err)
+		}
+		// A login already marked in flight keeps Start from launching the background goroutine,
+		// which would race the test transaction. Reaching that refusal is the proof: it is the
+		// last check, after every validation of the account itself.
+		connector.Tracker.Begin(notTracked.ID)
+		if err := connector.Start(context.Background(), notTracked.ID); !errors.Is(err, ErrAlreadyConnecting) {
+			t.Errorf("not tracked: err = %v, want it to pass validation (ErrAlreadyConnecting)", err)
 		}
 	})
 }

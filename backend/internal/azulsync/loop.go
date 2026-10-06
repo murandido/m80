@@ -151,15 +151,14 @@ func growBackoff(current, interval time.Duration) time.Duration {
 	return next
 }
 
-// eligibleAccounts are the connected accounts that are tracked: they have "Acompanhar extrato"
-// on and a customerKey to read. Owning the point inventory is no longer the question - an
-// account administered for someone else still has a statement worth reading. Accounts without a
-// key stay pending until a connect fills it, and are not worth a round; neither are accounts
-// parked in needs_reconnect.
+// eligibleAccounts are the connected accounts: every account with a customerKey to read, whether
+// or not it tracks its statement - the balance is read for all of them, and SyncAccount decides
+// per account whether the statement is pulled too. Accounts without a key stay pending until a
+// connect fills it, and are not worth a round; neither are accounts parked in needs_reconnect.
 func eligibleAccounts(db *gorm.DB) ([]data.Account, error) {
 	var accounts []data.Account
 	err := db.
-		Where("tracks_statement = ? AND azul_customer_key IS NOT NULL", true).
+		Where("azul_customer_key IS NOT NULL").
 		// A key Azul refused is not read again: no round can fix it, only a login (which puts
 		// the state back to pending). This is what stops the ticker hammering a dead key.
 		Where("NOT EXISTS (SELECT 1 FROM azul_sync_state s WHERE s.account_id = accounts.id AND s.state = ?)",

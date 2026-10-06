@@ -42,7 +42,7 @@ func NewAzulConnectHandler(connector *azulsync.Connector) *AzulConnectHandler {
 // @Failure      403  {object}  schemas.ErrorResponse "Requer admin"
 // @Failure      404  {object}  schemas.ErrorResponse "Conta não encontrada"
 // @Failure      409  {object}  schemas.ErrorResponse "Já existe um login em andamento para esta conta"
-// @Failure      422  {object}  schemas.ErrorResponse "Conta que não acompanha extrato, ou sem login/senha"
+// @Failure      422  {object}  schemas.ErrorResponse "Conta sem login/senha"
 // @Router       /accounts/{id}/azul-connect [post]
 func (h *AzulConnectHandler) ConnectAzulAccount(w http.ResponseWriter, r *http.Request) {
 	err := h.Connector.Start(r.Context(), chi.URLParam(r, "id"))
@@ -51,9 +51,6 @@ func (h *AzulConnectHandler) ConnectAzulAccount(w http.ResponseWriter, r *http.R
 		utils.SendJSON(w, r, http.StatusAccepted, "Login iniciado", schemas.AzulConnectResponse{Connecting: true})
 	case errors.Is(err, azulsync.ErrAccountNotFound):
 		utils.SendError(w, r, http.StatusNotFound, "Conta não encontrada")
-	case errors.Is(err, azulsync.ErrNotTracked):
-		utils.SendError(w, r, http.StatusUnprocessableEntity,
-			"Esta conta não acompanha extrato. Ligue \"Acompanhar extrato\" no cadastro dela.")
 	case errors.Is(err, azulsync.ErrMissingCredentials):
 		utils.SendError(w, r, http.StatusUnprocessableEntity,
 			"A conta precisa de login e senha salvos para conectar")

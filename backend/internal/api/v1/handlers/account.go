@@ -106,6 +106,7 @@ func fillLastSynced(db *gorm.DB, responses []schemas.AccountResponse) {
 
 	azulIDs := make([]string, 0, len(responses))
 	smilesIDs := make([]string, 0, len(responses))
+	latamIDs := make([]string, 0, len(responses))
 	for _, response := range responses {
 		if response.AzulConnected {
 			azulIDs = append(azulIDs, response.ID)
@@ -113,7 +114,12 @@ func fillLastSynced(db *gorm.DB, responses []schemas.AccountResponse) {
 		if response.SmilesConnected {
 			smilesIDs = append(smilesIDs, response.ID)
 		}
+		if response.LatamConnected {
+			latamIDs = append(latamIDs, response.ID)
+		}
 	}
+
+	fillLatamLastSynced(db, responses, latamIDs)
 
 	if len(azulIDs) > 0 {
 		var states []data.AzulSyncState
@@ -163,6 +169,35 @@ func fillLastSynced(db *gorm.DB, responses []schemas.AccountResponse) {
 	}
 }
 
+// fillLatamLastSynced is fillLastSynced's LATAM part: the state and the last read of each linked
+// account, best-effort like the rest.
+func fillLatamLastSynced(db *gorm.DB, responses []schemas.AccountResponse, latamIDs []string) {
+	if len(latamIDs) == 0 {
+		return
+	}
+	var states []data.LatamSyncState
+	if err := db.Where("account_id IN ?", latamIDs).Find(&states).Error; err != nil {
+		slog.Error("could not load the latam sync states", "err", err)
+		return
+	}
+	byAccount := make(map[string]data.LatamSyncState, len(states))
+	for _, state := range states {
+		byAccount[state.AccountID] = state
+	}
+	for i := range responses {
+		state, ok := byAccount[responses[i].ID]
+		if !ok {
+			continue
+		}
+		kind := state.State
+		responses[i].LatamSyncState = &kind
+		if state.LastSyncedAt != nil {
+			synced := *state.LastSyncedAt
+			responses[i].LatamLastSyncedAt = &synced
+		}
+	}
+}
+
 func toAccountResponse(account data.Account) schemas.AccountResponse {
 	return toAccountResponseWithUsage(account, nil)
 }
@@ -198,6 +233,7 @@ func toAccountResponseWithUsage(account data.Account, usage *acct.Usage) schemas
 		Category:                  account.Category,
 		AzulConnected:             account.AzulCustomerKey != nil && *account.AzulCustomerKey != "",
 		SmilesConnected:           account.SmilesRefreshToken != nil && *account.SmilesRefreshToken != "",
+		LatamConnected:            account.LatamRefreshToken != nil && *account.LatamRefreshToken != "",
 		RealBalancePoints:         account.RealBalancePoints,
 		RealBalanceCheckedOn:      checkedOn,
 		WaivesRedemptionFee:       account.WaivesRedemptionFee,

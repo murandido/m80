@@ -9,11 +9,12 @@ import (
 	"github.com/murandido/m-80-backend/internal/booking"
 	"github.com/murandido/m-80-backend/internal/events"
 	"github.com/murandido/m-80-backend/internal/health"
+	"github.com/murandido/m-80-backend/internal/latamsync"
 	"github.com/murandido/m-80-backend/internal/smilessync"
 	"gorm.io/gorm"
 )
 
-func NewRouter(db *gorm.DB, broker *events.Broker, bookings *booking.Registry, monitor *health.Monitor, smilesGuard *smilessync.SessionGuard, azulConnector *azulsync.Connector) chi.Router {
+func NewRouter(db *gorm.DB, broker *events.Broker, bookings *booking.Registry, monitor *health.Monitor, smilesGuard *smilessync.SessionGuard, latamGuard *latamsync.SessionGuard, azulConnector *azulsync.Connector) chi.Router {
 	r := chi.NewRouter()
 
 	authHandler := handlers.NewAuthHandler(db)
@@ -59,6 +60,7 @@ func NewRouter(db *gorm.DB, broker *events.Broker, bookings *booking.Registry, m
 		routes.RegisterPointBatchRoutes(r, db)
 		routes.RegisterAzulStatementRoutes(r, db, azulConnector)
 		routes.RegisterSmilesStatementRoutes(r, db, smilesGuard)
+		routes.RegisterLatamRoutes(r, db, latamGuard)
 		routes.RegisterInventoryPeriodRoutes(r, db)
 		// SSE stream, behind the same auth as everything else in this group
 		routes.RegisterEventRoutes(r, broker)

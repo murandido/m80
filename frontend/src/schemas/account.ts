@@ -109,6 +109,14 @@ export const accountSchema = z.object({
     .nullish()
     .transform((value) => value ?? false),
   smiles_last_synced_at: z.string().nullish(),
+  // The LATAM twins: whether a session is stored (the balance is being read), when it was last
+  // read, and the read's state - a plain string for the same reason as azul_sync_state.
+  latam_connected: z
+    .boolean()
+    .nullish()
+    .transform((value) => value ?? false),
+  latam_last_synced_at: z.string().nullish(),
+  latam_sync_state: z.string().nullish(),
   cpf_usage: cpfUsageSchema.nullish(),
   complete: z.boolean(),
   created_at: z.string(),

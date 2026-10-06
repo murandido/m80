@@ -24,13 +24,13 @@ func TestGrowBackoff(t *testing.T) {
 	}
 }
 
-func TestEligibleAccountsFiltersByTrackingAndKey(t *testing.T) {
+func TestEligibleAccountsFiltersByKeyAlone(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		connected := seedAccount(t, tx, "cust-key-1") // tracked + has a key
 		noKey := seedAccount(t, tx, "")               // tracked, no key yet
 
-		// An account nobody asked to track, even with a key, is not read. Turning the flag off
-		// is how an operator stops a sync without disconnecting the account.
+		// An account that does not track its statement is still read: its balance is read for
+		// every connected account, and SyncAccount stops there for it.
 		notTracked := seedAccount(t, tx, "cust-key-2")
 		if err := tx.Model(&notTracked).Update("tracks_statement", false).Error; err != nil {
 			t.Fatalf("flipping tracking: %v", err)
@@ -58,8 +58,8 @@ func TestEligibleAccountsFiltersByTrackingAndKey(t *testing.T) {
 		if got[noKey.ID] {
 			t.Error("an account with no customerKey was eligible")
 		}
-		if got[notTracked.ID] {
-			t.Error("an account that does not track its statement was eligible")
+		if !got[notTracked.ID] {
+			t.Error("a connected account was skipped because it does not track its statement")
 		}
 		if !got[notOwned.ID] {
 			t.Error("a tracked account was skipped because its points are not ours to cost")
