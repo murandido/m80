@@ -139,6 +139,7 @@ type fakeReader struct {
 	movements     []smiles.Transaction
 	statementErr  error
 	refreshCalls  int
+	refreshTokens []string
 	balanceCalls  int
 	statementCall int
 }
@@ -147,6 +148,7 @@ func (f *fakeReader) Refresh(_ context.Context, refreshToken string) (smiles.Ses
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.refreshCalls++
+	f.refreshTokens = append(f.refreshTokens, refreshToken)
 	if f.refreshErr != nil {
 		return smiles.Session{}, f.refreshErr
 	}

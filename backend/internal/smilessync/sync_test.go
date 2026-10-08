@@ -98,6 +98,27 @@ func TestSyncAccountStoresTheRotatedSessionBeforeReading(t *testing.T) {
 	})
 }
 
+func TestSyncAccountReloadsTheTokenAfterAcquiringTheGuard(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		account := seedAccount(t, tx, "refresh-1")
+		reader := &fakeReader{balances: []int{150000}}
+		guard := NewSessionGuard()
+
+		// Both callers hold the same pre-rotation account snapshot. The second call must
+		// use the token persisted by the first, or Auth0 revokes the token family.
+		if err := SyncAccount(context.Background(), tx, reader, guard, account, syncNow()); err != nil {
+			t.Fatalf("first round: %v", err)
+		}
+		if err := SyncAccount(context.Background(), tx, reader, guard, account, syncNow()); err != nil {
+			t.Fatalf("second round: %v", err)
+		}
+		if len(reader.refreshTokens) != 2 || reader.refreshTokens[0] != "refresh-1" ||
+			reader.refreshTokens[1] != "refresh-1-rotacionado" {
+			t.Fatalf("refresh inputs = %v, want successive tokens", reader.refreshTokens)
+		}
+	})
+}
+
 func TestSyncAccountSkipsTheStatementWhenTheBalanceHasNotMoved(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		account := seedAccount(t, tx, "refresh-1")

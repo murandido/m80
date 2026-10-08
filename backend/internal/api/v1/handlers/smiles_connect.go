@@ -354,6 +354,9 @@ func (h *SmilesConnectHandler) sendClientError(w http.ResponseWriter, r *http.Re
 	case errors.Is(err, smiles.ErrUnavailable), errors.Is(err, smiles.ErrHostsUnavailable):
 		utils.SendError(w, r, http.StatusServiceUnavailable,
 			"A Smiles não respondeu agora. Tente de novo em instantes.")
+	case errors.Is(err, smiles.ErrAccessBlocked):
+		utils.SendError(w, r, http.StatusServiceUnavailable,
+			"A Smiles recusou o acesso HTTP deste servidor. Verifique a saída de rede antes de tentar de novo.")
 	case errors.Is(err, smiles.ErrInvalidCredentials):
 		utils.SendError(w, r, http.StatusUnprocessableEntity,
 			"A Smiles recusou o login salvo na conta: "+err.Error())

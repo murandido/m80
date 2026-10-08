@@ -56,8 +56,13 @@ func SyncAccount(ctx context.Context, db *gorm.DB, reader Reader, guard *Session
 		return fmt.Errorf("smilessync: loading state: %w", err)
 	}
 
-	// account.SmilesRefreshToken comes back decrypted from the AfterFind hook.
-	refreshToken := deref(account.SmilesRefreshToken)
+	// The caller may have loaded this account before waiting for the guard. Another round
+	// can rotate its refresh token while we wait, so read the current value under the lock.
+	var current data.Account
+	if err := db.Select("id", "smiles_refresh_token").First(&current, "id = ?", account.ID).Error; err != nil {
+		return fmt.Errorf("smilessync: reloading session: %w", err)
+	}
+	refreshToken := deref(current.SmilesRefreshToken)
 	if refreshToken == "" {
 		// Not connected: nothing to read. Left pending for the connect flow to fill.
 		return recordPending(db, state)
