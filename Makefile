@@ -1,4 +1,4 @@
-.PHONY: dev front back-up back-down back-logs clean db-backup db-backup-list db-restore
+.PHONY: dev front back-up back-down back-logs clean db-backup db-backup-list db-restore ext-dev ext-build
 
 # LOCAL DEVELOPMENT (DOCKER-FIRST)
 
@@ -44,6 +44,15 @@ db-backup-list:
 db-restore:
 	@test -n "$(FILE)" || { echo "Uso: make db-restore FILE=<caminho do dump> [MODE=overwrite]"; exit 1; }
 	@PROFILE=$(PROFILE) backend/scripts/db-restore.sh $(if $(filter overwrite,$(MODE)),--overwrite,) $(FILE)
+
+# BROWSER EXTENSION (WXT)
+# Dev build with hot reload, written to extension/.output/chrome-mv3-dev
+ext-dev:
+	cd extension && pnpm install && pnpm dev
+
+# Production builds for both browsers, in extension/.output/{chrome,firefox}-mv3
+ext-build:
+	cd extension && pnpm install && pnpm test && pnpm build && pnpm build:firefox
 
 # UTILS
 # Clears caches and builds (does not delete Docker volumes to avoid data loss)

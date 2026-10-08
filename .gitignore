@@ -70,3 +70,8 @@ deploy/.deploy-state
 # already covers .env files, and being last it overrode the !.env.sample
 # exception - silently, since the two tracked samples survive on being tracked.
 .vercel
+
+# Browser extension (WXT / pnpm)
+extension/node_modules/
+extension/.output/
+extension/.wxt/
