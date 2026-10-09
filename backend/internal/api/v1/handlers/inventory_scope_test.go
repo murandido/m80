@@ -130,3 +130,27 @@ func TestScopeClosingFiltersBatchLinesAndFees(t *testing.T) {
 		t.Errorf("fee settlements: want none involving A, got %+v", got.FeeSettlements)
 	}
 }
+
+// The calculation's terms follow the settlements: a restricted caller sees only the parts
+// its agencies pay or receive, and the agency totals of the batches it keeps.
+func TestScopeClosingFiltersSettlementParts(t *testing.T) {
+	closing := inventory.Closing{
+		Batches: []inventory.BatchResult{{
+			BatchID: "mine", FundingAgencyID: "A",
+			Consumers: []inventory.Consumer{{AgencyID: "A", Points: 10}, {AgencyID: "B", Points: 20}},
+		}},
+		Parts: []inventory.SettlementPart{
+			{Kind: inventory.PartCost, PayerID: "B", PayeeID: "A", AmountCents: 100},
+			{Kind: inventory.PartCost, PayerID: "C", PayeeID: "B", AmountCents: 70},
+		},
+	}
+
+	got := scopeClosing(closing, access.AgencyScope{IDs: []string{"A"}})
+
+	if len(got.Parts) != 1 || got.Parts[0].PayerID != "B" {
+		t.Errorf("parts: want only the one A takes part in, got %+v", got.Parts)
+	}
+	if len(got.Agencies) != 1 || got.Agencies[0].AgencyID != "A" || got.Agencies[0].Points != 10 {
+		t.Errorf("agencies: want only A's 10 points, got %+v", got.Agencies)
+	}
+}

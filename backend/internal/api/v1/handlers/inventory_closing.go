@@ -86,6 +86,8 @@ func (h *InventoryClosingHandler) GetInventoryClosing(w http.ResponseWriter, r *
 	// Netted across accounts, the same way ReadClosing nets across batches: one transfer
 	// per pair of agencies, not one per account per batch.
 	var pointSettlements, feeSettlements []inventory.Settlement
+	var accountParts [][]inventory.SettlementPart
+	var accountAgencies []inventory.BatchResult
 
 	// The panel's own figure, and what somebody last read off the airline's page. Gathered
 	// for the whole report in one go, after the recompute below has had its say on the
@@ -135,12 +137,18 @@ func (h *InventoryClosingHandler) GetInventoryClosing(w http.ResponseWriter, r *
 		data.Totals.RedemptionFeeSavedCents += closing.RedemptionFeeSavedCents
 		pointSettlements = append(pointSettlements, closing.Settlements...)
 		feeSettlements = append(feeSettlements, closing.FeeSettlements...)
+		accountParts = append(accountParts, closing.Parts)
+		// SummariseAgencies adds consumers up across batches; each account's agency totals
+		// are handed to it as one batch's worth, to add them up across accounts.
+		accountAgencies = append(accountAgencies, inventory.BatchResult{Consumers: closing.Agencies})
 	}
 
 	data.Totals.ProfitCents = data.Totals.RevenueCents - data.Totals.CostCents
 	data.Totals.Settlements = settlementResponses(inventory.NetSettlements(pointSettlements), names)
 	data.Totals.FeeSettlements = settlementResponses(inventory.NetSettlements(feeSettlements), names)
 	data.Totals.TotalSettlements = settlementResponses(inventory.NetSettlements(pointSettlements, feeSettlements), names)
+	data.Totals.Parts = partResponses(inventory.MergeParts(accountParts...), names)
+	data.Totals.Agencies = consumerResponses(inventory.SummariseAgencies(accountAgencies), names)
 
 	utils.SendJSON(w, r, http.StatusOK, "Fechamento calculado com sucesso", data)
 }
@@ -224,6 +232,8 @@ func toClosingResponse(
 		RedemptionFeeSavedCents: closing.RedemptionFeeSavedCents,
 		FeeSettlements:          settlementResponses(closing.FeeSettlements, names),
 		TotalSettlements:        settlementResponses(closing.TotalSettlements, names),
+		Agencies:                consumerResponses(closing.Agencies, names),
+		Parts:                   partResponses(closing.Parts, names),
 	}
 
 	for _, batch := range closing.Batches {
@@ -246,6 +256,7 @@ func toClosingResponse(
 			FeeSettlements:          settlementResponses(batch.FeeSettlements, names),
 			TotalSettlements:        settlementResponses(batch.TotalSettlements, names),
 			Lines:                   make([]schemas.InventoryBatchLineResponse, 0, len(batch.Lines)),
+			Parts:                   partResponses(batch.Parts, names),
 		}
 
 		if label, ok := labels[batch.BatchID]; ok {
@@ -257,16 +268,7 @@ func toClosingResponse(
 			}
 		}
 
-		for _, consumer := range batch.Consumers {
-			line.Consumers = append(line.Consumers, schemas.InventoryConsumerResponse{
-				AgencyID:     consumer.AgencyID,
-				AgencyName:   nameOf(names, consumer.AgencyID),
-				Points:       consumer.Points,
-				CostCents:    consumer.CostCents,
-				RevenueCents: consumer.RevenueCents,
-				ProfitCents:  consumer.ProfitCents,
-			})
-		}
+		line.Consumers = append(line.Consumers, consumerResponses(batch.Consumers, names)...)
 		for _, slice := range batch.Lines {
 			line.Lines = append(line.Lines, schemas.InventoryBatchLineResponse{
 				IssuanceID:              slice.IssuanceID,
@@ -372,6 +374,46 @@ func (h *InventoryClosingHandler) accountLabels(accountIDs []string) (map[string
 	return labels, nil
 }
 
+// consumerResponses maps agency activity, never returning nil.
+func consumerResponses(consumers []inventory.Consumer, names map[string]string) []schemas.InventoryConsumerResponse {
+	responses := make([]schemas.InventoryConsumerResponse, 0, len(consumers))
+	for _, consumer := range consumers {
+		responses = append(responses, schemas.InventoryConsumerResponse{
+			AgencyID:                consumer.AgencyID,
+			AgencyName:              nameOf(names, consumer.AgencyID),
+			Points:                  consumer.Points,
+			CostCents:               consumer.CostCents,
+			RevenueCents:            consumer.RevenueCents,
+			ProfitCents:             consumer.ProfitCents,
+			RedemptionFeeSavedCents: consumer.RedemptionFeeSavedCents,
+		})
+	}
+	return responses
+}
+
+// partResponses maps settlement parts, never returning nil. A mixed percent becomes null:
+// there is no single figure to print, and the screen says "parte" instead.
+func partResponses(parts []inventory.SettlementPart, names map[string]string) []schemas.InventorySettlementPartResponse {
+	responses := make([]schemas.InventorySettlementPartResponse, 0, len(parts))
+	for _, part := range parts {
+		response := schemas.InventorySettlementPartResponse{
+			Kind:            part.Kind,
+			PayerAgencyID:   part.PayerID,
+			PayerAgencyName: nameOf(names, part.PayerID),
+			PayeeAgencyID:   part.PayeeID,
+			PayeeAgencyName: nameOf(names, part.PayeeID),
+			BaseCents:       part.BaseCents,
+			AmountCents:     part.AmountCents,
+		}
+		if part.Percent != inventory.MixedPercent {
+			percent := part.Percent
+			response.Percent = &percent
+		}
+		responses = append(responses, response)
+	}
+	return responses
+}
+
 // settlementResponses maps a list of settlements, never returning nil so the JSON carries
 // an empty list rather than null.
 func settlementResponses(settlements []inventory.Settlement, names map[string]string) []schemas.InventorySettlementResponse {
@@ -425,6 +467,16 @@ func scopeClosing(closing inventory.Closing, scope access.AgencyScope) inventory
 		return kept
 	}
 
+	involvedParts := func(parts []inventory.SettlementPart) []inventory.SettlementPart {
+		kept := make([]inventory.SettlementPart, 0, len(parts))
+		for _, part := range parts {
+			if scope.Allows(part.PayerID) || scope.Allows(part.PayeeID) {
+				kept = append(kept, part)
+			}
+		}
+		return kept
+	}
+
 	batches := make([]inventory.BatchResult, 0, len(closing.Batches))
 	closing.CostCents, closing.RevenueCents, closing.RedemptionFeeSavedCents = 0, 0, 0
 	for _, batch := range closing.Batches {
@@ -450,6 +502,7 @@ func scopeClosing(closing inventory.Closing, scope access.AgencyScope) inventory
 		batch.Settlements = involved(batch.Settlements)
 		batch.FeeSettlements = involved(batch.FeeSettlements)
 		batch.TotalSettlements = involved(batch.TotalSettlements)
+		batch.Parts = involvedParts(batch.Parts)
 		batches = append(batches, batch)
 		closing.CostCents += batch.ChargedCents
 		closing.RevenueCents += batch.RevenueCents
@@ -460,5 +513,9 @@ func scopeClosing(closing inventory.Closing, scope access.AgencyScope) inventory
 	closing.Settlements = involved(closing.Settlements)
 	closing.FeeSettlements = involved(closing.FeeSettlements)
 	closing.TotalSettlements = involved(closing.TotalSettlements)
+	closing.Parts = involvedParts(closing.Parts)
+	// The agency totals are added up again from the kept batches, whose consumers are
+	// already narrowed to the caller's agencies.
+	closing.Agencies = inventory.SummariseAgencies(closing.Batches)
 	return closing
 }

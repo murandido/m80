@@ -21,7 +21,9 @@ import {
 import type {
   InventoryBatchResult,
   InventoryClosing,
+  InventoryConsumer,
   InventorySettlement,
+  InventorySettlementPart,
 } from "@/schemas/inventory"
 
 interface Props {
@@ -93,44 +95,159 @@ function SettlementList({
   )
 }
 
-// The settlement in its three parts: what the points owe, what the saved redemption fee
-// owes, and the two together - the figure actually transferred. On an account that saved no
-// fee the first and last are the same, so only the total is shown.
-function SettlementBreakdown({
-  points,
-  fees,
-  total,
-  feeSavedCents,
-}: {
-  points: InventorySettlement[]
-  fees: InventorySettlement[]
-  total: InventorySettlement[]
-  feeSavedCents: number
-}) {
-  if (feeSavedCents === 0 && fees.length === 0) {
-    return <SettlementList settlements={total} />
+// How one term of a settlement reads in the calculation. The payer is always named, because
+// the sign of the line depends on who owes it.
+function partLabel(part: InventorySettlementPart): string {
+  const payer = part.payer_agency_name ?? "?"
+  const payee = part.payee_agency_name ?? "?"
+  const base = formatCurrencyBRL(part.base_cents)
+  // A percent the batches disagreed on has no single figure to print.
+  const share =
+    part.percent === null || part.percent === undefined
+      ? "Parte"
+      : `${part.percent}%`
+  switch (part.kind) {
+    case "cost":
+      return `Custo dos pontos que a ${payer} usou dos lotes da ${payee}`
+    case "profit_share":
+      return `${share} do lucro da ${payer} (${base})`
+    case "fee_share":
+      return `${share} da taxa de resgate economizada pela ${payer} (${base})`
   }
+}
+
+const partOrder = { cost: 0, profit_share: 1, fee_share: 2 } as const
+
+// The settlement as a sum anyone can check: each agency's activity, every term with its sign,
+// and who passes what to whom at the end. The terms are the ones the settlement was added up
+// from, so they reach the total to the centavo.
+function SettlementCalculation({
+  agencies,
+  parts,
+  settlements,
+}: {
+  agencies: InventoryConsumer[]
+  parts: InventorySettlementPart[]
+  settlements: InventorySettlement[]
+}) {
+  const showFees = agencies.some(
+    (agency) => agency.redemption_fee_saved_cents !== 0,
+  )
+
   return (
-    <div className="flex flex-col gap-1.5">
-      <div>
-        <p className="text-xs text-slate-500">Acerto dos pontos</p>
-        <SettlementList settlements={points} />
-      </div>
-      <div>
-        <p className="text-xs text-slate-500">
-          Acerto das taxas de resgate{" "}
-          <span className="text-slate-400">
-            (sobre {formatCurrencyBRL(feeSavedCents)} economizados)
-          </span>
-        </p>
-        <SettlementList settlements={fees} />
-      </div>
-      <div>
-        <p className="text-xs font-medium text-slate-600 dark:text-slate-300">
-          Acerto total
-        </p>
-        <SettlementList settlements={total} />
-      </div>
+    <div className="flex flex-col gap-4">
+      {agencies.length > 0 && (
+        <table className="w-full max-w-3xl text-sm">
+          <thead>
+            <tr className="text-left text-xs tracking-wide text-slate-500 uppercase">
+              <th className="py-1 pr-4 font-medium">Agência</th>
+              <th className="py-1 pr-4 text-right font-medium">
+                Pontos emitidos
+              </th>
+              <th className="py-1 pr-4 text-right font-medium">
+                Lucro nos pontos
+              </th>
+              {showFees && (
+                <th className="py-1 text-right font-medium">
+                  Taxa de resgate economizada
+                </th>
+              )}
+            </tr>
+          </thead>
+          <tbody>
+            {agencies.map((agency) => (
+              <tr key={agency.agency_id}>
+                <td className="py-1 pr-4 font-medium">
+                  {agency.agency_name ?? "?"}
+                </td>
+                <td className="py-1 pr-4 text-right tabular-nums">
+                  {formatPoints(agency.points)}
+                </td>
+                <td
+                  className={`py-1 pr-4 text-right tabular-nums ${moneyTone(agency.profit_cents)}`}
+                >
+                  {formatCurrencyBRL(agency.profit_cents)}
+                </td>
+                {showFees && (
+                  <td
+                    className={`py-1 text-right tabular-nums ${moneyTone(agency.redemption_fee_saved_cents)}`}
+                  >
+                    {formatCurrencyBRL(agency.redemption_fee_saved_cents)}
+                  </td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {settlements.length === 0 ? (
+        <p className="text-sm text-slate-500">Nada a acertar.</p>
+      ) : (
+        settlements.map((settlement) => {
+          const debtor = settlement.agency_id
+          const creditor = settlement.to_agency_id
+          const terms = parts
+            .filter(
+              (part) =>
+                (part.payer_agency_id === debtor &&
+                  part.payee_agency_id === creditor) ||
+                (part.payer_agency_id === creditor &&
+                  part.payee_agency_id === debtor),
+            )
+            .sort((a, b) => partOrder[a.kind] - partOrder[b.kind])
+          return (
+            <div key={debtor + creditor} className="max-w-3xl">
+              {terms.length > 0 && (
+                <>
+                  <p className="mb-1 text-xs font-medium tracking-wide text-slate-500 uppercase">
+                    Cálculo
+                  </p>
+                  <table className="w-full text-sm">
+                    <tbody>
+                      {terms.map((part, index) => {
+                        const owedByDebtor = part.payer_agency_id === debtor
+                        return (
+                          <tr key={`${part.kind}-${part.payer_agency_id}`}>
+                            <td className="w-5 py-0.5 text-slate-500">
+                              {index === 0 && owedByDebtor
+                                ? ""
+                                : owedByDebtor
+                                  ? "+"
+                                  : "−"}
+                            </td>
+                            <td className="py-0.5 pr-4 text-slate-700 dark:text-slate-300">
+                              {partLabel(part)}
+                            </td>
+                            <td className="py-0.5 text-right tabular-nums">
+                              {formatCurrencyBRL(part.amount_cents)}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </>
+              )}
+              <p
+                className={`text-base ${terms.length > 0 ? "mt-1 border-t border-slate-300 pt-2 dark:border-slate-600" : ""}`}
+              >
+                <span className="font-semibold">
+                  {settlement.agency_name ?? "?"}
+                </span>
+                <span className="text-slate-500"> repassa </span>
+                <span className="font-semibold text-amber-800 tabular-nums dark:text-amber-300">
+                  {formatCurrencyBRL(settlement.amount_cents)}
+                </span>
+                <span className="text-slate-500"> para </span>
+                <span className="font-semibold">
+                  {settlement.to_agency_name ?? "?"}
+                </span>
+              </p>
+            </div>
+          )
+        })
+      )}
     </div>
   )
 }
@@ -144,7 +261,8 @@ function BatchLines({ batch }: { batch: InventoryBatchResult }) {
   for (const line of batch.lines) {
     feeByIssuance.set(
       line.issuance_id,
-      (feeByIssuance.get(line.issuance_id) ?? 0) + line.redemption_fee_saved_cents,
+      (feeByIssuance.get(line.issuance_id) ?? 0) +
+        line.redemption_fee_saved_cents,
     )
   }
   const withFee = [...feeByIssuance.values()].filter((fee) => fee !== 0).length
@@ -227,11 +345,10 @@ function BatchLines({ batch }: { batch: InventoryBatchResult }) {
           </tfoot>
         </table>
       )}
-      <SettlementBreakdown
-        points={batch.settlements}
-        fees={batch.fee_settlements}
-        total={batch.total_settlements}
-        feeSavedCents={batch.redemption_fee_saved_cents}
+      <SettlementCalculation
+        agencies={batch.consumers}
+        parts={batch.parts}
+        settlements={batch.total_settlements}
       />
     </div>
   )
@@ -555,11 +672,10 @@ export function InventoryClosingPanel({ closing, startsOn, endsOn }: Props) {
               <p className="text-xs font-medium tracking-wide text-slate-500 uppercase">
                 Acerto do período
               </p>
-              <SettlementBreakdown
-                points={entry.settlements}
-                fees={entry.fee_settlements}
-                total={entry.total_settlements}
-                feeSavedCents={entry.redemption_fee_saved_cents}
+              <SettlementCalculation
+                agencies={entry.agencies}
+                parts={entry.parts}
+                settlements={entry.total_settlements}
               />
             </footer>
           )}
@@ -594,11 +710,10 @@ export function InventoryClosingPanel({ closing, startsOn, endsOn }: Props) {
           {(closing.totals.total_settlements.length > 0 ||
             closing.totals.fee_settlements.length > 0) && (
             <footer className="flex flex-col gap-1 border-t bg-amber-50/60 px-4 py-3 text-base dark:bg-amber-950/20">
-              <SettlementBreakdown
-                points={closing.totals.settlements}
-                fees={closing.totals.fee_settlements}
-                total={closing.totals.total_settlements}
-                feeSavedCents={closing.totals.redemption_fee_saved_cents}
+              <SettlementCalculation
+                agencies={closing.totals.agencies}
+                parts={closing.totals.parts}
+                settlements={closing.totals.total_settlements}
               />
             </footer>
           )}

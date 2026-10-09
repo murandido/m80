@@ -61,6 +61,11 @@ type Closing struct {
 	RedemptionFeeSavedCents int
 	FeeSettlements          []Settlement
 	TotalSettlements        []Settlement
+
+	// Agencies is each agency's activity across the period's batches, and Parts the terms
+	// of the settlement merged across them: what the screen shows as the calculation.
+	Agencies []Consumer
+	Parts    []SettlementPart
 }
 
 // Close a period and you settle these figures. ReadClosing computes them without freezing
@@ -120,6 +125,12 @@ func ReadClosing(db *gorm.DB, accountID string, startsOn, endsOn time.Time) (Clo
 	}
 
 	closing.ProfitCents = closing.RevenueCents - closing.CostCents
+	closing.Agencies = SummariseAgencies(closing.Batches)
+	batchParts := make([][]SettlementPart, 0, len(closing.Batches))
+	for _, batch := range closing.Batches {
+		batchParts = append(batchParts, batch.Parts)
+	}
+	closing.Parts = MergeParts(batchParts...)
 	closing.Settlements = NetSettlements(pointSettlements)
 	closing.FeeSettlements = NetSettlements(feeSettlements)
 	closing.TotalSettlements = NetSettlements(pointSettlements, feeSettlements)

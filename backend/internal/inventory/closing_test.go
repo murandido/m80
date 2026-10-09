@@ -291,3 +291,49 @@ func TestReadClosingGivesTheFeeBackWithARefund(t *testing.T) {
 		}
 	})
 }
+
+// The period's parts, merged across batches, add up to the total settlement - the
+// calculation the screen shows has to arrive at the figure that is paid.
+func TestReadClosingPartsAddUpToTheTotalSettlement(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		f := seedFixture(t, tx)
+		other := seedAgency(t, tx)
+		for _, batch := range []data.PointBatch{
+			seedBatch(t, tx, f, "2026-09-01", 30000, 30000),
+			seedBatch(t, tx, f, "2026-09-02", 100000, 100000),
+		} {
+			if err := tx.Model(&batch).Update("profit_share_percent", 50).Error; err != nil {
+				t.Fatalf("setting the split: %v", err)
+			}
+		}
+		theirs := seedIssuance(t, tx, f, "2026-09-10", 40000)
+		if err := tx.Model(&theirs).Updates(map[string]any{
+			"agency_id": other.ID, "redemption_fee_saved_cents": 8000,
+		}).Error; err != nil {
+			t.Fatalf("setting the booking: %v", err)
+		}
+		mine := seedIssuance(t, tx, f, "2026-09-11", 20000)
+		if err := tx.Model(&mine).Update("redemption_fee_saved_cents", 3000).Error; err != nil {
+			t.Fatalf("setting the booking: %v", err)
+		}
+
+		if err := Recompute(tx, f.account.ID); err != nil {
+			t.Fatalf("Recompute: %v", err)
+		}
+		closing, err := ReadClosing(tx, f.account.ID, day("2026-09-01"), day("2026-09-30"))
+		if err != nil {
+			t.Fatalf("ReadClosing: %v", err)
+		}
+
+		if len(closing.TotalSettlements) != 1 {
+			t.Fatalf("total = %+v, want one line", closing.TotalSettlements)
+		}
+		total := closing.TotalSettlements[0]
+		if got := signedSum(closing.Parts, total.AgencyID, total.ToAgencyID); got != total.AmountCents {
+			t.Errorf("parts add up to %d, want the total %d", got, total.AmountCents)
+		}
+		if len(closing.Agencies) != 2 {
+			t.Errorf("agencies = %+v, want both", closing.Agencies)
+		}
+	})
+}

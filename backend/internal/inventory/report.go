@@ -86,6 +86,98 @@ type BatchResult struct {
 	// Lines are the period's slices on this batch, in date order, so the screen can list the
 	// bookings and refunds behind each figure.
 	Lines []Slice
+
+	// Parts are the terms the settlements above are added up from, one per term per pair of
+	// agencies, so the screen can show the calculation and not only its result.
+	Parts []SettlementPart
+}
+
+// The kinds of term a settlement is made of.
+const (
+	// PartCost is the cost of the points an agency used from a batch another agency paid for.
+	PartCost = "cost"
+	// PartProfitShare is the share of an agency's profit on the points that belongs to the
+	// other side.
+	PartProfitShare = "profit_share"
+	// PartFeeShare is the share of the redemption fee an agency saved that belongs to the
+	// other side.
+	PartFeeShare = "fee_share"
+)
+
+// MixedPercent marks a merged part whose batches did not all use the same percent, so no
+// single percent describes it.
+const MixedPercent = -1
+
+// SettlementPart is one term of a settlement: Payer owes Payee AmountCents, which is
+// Percent% of BaseCents (the payer's own cost, profit or saved fee). AmountCents is exactly
+// the value the settlement was summed from, rounding included, so the parts of a pair always
+// add up to its settlement to the centavo.
+type SettlementPart struct {
+	Kind        string
+	PayerID     string
+	PayeeID     string
+	BaseCents   int
+	Percent     int
+	AmountCents int
+}
+
+// MergeParts adds parts of the same kind between the same payer and payee together - across
+// batches, or across accounts - keeping the order they first appeared in.
+func MergeParts(lists ...[]SettlementPart) []SettlementPart {
+	type key struct{ kind, payer, payee string }
+	merged := map[key]*SettlementPart{}
+	order := make([]key, 0)
+
+	for _, list := range lists {
+		for _, part := range list {
+			k := key{kind: part.Kind, payer: part.PayerID, payee: part.PayeeID}
+			existing, seen := merged[k]
+			if !seen {
+				copied := part
+				merged[k] = &copied
+				order = append(order, k)
+				continue
+			}
+			existing.BaseCents += part.BaseCents
+			existing.AmountCents += part.AmountCents
+			if existing.Percent != part.Percent {
+				existing.Percent = MixedPercent
+			}
+		}
+	}
+
+	parts := make([]SettlementPart, 0, len(order))
+	for _, k := range order {
+		parts = append(parts, *merged[k])
+	}
+	return parts
+}
+
+// SummariseAgencies adds each agency's activity up across batches: the points it issued,
+// what they cost, what they sold for, the profit and the redemption fee it saved.
+func SummariseAgencies(batches []BatchResult) []Consumer {
+	byAgency := map[string]*Consumer{}
+	order := make([]string, 0)
+	for _, batch := range batches {
+		for _, consumer := range batch.Consumers {
+			total, seen := byAgency[consumer.AgencyID]
+			if !seen {
+				total = &Consumer{AgencyID: consumer.AgencyID}
+				byAgency[consumer.AgencyID] = total
+				order = append(order, consumer.AgencyID)
+			}
+			total.Points += consumer.Points
+			total.CostCents += consumer.CostCents
+			total.RevenueCents += consumer.RevenueCents
+			total.ProfitCents += consumer.ProfitCents
+			total.RedemptionFeeSavedCents += consumer.RedemptionFeeSavedCents
+		}
+	}
+	summaries := make([]Consumer, 0, len(order))
+	for _, agencyID := range order {
+		summaries = append(summaries, *byAgency[agencyID])
+	}
+	return summaries
 }
 
 // SummariseBatch folds one batch's slices into its closing line.
@@ -178,13 +270,32 @@ func SummariseBatch(batch Batch, fundingAgencyID string, sharePercent int, slice
 			spent, earned, fee = consumer.CostCents, consumer.ProfitCents, consumer.RedemptionFeeSavedCents
 		}
 
-		owed := spent +
-			shareOf(earned, 100-sharePercent) -
-			shareOf(funderProfit, sharePercent)
+		// Each term is computed once and used both for the settlement and as a part, so the
+		// calculation the screen shows is the one that was paid, rounding and all.
+		earnedShare := shareOf(earned, 100-sharePercent)
+		funderShare := shareOf(funderProfit, sharePercent)
+		owed := spent + earnedShare - funderShare
 
 		// The saved fee follows the profit's rule without the cost term: nobody paid for it,
 		// so each side owes the other its share of what it kept.
-		owedFee := shareOf(fee, 100-sharePercent) - shareOf(funderFee, sharePercent)
+		feeShare := shareOf(fee, 100-sharePercent)
+		funderFeeShare := shareOf(funderFee, sharePercent)
+		owedFee := feeShare - funderFeeShare
+
+		addPart := func(kind, payer, payee string, base, percent, amount int) {
+			if amount == 0 {
+				return
+			}
+			result.Parts = append(result.Parts, SettlementPart{
+				Kind: kind, PayerID: payer, PayeeID: payee,
+				BaseCents: base, Percent: percent, AmountCents: amount,
+			})
+		}
+		addPart(PartCost, agencyID, fundingAgencyID, spent, 100, spent)
+		addPart(PartProfitShare, agencyID, fundingAgencyID, earned, 100-sharePercent, earnedShare)
+		addPart(PartProfitShare, fundingAgencyID, agencyID, funderProfit, sharePercent, funderShare)
+		addPart(PartFeeShare, agencyID, fundingAgencyID, fee, 100-sharePercent, feeShare)
+		addPart(PartFeeShare, fundingAgencyID, agencyID, funderFee, sharePercent, funderFeeShare)
 
 		// Nothing spent and nothing earned on either side is not a settlement, it is an
 		// empty line. Dropping it keeps a report from listing agencies with nothing to do

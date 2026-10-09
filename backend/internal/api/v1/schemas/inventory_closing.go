@@ -8,6 +8,24 @@ type InventoryConsumerResponse struct {
 	CostCents    int     `json:"cost_cents"`
 	RevenueCents int     `json:"revenue_cents"`
 	ProfitCents  int     `json:"profit_cents"`
+	// RedemptionFeeSavedCents is the redemption fee this agency's bookings did not pay.
+	RedemptionFeeSavedCents int `json:"redemption_fee_saved_cents"`
+}
+
+// InventorySettlementPartResponse is one term of a settlement: the payer owes the payee
+// amount_cents, which is percent% of base_cents (the payer's own cost, profit or saved fee).
+// Kind is "cost", "profit_share" or "fee_share". Percent is null when the term adds up
+// batches that did not all use the same percent. The parts of a pair add up to its
+// settlement to the centavo.
+type InventorySettlementPartResponse struct {
+	Kind            string  `json:"kind" example:"profit_share"`
+	PayerAgencyID   string  `json:"payer_agency_id"`
+	PayerAgencyName *string `json:"payer_agency_name"`
+	PayeeAgencyID   string  `json:"payee_agency_id"`
+	PayeeAgencyName *string `json:"payee_agency_name"`
+	BaseCents       int     `json:"base_cents" example:"482117"`
+	Percent         *int    `json:"percent" example:"50"`
+	AmountCents     int     `json:"amount_cents" example:"241059"`
 }
 
 // InventorySettlementResponse is one agency owing another. A negative amount is the debt
@@ -54,6 +72,8 @@ type InventoryBatchResultResponse struct {
 	// Lines are the period's bookings and refunds on this batch, in date order, so the
 	// screen can open a batch and show what each figure is made of.
 	Lines []InventoryBatchLineResponse `json:"lines"`
+	// Parts are the terms the batch's settlements are added up from.
+	Parts []InventorySettlementPartResponse `json:"parts"`
 }
 
 // InventoryBatchLineResponse is one booking's (or refund's) slice of a batch. Points and
@@ -108,6 +128,11 @@ type InventoryClosingResponse struct {
 	RedemptionFeeSavedCents int                           `json:"redemption_fee_saved_cents"`
 	FeeSettlements          []InventorySettlementResponse `json:"fee_settlements"`
 	TotalSettlements        []InventorySettlementResponse `json:"total_settlements"`
+
+	// Agencies is each agency's activity in the period, and Parts the terms of the
+	// settlement merged across batches: the calculation behind total_settlements.
+	Agencies []InventoryConsumerResponse       `json:"agencies"`
+	Parts    []InventorySettlementPartResponse `json:"parts"`
 }
 
 // InventoryClosingListResponse is the GET /inventory-closing route response.
@@ -140,4 +165,7 @@ type InventoryClosingTotalsResponse struct {
 	RedemptionFeeSavedCents int                           `json:"redemption_fee_saved_cents"`
 	FeeSettlements          []InventorySettlementResponse `json:"fee_settlements"`
 	TotalSettlements        []InventorySettlementResponse `json:"total_settlements"`
+
+	Agencies []InventoryConsumerResponse       `json:"agencies"`
+	Parts    []InventorySettlementPartResponse `json:"parts"`
 }

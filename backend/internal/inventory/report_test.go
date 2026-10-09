@@ -311,3 +311,72 @@ func TestNetSettlementsDropsAPairThatCancelsOut(t *testing.T) {
 		t.Errorf("got %+v, want nothing", netted)
 	}
 }
+
+// signedSum adds parts up in the direction of a settlement: what the debtor owes counts in,
+// what the creditor owes back counts out.
+func signedSum(parts []SettlementPart, debtor, creditor string) int {
+	total := 0
+	for _, part := range parts {
+		switch {
+		case part.PayerID == debtor && part.PayeeID == creditor:
+			total += part.AmountCents
+		case part.PayerID == creditor && part.PayeeID == debtor:
+			total -= part.AmountCents
+		}
+	}
+	return total
+}
+
+// The parts are the terms the settlement was summed from: on the spreadsheet's ESFERA batch
+// they add back up to its R$ 3.606,40 to the centavo.
+func TestSummariseBatchPartsAddUpToTheSettlement(t *testing.T) {
+	t.Parallel()
+
+	result := SummariseBatch(esferaBatch(), wilmara, 50, esferaSlices(), []string{wilmara, tiago})
+
+	if got := signedSum(result.Parts, tiago, wilmara); got != 360640 {
+		t.Errorf("parts add up to %d, want the settlement's 360640", got)
+	}
+	kinds := map[string]int{}
+	for _, part := range result.Parts {
+		kinds[part.Kind]++
+	}
+	// The cost tiago used, its profit share and wilmara's profit share; no fee on this batch.
+	if kinds[PartCost] != 1 || kinds[PartProfitShare] != 2 || kinds[PartFeeShare] != 0 {
+		t.Errorf("parts = %+v, want one cost and two profit shares", result.Parts)
+	}
+}
+
+// Merging keeps one part per kind and direction, adds the bases and amounts, and stops
+// claiming a percent once the batches disagree on it.
+func TestMergePartsAddsUpAndFlagsAMixedPercent(t *testing.T) {
+	t.Parallel()
+
+	merged := MergeParts(
+		[]SettlementPart{{Kind: PartProfitShare, PayerID: tiago, PayeeID: wilmara, BaseCents: 1000, Percent: 50, AmountCents: 500}},
+		[]SettlementPart{{Kind: PartProfitShare, PayerID: tiago, PayeeID: wilmara, BaseCents: 2000, Percent: 30, AmountCents: 1400}},
+		[]SettlementPart{{Kind: PartCost, PayerID: tiago, PayeeID: wilmara, BaseCents: 700, Percent: 100, AmountCents: 700}},
+	)
+
+	if len(merged) != 2 {
+		t.Fatalf("got %d parts, want 2: %+v", len(merged), merged)
+	}
+	share := merged[0]
+	if share.BaseCents != 3000 || share.AmountCents != 1900 || share.Percent != MixedPercent {
+		t.Errorf("merged share = %+v, want base 3000, amount 1900, mixed percent", share)
+	}
+}
+
+// Each agency's activity is added up across batches.
+func TestSummariseAgenciesAddsConsumersAcrossBatches(t *testing.T) {
+	t.Parallel()
+
+	summaries := SummariseAgencies([]BatchResult{
+		{Consumers: []Consumer{{AgencyID: tiago, Points: 10, ProfitCents: 100, RedemptionFeeSavedCents: 7}}},
+		{Consumers: []Consumer{{AgencyID: tiago, Points: 5, ProfitCents: 50}, {AgencyID: wilmara, Points: 1}}},
+	})
+
+	if len(summaries) != 2 || summaries[0].Points != 15 || summaries[0].ProfitCents != 150 || summaries[0].RedemptionFeeSavedCents != 7 {
+		t.Errorf("summaries = %+v, want tiago 15 points, 150 profit, 7 fee", summaries)
+	}
+}

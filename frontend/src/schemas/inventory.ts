@@ -66,9 +66,44 @@ const consumerSchema = z.object({
   cost_cents: z.number(),
   revenue_cents: z.number(),
   profit_cents: z.number(),
+  redemption_fee_saved_cents: z
+    .number()
+    .nullish()
+    .transform((value) => value ?? 0),
 })
 
 export type InventoryConsumer = z.infer<typeof consumerSchema>
+
+// One term of a settlement: the payer owes the payee amount_cents, which is percent% of
+// base_cents (the payer's own cost, profit or saved fee). Percent is null when the term adds
+// up batches that used different percents. The parts of a pair add up to its settlement.
+const settlementPartSchema = z.object({
+  kind: z.enum(["cost", "profit_share", "fee_share"]),
+  payer_agency_id: z.string(),
+  payer_agency_name: z.string().nullish(),
+  payee_agency_id: z.string(),
+  payee_agency_name: z.string().nullish(),
+  base_cents: z.number(),
+  percent: z.number().nullish(),
+  amount_cents: z.number(),
+})
+
+export type InventorySettlementPart = z.infer<typeof settlementPartSchema>
+
+// The calculation behind a settlement arrived after it, so it is tolerated as absent: an
+// older API leaves the screen showing the result without the working.
+const calculationFields = {
+  parts: z
+    .array(settlementPartSchema)
+    .nullish()
+    .transform((value) => value ?? []),
+}
+const agencyFields = {
+  agencies: z
+    .array(consumerSchema)
+    .nullish()
+    .transform((value) => value ?? []),
+}
 
 // One booking's (or refund's) slice of a batch, listed when the batch is opened on the
 // closing. Points and money are negative on a refund.
@@ -138,6 +173,7 @@ const batchResultSchema = z
       .array(batchLineSchema)
       .nullish()
       .transform((value) => value ?? []),
+    ...calculationFields,
   })
   .transform(withTotal)
 
@@ -170,6 +206,8 @@ const accountClosingSchema = z
     profit_cents: z.number(),
     settlements: z.array(settlementSchema),
     ...feeFields,
+    ...calculationFields,
+    ...agencyFields,
   })
   .transform(withTotal)
 
@@ -185,6 +223,8 @@ export const inventoryClosingSchema = z.object({
       pending_points: z.number(),
       settlements: z.array(settlementSchema),
       ...feeFields,
+      ...calculationFields,
+      ...agencyFields,
     })
     .transform(withTotal),
 })
