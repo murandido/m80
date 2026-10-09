@@ -230,3 +230,84 @@ func TestSummariseBatchIgnoresOtherBatchesSlices(t *testing.T) {
 		t.Errorf("consumed = %d points, want only esfera's 651200", result.ConsumedPoints)
 	}
 }
+
+// A Diamante account's saved redemption fee is split by the batch's percent, like the
+// profit but without the cost term: TIAGO kept R$ 300 of fees on a WILMARA batch and
+// WILMARA kept R$ 100, so at half each TIAGO owes 150 - 50 = R$ 100. The points
+// settlement is left exactly as it was.
+func TestSummariseBatchSplitsTheRedemptionFeeSavedByTheSamePercent(t *testing.T) {
+	t.Parallel()
+
+	slices := []Slice{
+		{BatchID: "b", AgencyID: tiago, Points: 10000, CostCents: 10000, RevenueCents: 15000, RedemptionFeeSavedCents: 30000, ProgramLocator: "TTT111", OccurredOn: day("2026-09-10")},
+		{BatchID: "b", AgencyID: wilmara, Points: 10000, CostCents: 10000, RevenueCents: 15000, RedemptionFeeSavedCents: 10000, ProgramLocator: "WWW111", OccurredOn: day("2026-09-05")},
+	}
+	batch := Batch{ID: "b", Points: 20000, CostCents: 20000}
+
+	result := SummariseBatch(batch, wilmara, 50, slices, []string{wilmara, tiago})
+
+	if result.RedemptionFeeSavedCents != 40000 {
+		t.Errorf("fee saved = %d, want 40000", result.RedemptionFeeSavedCents)
+	}
+	// Points: tiago spent 10000, made 5000, wilmara made 5000 -> 10000 + 2500 - 2500.
+	if len(result.Settlements) != 1 || result.Settlements[0].AmountCents != 10000 {
+		t.Fatalf("points settlement = %+v, want tiago owing 10000", result.Settlements)
+	}
+	if len(result.FeeSettlements) != 1 || result.FeeSettlements[0].AgencyID != tiago || result.FeeSettlements[0].AmountCents != 10000 {
+		t.Fatalf("fee settlement = %+v, want tiago owing 10000", result.FeeSettlements)
+	}
+	if len(result.TotalSettlements) != 1 || result.TotalSettlements[0].AgencyID != tiago ||
+		result.TotalSettlements[0].ToAgencyID != wilmara || result.TotalSettlements[0].AmountCents != 20000 {
+		t.Fatalf("total settlement = %+v, want tiago owing wilmara 20000", result.TotalSettlements)
+	}
+	// The lines come back in date order, whatever order the slices arrived in.
+	if len(result.Lines) != 2 || result.Lines[0].ProgramLocator != "WWW111" {
+		t.Errorf("lines = %+v, want both, earliest first", result.Lines)
+	}
+}
+
+// With a percent other than half, each side owes its partner that share of what it kept.
+func TestSummariseBatchSplitsTheFeeByAPercentOtherThanHalf(t *testing.T) {
+	t.Parallel()
+
+	slices := []Slice{
+		{BatchID: "b", AgencyID: tiago, Points: 1000, CostCents: 1000, RevenueCents: 1000, RedemptionFeeSavedCents: 10000},
+	}
+	result := SummariseBatch(Batch{ID: "b", Points: 1000, CostCents: 1000}, wilmara, 30, slices, []string{wilmara, tiago})
+
+	// tiago keeps 30% of its own fee and owes wilmara the other 70%.
+	if len(result.FeeSettlements) != 1 || result.FeeSettlements[0].AmountCents != 7000 {
+		t.Fatalf("fee settlement = %+v, want tiago owing 7000", result.FeeSettlements)
+	}
+}
+
+// "A owes B -100" and "B owes A 100" are one debt: netting reports each pair once, positive,
+// in the direction it runs - the two same-direction lines the Smiles closing used to show.
+func TestNetSettlementsMergesBothDirectionsOfAPair(t *testing.T) {
+	t.Parallel()
+
+	netted := NetSettlements(
+		[]Settlement{{AgencyID: tiago, ToAgencyID: wilmara, AmountCents: -85499}},
+		[]Settlement{{AgencyID: wilmara, ToAgencyID: tiago, AmountCents: 1151376}},
+	)
+
+	if len(netted) != 1 {
+		t.Fatalf("got %d lines, want 1: %+v", len(netted), netted)
+	}
+	if netted[0].AgencyID != wilmara || netted[0].ToAgencyID != tiago || netted[0].AmountCents != 85499+1151376 {
+		t.Errorf("netted = %+v, want wilmara owing tiago %d", netted[0], 85499+1151376)
+	}
+}
+
+// A pair that nets to nothing has nothing to transfer, and no line.
+func TestNetSettlementsDropsAPairThatCancelsOut(t *testing.T) {
+	t.Parallel()
+
+	netted := NetSettlements([]Settlement{
+		{AgencyID: tiago, ToAgencyID: wilmara, AmountCents: 500},
+		{AgencyID: wilmara, ToAgencyID: tiago, AmountCents: 500},
+	})
+	if len(netted) != 0 {
+		t.Errorf("got %+v, want nothing", netted)
+	}
+}

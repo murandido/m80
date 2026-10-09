@@ -101,3 +101,32 @@ func TestScopeClosing_KeepsOnlyTheCallersSide(t *testing.T) {
 		t.Error("dev: the closing must come back untouched")
 	}
 }
+
+// A restricted caller opening a batch sees only its own agencies' bookings, and the fee
+// totals are summed again from the batches it keeps.
+func TestScopeClosingFiltersBatchLinesAndFees(t *testing.T) {
+	closing := inventory.Closing{
+		Batches: []inventory.BatchResult{
+			{
+				BatchID: "mine", FundingAgencyID: "A", RedemptionFeeSavedCents: 300,
+				Lines:          []inventory.Slice{{AgencyID: "A", ProgramLocator: "AAA111"}, {AgencyID: "B", ProgramLocator: "BBB222"}},
+				FeeSettlements: []inventory.Settlement{{AgencyID: "B", ToAgencyID: "A", AmountCents: 10}},
+			},
+			{BatchID: "theirs", FundingAgencyID: "B", RedemptionFeeSavedCents: 900},
+		},
+		RedemptionFeeSavedCents: 1200,
+		FeeSettlements:          []inventory.Settlement{{AgencyID: "C", ToAgencyID: "B", AmountCents: 70}},
+	}
+
+	got := scopeClosing(closing, access.AgencyScope{IDs: []string{"A"}})
+
+	if lines := got.Batches[0].Lines; len(lines) != 1 || lines[0].ProgramLocator != "AAA111" {
+		t.Errorf("lines: want only A's booking, got %+v", lines)
+	}
+	if got.RedemptionFeeSavedCents != 300 {
+		t.Errorf("fee: want 300 from the kept batch, got %d", got.RedemptionFeeSavedCents)
+	}
+	if len(got.FeeSettlements) != 0 {
+		t.Errorf("fee settlements: want none involving A, got %+v", got.FeeSettlements)
+	}
+}

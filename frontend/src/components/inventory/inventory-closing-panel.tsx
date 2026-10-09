@@ -1,15 +1,28 @@
 "use client"
 
-import { useTransition } from "react"
+import { Fragment, useState, useTransition } from "react"
 import { toast } from "sonner"
-import { AlertTriangle, Lock, LockOpen } from "lucide-react"
+import {
+  AlertTriangle,
+  ChevronDown,
+  ChevronRight,
+  Lock,
+  LockOpen,
+} from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { applyPaddedThousandsMask } from "@/lib/points"
 import { formatCurrencyBRL } from "@/lib/currency"
-import { closeInventoryPeriodAction, reopenInventoryPeriodAction } from "@/actions/inventory"
-import type { InventoryClosing, InventorySettlement } from "@/schemas/inventory"
+import {
+  closeInventoryPeriodAction,
+  reopenInventoryPeriodAction,
+} from "@/actions/inventory"
+import type {
+  InventoryBatchResult,
+  InventoryClosing,
+  InventorySettlement,
+} from "@/schemas/inventory"
 
 interface Props {
   closing: InventoryClosing | null
@@ -54,7 +67,7 @@ function Settlement({ settlement }: { settlement: InventorySettlement }) {
     <span className="whitespace-nowrap">
       <span className="font-medium">{payer}</span>
       <span className="text-slate-500"> paga </span>
-      <span className="font-semibold tabular-nums text-amber-800 dark:text-amber-300">
+      <span className="font-semibold text-amber-800 tabular-nums dark:text-amber-300">
         {formatCurrencyBRL(amount)}
       </span>
       <span className="text-slate-500"> para </span>
@@ -63,8 +76,181 @@ function Settlement({ settlement }: { settlement: InventorySettlement }) {
   )
 }
 
+function SettlementList({
+  settlements,
+}: {
+  settlements: InventorySettlement[]
+}) {
+  if (settlements.length === 0) return <span className="text-slate-400">—</span>
+  return (
+    <>
+      {settlements.map((settlement) => (
+        <div key={settlement.agency_id + settlement.to_agency_id}>
+          <Settlement settlement={settlement} />
+        </div>
+      ))}
+    </>
+  )
+}
+
+// The settlement in its three parts: what the points owe, what the saved redemption fee
+// owes, and the two together - the figure actually transferred. On an account that saved no
+// fee the first and last are the same, so only the total is shown.
+function SettlementBreakdown({
+  points,
+  fees,
+  total,
+  feeSavedCents,
+}: {
+  points: InventorySettlement[]
+  fees: InventorySettlement[]
+  total: InventorySettlement[]
+  feeSavedCents: number
+}) {
+  if (feeSavedCents === 0 && fees.length === 0) {
+    return <SettlementList settlements={total} />
+  }
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div>
+        <p className="text-xs text-slate-500">Acerto dos pontos</p>
+        <SettlementList settlements={points} />
+      </div>
+      <div>
+        <p className="text-xs text-slate-500">
+          Acerto das taxas de resgate{" "}
+          <span className="text-slate-400">
+            (sobre {formatCurrencyBRL(feeSavedCents)} economizados)
+          </span>
+        </p>
+        <SettlementList settlements={fees} />
+      </div>
+      <div>
+        <p className="text-xs font-medium text-slate-600 dark:text-slate-300">
+          Acerto total
+        </p>
+        <SettlementList settlements={total} />
+      </div>
+    </div>
+  )
+}
+
+// What a batch is made of in the period: every booking and refund that drew on it, with the
+// redemption fee each one saved, and the fee subtotal the fee settlement is computed from.
+function BatchLines({ batch }: { batch: InventoryBatchResult }) {
+  // Counted per booking, net of its refunds: a booking and its reversal are two lines but one
+  // emission, and a fully refunded one kept no fee at all.
+  const feeByIssuance = new Map<string, number>()
+  for (const line of batch.lines) {
+    feeByIssuance.set(
+      line.issuance_id,
+      (feeByIssuance.get(line.issuance_id) ?? 0) + line.redemption_fee_saved_cents,
+    )
+  }
+  const withFee = [...feeByIssuance.values()].filter((fee) => fee !== 0).length
+  return (
+    <div className="flex flex-col gap-3 bg-slate-50/70 px-4 py-3 dark:bg-slate-900/30">
+      {batch.lines.length === 0 ? (
+        <p className="text-sm text-slate-500">
+          Nenhuma emissão deste lote está visível para você.
+        </p>
+      ) : (
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-left tracking-wide text-slate-500 uppercase">
+              <th className="py-1 pr-3 font-medium">Data</th>
+              <th className="py-1 pr-3 font-medium">Localizador</th>
+              <th className="py-1 pr-3 font-medium">Agência</th>
+              <th className="py-1 pr-3 text-right font-medium">Pontos</th>
+              <th className="py-1 pr-3 text-right font-medium">Custo</th>
+              <th className="py-1 pr-3 text-right font-medium">Venda</th>
+              <th className="py-1 pr-3 text-right font-medium">Lucro</th>
+              <th className="py-1 text-right font-medium">Taxa de resgate</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+            {batch.lines.map((line, index) => (
+              <tr key={`${line.issuance_id}-${index}`}>
+                <td className="py-1 pr-3 tabular-nums">
+                  {line.occurred_on.split("-").reverse().join("/")}
+                </td>
+                <td className="py-1 pr-3 font-medium">
+                  {line.program_locator}
+                  {line.points < 0 && (
+                    <span className="ml-1 font-normal text-red-700 dark:text-red-400">
+                      reembolso
+                    </span>
+                  )}
+                </td>
+                <td className="py-1 pr-3">{line.agency_name ?? "?"}</td>
+                <td
+                  className={`py-1 pr-3 text-right tabular-nums ${line.points < 0 ? "text-red-700 dark:text-red-400" : ""}`}
+                >
+                  {formatPoints(line.points)}
+                </td>
+                <td className="py-1 pr-3 text-right text-amber-800 tabular-nums dark:text-amber-300">
+                  {formatCurrencyBRL(line.cost_cents)}
+                </td>
+                <td className="py-1 pr-3 text-right tabular-nums">
+                  {formatCurrencyBRL(line.revenue_cents)}
+                </td>
+                <td
+                  className={`py-1 pr-3 text-right tabular-nums ${moneyTone(line.profit_cents)}`}
+                >
+                  {formatCurrencyBRL(line.profit_cents)}
+                </td>
+                <td
+                  className={`py-1 text-right tabular-nums ${moneyTone(line.redemption_fee_saved_cents)}`}
+                >
+                  {line.redemption_fee_saved_cents === 0
+                    ? "—"
+                    : formatCurrencyBRL(line.redemption_fee_saved_cents)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr className="border-t font-medium">
+              <td
+                colSpan={7}
+                className="py-1.5 pr-3 text-right text-slate-600 dark:text-slate-300"
+              >
+                Subtotal das taxas de resgate (
+                {withFee === 1 ? "1 emissão" : `${withFee} emissões`})
+              </td>
+              <td
+                className={`py-1.5 text-right tabular-nums ${moneyTone(batch.redemption_fee_saved_cents)}`}
+              >
+                {formatCurrencyBRL(batch.redemption_fee_saved_cents)}
+              </td>
+            </tr>
+          </tfoot>
+        </table>
+      )}
+      <SettlementBreakdown
+        points={batch.settlements}
+        fees={batch.fee_settlements}
+        total={batch.total_settlements}
+        feeSavedCents={batch.redemption_fee_saved_cents}
+      />
+    </div>
+  )
+}
+
 export function InventoryClosingPanel({ closing, startsOn, endsOn }: Props) {
   const [pending, startTransition] = useTransition()
+  // Which batches are open, keyed by account and batch so the same batch id can never
+  // collide across two accounts on one screen.
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+
+  function toggle(key: string) {
+    setExpanded((current) => {
+      const next = new Set(current)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
 
   if (!closing) {
     return (
@@ -78,7 +264,11 @@ export function InventoryClosingPanel({ closing, startsOn, endsOn }: Props) {
 
   function close(accountId: string) {
     startTransition(async () => {
-      const result = await closeInventoryPeriodAction(accountId, startsOn, endsOn)
+      const result = await closeInventoryPeriodAction(
+        accountId,
+        startsOn,
+        endsOn,
+      )
       if ("error" in result) {
         toast.error(result.error)
         return
@@ -94,7 +284,9 @@ export function InventoryClosingPanel({ closing, startsOn, endsOn }: Props) {
         toast.error(result.error)
         return
       }
-      toast.success("Período reaberto. O custeio volta a seguir os lançamentos.")
+      toast.success(
+        "Período reaberto. O custeio volta a seguir os lançamentos.",
+      )
     })
   }
 
@@ -107,8 +299,9 @@ export function InventoryClosingPanel({ closing, startsOn, endsOn }: Props) {
             {formatPoints(closing.totals.pending_points)} pontos sem lote
           </AlertTitle>
           <AlertDescription className="text-amber-800 dark:text-amber-300">
-            Foram emitidos pontos que nenhum lote cobre ainda. Lance a compra que faltou e o número
-            some sozinho — as emissões não ficam bloqueadas por isso.
+            Foram emitidos pontos que nenhum lote cobre ainda. Lance a compra
+            que faltou e o número some sozinho — as emissões não ficam
+            bloqueadas por isso.
           </AlertDescription>
         </Alert>
       )}
@@ -140,7 +333,12 @@ export function InventoryClosingPanel({ closing, startsOn, endsOn }: Props) {
                 Reabrir período
               </Button>
             ) : (
-              <Button variant="secondary" size="sm" disabled={pending} onClick={() => close(entry.account_id)}>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={pending}
+                onClick={() => close(entry.account_id)}
+              >
                 <Lock className="size-4" />
                 Fechar período
               </Button>
@@ -154,27 +352,49 @@ export function InventoryClosingPanel({ closing, startsOn, endsOn }: Props) {
                 Rateio indefinido: esta conta tem mais de duas agências
               </AlertTitle>
               <AlertDescription className="text-red-800 dark:text-red-300">
-                O percentual do lote diz como dividir entre duas partes, não entre três. Os valores de
-                acerto abaixo não devem ser usados até o rateio ser declarado por agência.
+                O percentual do lote diz como dividir entre duas partes, não
+                entre três. Os valores de acerto abaixo não devem ser usados até
+                o rateio ser declarado por agência.
               </AlertDescription>
             </Alert>
           )}
 
           {/* Custo and Lucro only: the sale figure was one column of noise between two the
-              eye actually stops on. */}
-          <div className="grid grid-cols-2 divide-x divide-slate-200 border-b bg-slate-50 dark:divide-slate-700 dark:bg-slate-900/40">
+              eye actually stops on. The redemption fee joins them only on an account that
+              saved any - a column of zeros on every other account would be the same noise. */}
+          <div
+            className={`grid divide-x divide-slate-200 border-b bg-slate-50 dark:divide-slate-700 dark:bg-slate-900/40 ${entry.redemption_fee_saved_cents !== 0 ? "grid-cols-3" : "grid-cols-2"}`}
+          >
             <div className="px-4 py-3">
-              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Custo</p>
-              <p className="text-2xl font-semibold tabular-nums text-amber-800 dark:text-amber-300">
+              <p className="text-xs font-medium tracking-wide text-slate-500 uppercase">
+                Custo
+              </p>
+              <p className="text-2xl font-semibold text-amber-800 tabular-nums dark:text-amber-300">
                 {formatCurrencyBRL(entry.cost_cents)}
               </p>
             </div>
             <div className="px-4 py-3">
-              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Lucro</p>
-              <p className={`text-2xl font-semibold tabular-nums ${moneyTone(entry.profit_cents)}`}>
+              <p className="text-xs font-medium tracking-wide text-slate-500 uppercase">
+                Lucro
+              </p>
+              <p
+                className={`text-2xl font-semibold tabular-nums ${moneyTone(entry.profit_cents)}`}
+              >
                 {formatCurrencyBRL(entry.profit_cents)}
               </p>
             </div>
+            {entry.redemption_fee_saved_cents !== 0 && (
+              <div className="px-4 py-3">
+                <p className="text-xs font-medium tracking-wide text-slate-500 uppercase">
+                  Taxa de resgate economizada
+                </p>
+                <p
+                  className={`text-2xl font-semibold tabular-nums ${moneyTone(entry.redemption_fee_saved_cents)}`}
+                >
+                  {formatCurrencyBRL(entry.redemption_fee_saved_cents)}
+                </p>
+              </div>
+            )}
           </div>
 
           {/* The panel's figure against the airline's, which is the only check there is on
@@ -184,11 +404,12 @@ export function InventoryClosingPanel({ closing, startsOn, endsOn }: Props) {
           <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1 border-b bg-slate-50 px-4 py-2 text-sm dark:bg-slate-900/40">
             <span className="text-slate-500">
               Saldo previsto{" "}
-              <span className="font-medium tabular-nums text-slate-700 dark:text-slate-200">
+              <span className="font-medium text-slate-700 tabular-nums dark:text-slate-200">
                 {formatPoints(entry.expected_balance_points)}
               </span>
             </span>
-            {entry.real_balance_points === null || entry.real_balance_points === undefined ? (
+            {entry.real_balance_points === null ||
+            entry.real_balance_points === undefined ? (
               <span className="text-slate-400">
                 Saldo real não conferido — informe na ficha da conta
               </span>
@@ -196,22 +417,33 @@ export function InventoryClosingPanel({ closing, startsOn, endsOn }: Props) {
               <>
                 <span className="text-slate-500">
                   Saldo real{" "}
-                  <span className="font-medium tabular-nums text-slate-700 dark:text-slate-200">
+                  <span className="font-medium text-slate-700 tabular-nums dark:text-slate-200">
                     {formatPoints(entry.real_balance_points)}
                   </span>
                   {entry.real_balance_checked_on && (
                     <span className="text-slate-400">
                       {" "}
-                      em {entry.real_balance_checked_on.split("-").reverse().join("/")}
+                      em{" "}
+                      {entry.real_balance_checked_on
+                        .split("-")
+                        .reverse()
+                        .join("/")}
                     </span>
                   )}
                 </span>
                 {entry.expected_balance_points === entry.real_balance_points ? (
-                  <span className="text-emerald-700 dark:text-emerald-400">Batem.</span>
+                  <span className="text-emerald-700 dark:text-emerald-400">
+                    Batem.
+                  </span>
                 ) : (
                   <span className="text-amber-800 dark:text-amber-300">
                     Diferença de{" "}
-                    {formatPoints(Math.abs(entry.expected_balance_points - entry.real_balance_points))}{" "}
+                    {formatPoints(
+                      Math.abs(
+                        entry.expected_balance_points -
+                          entry.real_balance_points,
+                      ),
+                    )}{" "}
                     pontos.
                   </span>
                 )}
@@ -222,10 +454,13 @@ export function InventoryClosingPanel({ closing, startsOn, endsOn }: Props) {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b bg-slate-100 text-xs uppercase tracking-wide text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                <tr className="border-b bg-slate-100 text-xs tracking-wide text-slate-600 uppercase dark:bg-slate-800 dark:text-slate-300">
                   <th className="px-4 py-2 text-left font-medium">Lote</th>
                   <th className="px-4 py-2 text-right font-medium">Custo</th>
                   <th className="px-4 py-2 text-right font-medium">Lucro</th>
+                  <th className="px-4 py-2 text-right font-medium">
+                    Taxa de resgate
+                  </th>
                   <th className="px-4 py-2 text-right font-medium">Saldo</th>
                   <th className="px-4 py-2 text-left font-medium">Acerto</th>
                 </tr>
@@ -233,60 +468,99 @@ export function InventoryClosingPanel({ closing, startsOn, endsOn }: Props) {
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {entry.batches.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="px-4 py-6 text-center text-slate-500">
+                    <td
+                      colSpan={6}
+                      className="px-4 py-6 text-center text-slate-500"
+                    >
                       Nenhum lote foi consumido neste período.
                     </td>
                   </tr>
                 ) : (
-                  entry.batches.map((batch) => (
-                    <tr key={batch.batch_id} className="hover:bg-slate-50 dark:hover:bg-slate-900/40">
-                      <td className="px-4 py-2">
-                        <span className="font-medium">{batch.origin_name ?? "Saldo de partida"}</span>
-                        <span className="text-slate-500">
-                          {" "}
-                          {batch.acquired_on.split("-").reverse().join("/")}
-                        </span>
-                      </td>
-                      <td className="px-4 py-2 text-right tabular-nums text-amber-800 dark:text-amber-300">
-                        {formatCurrencyBRL(batch.charged_cents)}
-                      </td>
-                      <td
-                        className={`px-4 py-2 text-right font-medium tabular-nums ${moneyTone(batch.profit_cents)}`}
-                      >
-                        {formatCurrencyBRL(batch.profit_cents)}
-                      </td>
-                      {/* Points, not money: no colour, and the grid's own grammar. */}
-                      <td className="px-4 py-2 text-right tabular-nums text-slate-600 dark:text-slate-300">
-                        {formatPoints(batch.remaining_points)}
-                      </td>
-                      <td className="px-4 py-2">
-                        {batch.settlements.length === 0 ? (
-                          <span className="text-slate-400">—</span>
-                        ) : (
-                          batch.settlements.map((settlement) => (
-                            <div key={settlement.agency_id}>
-                              <Settlement settlement={settlement} />
-                            </div>
-                          ))
+                  entry.batches.map((batch) => {
+                    const key = `${entry.account_id}:${batch.batch_id}`
+                    const open = expanded.has(key)
+                    return (
+                      <Fragment key={batch.batch_id}>
+                        <tr
+                          className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-900/40"
+                          onClick={() => toggle(key)}
+                          aria-expanded={open}
+                          title={
+                            open
+                              ? "Esconder as emissões deste lote"
+                              : "Ver as emissões e reembolsos deste lote"
+                          }
+                        >
+                          <td className="px-4 py-2">
+                            {open ? (
+                              <ChevronDown className="mr-1 inline size-4 text-slate-500" />
+                            ) : (
+                              <ChevronRight className="mr-1 inline size-4 text-slate-500" />
+                            )}
+                            <span className="font-medium">
+                              {batch.origin_name ?? "Saldo de partida"}
+                            </span>
+                            <span className="text-slate-500">
+                              {" "}
+                              {batch.acquired_on.split("-").reverse().join("/")}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2 text-right text-amber-800 tabular-nums dark:text-amber-300">
+                            {formatCurrencyBRL(batch.charged_cents)}
+                          </td>
+                          <td
+                            className={`px-4 py-2 text-right font-medium tabular-nums ${moneyTone(batch.profit_cents)}`}
+                          >
+                            {formatCurrencyBRL(batch.profit_cents)}
+                          </td>
+                          <td
+                            className={`px-4 py-2 text-right tabular-nums ${moneyTone(batch.redemption_fee_saved_cents)}`}
+                          >
+                            {batch.redemption_fee_saved_cents === 0
+                              ? "—"
+                              : formatCurrencyBRL(
+                                  batch.redemption_fee_saved_cents,
+                                )}
+                          </td>
+                          {/* Points, not money: no colour, and the grid's own grammar. */}
+                          <td className="px-4 py-2 text-right text-slate-600 tabular-nums dark:text-slate-300">
+                            {formatPoints(batch.remaining_points)}
+                          </td>
+                          {/* The row shows what is actually transferred; the parts are in the
+                          opened batch below. */}
+                          <td className="px-4 py-2">
+                            <SettlementList
+                              settlements={batch.total_settlements}
+                            />
+                          </td>
+                        </tr>
+                        {open && (
+                          <tr>
+                            <td colSpan={6} className="p-0">
+                              <BatchLines batch={batch} />
+                            </td>
+                          </tr>
                         )}
-                      </td>
-                    </tr>
-                  ))
+                      </Fragment>
+                    )
+                  })
                 )}
               </tbody>
             </table>
           </div>
 
-          {entry.settlements.length > 0 && (
-            <footer className="flex flex-col gap-1 border-t bg-amber-50/60 px-4 py-3 dark:bg-amber-950/20">
-              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+          {(entry.total_settlements.length > 0 ||
+            entry.fee_settlements.length > 0) && (
+            <footer className="flex flex-col gap-1 border-t bg-amber-50/60 px-4 py-3 text-base dark:bg-amber-950/20">
+              <p className="text-xs font-medium tracking-wide text-slate-500 uppercase">
                 Acerto do período
               </p>
-              {entry.settlements.map((settlement) => (
-                <p key={settlement.agency_id + settlement.to_agency_id} className="text-base">
-                  <Settlement settlement={settlement} />
-                </p>
-              ))}
+              <SettlementBreakdown
+                points={entry.settlements}
+                fees={entry.fee_settlements}
+                total={entry.total_settlements}
+                feeSavedCents={entry.redemption_fee_saved_cents}
+              />
             </footer>
           )}
         </section>
@@ -294,28 +568,38 @@ export function InventoryClosingPanel({ closing, startsOn, endsOn }: Props) {
 
       {showTotals && (
         <section className="overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700">
-          <header className="bg-[#1F3864] px-4 py-2.5 font-semibold text-white">Consolidado</header>
+          <header className="bg-[#1F3864] px-4 py-2.5 font-semibold text-white">
+            Consolidado
+          </header>
           <div className="grid grid-cols-2 divide-x divide-slate-200 bg-slate-50 dark:divide-slate-700 dark:bg-slate-900/40">
             <div className="px-4 py-3">
-              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Custo</p>
-              <p className="text-2xl font-semibold tabular-nums text-amber-800 dark:text-amber-300">
+              <p className="text-xs font-medium tracking-wide text-slate-500 uppercase">
+                Custo
+              </p>
+              <p className="text-2xl font-semibold text-amber-800 tabular-nums dark:text-amber-300">
                 {formatCurrencyBRL(closing.totals.cost_cents)}
               </p>
             </div>
             <div className="px-4 py-3">
-              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Lucro</p>
-              <p className={`text-2xl font-semibold tabular-nums ${moneyTone(closing.totals.profit_cents)}`}>
+              <p className="text-xs font-medium tracking-wide text-slate-500 uppercase">
+                Lucro
+              </p>
+              <p
+                className={`text-2xl font-semibold tabular-nums ${moneyTone(closing.totals.profit_cents)}`}
+              >
                 {formatCurrencyBRL(closing.totals.profit_cents)}
               </p>
             </div>
           </div>
-          {closing.totals.settlements.length > 0 && (
-            <footer className="flex flex-col gap-1 border-t bg-amber-50/60 px-4 py-3 dark:bg-amber-950/20">
-              {closing.totals.settlements.map((settlement) => (
-                <p key={settlement.agency_id + settlement.to_agency_id} className="text-base">
-                  <Settlement settlement={settlement} />
-                </p>
-              ))}
+          {(closing.totals.total_settlements.length > 0 ||
+            closing.totals.fee_settlements.length > 0) && (
+            <footer className="flex flex-col gap-1 border-t bg-amber-50/60 px-4 py-3 text-base dark:bg-amber-950/20">
+              <SettlementBreakdown
+                points={closing.totals.settlements}
+                fees={closing.totals.fee_settlements}
+                total={closing.totals.total_settlements}
+                feeSavedCents={closing.totals.redemption_fee_saved_cents}
+              />
             </footer>
           )}
         </section>

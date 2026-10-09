@@ -1,5 +1,10 @@
 package inventory
 
+import (
+	"sort"
+	"time"
+)
+
 // This file turns the allocations into the two figures the month is closed on: what each
 // batch earned, and what one agency owes the other for it.
 //
@@ -18,15 +23,28 @@ type Slice struct {
 	Points       int
 	CostCents    int
 	RevenueCents int
+	// RedemptionFeeSavedCents is this slice's part of the redemption fee the booking did not
+	// pay because the account is exempt (Azul's Diamante Unique). The issuing agency still
+	// charged it to the client, so it is a gain on the account like the margin on the points,
+	// and is split by the same percent. Prorated by points like the revenue, so a booking
+	// that drew on two batches leaves part of the saving on each, and a reversal gives its
+	// share back.
+	RedemptionFeeSavedCents int
+
+	// What the screen lists when a batch is opened: which booking or refund this slice is.
+	IssuanceID     string
+	ProgramLocator string
+	OccurredOn     time.Time
 }
 
 // Consumer is one agency's activity against one batch.
 type Consumer struct {
-	AgencyID     string
-	Points       int
-	CostCents    int
-	RevenueCents int
-	ProfitCents  int
+	AgencyID                string
+	Points                  int
+	CostCents               int
+	RevenueCents            int
+	ProfitCents             int
+	RedemptionFeeSavedCents int
 }
 
 // Settlement is one agency owing the batch's funder. A negative amount is the funder
@@ -53,8 +71,21 @@ type BatchResult struct {
 	ProfitCents     int
 	RemainingPoints int
 
-	Consumers   []Consumer
+	// RedemptionFeeSavedCents is the redemption fee saved by every booking on this batch,
+	// kept apart from the profit on the points so the screen can show each on its own.
+	RedemptionFeeSavedCents int
+
+	Consumers []Consumer
+	// Settlements are on the points alone, exactly as the spreadsheet computed them.
 	Settlements []Settlement
+	// FeeSettlements split the redemption fee saved by the same percent, and
+	// TotalSettlements are the two netted per pair of agencies - what is actually paid.
+	FeeSettlements   []Settlement
+	TotalSettlements []Settlement
+
+	// Lines are the period's slices on this batch, in date order, so the screen can list the
+	// bookings and refunds behind each figure.
+	Lines []Slice
 }
 
 // SummariseBatch folds one batch's slices into its closing line.
@@ -103,19 +134,30 @@ func SummariseBatch(batch Batch, fundingAgencyID string, sharePercent int, slice
 		consumer.Points += slice.Points
 		consumer.CostCents += slice.CostCents
 		consumer.RevenueCents += slice.RevenueCents
+		consumer.RedemptionFeeSavedCents += slice.RedemptionFeeSavedCents
 
 		result.ConsumedPoints += slice.Points
 		result.ChargedCents += slice.CostCents
 		result.RevenueCents += slice.RevenueCents
+		result.RedemptionFeeSavedCents += slice.RedemptionFeeSavedCents
+		result.Lines = append(result.Lines, slice)
 	}
+
+	sort.SliceStable(result.Lines, func(i, j int) bool {
+		if !result.Lines[i].OccurredOn.Equal(result.Lines[j].OccurredOn) {
+			return result.Lines[i].OccurredOn.Before(result.Lines[j].OccurredOn)
+		}
+		return result.Lines[i].ProgramLocator < result.Lines[j].ProgramLocator
+	})
 
 	result.ProfitCents = result.RevenueCents - result.ChargedCents
 	result.RemainingPoints = batch.Points - result.ConsumedPoints
 
-	funderProfit := 0
+	funderProfit, funderFee := 0, 0
 	if funder, ok := byAgency[fundingAgencyID]; ok {
 		funder.ProfitCents = funder.RevenueCents - funder.CostCents
 		funderProfit = funder.ProfitCents
+		funderFee = funder.RedemptionFeeSavedCents
 	}
 
 	for _, agencyID := range order {
@@ -131,30 +173,80 @@ func SummariseBatch(batch Batch, fundingAgencyID string, sharePercent int, slice
 			continue
 		}
 
-		spent, earned := 0, 0
+		spent, earned, fee := 0, 0, 0
 		if consumer, ok := byAgency[agencyID]; ok {
-			spent, earned = consumer.CostCents, consumer.ProfitCents
+			spent, earned, fee = consumer.CostCents, consumer.ProfitCents, consumer.RedemptionFeeSavedCents
 		}
 
 		owed := spent +
 			shareOf(earned, 100-sharePercent) -
 			shareOf(funderProfit, sharePercent)
 
+		// The saved fee follows the profit's rule without the cost term: nobody paid for it,
+		// so each side owes the other its share of what it kept.
+		owedFee := shareOf(fee, 100-sharePercent) - shareOf(funderFee, sharePercent)
+
 		// Nothing spent and nothing earned on either side is not a settlement, it is an
 		// empty line. Dropping it keeps a report from listing agencies with nothing to do
 		// with the batch.
-		if owed == 0 {
-			continue
+		if owed != 0 {
+			result.Settlements = append(result.Settlements, Settlement{
+				AgencyID:    agencyID,
+				ToAgencyID:  fundingAgencyID,
+				AmountCents: owed,
+			})
 		}
-
-		result.Settlements = append(result.Settlements, Settlement{
-			AgencyID:    agencyID,
-			ToAgencyID:  fundingAgencyID,
-			AmountCents: owed,
-		})
+		if owedFee != 0 {
+			result.FeeSettlements = append(result.FeeSettlements, Settlement{
+				AgencyID:    agencyID,
+				ToAgencyID:  fundingAgencyID,
+				AmountCents: owedFee,
+			})
+		}
 	}
 
+	result.TotalSettlements = NetSettlements(result.Settlements, result.FeeSettlements)
 	return result
+}
+
+// NetSettlements adds settlements up per pair of agencies, whichever way round each one
+// was written, and reports every pair once, as a positive amount owed in the direction it
+// actually runs.
+//
+// "A owes B -100" and "B owes A 100" are the same debt. Keying on the ordered pair kept them
+// apart, and a period whose batches were funded by both agencies came out as two lines in
+// the same direction that had to be added up by hand.
+func NetSettlements(lists ...[]Settlement) []Settlement {
+	type pair struct{ low, high string }
+	owed := map[pair]int{}
+	order := make([]pair, 0)
+
+	for _, list := range lists {
+		for _, settlement := range list {
+			key := pair{low: settlement.AgencyID, high: settlement.ToAgencyID}
+			amount := settlement.AmountCents
+			if key.high < key.low {
+				key = pair{low: key.high, high: key.low}
+				amount = -amount
+			}
+			if _, seen := owed[key]; !seen {
+				order = append(order, key)
+			}
+			owed[key] += amount
+		}
+	}
+
+	netted := make([]Settlement, 0, len(order))
+	for _, key := range order {
+		amount := owed[key]
+		switch {
+		case amount > 0:
+			netted = append(netted, Settlement{AgencyID: key.low, ToAgencyID: key.high, AmountCents: amount})
+		case amount < 0:
+			netted = append(netted, Settlement{AgencyID: key.high, ToAgencyID: key.low, AmountCents: -amount})
+		}
+	}
+	return netted
 }
 
 // shareOf is percent% of an amount, rounded half away from zero so a share of a loss is

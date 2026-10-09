@@ -85,9 +85,7 @@ func (h *InventoryClosingHandler) GetInventoryClosing(w http.ResponseWriter, r *
 	data := schemas.InventoryClosingDataResponse{Accounts: []schemas.InventoryClosingResponse{}}
 	// Netted across accounts, the same way ReadClosing nets across batches: one transfer
 	// per pair of agencies, not one per account per batch.
-	type pair struct{ from, to string }
-	owed := map[pair]int{}
-	order := make([]pair, 0)
+	var pointSettlements, feeSettlements []inventory.Settlement
 
 	// The panel's own figure, and what somebody last read off the airline's page. Gathered
 	// for the whole report in one go, after the recompute below has had its say on the
@@ -134,22 +132,15 @@ func (h *InventoryClosingHandler) GetInventoryClosing(w http.ResponseWriter, r *
 		data.Totals.CostCents += closing.CostCents
 		data.Totals.RevenueCents += closing.RevenueCents
 		data.Totals.PendingPoints += closing.PendingPoints
-		for _, settlement := range closing.Settlements {
-			key := pair{from: settlement.AgencyID, to: settlement.ToAgencyID}
-			if _, seen := owed[key]; !seen {
-				order = append(order, key)
-			}
-			owed[key] += settlement.AmountCents
-		}
+		data.Totals.RedemptionFeeSavedCents += closing.RedemptionFeeSavedCents
+		pointSettlements = append(pointSettlements, closing.Settlements...)
+		feeSettlements = append(feeSettlements, closing.FeeSettlements...)
 	}
 
 	data.Totals.ProfitCents = data.Totals.RevenueCents - data.Totals.CostCents
-	data.Totals.Settlements = make([]schemas.InventorySettlementResponse, 0, len(order))
-	for _, key := range order {
-		data.Totals.Settlements = append(data.Totals.Settlements, settlementResponse(
-			inventory.Settlement{AgencyID: key.from, ToAgencyID: key.to, AmountCents: owed[key]}, names,
-		))
-	}
+	data.Totals.Settlements = settlementResponses(inventory.NetSettlements(pointSettlements), names)
+	data.Totals.FeeSettlements = settlementResponses(inventory.NetSettlements(feeSettlements), names)
+	data.Totals.TotalSettlements = settlementResponses(inventory.NetSettlements(pointSettlements, feeSettlements), names)
 
 	utils.SendJSON(w, r, http.StatusOK, "Fechamento calculado com sucesso", data)
 }
@@ -228,7 +219,11 @@ func toClosingResponse(
 		CostCents:        closing.CostCents,
 		RevenueCents:     closing.RevenueCents,
 		ProfitCents:      closing.ProfitCents,
-		Settlements:      make([]schemas.InventorySettlementResponse, 0, len(closing.Settlements)),
+		Settlements:      settlementResponses(closing.Settlements, names),
+
+		RedemptionFeeSavedCents: closing.RedemptionFeeSavedCents,
+		FeeSettlements:          settlementResponses(closing.FeeSettlements, names),
+		TotalSettlements:        settlementResponses(closing.TotalSettlements, names),
 	}
 
 	for _, batch := range closing.Batches {
@@ -245,7 +240,12 @@ func toClosingResponse(
 			ProfitCents:        batch.ProfitCents,
 			RemainingPoints:    batch.RemainingPoints,
 			Consumers:          make([]schemas.InventoryConsumerResponse, 0, len(batch.Consumers)),
-			Settlements:        make([]schemas.InventorySettlementResponse, 0, len(batch.Settlements)),
+			Settlements:        settlementResponses(batch.Settlements, names),
+
+			RedemptionFeeSavedCents: batch.RedemptionFeeSavedCents,
+			FeeSettlements:          settlementResponses(batch.FeeSettlements, names),
+			TotalSettlements:        settlementResponses(batch.TotalSettlements, names),
+			Lines:                   make([]schemas.InventoryBatchLineResponse, 0, len(batch.Lines)),
 		}
 
 		if label, ok := labels[batch.BatchID]; ok {
@@ -267,15 +267,22 @@ func toClosingResponse(
 				ProfitCents:  consumer.ProfitCents,
 			})
 		}
-		for _, settlement := range batch.Settlements {
-			line.Settlements = append(line.Settlements, settlementResponse(settlement, names))
+		for _, slice := range batch.Lines {
+			line.Lines = append(line.Lines, schemas.InventoryBatchLineResponse{
+				IssuanceID:              slice.IssuanceID,
+				ProgramLocator:          slice.ProgramLocator,
+				OccurredOn:              slice.OccurredOn.Format(batchDateLayout),
+				AgencyID:                slice.AgencyID,
+				AgencyName:              nameOf(names, slice.AgencyID),
+				Points:                  slice.Points,
+				CostCents:               slice.CostCents,
+				RevenueCents:            slice.RevenueCents,
+				ProfitCents:             slice.RevenueCents - slice.CostCents,
+				RedemptionFeeSavedCents: slice.RedemptionFeeSavedCents,
+			})
 		}
 
 		response.Batches = append(response.Batches, line)
-	}
-
-	for _, settlement := range closing.Settlements {
-		response.Settlements = append(response.Settlements, settlementResponse(settlement, names))
 	}
 
 	if label, ok := accountLabels[closing.AccountID]; ok && label != "" {
@@ -365,6 +372,16 @@ func (h *InventoryClosingHandler) accountLabels(accountIDs []string) (map[string
 	return labels, nil
 }
 
+// settlementResponses maps a list of settlements, never returning nil so the JSON carries
+// an empty list rather than null.
+func settlementResponses(settlements []inventory.Settlement, names map[string]string) []schemas.InventorySettlementResponse {
+	responses := make([]schemas.InventorySettlementResponse, 0, len(settlements))
+	for _, settlement := range settlements {
+		responses = append(responses, settlementResponse(settlement, names))
+	}
+	return responses
+}
+
 func settlementResponse(settlement inventory.Settlement, names map[string]string) schemas.InventorySettlementResponse {
 	return schemas.InventorySettlementResponse{
 		AgencyID:     settlement.AgencyID,
@@ -409,7 +426,7 @@ func scopeClosing(closing inventory.Closing, scope access.AgencyScope) inventory
 	}
 
 	batches := make([]inventory.BatchResult, 0, len(closing.Batches))
-	closing.CostCents, closing.RevenueCents = 0, 0
+	closing.CostCents, closing.RevenueCents, closing.RedemptionFeeSavedCents = 0, 0, 0
 	for _, batch := range closing.Batches {
 		if !scope.Allows(batch.FundingAgencyID) {
 			continue
@@ -421,13 +438,27 @@ func scopeClosing(closing inventory.Closing, scope access.AgencyScope) inventory
 			}
 		}
 		batch.Consumers = consumers
+		// The bookings listed under a batch follow the same rule as its consumers: another
+		// agency's locators and sale prices are not this caller's to read.
+		lines := make([]inventory.Slice, 0, len(batch.Lines))
+		for _, line := range batch.Lines {
+			if scope.Allows(line.AgencyID) {
+				lines = append(lines, line)
+			}
+		}
+		batch.Lines = lines
 		batch.Settlements = involved(batch.Settlements)
+		batch.FeeSettlements = involved(batch.FeeSettlements)
+		batch.TotalSettlements = involved(batch.TotalSettlements)
 		batches = append(batches, batch)
 		closing.CostCents += batch.ChargedCents
 		closing.RevenueCents += batch.RevenueCents
+		closing.RedemptionFeeSavedCents += batch.RedemptionFeeSavedCents
 	}
 	closing.Batches = batches
 	closing.ProfitCents = closing.RevenueCents - closing.CostCents
 	closing.Settlements = involved(closing.Settlements)
+	closing.FeeSettlements = involved(closing.FeeSettlements)
+	closing.TotalSettlements = involved(closing.TotalSettlements)
 	return closing
 }

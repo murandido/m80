@@ -39,8 +39,36 @@ type InventoryBatchResultResponse struct {
 	ProfitCents     int `json:"profit_cents"`
 	RemainingPoints int `json:"remaining_points"`
 
-	Consumers   []InventoryConsumerResponse   `json:"consumers"`
+	Consumers []InventoryConsumerResponse `json:"consumers"`
+	// Settlements are on the points alone - unchanged from before the redemption fee
+	// entered the closing.
 	Settlements []InventorySettlementResponse `json:"settlements"`
+
+	// RedemptionFeeSavedCents is the redemption fee this batch's bookings did not pay
+	// because the account is exempt (Azul's Diamante Unique). FeeSettlements split it by
+	// the batch's percent, and TotalSettlements net that with the points: the three parts
+	// of the settlement the screen shows.
+	RedemptionFeeSavedCents int                           `json:"redemption_fee_saved_cents" example:"27960"`
+	FeeSettlements          []InventorySettlementResponse `json:"fee_settlements"`
+	TotalSettlements        []InventorySettlementResponse `json:"total_settlements"`
+	// Lines are the period's bookings and refunds on this batch, in date order, so the
+	// screen can open a batch and show what each figure is made of.
+	Lines []InventoryBatchLineResponse `json:"lines"`
+}
+
+// InventoryBatchLineResponse is one booking's (or refund's) slice of a batch. Points and
+// money are negative on a refund.
+type InventoryBatchLineResponse struct {
+	IssuanceID              string  `json:"issuance_id"`
+	ProgramLocator          string  `json:"program_locator" example:"ALCTKJ"`
+	OccurredOn              string  `json:"occurred_on" example:"2026-09-24"`
+	AgencyID                string  `json:"agency_id"`
+	AgencyName              *string `json:"agency_name"`
+	Points                  int     `json:"points" example:"68000"`
+	CostCents               int     `json:"cost_cents"`
+	RevenueCents            int     `json:"revenue_cents"`
+	ProfitCents             int     `json:"profit_cents"`
+	RedemptionFeeSavedCents int     `json:"redemption_fee_saved_cents"`
 }
 
 // InventoryClosingResponse is one account's closing report.
@@ -75,6 +103,11 @@ type InventoryClosingResponse struct {
 	RevenueCents int                           `json:"revenue_cents"`
 	ProfitCents  int                           `json:"profit_cents"`
 	Settlements  []InventorySettlementResponse `json:"settlements"`
+
+	// The period's redemption fee saved, its split, and the split netted with the points.
+	RedemptionFeeSavedCents int                           `json:"redemption_fee_saved_cents"`
+	FeeSettlements          []InventorySettlementResponse `json:"fee_settlements"`
+	TotalSettlements        []InventorySettlementResponse `json:"total_settlements"`
 }
 
 // InventoryClosingListResponse is the GET /inventory-closing route response.
@@ -103,4 +136,8 @@ type InventoryClosingTotalsResponse struct {
 	ProfitCents   int                           `json:"profit_cents"`
 	PendingPoints int                           `json:"pending_points"`
 	Settlements   []InventorySettlementResponse `json:"settlements"`
+
+	RedemptionFeeSavedCents int                           `json:"redemption_fee_saved_cents"`
+	FeeSettlements          []InventorySettlementResponse `json:"fee_settlements"`
+	TotalSettlements        []InventorySettlementResponse `json:"total_settlements"`
 }

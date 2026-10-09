@@ -70,65 +70,123 @@ const consumerSchema = z.object({
 
 export type InventoryConsumer = z.infer<typeof consumerSchema>
 
-const batchResultSchema = z.object({
-  batch_id: z.string(),
-  origin_name: z.string().nullish(),
-  acquired_on: z.string(),
-  funding_agency_id: z.string(),
-  funding_agency_name: z.string().nullish(),
-  profit_share_percent: z.number(),
-  settled_at: z.string().nullish(),
+// One booking's (or refund's) slice of a batch, listed when the batch is opened on the
+// closing. Points and money are negative on a refund.
+const batchLineSchema = z.object({
+  issuance_id: z.string(),
+  program_locator: z.string(),
+  occurred_on: z.string(),
+  agency_id: z.string(),
+  agency_name: z.string().nullish(),
   points: z.number(),
   cost_cents: z.number(),
-  consumed_points: z.number(),
-  charged_cents: z.number(),
   revenue_cents: z.number(),
   profit_cents: z.number(),
-  remaining_points: z.number(),
-  consumers: z.array(consumerSchema),
-  settlements: z.array(settlementSchema),
+  redemption_fee_saved_cents: z.number(),
 })
+
+export type InventoryBatchLine = z.infer<typeof batchLineSchema>
+
+// The redemption fee fields arrived after the rest, so every one of them is tolerated as
+// absent: a panel left open across a deploy keeps rendering against the older API. Absent
+// reads as no fee saved, and the total settlement falls back to the points settlement,
+// which is what it was then.
+const feeFields = {
+  redemption_fee_saved_cents: z
+    .number()
+    .nullish()
+    .transform((value) => value ?? 0),
+  fee_settlements: z
+    .array(settlementSchema)
+    .nullish()
+    .transform((value) => value ?? []),
+  total_settlements: z.array(settlementSchema).nullish(),
+}
+
+function withTotal<
+  T extends {
+    settlements: InventorySettlement[]
+    total_settlements?: InventorySettlement[] | null
+  },
+>(value: T): T & { total_settlements: InventorySettlement[] } {
+  return {
+    ...value,
+    total_settlements: value.total_settlements ?? value.settlements,
+  }
+}
+
+const batchResultSchema = z
+  .object({
+    batch_id: z.string(),
+    origin_name: z.string().nullish(),
+    acquired_on: z.string(),
+    funding_agency_id: z.string(),
+    funding_agency_name: z.string().nullish(),
+    profit_share_percent: z.number(),
+    settled_at: z.string().nullish(),
+    points: z.number(),
+    cost_cents: z.number(),
+    consumed_points: z.number(),
+    charged_cents: z.number(),
+    revenue_cents: z.number(),
+    profit_cents: z.number(),
+    remaining_points: z.number(),
+    consumers: z.array(consumerSchema),
+    settlements: z.array(settlementSchema),
+    ...feeFields,
+    lines: z
+      .array(batchLineSchema)
+      .nullish()
+      .transform((value) => value ?? []),
+  })
+  .transform(withTotal)
 
 export type InventoryBatchResult = z.infer<typeof batchResultSchema>
 
-const accountClosingSchema = z.object({
-  account_id: z.string(),
-  account_label: z.string().nullish(),
-  starts_on: z.string(),
-  ends_on: z.string(),
-  closed: z.boolean(),
-  closed_period_id: z.string().nullish(),
-  // More than two partner agencies: the single frozen percent cannot express how the
-  // profit divides, so the settlement figures are not to be acted on. Absent reads as
-  // false, the case for every account today.
-  unsupported_split: z
-    .boolean()
-    .nullish()
-    .transform((value) => value ?? false),
-  batches: z.array(batchResultSchema),
-  pending_points: z.number(),
-  // What the costing says the account still has, and what somebody last read off the
-  // airline's page - the only place a real balance exists. Real is null until checked.
-  expected_balance_points: z.number(),
-  real_balance_points: z.number().nullish(),
-  real_balance_checked_on: z.string().nullish(),
-  cost_cents: z.number(),
-  revenue_cents: z.number(),
-  profit_cents: z.number(),
-  settlements: z.array(settlementSchema),
-})
+const accountClosingSchema = z
+  .object({
+    account_id: z.string(),
+    account_label: z.string().nullish(),
+    starts_on: z.string(),
+    ends_on: z.string(),
+    closed: z.boolean(),
+    closed_period_id: z.string().nullish(),
+    // More than two partner agencies: the single frozen percent cannot express how the
+    // profit divides, so the settlement figures are not to be acted on. Absent reads as
+    // false, the case for every account today.
+    unsupported_split: z
+      .boolean()
+      .nullish()
+      .transform((value) => value ?? false),
+    batches: z.array(batchResultSchema),
+    pending_points: z.number(),
+    // What the costing says the account still has, and what somebody last read off the
+    // airline's page - the only place a real balance exists. Real is null until checked.
+    expected_balance_points: z.number(),
+    real_balance_points: z.number().nullish(),
+    real_balance_checked_on: z.string().nullish(),
+    cost_cents: z.number(),
+    revenue_cents: z.number(),
+    profit_cents: z.number(),
+    settlements: z.array(settlementSchema),
+    ...feeFields,
+  })
+  .transform(withTotal)
 
 export type InventoryAccountClosing = z.infer<typeof accountClosingSchema>
 
 export const inventoryClosingSchema = z.object({
   accounts: z.array(accountClosingSchema),
-  totals: z.object({
-    cost_cents: z.number(),
-    revenue_cents: z.number(),
-    profit_cents: z.number(),
-    pending_points: z.number(),
-    settlements: z.array(settlementSchema),
-  }),
+  totals: z
+    .object({
+      cost_cents: z.number(),
+      revenue_cents: z.number(),
+      profit_cents: z.number(),
+      pending_points: z.number(),
+      settlements: z.array(settlementSchema),
+      ...feeFields,
+    })
+    .transform(withTotal),
 })
 
 export type InventoryClosing = z.infer<typeof inventoryClosingSchema>
@@ -217,7 +275,9 @@ export const statementReconciliationSchema = z.object({
   panel_net_points: z.number(),
 })
 
-export type StatementReconciliation = z.infer<typeof statementReconciliationSchema>
+export type StatementReconciliation = z.infer<
+  typeof statementReconciliationSchema
+>
 
 export const statementReconciliationResponseSchema = z.object({
   success: z.boolean(),
@@ -354,7 +414,9 @@ export const statementLinkedIssuanceSchema = z.object({
   manual: z.boolean(),
 })
 
-export type StatementLinkedIssuance = z.infer<typeof statementLinkedIssuanceSchema>
+export type StatementLinkedIssuance = z.infer<
+  typeof statementLinkedIssuanceSchema
+>
 
 // The point batch (lote) a purchase or accrual line resolves to. manual says whether it was
 // pinned by hand (true) or matched automatically by the batch's recorded credits (false).
