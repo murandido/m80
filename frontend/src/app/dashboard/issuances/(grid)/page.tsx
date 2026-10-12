@@ -10,6 +10,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { getIssuancesSchema } from "@/schemas/issuance"
 import { IssuancesScreen } from "@/components/issuances/issuances-screen"
 import { ListSearchBar } from "@/components/shared/list-search-bar"
+import layout from "@/components/issuances/board/board-layout.module.css"
 
 export const metadata: Metadata = {
   title: "Emissões",
@@ -35,7 +36,9 @@ type FilterState = Record<(typeof FILTER_KEYS)[number], string>
 // sticky-restore set either. A pasted /dashboard/issuances?q=ABC therefore still
 // gets the remembered dimension filters - and the backend ignores date and issuer
 // while a search is active anyway.
-type IssuancesSearchParams = Partial<Record<(typeof FILTER_KEYS)[number], string>> & {
+type IssuancesSearchParams = Partial<
+  Record<(typeof FILTER_KEYS)[number], string>
+> & {
   q?: string
 }
 
@@ -112,7 +115,9 @@ export default async function IssuancesPage({
   // URL that carries nothing else. A bare URL is the exception - useStickyFilters puts
   // the remembered search back into it on the client, and taking it from the cookie
   // here too keeps the first paint from showing the unsearched list for a moment.
-  const isBareUrl = Object.values(requested).every((value) => value === undefined)
+  const isBareUrl = Object.values(requested).every(
+    (value) => value === undefined,
+  )
   const search = (
     requested.q ?? (isBareUrl ? (remembered?.get("q") ?? "") : "")
   ).trim()
@@ -136,41 +141,46 @@ export default async function IssuancesPage({
   )
 
   return (
-    <div className="p-6 sm:p-8">
-      <div className="flex flex-col gap-2 sm:gap-6">
-        {/* The search box sits here, outside <IssuancesGrid>, on purpose: the grid is
-            keyed on the resolved filters and remounts on every filter change, taking
-            the filter bar with it. A text input in that subtree would lose focus each
-            time the debounce fired. As a sibling it survives the remount. */}
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <h1 className="text-lg font-semibold text-slate-800">Emissões</h1>
-          <div className="w-full sm:w-96">
-            <Suspense fallback={<div className="h-14" />}>
-              {/* This list is not paginated - a search returns every match, with
-                  its preloads, straight into the grid. Three characters is an IATA
-                  code; one letter matched most of the table. */}
-              <ListSearchBar placeholder="PNR, passageiro, origem ou destino" minLength={3} />
-            </Suspense>
-          </div>
+    <div className="p-4 sm:p-8">
+      {/* One grid for the whole screen (board-layout.module.css): the title and the search
+          box are rendered here, the rest by the board, and the areas put each in its place.
+          The search box sits here, outside the board, on purpose: the board is keyed on the
+          resolved filters and remounts on every filter change. A text input in that subtree
+          would lose focus each time the debounce fired. As a sibling it survives the remount. */}
+      <div className={layout.layout}>
+        <h1 className={`${layout.title} text-lg font-semibold text-slate-800`}>
+          Emissões
+        </h1>
+        <div className={layout.search}>
+          <Suspense fallback={<div className="h-14" />}>
+            {/* This list is not paginated - a search returns every match, with its
+                preloads, straight into the board. Three characters is an IATA code; one
+                letter matched most of the table. */}
+            <ListSearchBar
+              placeholder="PNR, passageiro, origem ou destino"
+              minLength={3}
+            />
+          </Suspense>
         </div>
 
         {issuances === null ? (
-          // The grid is deliberately not rendered: showing an empty spreadsheet after a
-          // failed load invites the user to retype issuances that already exist.
-          <Alert variant="destructive">
+          // The board is deliberately not rendered: showing it empty after a failed load
+          // invites the user to retype issuances that already exist.
+          <Alert variant="destructive" className={layout.board}>
             <AlertTriangle />
             <AlertTitle>Não foi possível carregar as emissões</AlertTitle>
             <AlertDescription>
-              As emissões já cadastradas não puderam ser lidas do servidor. Recarregue a página —
-              cadastrar agora poderia duplicar emissões existentes.
+              As emissões já cadastradas não puderam ser lidas do servidor.
+              Recarregue a página — cadastrar agora poderia duplicar emissões
+              existentes.
             </AlertDescription>
           </Alert>
         ) : (
           <IssuancesScreen
             // Keyed on the resolved filters so a client-side filter change (router.replace,
-            // which re-renders this Server Component but does not remount the grid) forces a
-            // remount. Without it the grid seeds `rows` from initialIssuances only on first
-            // mount and keeps showing the previous filter's issuances until a full reload.
+            // which re-renders this Server Component but does not remount the board) forces
+            // a remount. Without it the board seeds its rows from initialIssuances only on
+            // first mount and keeps showing the previous filter's issuances.
             key={[...FILTER_KEYS.map((key) => filters[key]), search].join("|")}
             initialIssuances={issuances}
             filterQuery={issuanceQuery.toString()}

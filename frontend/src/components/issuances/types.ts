@@ -25,6 +25,9 @@ export interface IssuanceRow {
   // some day, and a draft carries the one the toolbar is recording on.
   issued_on: string
   main_passenger_name: string | null
+  // The surname typed for the airline's lookup, kept apart from main_passenger_name -
+  // which the sync replaces with the full name. Only the board edits it.
+  passenger_last_name: string | null
   origin_iata_code: string | null
   destination_iata_code: string | null
   points: number | null
@@ -107,6 +110,7 @@ export function issuanceToRow(issuance: Issuance): IssuanceRow {
     flight_date: outboundFlight ? outboundFlight.departure_at.slice(0, 10) : null,
     issued_on: issuance.issued_on,
     main_passenger_name: issuance.main_passenger_name,
+    passenger_last_name: issuance.passenger_last_name ?? null,
     origin_iata_code: issuance.origin_iata_code,
     destination_iata_code: issuance.destination_iata_code,
     points: issuance.points,
@@ -155,6 +159,7 @@ export function makeDraftRow(
     flight_date: null,
     issued_on: issuedOn ?? new Date().toISOString().slice(0, 10),
     main_passenger_name: null,
+    passenger_last_name: null,
     origin_iata_code: null,
     destination_iata_code: null,
     points: null,

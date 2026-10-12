@@ -27,6 +27,10 @@ func RegisterIssuanceRoutes(r chi.Router, db *gorm.DB, broker *events.Broker, bo
 		// export filtered issuances as an .xlsx spreadsheet
 		r.Get("/export", issuanceHandler.GetIssuancesExport)
 
+		// preview a booking at the airline before the issuance exists - the panel's
+		// form asks for the itinerary before the values an issuance needs to be saved
+		r.Post("/lookup", issuanceHandler.LookupIssuanceBooking)
+
 		// Everything addressed by id sits behind the scope check, so a route added to this
 		// group is protected without having to remember it (see RequireIssuanceInScope).
 		r.Route("/{id}", func(r chi.Router) {

@@ -1,11 +1,9 @@
 "use client"
 
 import { createContext, useContext, useMemo, type ReactNode } from "react"
-import { AlertTriangle } from "lucide-react"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import type { GridReferenceData } from "@/components/issuances/grid-context"
-import { IssuancesGrid } from "@/components/issuances/issuances-grid"
-import { IssuancesFilterBar } from "@/components/issuances/issuances-filter-bar"
+import { IssuanceBoardScreen } from "@/components/issuances/board/issuance-board-screen"
+import type { FilterState } from "@/components/issuances/board/board-toolbar"
 import type { Issuance } from "@/schemas/issuance"
 
 // The pickers' reference lists, loaded by the issuances layout rather than by the page.
@@ -31,18 +29,23 @@ export function IssuancesReferenceProvider({
   // stable across filter changes - which the grid's memoized cells rely on.
   const value = useMemo(() => ({ data, failed }), [data, failed])
   return (
-    <IssuancesReferenceContext.Provider value={value}>{children}</IssuancesReferenceContext.Provider>
+    <IssuancesReferenceContext.Provider value={value}>
+      {children}
+    </IssuancesReferenceContext.Provider>
   )
 }
 
 interface IssuancesScreenProps {
   initialIssuances: Issuance[]
   filterQuery: string
-  initialFilters: Parameters<typeof IssuancesFilterBar>[0]["initialFilters"]
+  initialFilters: FilterState
   hasSearch: boolean
   currentUserId: string | null
 }
 
+// The issuances are a board of cards with a side panel (see components/issuances/board/).
+// The spreadsheet's files (issuances-grid.tsx, cells/, the filter bar) are no longer
+// rendered; they stay until the board has settled in production, then go in a cleanup.
 export function IssuancesScreen({
   initialIssuances,
   filterQuery,
@@ -52,41 +55,20 @@ export function IssuancesScreen({
 }: IssuancesScreenProps) {
   const reference = useContext(IssuancesReferenceContext)
   if (!reference) {
-    throw new Error("IssuancesScreen must be rendered inside IssuancesReferenceProvider")
+    throw new Error(
+      "IssuancesScreen must be rendered inside IssuancesReferenceProvider",
+    )
   }
-  const { data, failed } = reference
 
   return (
-    <>
-      {failed && (
-        <Alert>
-          <AlertTriangle />
-          <AlertTitle>Algumas listas não carregaram</AlertTitle>
-          <AlertDescription>
-            Companhias, contas, agências ou emissores podem aparecer incompletos nos campos de
-            seleção. Recarregue a página para tentar de novo.
-          </AlertDescription>
-        </Alert>
-      )}
-
-      <IssuancesGrid
-        filters={
-          <IssuancesFilterBar
-            loyaltyPrograms={data.loyaltyPrograms}
-            airlines={data.airlines}
-            accounts={data.accounts}
-            people={data.people}
-            agencies={data.agencies}
-            users={data.users}
-            initialFilters={initialFilters}
-            hasSearch={hasSearch}
-          />
-        }
-        initialIssuances={initialIssuances}
-        filterQuery={filterQuery}
-        currentUserId={currentUserId}
-        {...data}
-      />
-    </>
+    <IssuanceBoardScreen
+      initialIssuances={initialIssuances}
+      filterQuery={filterQuery}
+      initialFilters={initialFilters}
+      hasSearch={hasSearch}
+      currentUserId={currentUserId}
+      referenceData={reference.data}
+      referenceListsFailed={reference.failed}
+    />
   )
 }
