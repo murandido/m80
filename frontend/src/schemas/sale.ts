@@ -34,6 +34,11 @@ export const saleSchema = z.object({
   // The airline's cancellation fee on a cancelled sale, which the client always pays: it is
   // what the balance of a cancelled sale still counts. Zero on a live sale.
   cancellation_fee_cents: z.number().default(0),
+  // What the payments control set above (positive) or below (negative) the computed price;
+  // amount_cents already includes it. computed_amount_cents is the price without it - absent
+  // on an older API, where there was no adjustment to tell apart.
+  price_adjustment_cents: z.number().default(0),
+  computed_amount_cents: z.number().nullish(),
   // What the ticket's alterations add to the price; zero when it was never altered.
   adjustment_cents: z.number().default(0),
   // Listed because the ticket was altered in the period, not issued there. When the booking
@@ -141,6 +146,9 @@ export const updateSaleSchema = {
     paid: z.boolean().optional(),
     // Same rule as client_id: null (or "") clears it, absent leaves it alone.
     note: z.string().nullable().optional(),
+    // The total the client pays. The server keeps its difference from the computed price,
+    // so sending the computed price back clears the adjustment.
+    amount_cents: z.number().int().nonnegative().optional(),
   }),
   response: z.object({
     success: z.boolean(),

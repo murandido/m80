@@ -16,6 +16,10 @@ type UpdateSaleRequest struct {
 	// Note follows client_id's rules: absent leaves it alone, and an explicit null - or an
 	// empty string - clears it.
 	Note *string `json:"note" validate:"omitempty,max=1000"`
+	// AmountCents sets what the client pays for the sale, in centavos: the total, not the
+	// difference. The server keeps the difference from the computed price, so sending the
+	// computed price back clears it. Refused on a cancelled sale, whose amount is its fee.
+	AmountCents *int `json:"amount_cents" validate:"omitempty,min=0"`
 }
 
 // CreateSalePaymentRequest is the payload for POST /sales/{id}/payments.
@@ -157,6 +161,11 @@ type SaleResponse struct {
 	// client pays: it is what BalanceCents still counts against what was paid. Zero on a
 	// live sale.
 	CancellationFeeCents int `json:"cancellation_fee_cents"`
+	// PriceAdjustmentCents is what the payments control set above (positive) or below
+	// (negative) the computed price; AmountCents already includes it. ComputedAmountCents is
+	// the price without it, so the screen can say what the sale would have been.
+	PriceAdjustmentCents int `json:"price_adjustment_cents"`
+	ComputedAmountCents  int `json:"computed_amount_cents"`
 	// AdjustmentCents is what the ticket's alterations add to the price, zero when it was
 	// never altered. The panel badges an altered sale with it.
 	AdjustmentCents int `json:"adjustment_cents"`

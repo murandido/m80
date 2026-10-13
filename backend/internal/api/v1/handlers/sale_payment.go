@@ -590,6 +590,15 @@ func rebalanceClient(tx *gorm.DB, clientID string) ([]string, error) {
 	return sale.RebalanceClient(tx, clientID)
 }
 
+// saleAmountOf and recalculateSale live out here for the same reason.
+func saleAmountOf(db *gorm.DB, saleID string) (sale.Amount, error) {
+	return sale.AmountOf(db, saleID)
+}
+
+func recalculateSale(tx *gorm.DB, issuanceID string) error {
+	return sale.RecalculateByIssuance(tx, issuanceID)
+}
+
 func optionalText(value *string) *string {
 	if value == nil || *value == "" {
 		return nil

@@ -67,21 +67,26 @@ type Amount struct {
 	// It is what a cancelled sale still owes. Zero on a live sale and on a cancellation with
 	// no fee.
 	CancellationFeeCents int
+	// PriceAdjustmentCents is the part of Cents typed in the payments control on top of (or
+	// below) the computed price - sales.price_adjustment_cents. Zero on a cancelled sale,
+	// whose price is no longer owed.
+	PriceAdjustmentCents int
 }
 
 // AmountOf reads a sale's price from the issuance behind it, alterations included.
 func AmountOf(db *gorm.DB, saleID string) (Amount, error) {
 	var row struct {
-		Points             int
-		ValueOfTheThousand int
-		Taxes              *int
-		AdjustmentCents    int
-		CancelledAt        *string
-		CancellationFee    *int
+		Points               int
+		ValueOfTheThousand   int
+		Taxes                *int
+		AdjustmentCents      int
+		CancelledAt          *string
+		CancellationFee      *int
+		PriceAdjustmentCents int
 	}
 	err := db.Table("sales").
 		Select(`issuances.points, issuances.value_of_the_thousand, issuances.taxes, issuances.cancelled_at,
-			issuances.cancellation_fee,
+			issuances.cancellation_fee, sales.price_adjustment_cents,
 			COALESCE(adjustments.cents, 0) AS adjustment_cents`).
 		Joins("JOIN issuances ON issuances.id = sales.issuance_id").
 		Joins("LEFT JOIN "+AdjustmentCentsJoin+" AS adjustments ON adjustments.issuance_id = issuances.id").
@@ -98,6 +103,10 @@ func AmountOf(db *gorm.DB, saleID string) (Amount, error) {
 	amount := Amount{Cents: cents, Cancelled: row.CancelledAt != nil, AdjustmentCents: row.AdjustmentCents}
 	if amount.Cancelled && row.CancellationFee != nil {
 		amount.CancellationFeeCents = *row.CancellationFee
+	}
+	if !amount.Cancelled {
+		amount.Cents += row.PriceAdjustmentCents
+		amount.PriceAdjustmentCents = row.PriceAdjustmentCents
 	}
 	return amount, nil
 }

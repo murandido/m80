@@ -86,6 +86,8 @@ type saleRow struct {
 	CancelledAt     *time.Time
 	// CancellationFee is the airline's fee on a cancelled ticket, which the client pays.
 	CancellationFee *int
+	// PriceAdjustmentCents is what the payments control set on top of the computed price.
+	PriceAdjustmentCents int
 
 	ClientPaymentCents  int
 	ClientPaymentPaidOn *time.Time
@@ -107,6 +109,7 @@ func saleListQuery(db *gorm.DB) *gorm.DB {
 			sales.client_id,
 			sales.paid,
 			sales.note,
+			sales.price_adjustment_cents,
 			clients.name AS client_name,
 			issuances.program_locator,
 			issuances.main_passenger_name,
@@ -179,6 +182,10 @@ func toSaleResponse(row saleRow) schemas.SaleResponse {
 		clientPaymentPaidOn = &day
 	}
 
+	computed := amount
+	if row.CancelledAt == nil {
+		amount += row.PriceAdjustmentCents
+	}
 	saleAmount := sale.Amount{Cents: amount, Cancelled: row.CancelledAt != nil}
 	if saleAmount.Cancelled && row.CancellationFee != nil {
 		saleAmount.CancellationFeeCents = *row.CancellationFee
@@ -192,6 +199,8 @@ func toSaleResponse(row saleRow) schemas.SaleResponse {
 		AdjustmentCents:      row.AdjustmentCents,
 		BalanceCents:         sale.BalanceCents(saleAmount, row.PaidCents),
 		CancellationFeeCents: saleAmount.CancellationFeeCents,
+		PriceAdjustmentCents: row.PriceAdjustmentCents,
+		ComputedAmountCents:  computed,
 		IssuanceID:           row.IssuanceID,
 		ClientID:             row.ClientID,
 		ClientName:           row.ClientName,
@@ -711,6 +720,25 @@ func (h *SaleHandler) UpdateSale(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// The amount to receive is typed as a total and kept as its difference from the
+	// computed price, so a later correction to the points or the rate moves the total with
+	// it. Typing the computed price back clears the difference.
+	priceChanged := false
+	if req.AmountCents != nil {
+		amount, err := saleAmountOf(h.DB, sale.ID)
+		if err != nil {
+			utils.SendError(w, r, http.StatusInternalServerError, "Failed to update sale: "+err.Error())
+			return
+		}
+		if amount.Cancelled {
+			utils.SendError(w, r, http.StatusUnprocessableEntity, "O valor de uma venda cancelada é a multa de cancelamento")
+			return
+		}
+		computed := amount.Cents - amount.PriceAdjustmentCents
+		updates["price_adjustment_cents"] = *req.AmountCents - computed
+		priceChanged = true
+	}
+
 	if len(updates) == 0 && req.Paid == nil {
 		utils.SendError(w, r, http.StatusBadRequest, "No fields to update")
 		return
@@ -782,6 +810,13 @@ func (h *SaleHandler) UpdateSale(w http.ResponseWriter, r *http.Request) {
 				return err
 			}
 			rebalancedSaleIDs = append(rebalancedSaleIDs, changed...)
+		}
+		// What is owed moved: sales.paid follows, and the client's lump sums are replayed
+		// over the new figure - more to cover, or money freed for the next sale.
+		if priceChanged {
+			if err := recalculateSale(tx, sale.IssuanceID); err != nil {
+				return err
+			}
 		}
 		// paid is no longer a column an operator sets: it is the sum of the sale's
 		// payments. A client still sending it gets that intent translated into the

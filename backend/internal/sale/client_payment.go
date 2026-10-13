@@ -92,18 +92,19 @@ type openSale struct {
 // with no fee is left out entirely.
 func openSalesOf(tx *gorm.DB, clientID string) ([]openSale, error) {
 	var rows []struct {
-		ID                 string
-		Points             int
-		ValueOfTheThousand int
-		Taxes              *int
-		AdjustmentCents    int
-		CancelledAt        *string
-		CancellationFee    *int
-		PaidCents          int
+		ID                   string
+		Points               int
+		ValueOfTheThousand   int
+		Taxes                *int
+		AdjustmentCents      int
+		CancelledAt          *string
+		CancellationFee      *int
+		PriceAdjustmentCents int
+		PaidCents            int
 	}
 	err := tx.Table("sales").
 		Select(`sales.id, issuances.points, issuances.value_of_the_thousand, issuances.taxes,
-			issuances.cancelled_at, issuances.cancellation_fee,
+			issuances.cancelled_at, issuances.cancellation_fee, sales.price_adjustment_cents,
 			COALESCE(adjustments.cents, 0) AS adjustment_cents,
 			COALESCE((SELECT SUM(amount_cents) FROM sale_payments
 				WHERE sale_id = sales.id AND client_payment_id IS NULL), 0) AS paid_cents`).
@@ -129,6 +130,9 @@ func openSalesOf(tx *gorm.DB, clientID string) ([]openSale, error) {
 		amount := Amount{Cents: cents, Cancelled: row.CancelledAt != nil}
 		if amount.Cancelled && row.CancellationFee != nil {
 			amount.CancellationFeeCents = *row.CancellationFee
+		}
+		if !amount.Cancelled {
+			amount.Cents += row.PriceAdjustmentCents
 		}
 		if balance := BalanceCents(amount, row.PaidCents); balance > 0 {
 			open = append(open, openSale{ID: row.ID, Balance: balance})

@@ -16,9 +16,12 @@ type Sale struct {
 	Paid       bool      `gorm:"not null;default:false" json:"paid"`
 	// Note is the payments screen's free-text line about this sale's money. Nil is
 	// "nobody wrote anything"; the handler stores an emptied note as nil too.
-	Note      *string   `gorm:"type:text" json:"note"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Note *string `gorm:"type:text" json:"note"`
+	// PriceAdjustmentCents is what the client is charged above (positive) or below
+	// (negative) the computed price. See migration 83 for why it is a difference.
+	PriceAdjustmentCents int       `gorm:"column:price_adjustment_cents;not null;default:0" json:"price_adjustment_cents"`
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
 }
 
 func (s *Sale) BeforeCreate(tx *gorm.DB) error {

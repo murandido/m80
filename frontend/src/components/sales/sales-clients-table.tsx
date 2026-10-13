@@ -27,7 +27,7 @@ import {
   serializeClientIds,
   singleClientId,
 } from "@/app/dashboard/sales/period-params"
-import { formatCurrencyBRL } from "@/lib/currency"
+import { formatCurrencyBRL, parseCurrencyBRLInput } from "@/lib/currency"
 import { cn } from "@/lib/utils"
 import type { Client } from "@/schemas/client"
 import type { Sale } from "@/schemas/sale"
@@ -316,6 +316,32 @@ export function SalesClientsTable({
     )
   }
 
+  // The amount to receive, typed as a total. Undo types the previous total back.
+  function handleAmount(sale: Sale, amountCents: number) {
+    if (amountCents === sale.amount_cents) return
+    const previous = sale.amount_cents
+    const delta = amountCents - sale.amount_cents
+    const patch: Partial<Sale> = {
+      amount_cents: amountCents,
+      balance_cents: sale.balance_cents + delta,
+      price_adjustment_cents: sale.price_adjustment_cents + delta,
+    }
+    persist(sale, patch, { amount_cents: amountCents }, "Erro ao salvar o valor.", () =>
+      pushUndo(() =>
+        persist(
+          { ...sale, ...patch },
+          {
+            amount_cents: previous,
+            balance_cents: sale.balance_cents,
+            price_adjustment_cents: sale.price_adjustment_cents,
+          },
+          { amount_cents: previous },
+          "Erro ao desfazer.",
+        ),
+      ),
+    )
+  }
+
   function handleNote(sale: Sale, note: string | null) {
     const previous = sale.note ?? null
     persist(sale, { note }, { note }, "Erro ao salvar a observação.", () =>
@@ -490,23 +516,29 @@ export function SalesClientsTable({
                   </span>
                 )}
               </span>
-              <span
-                role="cell"
-                className="text-right text-slate-900 tabular-nums @4xl:text-center"
-                title={
-                  isCancelled && sale.cancellation_fee_cents > 0
-                    ? `Multa de cancelamento (a passagem era ${formatCurrencyBRL(sale.amount_cents)})`
-                    : undefined
-                }
-              >
-                {/* A cancelled sale with a fee is worth the fee: that is what the client owes
-                    for it, and what the button beside it settles or nets against. */}
-                {formatCurrencyBRL(
-                  isCancelled && sale.cancellation_fee_cents > 0
-                    ? sale.cancellation_fee_cents
-                    : sale.amount_cents,
-                )}
-              </span>
+              {isCancelled ? (
+                <span
+                  role="cell"
+                  className="text-right text-slate-900 tabular-nums @4xl:text-center"
+                  title={
+                    sale.cancellation_fee_cents > 0
+                      ? `Multa de cancelamento (a passagem era ${formatCurrencyBRL(sale.amount_cents)})`
+                      : undefined
+                  }
+                >
+                  {/* A cancelled sale with a fee is worth the fee: that is what the client owes
+                      for it, and what the button beside it settles or nets against. */}
+                  {formatCurrencyBRL(
+                    sale.cancellation_fee_cents > 0 ? sale.cancellation_fee_cents : sale.amount_cents,
+                  )}
+                </span>
+              ) : (
+                <AmountCell
+                  sale={sale}
+                  disabled={isSaving}
+                  onCommit={(cents) => handleAmount(sale, cents)}
+                />
+              )}
               <div role="cell" className={WIDE_CELL}>
                 <ClientCombobox
                   clients={clientOptions}
@@ -597,5 +629,86 @@ export function SalesClientsTable({
         </div>
       </div>
     </div>
+  )
+}
+
+// The amount to receive, editable in place. It is the total the client pays: the server keeps
+// how far it is from the computed price, and the badge says so. An alteration-day row shows
+// the alteration alone, so it is not where the total is typed - its issue-day row is.
+function AmountCell({
+  sale,
+  disabled,
+  onCommit,
+}: {
+  sale: Sale
+  disabled: boolean
+  onCommit: (amountCents: number) => void
+}) {
+  const [draft, setDraft] = useState<string | null>(null)
+  const adjusted = sale.price_adjustment_cents !== 0
+  const editable = !disabled && !sale.alteration_day
+  const computed = sale.computed_amount_cents ?? sale.amount_cents - sale.price_adjustment_cents
+
+  function commit() {
+    if (draft === null) return
+    const cents = parseCurrencyBRLInput(draft)
+    setDraft(null)
+    if (cents === null || cents < 0) {
+      if (draft.trim() !== "") toast.error("Valor inválido.")
+      return
+    }
+    onCommit(cents)
+  }
+
+  if (draft !== null) {
+    return (
+      <span role="cell" className="text-right @4xl:text-center">
+        <input
+          autoFocus
+          inputMode="decimal"
+          aria-label="Valor a receber"
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={commit}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") event.currentTarget.blur()
+            if (event.key === "Escape") setDraft(null)
+          }}
+          className="w-28 rounded-md border border-slate-300 px-2 py-1 text-right tabular-nums"
+        />
+      </span>
+    )
+  }
+
+  return (
+    <span
+      role="cell"
+      className="flex flex-col items-end gap-0.5 text-slate-900 tabular-nums @4xl:items-center"
+    >
+      <button
+        type="button"
+        disabled={!editable}
+        onClick={() => setDraft((sale.amount_cents / 100).toFixed(2).replace(".", ","))}
+        title={
+          sale.alteration_day
+            ? "O valor total se edita na linha do dia da emissão"
+            : "Clique para mudar o valor a receber"
+        }
+        className={cn(
+          "rounded px-1 tabular-nums",
+          editable && "cursor-text hover:bg-slate-200",
+        )}
+      >
+        {formatCurrencyBRL(sale.amount_cents)}
+      </button>
+      {adjusted && (
+        <span
+          className="rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-sky-900 uppercase"
+          title={`Calculado ${formatCurrencyBRL(computed)} (${sale.price_adjustment_cents > 0 ? "+" : "−"}${formatCurrencyBRL(Math.abs(sale.price_adjustment_cents))})`}
+        >
+          ajustado
+        </span>
+      )}
+    </span>
   )
 }
