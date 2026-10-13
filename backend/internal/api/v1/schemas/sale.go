@@ -153,6 +153,10 @@ type SaleResponse struct {
 	LoyaltyProgramName  string `json:"loyalty_program_name"`
 	LoyaltyProgramColor string `json:"loyalty_program_color"`
 
+	// CancellationFeeCents is the airline's cancellation fee on a cancelled sale, which the
+	// client pays: it is what BalanceCents still counts against what was paid. Zero on a
+	// live sale.
+	CancellationFeeCents int `json:"cancellation_fee_cents"`
 	// AdjustmentCents is what the ticket's alterations add to the price, zero when it was
 	// never altered. The panel badges an altered sale with it.
 	AdjustmentCents int `json:"adjustment_cents"`

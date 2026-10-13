@@ -63,6 +63,10 @@ type Amount struct {
 	// AdjustmentCents is the part of Cents the ticket's alterations added, so a caller can
 	// tell what was owed for the booking alone.
 	AdjustmentCents int
+	// CancellationFeeCents is the airline's cancellation fee, which the client always pays.
+	// It is what a cancelled sale still owes. Zero on a live sale and on a cancellation with
+	// no fee.
+	CancellationFeeCents int
 }
 
 // AmountOf reads a sale's price from the issuance behind it, alterations included.
@@ -73,9 +77,11 @@ func AmountOf(db *gorm.DB, saleID string) (Amount, error) {
 		Taxes              *int
 		AdjustmentCents    int
 		CancelledAt        *string
+		CancellationFee    *int
 	}
 	err := db.Table("sales").
 		Select(`issuances.points, issuances.value_of_the_thousand, issuances.taxes, issuances.cancelled_at,
+			issuances.cancellation_fee,
 			COALESCE(adjustments.cents, 0) AS adjustment_cents`).
 		Joins("JOIN issuances ON issuances.id = sales.issuance_id").
 		Joins("LEFT JOIN "+AdjustmentCentsJoin+" AS adjustments ON adjustments.issuance_id = issuances.id").
@@ -89,7 +95,11 @@ func AmountOf(db *gorm.DB, saleID string) (Amount, error) {
 	if row.Taxes != nil {
 		cents += *row.Taxes
 	}
-	return Amount{Cents: cents, Cancelled: row.CancelledAt != nil, AdjustmentCents: row.AdjustmentCents}, nil
+	amount := Amount{Cents: cents, Cancelled: row.CancelledAt != nil, AdjustmentCents: row.AdjustmentCents}
+	if amount.Cancelled && row.CancellationFee != nil {
+		amount.CancellationFeeCents = *row.CancellationFee
+	}
+	return amount, nil
 }
 
 // PaidCents is the sum of a sale's payments. Negative entries are refunds, so this can go
@@ -109,14 +119,16 @@ func PaidCents(db *gorm.DB, saleID string) (int, error) {
 // BalanceCents is the money still to move on a sale, signed: positive is owed by the
 // client, negative is owed back to them, zero is nothing left to do.
 //
-// A cancelled sale is owed nothing. The ticket is gone, so its price stopped being a debt
-// the moment it was cancelled - what survives is whatever the client already handed over,
-// which now has to go back. Without this, a cancelled sale nobody ever paid read as owing
-// its full price forever, and one that was paid and then refunded read the same, when in
-// both cases there is nothing left to do.
+// A cancelled sale is owed its cancellation fee and nothing else. The ticket is gone, so its
+// price stopped being a debt the moment it was cancelled - what survives is the fee, which
+// the client always pays, against whatever the client already handed over. Paid more than
+// the fee, the rest goes back; paid less, the client still owes the difference. Without the
+// fee this is "give back everything that came in", which is what it was before the fee was
+// counted: a cancelled sale nobody ever paid read as owing its full price forever, and one
+// that was paid and then refunded read the same.
 func BalanceCents(amount Amount, paidCents int) int {
 	if amount.Cancelled {
-		return -paidCents
+		return amount.CancellationFeeCents - paidCents
 	}
 	return amount.Cents - paidCents
 }

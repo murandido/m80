@@ -86,9 +86,10 @@ type openSale struct {
 }
 
 // openSalesOf lists the client's sales that still owe money once the spread lines are set
-// aside, oldest issuance first - the order the money is spent in. Cancelled issuances are
-// left out: a cancelled ticket is not a debt (see BalanceCents), so a replay takes back
-// whatever a lump sum had put on it and it goes on to the next sale, or to credit.
+// aside, oldest issuance first - the order the money is spent in. A cancelled issuance owes
+// only its cancellation fee (see BalanceCents): a replay takes back whatever a lump sum had
+// put on it beyond the fee, and that goes on to the next sale, or to credit. One cancelled
+// with no fee is left out entirely.
 func openSalesOf(tx *gorm.DB, clientID string) ([]openSale, error) {
 	var rows []struct {
 		ID                 string
@@ -96,17 +97,23 @@ func openSalesOf(tx *gorm.DB, clientID string) ([]openSale, error) {
 		ValueOfTheThousand int
 		Taxes              *int
 		AdjustmentCents    int
+		CancelledAt        *string
+		CancellationFee    *int
 		PaidCents          int
 	}
 	err := tx.Table("sales").
 		Select(`sales.id, issuances.points, issuances.value_of_the_thousand, issuances.taxes,
+			issuances.cancelled_at, issuances.cancellation_fee,
 			COALESCE(adjustments.cents, 0) AS adjustment_cents,
 			COALESCE((SELECT SUM(amount_cents) FROM sale_payments
 				WHERE sale_id = sales.id AND client_payment_id IS NULL), 0) AS paid_cents`).
 		Joins("JOIN issuances ON issuances.id = sales.issuance_id").
 		Joins("LEFT JOIN "+AdjustmentCentsJoin+" AS adjustments ON adjustments.issuance_id = issuances.id").
 		Where("sales.client_id = ?", clientID).
-		Where("issuances.deleted_at IS NULL AND issuances.cancelled_at IS NULL").
+		// A cancelled ticket is a debt only for its fee, so it stays in the queue when it has
+		// one; without a fee there is nothing for a lump sum to cover.
+		Where("issuances.deleted_at IS NULL").
+		Where("issuances.cancelled_at IS NULL OR COALESCE(issuances.cancellation_fee, 0) > 0").
 		Order("issuances.created_at, sales.id").
 		Scan(&rows).Error
 	if err != nil {
@@ -119,7 +126,11 @@ func openSalesOf(tx *gorm.DB, clientID string) ([]openSale, error) {
 		if row.Taxes != nil {
 			cents += *row.Taxes
 		}
-		if balance := BalanceCents(Amount{Cents: cents}, row.PaidCents); balance > 0 {
+		amount := Amount{Cents: cents, Cancelled: row.CancelledAt != nil}
+		if amount.Cancelled && row.CancellationFee != nil {
+			amount.CancellationFeeCents = *row.CancellationFee
+		}
+		if balance := BalanceCents(amount, row.PaidCents); balance > 0 {
 			open = append(open, openSale{ID: row.ID, Balance: balance})
 		}
 	}

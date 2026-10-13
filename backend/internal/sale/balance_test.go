@@ -84,6 +84,23 @@ func TestBalanceAndSettled(t *testing.T) {
 			wantBalance: -50_000,
 		},
 		{
+			name:        "cancelled with a fee and never paid owes the fee",
+			amount:      Amount{Cents: 50_000, Cancelled: true, CancellationFeeCents: 15_000},
+			wantBalance: 15_000,
+		},
+		{
+			name:        "cancelled with a fee after paying gives back the rest",
+			amount:      Amount{Cents: 50_000, Cancelled: true, CancellationFeeCents: 15_000},
+			paidCents:   50_000,
+			wantBalance: -35_000,
+		},
+		{
+			name:        "cancelled with the fee paid is settled",
+			amount:      Amount{Cents: 50_000, Cancelled: true, CancellationFeeCents: 15_000},
+			paidCents:   15_000,
+			wantSettled: true,
+		},
+		{
 			name:        "cancelled and refunded is settled",
 			amount:      Amount{Cents: 50_000, Cancelled: true},
 			paidCents:   0,

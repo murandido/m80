@@ -107,10 +107,20 @@ func TestHandleCancelamento_PartialRefund(t *testing.T) {
 // The bot cancels through the same internal/issuance.Cancel the panel does, which is the
 // point of the rule living there: a CANCELAMENTO no longer reopens the sale either. What
 // the client paid is the sum of the sale's payments, and cancelling a booking does not take
-// that money back out of the till.
+// that money back out of the till. A cancelled sale owes its fee, so the client here has
+// paid exactly the fee - which is what keeps it settled.
 func TestHandleCancelamento_LeavesThePaidSaleAlone(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		s := newCorrectionScenario(t, tx, data.Airline{})
+		var sale data.Sale
+		if err := tx.First(&sale, "issuance_id = ?", s.Issuance.ID).Error; err != nil {
+			t.Fatalf("failed to read the sale: %v", err)
+		}
+		if err := tx.Create(&data.SalePayment{
+			SaleID: sale.ID, AmountCents: 5000, PaidOn: time.Now(), CreatedByID: s.Issuance.IssuerID,
+		}).Error; err != nil {
+			t.Fatalf("failed to record the fee payment: %v", err)
+		}
 		if err := tx.Model(&data.Sale{}).Where("issuance_id = ?", s.Issuance.ID).
 			Update("paid", true).Error; err != nil {
 			t.Fatalf("failed to mark the sale paid: %v", err)
@@ -120,7 +130,6 @@ func TestHandleCancelamento_LeavesThePaidSaleAlone(t *testing.T) {
 
 		assertCancelRocket(t, s)
 
-		var sale data.Sale
 		if err := tx.First(&sale, "issuance_id = ?", s.Issuance.ID).Error; err != nil {
 			t.Fatalf("failed to re-read sale: %v", err)
 		}

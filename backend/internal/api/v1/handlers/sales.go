@@ -84,6 +84,8 @@ type saleRow struct {
 	AdjustmentCents int
 	PaidCents       int
 	CancelledAt     *time.Time
+	// CancellationFee is the airline's fee on a cancelled ticket, which the client pays.
+	CancellationFee *int
 
 	ClientPaymentCents  int
 	ClientPaymentPaidOn *time.Time
@@ -117,6 +119,7 @@ func saleListQuery(db *gorm.DB) *gorm.DB {
 			COALESCE(payments.client_payment_cents, 0) AS client_payment_cents,
 			payments.client_payment_paid_on,
 			issuances.cancelled_at,
+			issuances.cancellation_fee,
 			issuances.account_id,
 			users.name AS issuer_name,
 			account_nicknames.nickname AS account_nickname,
@@ -176,32 +179,37 @@ func toSaleResponse(row saleRow) schemas.SaleResponse {
 		clientPaymentPaidOn = &day
 	}
 
+	saleAmount := sale.Amount{Cents: amount, Cancelled: row.CancelledAt != nil}
+	if saleAmount.Cancelled && row.CancellationFee != nil {
+		saleAmount.CancellationFeeCents = *row.CancellationFee
+	}
+
 	return schemas.SaleResponse{
-		ID:                  row.ID,
-		PaidCents:           row.PaidCents,
-		ClientPaymentCents:  row.ClientPaymentCents,
-		ClientPaymentPaidOn: clientPaymentPaidOn,
-		AdjustmentCents:     row.AdjustmentCents,
-		BalanceCents: sale.BalanceCents(
-			sale.Amount{Cents: amount, Cancelled: row.CancelledAt != nil}, row.PaidCents),
-		IssuanceID:          row.IssuanceID,
-		ClientID:            row.ClientID,
-		ClientName:          row.ClientName,
-		Paid:                row.Paid,
-		Note:                row.Note,
-		ProgramLocator:      row.ProgramLocator,
-		MainPassengerName:   row.MainPassengerName,
-		IssuedAt:            row.IssuedAt,
-		IssuerName:          row.IssuerName,
-		Points:              row.Points,
-		ValueOfTheThousand:  row.ValueOfTheThousand,
-		Taxes:               row.Taxes,
-		AmountCents:         amount,
-		AccountID:           row.AccountID,
-		AccountLabel:        saleAccountLabel(row),
-		LoyaltyProgramName:  row.LoyaltyProgramName,
-		LoyaltyProgramColor: row.LoyaltyProgramColor,
-		CancelledAt:         row.CancelledAt,
+		ID:                   row.ID,
+		PaidCents:            row.PaidCents,
+		ClientPaymentCents:   row.ClientPaymentCents,
+		ClientPaymentPaidOn:  clientPaymentPaidOn,
+		AdjustmentCents:      row.AdjustmentCents,
+		BalanceCents:         sale.BalanceCents(saleAmount, row.PaidCents),
+		CancellationFeeCents: saleAmount.CancellationFeeCents,
+		IssuanceID:           row.IssuanceID,
+		ClientID:             row.ClientID,
+		ClientName:           row.ClientName,
+		Paid:                 row.Paid,
+		Note:                 row.Note,
+		ProgramLocator:       row.ProgramLocator,
+		MainPassengerName:    row.MainPassengerName,
+		IssuedAt:             row.IssuedAt,
+		IssuerName:           row.IssuerName,
+		Points:               row.Points,
+		ValueOfTheThousand:   row.ValueOfTheThousand,
+		Taxes:                row.Taxes,
+		AmountCents:          amount,
+		AccountID:            row.AccountID,
+		AccountLabel:         saleAccountLabel(row),
+		LoyaltyProgramName:   row.LoyaltyProgramName,
+		LoyaltyProgramColor:  row.LoyaltyProgramColor,
+		CancelledAt:          row.CancelledAt,
 	}
 }
 
@@ -344,9 +352,29 @@ func applySaleListFilters(query *gorm.DB, r *http.Request) *gorm.DB {
 			"(issuance_adjustments.value_of_the_thousand > 0 OR issuance_adjustments.taxes_passed_to_client)",
 		}
 		altered, alteredArgs := appendAdjustmentDayBounds(altered, nil, from, to)
+
+		// And to the day its ticket was cancelled, when the cancellation left something to
+		// do: a fee to collect, or money to give back.
+		cancelled := []string{
+			"issuances.cancelled_at IS NOT NULL",
+			"(COALESCE(issuances.cancellation_fee, 0) > 0 OR COALESCE(payments.paid_cents, 0) <> 0)",
+		}
+		cancelledArgs := []any{}
+		if from != nil {
+			cancelled = append(cancelled, "issuances.cancelled_at >= ?")
+			cancelledArgs = append(cancelledArgs, *from)
+		}
+		if to != nil {
+			cancelled = append(cancelled, "issuances.cancelled_at < ?")
+			cancelledArgs = append(cancelledArgs, *to)
+		}
+
+		args := append(append(createdArgs, alteredArgs...), cancelledArgs...)
 		query = query.Where(
-			"("+strings.Join(created, " AND ")+") OR EXISTS (SELECT 1 FROM issuance_adjustments WHERE "+strings.Join(altered, " AND ")+")",
-			append(createdArgs, alteredArgs...)...,
+			"("+strings.Join(created, " AND ")+")"+
+				" OR EXISTS (SELECT 1 FROM issuance_adjustments WHERE "+strings.Join(altered, " AND ")+")"+
+				" OR ("+strings.Join(cancelled, " AND ")+")",
+			args...,
 		)
 	}
 
@@ -398,12 +426,16 @@ func asAlterationDay(response schemas.SaleResponse, alterations map[string]int, 
 	if (from == nil && to == nil) || inRange(&issuedAt, from, to) {
 		return response
 	}
+	// Listed outside its issue day for another reason - its cancellation day.
+	inWindow, altered := alterations[response.IssuanceID]
+	if !altered {
+		return response
+	}
 	response.AlterationDay = true
 	if response.CancelledAt != nil {
 		return response
 	}
 
-	inWindow := alterations[response.IssuanceID]
 	owedBefore := response.AmountCents - inWindow
 	if response.PaidCents >= owedBefore {
 		response.AmountCents = inWindow

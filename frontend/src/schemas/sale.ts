@@ -31,6 +31,9 @@ export const saleSchema = z.object({
   account_label: z.string(),
   loyalty_program_name: z.string(),
   loyalty_program_color: z.string(),
+  // The airline's cancellation fee on a cancelled sale, which the client always pays: it is
+  // what the balance of a cancelled sale still counts. Zero on a live sale.
+  cancellation_fee_cents: z.number().default(0),
   // What the ticket's alterations add to the price; zero when it was never altered.
   adjustment_cents: z.number().default(0),
   // Listed because the ticket was altered in the period, not issued there. When the booking

@@ -459,16 +459,27 @@ export function SalesClientsTable({
               </span>
               <span
                 role="cell"
-                className={cn(
-                  "font-medium text-slate-900",
-                  isCancelled && "text-muted-foreground line-through",
-                )}
-                title={isCancelled ? "Emissão cancelada" : undefined}
+                className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 font-medium text-slate-900"
               >
-                {sale.program_locator}
+                {/* Only the locator is struck through on a cancelled sale: the badges beside it
+                    are still true. */}
+                <span
+                  className={cn(isCancelled && "text-muted-foreground line-through")}
+                  title={isCancelled ? "Emissão cancelada" : undefined}
+                >
+                  {sale.program_locator}
+                </span>
+                {isCancelled && sale.cancellation_fee_cents > 0 && (
+                  <span
+                    className="rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-slate-800 uppercase"
+                    title="Multa de cancelamento, paga pelo cliente"
+                  >
+                    multa
+                  </span>
+                )}
                 {(sale.alteration_day || sale.adjustment_cents !== 0) && (
                   <span
-                    className="ml-1.5 rounded-full bg-amber-100 px-1.5 py-0.5 align-middle text-[10px] font-semibold tracking-wide text-amber-900 uppercase no-underline"
+                    className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-amber-900 uppercase"
                     title={
                       sale.alteration_day
                         ? `Passagem alterada neste dia (emitida em ${formatDay(sale.issued_at)})`
@@ -482,8 +493,19 @@ export function SalesClientsTable({
               <span
                 role="cell"
                 className="text-right text-slate-900 tabular-nums @4xl:text-center"
+                title={
+                  isCancelled && sale.cancellation_fee_cents > 0
+                    ? `Multa de cancelamento (a passagem era ${formatCurrencyBRL(sale.amount_cents)})`
+                    : undefined
+                }
               >
-                {formatCurrencyBRL(sale.amount_cents)}
+                {/* A cancelled sale with a fee is worth the fee: that is what the client owes
+                    for it, and what the button beside it settles or nets against. */}
+                {formatCurrencyBRL(
+                  isCancelled && sale.cancellation_fee_cents > 0
+                    ? sale.cancellation_fee_cents
+                    : sale.amount_cents,
+                )}
               </span>
               <div role="cell" className={WIDE_CELL}>
                 <ClientCombobox

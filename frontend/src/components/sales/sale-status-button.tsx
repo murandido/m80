@@ -18,7 +18,10 @@ export type SaleStatus =
 // ever has money to hand back, or nothing at all.
 export function saleStatus(sale: Sale): SaleStatus {
   if (sale.cancelled_at !== null) {
-    return sale.balance_cents < 0 ? "refund" : "cancelled"
+    if (sale.balance_cents < 0) return "refund"
+    // The cancellation fee, still to be paid: the client owes it like any other charge.
+    if (sale.balance_cents > 0) return sale.paid_cents > 0 ? "partial" : "unpaid"
+    return "cancelled"
   }
   // An issuance still missing its points or its price is worth nothing by arithmetic, not
   // because it is settled - calling it paid would hide the row that most needs filling in.
@@ -67,12 +70,17 @@ export function SaleStatusButton({ sale, onToggle, disabled }: SaleStatusButtonP
   // moves it, and the backend refuses the switch on it too. Not when what is missing came
   // from an alteration made after the booking was paid: that is a new charge, settled by
   // hand like any other (salePartlyPaid on the backend draws the same line).
-  const bookingCovered = sale.paid_cents >= sale.amount_cents - sale.adjustment_cents
+  // A cancelled sale owes only its fee, and the backend never counts it as partly paid.
+  const cancelled = sale.cancelled_at !== null
+  const bookingCovered =
+    cancelled || sale.paid_cents >= sale.amount_cents - sale.adjustment_cents
   const locked = coveredByClientPayment || (status === "partial" && !bookingCovered)
 
+  // What the bar fills against: the fee on a cancelled sale, the price otherwise.
+  const owedCents = cancelled ? sale.cancellation_fee_cents : sale.amount_cents
   const paidShare =
-    sale.amount_cents > 0
-      ? Math.min(100, Math.max(0, (sale.paid_cents / sale.amount_cents) * 100))
+    owedCents > 0
+      ? Math.min(100, Math.max(0, (sale.paid_cents / owedCents) * 100))
       : 0
 
   const label = {

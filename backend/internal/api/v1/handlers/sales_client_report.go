@@ -55,10 +55,15 @@ func (h *SaleHandler) GetClientReportPDF(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Shaped like the listing's rows, so the statement shows on an alteration day what the
+	// screen shows there.
+	from, to := parseDateRange(r)
+	alterations := alterationCentsInWindow(h.DB, rows, from, to)
+
 	sales := make([]schemas.SaleResponse, 0, len(rows))
 	credits := map[string]int{}
 	for _, row := range rows {
-		sales = append(sales, toSaleResponse(row))
+		sales = append(sales, asAlterationDay(toSaleResponse(row), alterations, from, to))
 		if row.ClientID != nil {
 			credits[*row.ClientID] = 0
 		}
@@ -76,7 +81,6 @@ func (h *SaleHandler) GetClientReportPDF(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	from, to := parseDateRange(r)
 	now := time.Now().In(supplierReportLocation())
 	model := buildClientReport(sales, credits, agency.Name, supplierPeriodLabel(from, to), now)
 
@@ -162,9 +166,12 @@ func buildClientReport(
 			StatusKind: kind,
 			Cancelled:  cancelled,
 		})
-		// A cancelled ticket is no debt: its value stays out of the total bought, while what
-		// was paid for it and what has to go back still count.
-		if !cancelled {
+		// A cancelled ticket is a debt only for its cancellation fee: its price stays out of
+		// the total bought, the fee goes in, and what was paid for it and what has to go
+		// back still count.
+		if cancelled {
+			acc.amount += s.CancellationFeeCents
+		} else {
 			acc.amount += s.AmountCents
 		}
 		acc.paid += s.PaidCents
@@ -204,6 +211,9 @@ func clientReportStatus(s schemas.SaleResponse) (label, kind string) {
 	switch {
 	case s.CancelledAt != nil && s.BalanceCents < 0:
 		return "Devolver", "refund"
+	case s.CancelledAt != nil && s.BalanceCents > 0:
+		// The cancellation fee, still to be paid.
+		return "Multa a pagar", "unpaid"
 	case s.CancelledAt != nil:
 		return "Cancelada", "cancelled"
 	case s.AmountCents <= 0:
