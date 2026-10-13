@@ -972,10 +972,19 @@ function SupplierIssuanceRow({
               </span>
             )}
           </span>
-          {isRefund && (
-            <span className="rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-red-800 uppercase">
-              estorno
+          {line.adjustment_id ? (
+            <span
+              className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-amber-900 uppercase"
+              title={line.adjustment_reason ?? undefined}
+            >
+              alteração
             </span>
+          ) : (
+            isRefund && (
+              <span className="rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-red-800 uppercase">
+                estorno
+              </span>
+            )
           )}
         </span>
       </TableCell>

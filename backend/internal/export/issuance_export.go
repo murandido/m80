@@ -102,15 +102,27 @@ type issuanceSheet struct {
 	rows []exportRow
 }
 
+// ExportWindow is the period and the people the export was asked for, the same ones the
+// listing filtered by. It matters for alterations only (data.IssuanceAdjustment): an old
+// booking altered inside the window is listed for its alteration, and the sheet then has to
+// write the alteration's line and not the booking again. The zero value means "no window",
+// and every alteration on the listed issuances gets its line.
+type ExportWindow struct {
+	From, To *time.Time
+	// Issuers narrows the alteration lines to the people who recorded them, as the listing's
+	// alteration branch does. Empty means anyone.
+	Issuers []string
+}
+
 // BuildIssuancesXLSX renders the given issuances into one worksheet and returns the resulting
 // .xlsx bytes.
-func BuildIssuancesXLSX(issuances []data.Issuance) ([]byte, error) {
-	return renderIssuancesXLSX(issuances, time.Now())
+func BuildIssuancesXLSX(issuances []data.Issuance, window ExportWindow) ([]byte, error) {
+	return renderIssuancesXLSX(issuances, window, time.Now())
 }
 
 // renderIssuancesXLSX holds the pure rendering logic: it takes the reference time explicitly
 // so it can be exercised without depending on the clock.
-func renderIssuancesXLSX(issuances []data.Issuance, now time.Time) ([]byte, error) {
+func renderIssuancesXLSX(issuances []data.Issuance, window ExportWindow, now time.Time) ([]byte, error) {
 	loc, err := time.LoadLocation(exportTimezone)
 	if err != nil {
 		loc = time.UTC
@@ -123,7 +135,7 @@ func renderIssuancesXLSX(issuances []data.Issuance, now time.Time) ([]byte, erro
 
 	// One tab, always. An empty result still gets it - a titled empty sheet says "nothing
 	// matched" rather than a workbook with no sheet at all, which Excel refuses to open.
-	sheet := issuanceSheet{rows: exportRowsFor(issuances, loc)}
+	sheet := issuanceSheet{rows: exportRowsFor(issuances, window, loc)}
 	if err := f.SetSheetName(f.GetSheetName(0), issuanceExportSheetName); err != nil {
 		return nil, fmt.Errorf("renderIssuancesXLSX: name sheet: %w", err)
 	}
@@ -160,13 +172,100 @@ func issuanceSheetOwner(issuance data.Issuance) string {
 }
 
 // exportRowsFor flattens the issuances in the order they came (created_at asc), which the
-// airline blocks then preserve.
-func exportRowsFor(issuances []data.Issuance, loc *time.Location) []exportRow {
+// airline blocks then preserve. Each alteration inside the window follows its issuance as a
+// line of its own, the way a cancellation on a later day is its own line on that day.
+//
+// The issuance's own line is left out when neither its booking nor its cancellation falls
+// in the window: then it is on the list only because it was altered there, and its booking
+// already sits on the sheet of the day it was made.
+func exportRowsFor(issuances []data.Issuance, window ExportWindow, loc *time.Location) []exportRow {
 	rows := make([]exportRow, 0, len(issuances))
 	for _, issuance := range issuances {
-		rows = append(rows, toExportRow(issuance, loc))
+		if window.covers(&issuance.CreatedAt) || window.covers(issuance.CancelledAt) {
+			rows = append(rows, toExportRow(issuance, loc))
+		}
+		for _, adjustment := range issuance.Adjustments {
+			if window.coversAdjustment(adjustment) {
+				rows = append(rows, toAdjustmentExportRow(issuance, adjustment, loc))
+			}
+		}
 	}
 	return rows
+}
+
+// covers says whether an instant falls in the window, half-open like the listing's bounds.
+// No window covers everything.
+func (w ExportWindow) covers(instant *time.Time) bool {
+	if instant == nil {
+		return false
+	}
+	if w.From != nil && instant.Before(*w.From) {
+		return false
+	}
+	if w.To != nil && !instant.Before(*w.To) {
+		return false
+	}
+	return true
+}
+
+// coversAdjustment is covers for an alteration's day, plus the issuer narrowing. occurred_on
+// is a calendar day stored as UTC midnight, which is the evening before in São Paulo; noon
+// UTC is the same day in both, so it is the instant compared.
+func (w ExportWindow) coversAdjustment(adjustment data.IssuanceAdjustment) bool {
+	day := adjustment.OccurredOn
+	noon := time.Date(day.Year(), day.Month(), day.Day(), 12, 0, 0, 0, time.UTC)
+	if !w.covers(&noon) {
+		return false
+	}
+	if len(w.Issuers) == 0 {
+		return true
+	}
+	for _, issuer := range w.Issuers {
+		if issuer == adjustment.CreatedByID {
+			return true
+		}
+	}
+	return false
+}
+
+// toAdjustmentExportRow writes one alteration as a line of the sheet: the booking's own
+// identity (locator, route, passenger, account), so it lands in the same airline block and
+// the same account total, with the alteration's signed points and taxes. Milheiro is what
+// the client pays for those points, zero when the agency absorbed them, and the observation
+// says which kind of alteration it was, since nothing else on the line does.
+func toAdjustmentExportRow(issuance data.Issuance, adjustment data.IssuanceAdjustment, loc *time.Location) exportRow {
+	row := toExportRow(issuance, loc)
+	row.milheiros = float64(adjustment.Points) / 1000
+	row.valueOfTheThousand = centsToReais(adjustment.ValueOfTheThousand)
+	row.taxes = nil
+	if adjustment.Taxes != 0 {
+		amount := centsToReais(adjustment.Taxes)
+		row.taxes = &amount
+	}
+	row.redemptionFee = nil
+	row.observation = adjustmentObservation(adjustment)
+	row.issuer = issuanceExportNoIssuerLabel
+	if adjustment.CreatedBy != nil && adjustment.CreatedBy.Name != "" {
+		row.issuer = adjustment.CreatedBy.Name
+	}
+	// Tinted like a refund when it gives miles back, which is what the tint means.
+	row.cancelled = adjustment.Points < 0 || (adjustment.Points == 0 && adjustment.Taxes < 0)
+	return row
+}
+
+func adjustmentObservation(adjustment data.IssuanceAdjustment) string {
+	refund := adjustment.Points < 0 || (adjustment.Points == 0 && adjustment.Taxes < 0)
+	passed := adjustment.ValueOfTheThousand > 0 || adjustment.TaxesPassedToClient
+	kind := "ALTERAÇÃO cobrada do cliente"
+	switch {
+	case refund && passed:
+		kind = "ALTERAÇÃO reembolso devolvido ao cliente"
+	case refund:
+		kind = "ALTERAÇÃO reembolso retido pela agência"
+	case !passed:
+		kind = "ALTERAÇÃO absorvida pela agência"
+	}
+	return kind + ": " + adjustment.Reason
 }
 
 // toExportRow flattens one issuance into the values the sheet writes, applying the signed

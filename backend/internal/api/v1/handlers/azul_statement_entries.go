@@ -581,7 +581,7 @@ func toLinkedIssuance(booking statement.ResolvedBooking, scope access.AgencyScop
 		Origin:        derefString(issuance.OriginIATACode),
 		Destination:   derefString(issuance.DestinationIATACode),
 		IssuedOn:      issuance.CreatedAt.Format(batchDateLayout),
-		Points:        issuance.Points,
+		Points:        booking.RedeemedPoints(),
 		Manual:        booking.Manual,
 	}
 }

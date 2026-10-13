@@ -466,6 +466,18 @@ export function SalesClientsTable({
                 title={isCancelled ? "Emissão cancelada" : undefined}
               >
                 {sale.program_locator}
+                {(sale.alteration_day || sale.adjustment_cents !== 0) && (
+                  <span
+                    className="ml-1.5 rounded-full bg-amber-100 px-1.5 py-0.5 align-middle text-[10px] font-semibold tracking-wide text-amber-900 uppercase no-underline"
+                    title={
+                      sale.alteration_day
+                        ? `Passagem alterada neste dia (emitida em ${formatDay(sale.issued_at)})`
+                        : "Passagem alterada depois da emissão"
+                    }
+                  >
+                    alteração
+                  </span>
+                )}
               </span>
               <span
                 role="cell"

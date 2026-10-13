@@ -44,6 +44,21 @@ Tudo abaixo desta seção descreve a planilha.
   formulário.
 - **Simular Emissão:** calculadora de milheiro (pontos, milheiro e taxas → total + linha de
   cálculo). Não salva nada.
+- **Alteração ≠ correção.** Editar Pontos/Milheiro/Taxas no painel (ou a `ALTERACAO` do bot) *corrige*
+  o que foi digitado errado e reescreve a emissão. Quando a **passagem muda depois de emitida** (a cia
+  cobra milhas ou taxa a mais por trocar um trecho, ou devolve algo), o caminho é a seção
+  **Alterações** do painel (`board/adjustments-section.tsx` + `board/adjustment-dialog.tsx`), que grava
+  um movimento datado em `issuance_adjustments` (`POST/PATCH/DELETE /issuances/{id}/adjustments`).
+  Cada movimento diz se é repassado ao cliente (milheiro próprio + taxas) ou absorvido/retido pela
+  agência. A venda soma o `client_amount_cents` dos movimentos, o custeio FIFO consome ou devolve na
+  data do movimento e o precifica pelo milheiro dele, e a conciliação com o extrato conta o débito
+  extra no mesmo localizador. Os valores da emissão continuam sendo a reserva como foi feita. A linha do painel
+  aberto é protegida do refresh do SSE, então o hook (`saveAdjustment`/`deleteAdjustment`) aplica a
+  resposta direto na linha. Emissão cancelada não aceita alteração.
+  A alteração pertence ao **dia em que aconteceu**. A emissão antiga entra no fluxo desse dia, no
+  de quem registrou (terceiro ramo de `applyIssuanceListFilters`), e a planilha de controle escreve só a
+  linha da alteração (`ExportWindow` em `internal/export`). Quando a alteração muda o que o cliente deve,
+  a venda também aparece no controle de pagamentos desse dia.
 
 ## Propósito
 Uma **planilha turbinada** para cadastrar emissões de milhas **rápido, só com teclado** —

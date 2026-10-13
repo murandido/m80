@@ -106,6 +106,47 @@ type CancelIssuanceRequest struct {
 	CancelledOn *string `json:"cancelled_on" validate:"omitempty,datetime=2006-01-02" example:"2026-09-05"`
 }
 
+// IssuanceAdjustmentRequest is the body of POST and PATCH /issuances/{id}/adjustments. Both
+// replace every field: an alteration is small enough that the panel always sends it whole.
+// Points and taxes are signed (negative is the airline giving back), in points and centavos.
+type IssuanceAdjustmentRequest struct {
+	// OccurredOn (YYYY-MM-DD) is the day the airline charged or returned, which decides
+	// the period the movement is costed in.
+	OccurredOn         string `json:"occurred_on" validate:"required,datetime=2006-01-02" example:"2026-10-13"`
+	Points             int    `json:"points" example:"12000"`
+	Taxes              int    `json:"taxes" example:"8000"`
+	ValueOfTheThousand int    `json:"value_of_the_thousand" validate:"min=0" example:"2000"`
+	// TaxesPassedToClient says the taxes go on the client's bill.
+	TaxesPassedToClient bool   `json:"taxes_passed_to_client"`
+	Reason              string `json:"reason" validate:"required" example:"GRU-CNF trocado para GRU-BHZ, 20/11"`
+}
+
+// IssuanceAdjustmentResponse is one alteration as the panel shows it.
+type IssuanceAdjustmentResponse struct {
+	ID                  string `json:"id"`
+	IssuanceID          string `json:"issuance_id"`
+	OccurredOn          string `json:"occurred_on" example:"2026-10-13"`
+	Points              int    `json:"points"`
+	Taxes               int    `json:"taxes"`
+	ValueOfTheThousand  int    `json:"value_of_the_thousand"`
+	TaxesPassedToClient bool   `json:"taxes_passed_to_client"`
+	Reason              string `json:"reason"`
+	// ClientAmountCents is what the alteration adds to the sale, negative when the client
+	// gets money back. Worked out here so the panel never has its own copy of the rounding.
+	ClientAmountCents int       `json:"client_amount_cents"`
+	CreatedByID       string    `json:"created_by_id"`
+	CreatedByName     *string   `json:"created_by_name"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
+}
+
+// IssuanceAdjustmentSingleResponse wraps one alteration in the standard envelope.
+type IssuanceAdjustmentSingleResponse struct {
+	Success bool                       `json:"success" example:"true"`
+	Message string                     `json:"message" example:"Alteração registrada"`
+	Data    IssuanceAdjustmentResponse `json:"data"`
+}
+
 // IssuanceFlightResponse defines how a flight leg should be returned nested in an issuance response.
 type IssuanceFlightResponse struct {
 	ID                  string     `json:"id"`
@@ -189,18 +230,21 @@ type IssuanceResponse struct {
 	// the next Traveos sync from recomputing over the correction.
 	RedemptionFeeManual bool `json:"redemption_fee_manual"`
 	// Status is derived: "incomplete" | "complete" | "cancelled".
-	Status             string                      `json:"status" example:"incomplete"`
-	Flights            []IssuanceFlightResponse    `json:"flights,omitempty"`
-	Passengers         []IssuancePassengerResponse `json:"passengers,omitempty"`
-	AdditionalServices datatypes.JSON              `json:"additional_services" swaggertype:"object"`
-	Observation        *string                     `json:"observation"`
-	Active             bool                        `json:"active"`
-	CancelledAt        *time.Time                  `json:"cancelled_at"`
-	CancelledByID      *string                     `json:"cancelled_by_id"`
-	RefundedPoints     *int                        `json:"refunded_points"`
-	RefundedTaxes      *int                        `json:"refunded_taxes"`
-	CancellationFee    *int                        `json:"cancellation_fee"`
-	CreatedAt          time.Time                   `json:"created_at"`
+	Status     string                      `json:"status" example:"incomplete"`
+	Flights    []IssuanceFlightResponse    `json:"flights,omitempty"`
+	Passengers []IssuancePassengerResponse `json:"passengers,omitempty"`
+	// Adjustments are the alterations made to the ticket after it was issued, oldest
+	// first. Points, ValueOfTheThousand and Taxes above stay the booking as it was made.
+	Adjustments        []IssuanceAdjustmentResponse `json:"adjustments"`
+	AdditionalServices datatypes.JSON               `json:"additional_services" swaggertype:"object"`
+	Observation        *string                      `json:"observation"`
+	Active             bool                         `json:"active"`
+	CancelledAt        *time.Time                   `json:"cancelled_at"`
+	CancelledByID      *string                      `json:"cancelled_by_id"`
+	RefundedPoints     *int                         `json:"refunded_points"`
+	RefundedTaxes      *int                         `json:"refunded_taxes"`
+	CancellationFee    *int                         `json:"cancellation_fee"`
+	CreatedAt          time.Time                    `json:"created_at"`
 	// IssuedOn is created_at as the operator's calendar day, which is what every screen
 	// means by "the day of the issuance". Resolved here rather than in the browser so the
 	// grid and the closing can never disagree about which day a row is on.

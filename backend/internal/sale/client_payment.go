@@ -95,13 +95,16 @@ func openSalesOf(tx *gorm.DB, clientID string) ([]openSale, error) {
 		Points             int
 		ValueOfTheThousand int
 		Taxes              *int
+		AdjustmentCents    int
 		PaidCents          int
 	}
 	err := tx.Table("sales").
 		Select(`sales.id, issuances.points, issuances.value_of_the_thousand, issuances.taxes,
+			COALESCE(adjustments.cents, 0) AS adjustment_cents,
 			COALESCE((SELECT SUM(amount_cents) FROM sale_payments
 				WHERE sale_id = sales.id AND client_payment_id IS NULL), 0) AS paid_cents`).
 		Joins("JOIN issuances ON issuances.id = sales.issuance_id").
+		Joins("LEFT JOIN "+AdjustmentCentsJoin+" AS adjustments ON adjustments.issuance_id = issuances.id").
 		Where("sales.client_id = ?", clientID).
 		Where("issuances.deleted_at IS NULL AND issuances.cancelled_at IS NULL").
 		Order("issuances.created_at, sales.id").
@@ -112,7 +115,7 @@ func openSalesOf(tx *gorm.DB, clientID string) ([]openSale, error) {
 
 	open := make([]openSale, 0, len(rows))
 	for _, row := range rows {
-		cents := PointsValueCents(row.Points, row.ValueOfTheThousand)
+		cents := PointsValueCents(row.Points, row.ValueOfTheThousand) + row.AdjustmentCents
 		if row.Taxes != nil {
 			cents += *row.Taxes
 		}

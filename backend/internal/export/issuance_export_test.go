@@ -81,7 +81,7 @@ func sampleIssuance(program, locator, account, issuer string) data.Issuance {
 func renderForTest(t *testing.T, issuances []data.Issuance) *excelize.File {
 	t.Helper()
 
-	out, err := renderIssuancesXLSX(issuances, time.Date(2026, 7, 22, 15, 0, 0, 0, time.UTC))
+	out, err := renderIssuancesXLSX(issuances, ExportWindow{}, time.Date(2026, 7, 22, 15, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatalf("renderIssuancesXLSX: %v", err)
 	}

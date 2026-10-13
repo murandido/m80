@@ -56,16 +56,23 @@ func CostByIssuance(db *gorm.DB, issuanceIDs []string) (map[string]IssuanceCost,
 
 	// Split in SQL rather than in Go so the whole statement is one query however many
 	// bookings the period holds.
+	//
+	// An alteration's slices are its own lines on the statement (CostByAdjustment), so the
+	// booking side leaves them out. The cancellation is the exception: it gives back an
+	// alteration's points too, tagged with that alteration for the closing's sake, and those
+	// belong on the refund line - which is why the refund side keeps the reversals of a
+	// charge (a positive alteration) and drops only an alteration's own refund.
 	err := db.Model(&data.PointBatchAllocation{}).
-		Select(`issuance_id,
-		        COALESCE(SUM(CASE WHEN points >= 0 THEN cost_cents ELSE 0 END), 0) AS charged_cents,
-		        COALESCE(SUM(CASE WHEN points <  0 THEN cost_cents ELSE 0 END), 0) AS refunded_cents,
-		        COUNT(*) FILTER (WHERE points >= 0) AS booked_slices,
-		        COUNT(*) FILTER (WHERE points >= 0 AND batch_id IS NULL) AS booked_pending,
-		        COUNT(*) FILTER (WHERE points <  0) AS refund_slices,
-		        COUNT(*) FILTER (WHERE points <  0 AND batch_id IS NULL) AS refund_pending`).
-		Where("issuance_id IN ?", issuanceIDs).
-		Group("issuance_id").
+		Select(`point_batch_allocations.issuance_id,
+		        COALESCE(SUM(point_batch_allocations.cost_cents) FILTER (WHERE `+bookingSlice+`), 0) AS charged_cents,
+		        COALESCE(SUM(point_batch_allocations.cost_cents) FILTER (WHERE `+cancellationSlice+`), 0) AS refunded_cents,
+		        COUNT(*) FILTER (WHERE `+bookingSlice+`) AS booked_slices,
+		        COUNT(*) FILTER (WHERE `+bookingSlice+` AND point_batch_allocations.batch_id IS NULL) AS booked_pending,
+		        COUNT(*) FILTER (WHERE `+cancellationSlice+`) AS refund_slices,
+		        COUNT(*) FILTER (WHERE `+cancellationSlice+` AND point_batch_allocations.batch_id IS NULL) AS refund_pending`).
+		Joins("LEFT JOIN issuance_adjustments ON issuance_adjustments.id = point_batch_allocations.adjustment_id").
+		Where("point_batch_allocations.issuance_id IN ?", issuanceIDs).
+		Group("point_batch_allocations.issuance_id").
 		Scan(&rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("inventory.CostByIssuance: %w", err)
@@ -78,6 +85,56 @@ func CostByIssuance(db *gorm.DB, issuanceIDs []string) (map[string]IssuanceCost,
 			BookingCovered: r.BookedSlices > 0 && r.BookedPending == 0,
 			RefundCovered:  r.RefundSlices > 0 && r.RefundPending == 0,
 		}
+	}
+	return costs, nil
+}
+
+// The two halves of an issuance's own slices, as SQL over point_batch_allocations joined to
+// issuance_adjustments. See CostByIssuance.
+const (
+	bookingSlice      = `point_batch_allocations.points >= 0 AND point_batch_allocations.adjustment_id IS NULL`
+	cancellationSlice = `point_batch_allocations.points < 0 AND (point_batch_allocations.adjustment_id IS NULL OR issuance_adjustments.points > 0)`
+)
+
+// AdjustmentCost is what the FIFO costing charged one alteration: the cost of the miles it
+// took, or (negative) of the miles it gave back.
+type AdjustmentCost struct {
+	CostCents int
+	// Covered says a batch priced every point, the same question IssuanceCost answers.
+	Covered bool
+}
+
+// CostByAdjustment reads the exact cost of each of the given alterations, keyed by id. A
+// charge counts only the slices it consumed: the cancellation's reversal of those points
+// carries its tag too, and belongs on the issuance's refund line (CostByIssuance).
+func CostByAdjustment(db *gorm.DB, adjustmentIDs []string) (map[string]AdjustmentCost, error) {
+	costs := map[string]AdjustmentCost{}
+	if len(adjustmentIDs) == 0 {
+		return costs, nil
+	}
+
+	var rows []struct {
+		AdjustmentID string
+		CostCents    int
+		Slices       int
+		Pending      int
+	}
+	own := `(issuance_adjustments.points < 0 OR point_batch_allocations.points >= 0)`
+	err := db.Model(&data.PointBatchAllocation{}).
+		Select(`point_batch_allocations.adjustment_id,
+		        COALESCE(SUM(point_batch_allocations.cost_cents) FILTER (WHERE `+own+`), 0) AS cost_cents,
+		        COUNT(*) FILTER (WHERE `+own+`) AS slices,
+		        COUNT(*) FILTER (WHERE `+own+` AND point_batch_allocations.batch_id IS NULL) AS pending`).
+		Joins("JOIN issuance_adjustments ON issuance_adjustments.id = point_batch_allocations.adjustment_id").
+		Where("point_batch_allocations.adjustment_id IN ?", adjustmentIDs).
+		Group("point_batch_allocations.adjustment_id").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("inventory.CostByAdjustment: %w", err)
+	}
+
+	for _, r := range rows {
+		costs[r.AdjustmentID] = AdjustmentCost{CostCents: r.CostCents, Covered: r.Slices > 0 && r.Pending == 0}
 	}
 	return costs, nil
 }

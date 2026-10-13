@@ -24,35 +24,72 @@ func PointsValueCents(points, valueOfTheThousand int) int {
 	return (total + 999) / 1000
 }
 
+// AdjustmentClientCents is what one alteration adds to the sale: its points at the rate the
+// client pays for them, plus its taxes when those were passed on. Negative when the client
+// gets money back.
+//
+// The points are priced by magnitude and the sign put back on afterwards, so a refund
+// rounds up to the client's favour the same way a charge rounds up to the agency's.
+// PointsValueCents alone would truncate a negative product toward zero.
+func AdjustmentClientCents(points, valueOfTheThousand, taxes int, taxesPassedToClient bool) int {
+	cents := PointsValueCents(points, valueOfTheThousand)
+	if points < 0 {
+		cents = -PointsValueCents(-points, valueOfTheThousand)
+	}
+	if taxesPassedToClient {
+		cents += taxes
+	}
+	return cents
+}
+
+// AdjustmentCentsJoin is AdjustmentClientCents for every issuance at once, as a subquery
+// keyed by issuance_id with the total in `cents`. The list queries join it rather than
+// loading the alterations row by row. It has to stay the same arithmetic as the Go
+// function above, and TestAdjustmentCentsJoinMatchesTheGoFunction holds the two together.
+const AdjustmentCentsJoin = `(
+	SELECT issuance_id,
+		SUM(SIGN(points) * CEIL(ABS(points)::numeric * value_of_the_thousand / 1000)
+			+ CASE WHEN taxes_passed_to_client THEN taxes ELSE 0 END)::integer AS cents
+	FROM issuance_adjustments
+	WHERE deleted_at IS NULL
+	GROUP BY issuance_id
+)`
+
 // Amount is what a sale is worth and whether the issuance behind it was cancelled - the two
 // facts BalanceCents needs.
 type Amount struct {
 	Cents     int
 	Cancelled bool
+	// AdjustmentCents is the part of Cents the ticket's alterations added, so a caller can
+	// tell what was owed for the booking alone.
+	AdjustmentCents int
 }
 
-// AmountOf reads a sale's price from the issuance behind it.
+// AmountOf reads a sale's price from the issuance behind it, alterations included.
 func AmountOf(db *gorm.DB, saleID string) (Amount, error) {
 	var row struct {
 		Points             int
 		ValueOfTheThousand int
 		Taxes              *int
+		AdjustmentCents    int
 		CancelledAt        *string
 	}
 	err := db.Table("sales").
-		Select("issuances.points, issuances.value_of_the_thousand, issuances.taxes, issuances.cancelled_at").
+		Select(`issuances.points, issuances.value_of_the_thousand, issuances.taxes, issuances.cancelled_at,
+			COALESCE(adjustments.cents, 0) AS adjustment_cents`).
 		Joins("JOIN issuances ON issuances.id = sales.issuance_id").
+		Joins("LEFT JOIN "+AdjustmentCentsJoin+" AS adjustments ON adjustments.issuance_id = issuances.id").
 		Where("sales.id = ?", saleID).
 		Scan(&row).Error
 	if err != nil {
 		return Amount{}, err
 	}
 
-	cents := PointsValueCents(row.Points, row.ValueOfTheThousand)
+	cents := PointsValueCents(row.Points, row.ValueOfTheThousand) + row.AdjustmentCents
 	if row.Taxes != nil {
 		cents += *row.Taxes
 	}
-	return Amount{Cents: cents, Cancelled: row.CancelledAt != nil}, nil
+	return Amount{Cents: cents, Cancelled: row.CancelledAt != nil, AdjustmentCents: row.AdjustmentCents}, nil
 }
 
 // PaidCents is the sum of a sale's payments. Negative entries are refunds, so this can go

@@ -64,8 +64,11 @@ export function SaleStatusButton({ sale, onToggle, disabled }: SaleStatusButtonP
     sale.paid_cents - sale.client_payment_cents <= 0
   const inert = status === "cancelled" || status === "no-value"
   // A partly paid sale is where a client's lump sum ran out: only another client payment
-  // moves it, and the backend refuses the switch on it too.
-  const locked = coveredByClientPayment || status === "partial"
+  // moves it, and the backend refuses the switch on it too. Not when what is missing came
+  // from an alteration made after the booking was paid: that is a new charge, settled by
+  // hand like any other (salePartlyPaid on the backend draws the same line).
+  const bookingCovered = sale.paid_cents >= sale.amount_cents - sale.adjustment_cents
+  const locked = coveredByClientPayment || (status === "partial" && !bookingCovered)
 
   const paidShare =
     sale.amount_cents > 0

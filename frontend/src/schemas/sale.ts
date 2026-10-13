@@ -31,6 +31,11 @@ export const saleSchema = z.object({
   account_label: z.string(),
   loyalty_program_name: z.string(),
   loyalty_program_color: z.string(),
+  // What the ticket's alterations add to the price; zero when it was never altered.
+  adjustment_cents: z.number().default(0),
+  // Listed because the ticket was altered in the period, not issued there. When the booking
+  // was already paid, amount_cents and paid_cents describe the alteration alone.
+  alteration_day: z.boolean().default(false),
   // Set means the sale was reopened by the issuance being cancelled. There is no deleted
   // counterpart: deleting an issuance deletes its sale.
   cancelled_at: z.string().nullable(),
@@ -151,6 +156,11 @@ export const supplierIssuanceSchema = z.object({
   account_id: z.string().nullish(),
   account_label: z.string().nullish(),
   kind: z.enum(["issued", "refund"]),
+  // Set when the line is an alteration to the ticket rather than the booking or its
+  // cancellation. It still arrives as "issued" (miles charged) or "refund" (miles given
+  // back), so the sums above need no case of their own.
+  adjustment_id: z.string().nullish(),
+  adjustment_reason: z.string().nullish(),
   date: z.string(),
   program_locator: z.string(),
   airline_locator: z.string().nullable(),

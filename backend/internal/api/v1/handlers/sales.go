@@ -80,8 +80,10 @@ type saleRow struct {
 
 	ValueOfTheThousand int
 	Taxes              *int
-	PaidCents          int
-	CancelledAt        *time.Time
+	// AdjustmentCents is what the ticket's alterations add to the price (sale.AdjustmentCentsJoin).
+	AdjustmentCents int
+	PaidCents       int
+	CancelledAt     *time.Time
 
 	ClientPaymentCents  int
 	ClientPaymentPaidOn *time.Time
@@ -110,6 +112,7 @@ func saleListQuery(db *gorm.DB) *gorm.DB {
 			issuances.points,
 			issuances.value_of_the_thousand,
 			issuances.taxes,
+			COALESCE(adjustments.cents, 0) AS adjustment_cents,
 			COALESCE(payments.paid_cents, 0) AS paid_cents,
 			COALESCE(payments.client_payment_cents, 0) AS client_payment_cents,
 			payments.client_payment_paid_on,
@@ -128,6 +131,8 @@ func saleListQuery(db *gorm.DB) *gorm.DB {
 		Joins("LEFT JOIN clients ON clients.id = sales.client_id").
 		Joins("LEFT JOIN account_nicknames ON account_nicknames.id = issuances.account_nickname_id").
 		Joins("LEFT JOIN people AS holders ON holders.id = accounts.holder_id").
+		// What the ticket's alterations added to (or took off) the price.
+		Joins("LEFT JOIN " + sale.AdjustmentCentsJoin + " AS adjustments ON adjustments.issuance_id = issuances.id").
 		// Aggregated in the join rather than per row: the statement of every sale on the
 		// screen in one pass, instead of one query per line.
 		Joins(`LEFT JOIN (
@@ -160,7 +165,7 @@ func saleAccountLabel(row saleRow) string {
 }
 
 func toSaleResponse(row saleRow) schemas.SaleResponse {
-	amount := sale.PointsValueCents(row.Points, row.ValueOfTheThousand)
+	amount := sale.PointsValueCents(row.Points, row.ValueOfTheThousand) + row.AdjustmentCents
 	if row.Taxes != nil {
 		amount += *row.Taxes
 	}
@@ -176,6 +181,7 @@ func toSaleResponse(row saleRow) schemas.SaleResponse {
 		PaidCents:           row.PaidCents,
 		ClientPaymentCents:  row.ClientPaymentCents,
 		ClientPaymentPaidOn: clientPaymentPaidOn,
+		AdjustmentCents:     row.AdjustmentCents,
 		BalanceCents: sale.BalanceCents(
 			sale.Amount{Cents: amount, Cancelled: row.CancelledAt != nil}, row.PaidCents),
 		IssuanceID:          row.IssuanceID,
@@ -315,15 +321,96 @@ func applySaleListFilters(query *gorm.DB, r *http.Request) *gorm.DB {
 
 	// created_at is UTC in the DB; parseDateRange resolves the local calendar days into UTC
 	// bounds so "today" matches the operator's day.
+	//
+	// A sale also belongs to the day its ticket was altered, when the alteration changed what
+	// the client owes: that is the day somebody has to go and charge (or pay back) the
+	// difference. An alteration the agency absorbed changes nothing to collect, so it does
+	// not bring an old sale back.
 	from, to := parseDateRange(r)
-	if from != nil {
-		query = query.Where("issuances.created_at >= ?", *from)
-	}
-	if to != nil {
-		query = query.Where("issuances.created_at < ?", *to)
+	if from != nil || to != nil {
+		created := []string{}
+		createdArgs := []any{}
+		if from != nil {
+			created = append(created, "issuances.created_at >= ?")
+			createdArgs = append(createdArgs, *from)
+		}
+		if to != nil {
+			created = append(created, "issuances.created_at < ?")
+			createdArgs = append(createdArgs, *to)
+		}
+		altered := []string{
+			"issuance_adjustments.issuance_id = issuances.id",
+			"issuance_adjustments.deleted_at IS NULL",
+			"(issuance_adjustments.value_of_the_thousand > 0 OR issuance_adjustments.taxes_passed_to_client)",
+		}
+		altered, alteredArgs := appendAdjustmentDayBounds(altered, nil, from, to)
+		query = query.Where(
+			"("+strings.Join(created, " AND ")+") OR EXISTS (SELECT 1 FROM issuance_adjustments WHERE "+strings.Join(altered, " AND ")+")",
+			append(createdArgs, alteredArgs...)...,
+		)
 	}
 
 	return query
+}
+
+// alterationCentsInWindow sums, per issuance, what the alterations inside the period charge
+// or give back to the client - for the sales that are listed only because of them (issued
+// outside the period). Empty when the listing has no period, or no such sale.
+func alterationCentsInWindow(db *gorm.DB, rows []saleRow, from, to *time.Time) map[string]int {
+	totals := map[string]int{}
+	if from == nil && to == nil {
+		return totals
+	}
+	issuanceIDs := make([]string, 0)
+	for _, row := range rows {
+		issuedAt := row.IssuedAt
+		if !inRange(&issuedAt, from, to) {
+			issuanceIDs = append(issuanceIDs, row.IssuanceID)
+		}
+	}
+	if len(issuanceIDs) == 0 {
+		return totals
+	}
+
+	clauses, args := appendAdjustmentDayBounds([]string{"issuance_id IN ?"}, []any{issuanceIDs}, from, to)
+	var adjustments []data.IssuanceAdjustment
+	if err := db.Where(strings.Join(clauses, " AND "), args...).Find(&adjustments).Error; err != nil {
+		slog.Error("failed to read the alterations of the listed sales", "err", err)
+		return totals
+	}
+	for _, adjustment := range adjustments {
+		totals[adjustment.IssuanceID] += sale.AdjustmentClientCents(
+			adjustment.Points, adjustment.ValueOfTheThousand, adjustment.Taxes, adjustment.TaxesPassedToClient)
+	}
+	return totals
+}
+
+// asAlterationDay reshapes a sale listed on the day its ticket was altered. If everything
+// owed before those alterations had been paid, the row shows only the alteration: its value,
+// and what has come in towards it. Otherwise the client still owes the booking too, and the
+// row shows the whole sale. The balance is the same either way - what is still missing - so
+// marking the row paid settles exactly that.
+//
+// A cancelled sale is left whole: its balance is money to give back, not an alteration to
+// collect.
+func asAlterationDay(response schemas.SaleResponse, alterations map[string]int, from, to *time.Time) schemas.SaleResponse {
+	issuedAt := response.IssuedAt
+	if (from == nil && to == nil) || inRange(&issuedAt, from, to) {
+		return response
+	}
+	response.AlterationDay = true
+	if response.CancelledAt != nil {
+		return response
+	}
+
+	inWindow := alterations[response.IssuanceID]
+	owedBefore := response.AmountCents - inWindow
+	if response.PaidCents >= owedBefore {
+		response.AmountCents = inWindow
+		response.PaidCents -= owedBefore
+		response.ClientPaymentCents = max(0, response.ClientPaymentCents-owedBefore)
+	}
+	return response
 }
 
 // noClientToken is the "Sem cliente registrado" entry of the clients view's filter. It is
@@ -413,9 +500,12 @@ func (h *SaleHandler) GetSales(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	from, to := parseDateRange(r)
+	alterations := alterationCentsInWindow(h.DB, rows, from, to)
+
 	resp := make([]schemas.SaleResponse, 0, len(rows))
 	for _, row := range rows {
-		resp = append(resp, toSaleResponse(row))
+		resp = append(resp, asAlterationDay(toSaleResponse(row), alterations, from, to))
 	}
 
 	utils.SendJSON(w, r, http.StatusOK, "Sales fetched successfully", resp)
@@ -460,11 +550,14 @@ func (h *SaleHandler) GetSalesExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	from, to := parseDateRange(r)
+	alterations := alterationCentsInWindow(h.DB, rows, from, to)
+
 	sales := make([]export.SaleRow, 0, len(rows))
 	for _, row := range rows {
 		// Through toSaleResponse rather than recomputing the amount here: a second copy of
 		// the formula is how the sheet and the screen start disagreeing by a cent.
-		response := toSaleResponse(row)
+		response := asAlterationDay(toSaleResponse(row), alterations, from, to)
 		sales = append(sales, export.SaleRow{
 			IssuedAt:       response.IssuedAt,
 			ClientName:     response.ClientName,
@@ -885,20 +978,25 @@ func (h *SaleHandler) fetchSupplierRows(r *http.Request) ([]supplierIssuanceRow,
 		query = query.Where("issuances.account_id NOT IN ?", excluded)
 	}
 
-	// Narrow to rows that can contribute to the period at all: issued in it, or
-	// cancelled in it. Without this the aggregation would read the whole table.
+	// Narrow to rows that can contribute to the period at all: issued in it, cancelled in
+	// it, or altered in it. Without this the aggregation would read the whole table.
 	if from != nil || to != nil {
 		created := h.DB.Session(&gorm.Session{NewDB: true})
 		cancelled := h.DB.Session(&gorm.Session{NewDB: true})
+		altered := h.DB.Session(&gorm.Session{NewDB: true}).Table("issuance_adjustments").
+			Select("1").
+			Where("issuance_adjustments.issuance_id = issuances.id AND issuance_adjustments.deleted_at IS NULL")
 		if from != nil {
 			created = created.Where("issuances.created_at >= ?", *from)
 			cancelled = cancelled.Where("issuances.cancelled_at >= ?", *from)
+			altered = altered.Where("issuance_adjustments.occurred_on >= ?", from.Format(time.DateOnly))
 		}
 		if to != nil {
 			created = created.Where("issuances.created_at < ?", *to)
 			cancelled = cancelled.Where("issuances.cancelled_at < ?", *to)
+			altered = altered.Where("issuance_adjustments.occurred_on < ?", to.Format(time.DateOnly))
 		}
-		query = query.Where(created.Or(cancelled))
+		query = query.Where(created.Or(cancelled).Or("EXISTS (?)", altered))
 	}
 
 	var rows []supplierIssuanceRow
@@ -979,6 +1077,7 @@ func aggregateSupplierBalances(
 	// One query for the whole statement rather than one per line. Empty on a set with no
 	// inventory account in it, which is the ordinary case.
 	inventoryCosts := supplierInventoryCosts(db, rows)
+	adjustments, adjustmentCosts := supplierAdjustments(db, rows)
 
 	byGroup := map[string]*accumulator{}
 	for _, row := range rows {
@@ -1006,6 +1105,38 @@ func aggregateSupplierBalances(
 				row, "refund", *row.CancelledAt, -*row.RefundedPoints, negateCents(row.RefundedTaxes),
 				refundedCents(inventoryCosts, row),
 			))
+		}
+
+		// An alteration is more miles out of the account, or miles back into it, on its
+		// own day. It reads as one more issued or refund line rather than a kind of its
+		// own, so a panel tab still on the previous bundle - whose schema knows only those
+		// two - keeps parsing the statement. adjustment_id is what tells the two apart.
+		for _, adjustment := range adjustments[row.IssuanceID] {
+			// occurred_on is a calendar day, stored as UTC midnight - which is the evening
+			// before in São Paulo, so it would fall out of its own month at the boundary
+			// and show the previous day on the line. Noon UTC is the same day everywhere
+			// the panel runs.
+			day := adjustment.OccurredOn
+			occurredOn := time.Date(day.Year(), day.Month(), day.Day(), 12, 0, 0, 0, time.UTC)
+			if !inRange(&occurredOn, from, to) {
+				continue
+			}
+			kind := "issued"
+			if adjustment.Points < 0 {
+				kind = "refund"
+				acc.refundedPoints -= adjustment.Points
+			} else {
+				acc.issuedPoints += adjustment.Points
+			}
+			taxes := adjustment.Taxes
+			line := supplierStatementLine(
+				row, kind, occurredOn, adjustment.Points, &taxes,
+				adjustmentCostCents(adjustmentCosts, row, adjustment.ID),
+			)
+			adjustmentID, reason := adjustment.ID, adjustment.Reason
+			line.AdjustmentID = &adjustmentID
+			line.AdjustmentReason = &reason
+			acc.statement = append(acc.statement, line)
 		}
 	}
 
@@ -1447,6 +1578,56 @@ func chargedCents(costs map[string]inventory.IssuanceCost, row supplierIssuanceR
 
 // refundedCents is what the inventory gave back on a cancellation, as a negative amount to
 // match the negative points on the refund line. Nil under the same rule as chargedCents.
+// supplierAdjustments reads the alterations of every issuance on the statement, keyed by
+// issuance, and on an inventory account what each of them cost. The period is applied by
+// the caller, as it is for the issued and refund sides.
+func supplierAdjustments(db *gorm.DB, rows []supplierIssuanceRow) (map[string][]data.IssuanceAdjustment, map[string]inventory.AdjustmentCost) {
+	issuanceIDs := make([]string, 0, len(rows))
+	for _, row := range rows {
+		issuanceIDs = append(issuanceIDs, row.IssuanceID)
+	}
+	if len(issuanceIDs) == 0 {
+		return nil, nil
+	}
+
+	var adjustments []data.IssuanceAdjustment
+	if err := db.Where("issuance_id IN ?", issuanceIDs).
+		Order("occurred_on ASC").Order("created_at ASC").
+		Find(&adjustments).Error; err != nil {
+		slog.Error("failed to read the alterations for the supplier statement",
+			"issuance_count", len(issuanceIDs), "err", err)
+		return nil, nil
+	}
+
+	byIssuance := make(map[string][]data.IssuanceAdjustment, len(adjustments))
+	adjustmentIDs := make([]string, 0, len(adjustments))
+	for _, adjustment := range adjustments {
+		byIssuance[adjustment.IssuanceID] = append(byIssuance[adjustment.IssuanceID], adjustment)
+		adjustmentIDs = append(adjustmentIDs, adjustment.ID)
+	}
+
+	// The recompute already ran in supplierInventoryCosts, so the slices are current.
+	costs, err := inventory.CostByAdjustment(db, adjustmentIDs)
+	if err != nil {
+		slog.Error("failed to read the points inventory cost of the alterations",
+			"adjustment_count", len(adjustmentIDs), "err", err)
+		return byIssuance, nil
+	}
+	return byIssuance, costs
+}
+
+// adjustmentCostCents is chargedCents for one alteration's line.
+func adjustmentCostCents(costs map[string]inventory.AdjustmentCost, row supplierIssuanceRow, adjustmentID string) *int {
+	if !row.OwnsPointInventory {
+		return nil
+	}
+	cost, ok := costs[adjustmentID]
+	if !ok || !cost.Covered {
+		return nil
+	}
+	return &cost.CostCents
+}
+
 func refundedCents(costs map[string]inventory.IssuanceCost, row supplierIssuanceRow) *int {
 	if !row.OwnsPointInventory {
 		return nil

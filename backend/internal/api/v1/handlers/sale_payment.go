@@ -577,7 +577,11 @@ func salePartlyPaid(db *gorm.DB, saleID string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return paidCents > 0 && sale.BalanceCents(amount, paidCents) > 0, nil
+	// What is missing only because the ticket was altered after the booking was paid is not
+	// where a lump sum ran out: the booking is covered, and the difference is a new charge
+	// the operator collects and settles by hand like any other.
+	bookingCents := amount.Cents - amount.AdjustmentCents
+	return paidCents > 0 && paidCents < bookingCents && sale.BalanceCents(amount, paidCents) > 0, nil
 }
 
 // rebalanceClient replays a client's payments after one of their sales changed hands. It

@@ -153,6 +153,15 @@ type SaleResponse struct {
 	LoyaltyProgramName  string `json:"loyalty_program_name"`
 	LoyaltyProgramColor string `json:"loyalty_program_color"`
 
+	// AdjustmentCents is what the ticket's alterations add to the price, zero when it was
+	// never altered. The panel badges an altered sale with it.
+	AdjustmentCents int `json:"adjustment_cents"`
+	// AlterationDay says the sale is listed because its ticket was altered in the period,
+	// not because it was issued there. On such a row, when everything before the alteration
+	// was already paid, AmountCents and PaidCents describe the alteration alone - what there
+	// is to collect that day. When it was not paid, they stay the whole sale.
+	AlterationDay bool `json:"alteration_day"`
+
 	// CancelledAt set means the sale was reopened by the issuance being cancelled: money
 	// already collected has to go back, as opposed to simply never having been charged.
 	// There is no "deleted" counterpart - deleting an issuance deletes its sale.
@@ -212,6 +221,11 @@ type SupplierIssuanceResponse struct {
 	AccountLabel string `json:"account_label"`
 	// Kind is "issued" or "refund".
 	Kind string `json:"kind" example:"issued"`
+	// AdjustmentID is set on a line that is an alteration to the ticket rather than the
+	// booking or its cancellation. Such a line is still "issued" (miles charged) or
+	// "refund" (miles given back), so a panel that does not know alterations reads it right.
+	AdjustmentID     *string `json:"adjustment_id,omitempty"`
+	AdjustmentReason *string `json:"adjustment_reason,omitempty"`
 	// Date is the issuance's created_at, or its cancelled_at on a refund line.
 	Date                time.Time `json:"date"`
 	ProgramLocator      string    `json:"program_locator" example:"ABC123"`

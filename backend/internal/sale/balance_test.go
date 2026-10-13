@@ -112,3 +112,33 @@ func TestBalanceAndSettled(t *testing.T) {
 		})
 	}
 }
+
+func TestAdjustmentClientCents(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name                string
+		points, rate, taxes int
+		passed              bool
+		want                int
+	}{
+		{"charge passed on with taxes", 10000, 2000, 8000, true, 28000},
+		{"charge passed on, taxes absorbed", 10000, 2000, 8000, false, 20000},
+		{"absorbed entirely", 10000, 0, 8000, false, 0},
+		// 1.001 points at 15,00 is 15,015 - a charge rounds up to the agency's favour.
+		{"charge rounds up", 1001, 1500, 0, true, 1502},
+		// The same 1.001 points given back rounds up to the client's favour.
+		{"refund rounds up in magnitude", -1001, 1500, 0, true, -1502},
+		{"refund of taxes only", 0, 0, -5000, true, -5000},
+		{"refund kept by the agency", -5000, 0, -5000, false, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := AdjustmentClientCents(tc.points, tc.rate, tc.taxes, tc.passed); got != tc.want {
+				t.Errorf("AdjustmentClientCents(%d, %d, %d, %v) = %d, want %d",
+					tc.points, tc.rate, tc.taxes, tc.passed, got, tc.want)
+			}
+		})
+	}
+}

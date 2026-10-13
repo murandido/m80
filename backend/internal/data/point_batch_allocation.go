@@ -27,9 +27,12 @@ type PointBatchAllocation struct {
 	OccurredOn time.Time `gorm:"column:occurred_on;type:date;not null" json:"occurred_on"`
 	// Points and CostCents are negative on a reversal, so a batch's remaining balance and
 	// a period's profit are both plain sums.
-	Points    int       `gorm:"not null" json:"points"`
-	CostCents int       `gorm:"column:cost_cents;not null" json:"cost_cents"`
-	CreatedAt time.Time `json:"created_at"`
+	Points    int `gorm:"not null" json:"points"`
+	CostCents int `gorm:"column:cost_cents;not null" json:"cost_cents"`
+	// AdjustmentID is the alteration this slice belongs to, nil for the booking itself
+	// and for its cancellation. The closing prices the slice at that movement's rate.
+	AdjustmentID *string   `gorm:"column:adjustment_id;type:uuid" json:"adjustment_id"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 func (a *PointBatchAllocation) BeforeCreate(tx *gorm.DB) error {

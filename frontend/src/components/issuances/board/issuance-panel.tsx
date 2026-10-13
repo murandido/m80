@@ -42,6 +42,7 @@ import {
   type GridContextValue,
 } from "@/components/issuances/grid-context"
 import { CancelIssuanceButton } from "@/components/issuances/cancel-issuance-dialog"
+import { AdjustmentsSection } from "@/components/issuances/board/adjustments-section"
 import { copyEmissaoText } from "@/components/issuances/copy-emissao-menu"
 import {
   accountFallbackLabel,
@@ -316,6 +317,16 @@ export function IssuancePanel({
   const accountInvalid = accountCleared && row.account_id === null
 
   const total = issuanceTotalCents(row)
+  // What the sale is worth once the alterations the client pays for are in. Shown only
+  // when there are any: Total above stays the booking as it was made.
+  const adjustedTotal =
+    total !== null && row.adjustments.length > 0
+      ? total +
+        row.adjustments.reduce(
+          (sum, adjustment) => sum + adjustment.client_amount_cents,
+          0,
+        )
+      : null
   const calculo = buildCalculo(row)
   const referenceForMessage = {
     loyaltyPrograms,
@@ -925,6 +936,11 @@ export function IssuancePanel({
               value={total !== null ? formatCurrencyBRL(total) : ""}
             />
           </FieldGroup>
+          {adjustedTotal !== null && (
+            <p className="self-end text-sm font-medium text-slate-700 tabular-nums">
+              Total com alterações: {formatCurrencyBRL(adjustedTotal)}
+            </p>
+          )}
           <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-sm text-slate-500">
             {row.redemption_fee_saved_cents !== null && (
               <>
@@ -947,6 +963,14 @@ export function IssuancePanel({
             )}
           </div>
         </section>
+
+        {/* A draft has nothing to alter yet: an alteration is about a ticket already issued. */}
+        {row.id && (
+          <>
+            <hr className="border-slate-300" />
+            <AdjustmentsSection board={board} row={row} />
+          </>
+        )}
       </div>
 
       <AlertDialog

@@ -144,6 +144,10 @@ func ReadClosing(db *gorm.DB, accountID string, startsOn, endsOn time.Time) (Clo
 // The revenue is the issuance's own value_of_the_thousand, applied to the slice rather
 // than to the whole booking: a booking split across two batches earned part of its margin
 // against each of them, and the spreadsheet wrote it exactly that way.
+//
+// A slice belonging to an alteration is priced at the alteration's rate instead: what the
+// client paid for those extra miles, or zero when the agency absorbed them. The same holds
+// for miles an alteration gave back, which is how a kept refund shows as profit.
 func loadSlices(db *gorm.DB, accountID string, startsOn, endsOn time.Time) ([]Slice, int, error) {
 	type row struct {
 		BatchID                 *string
@@ -172,15 +176,21 @@ func loadSlices(db *gorm.DB, accountID string, startsOn, endsOn time.Time) ([]Sl
 		        -- past what an integer holds, and Postgres refuses the whole query. It
 		        -- stayed hidden while every slice was bounded by the batch it drew on;
 		        -- an account left with no batches makes each booking one whole slice.
-		        CAST(ROUND(point_batch_allocations.points::numeric * issuances.value_of_the_thousand / 1000.0) AS INTEGER) AS revenue_cents,
+		        CAST(ROUND(point_batch_allocations.points::numeric * COALESCE(issuance_adjustments.value_of_the_thousand, issuances.value_of_the_thousand) / 1000.0) AS INTEGER) AS revenue_cents,
 		        -- The booking's saved redemption fee, prorated by the slice's share of its
 		        -- points - numeric first for the same overflow reason as above. Zero when the
-		        -- account is not exempt or the fee was never worked out.
-		        CAST(COALESCE(ROUND(point_batch_allocations.points::numeric * issuances.redemption_fee_saved_cents / NULLIF(issuances.points, 0)), 0) AS INTEGER) AS redemption_fee_saved_cents,
+		        -- account is not exempt or the fee was never worked out, and on an
+		        -- alteration's slices: the fee was saved on the booking, not on the change.
+		        CASE WHEN point_batch_allocations.adjustment_id IS NULL
+		             THEN CAST(COALESCE(ROUND(point_batch_allocations.points::numeric * issuances.redemption_fee_saved_cents / NULLIF(issuances.points, 0)), 0) AS INTEGER)
+		             ELSE 0 END AS redemption_fee_saved_cents,
 		        point_batch_allocations.issuance_id,
 		        issuances.program_locator,
 		        point_batch_allocations.occurred_on`).
 		Joins("JOIN issuances ON issuances.id = point_batch_allocations.issuance_id").
+		// Unscoped on purpose: a slice already settled keeps its rate even if the
+		// alteration behind it was later removed in an open period.
+		Joins("LEFT JOIN issuance_adjustments ON issuance_adjustments.id = point_batch_allocations.adjustment_id").
 		Where("issuances.account_id = ?", accountID).
 		Where("point_batch_allocations.occurred_on >= ? AND point_batch_allocations.occurred_on <= ?", startsOn, endsOn).
 		Scan(&rows).Error

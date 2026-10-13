@@ -25,6 +25,8 @@ import {
   cancelIssuanceAction,
   createIssuanceAction,
   deleteIssuanceAction,
+  deleteIssuanceAdjustmentAction,
+  saveIssuanceAdjustmentAction,
   syncIssuanceWithTraveosAction,
   uncancelIssuanceAction,
   updateIssuanceAction,
@@ -33,6 +35,8 @@ import { lookupIssuanceBookingAction } from "@/actions/issuance-lookup"
 import {
   CancelIssuanceInput,
   Issuance,
+  IssuanceAdjustment,
+  IssuanceAdjustmentInput,
   getIssuancesSchema,
   updateIssuanceSchema,
 } from "@/schemas/issuance"
@@ -689,6 +693,64 @@ export function useIssuanceBoard({
     [updateRow],
   )
 
+  // An alteration is written through its own endpoint and folded into the row from the
+  // response, not from a refresh: the open panel's row is protected from the refresh (see
+  // reconcileRows), so waiting for the SSE round trip would leave it showing the old list.
+  const saveAdjustment = useCallback(
+    async (
+      key: string,
+      adjustmentId: string | null,
+      data: IssuanceAdjustmentInput,
+    ): Promise<ActionResult> => {
+      const row = rowsRef.current.find((candidate) => candidate.key === key)
+      if (!row || row.isDraft || !row.id)
+        return { error: "Emissão ainda não foi salva." }
+      const result = await saveIssuanceAdjustmentAction(row.id, adjustmentId, data)
+      if ("error" in result)
+        return { error: result.error ?? "Erro ao salvar a alteração." }
+      const saved = result.adjustment
+      setRows((prev) =>
+        prev.map((candidate) => {
+          if (candidate.key !== key) return candidate
+          const others = candidate.adjustments.filter(
+            (adjustment) => adjustment.id !== saved.id,
+          )
+          return {
+            ...candidate,
+            adjustments: [...others, saved].sort(byOccurrence),
+          }
+        }),
+      )
+      return { success: true }
+    },
+    [],
+  )
+
+  const deleteAdjustment = useCallback(
+    async (key: string, adjustmentId: string): Promise<ActionResult> => {
+      const row = rowsRef.current.find((candidate) => candidate.key === key)
+      if (!row || row.isDraft || !row.id)
+        return { error: "Emissão ainda não foi salva." }
+      const result = await deleteIssuanceAdjustmentAction(row.id, adjustmentId)
+      if ("error" in result)
+        return { error: result.error ?? "Erro ao excluir a alteração." }
+      setRows((prev) =>
+        prev.map((candidate) =>
+          candidate.key === key
+            ? {
+                ...candidate,
+                adjustments: candidate.adjustments.filter(
+                  (adjustment) => adjustment.id !== adjustmentId,
+                ),
+              }
+            : candidate,
+        ),
+      )
+      return { success: true }
+    },
+    [],
+  )
+
   // Pulls and writes the itinerary of a saved issuance - the button, and the sweep below.
   const syncRow = useCallback(
     async (key: string): Promise<ActionResult> => {
@@ -938,8 +1000,16 @@ export function useIssuanceBoard({
     deleteRow,
     cancelRow,
     uncancelRow,
+    saveAdjustment,
+    deleteAdjustment,
     syncRow,
   }
+}
+
+// The order the server lists alterations in: by day, then by when they were typed.
+function byOccurrence(a: IssuanceAdjustment, b: IssuanceAdjustment): number {
+  if (a.occurred_on !== b.occurred_on) return a.occurred_on < b.occurred_on ? -1 : 1
+  return a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0
 }
 
 export type IssuanceBoardState = ReturnType<typeof useIssuanceBoard>

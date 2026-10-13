@@ -6,6 +6,8 @@ import {
   cancelIssuanceSchema,
   createIssuanceSchema,
   deleteIssuanceSchema,
+  issuanceAdjustmentRequestSchema,
+  issuanceAdjustmentResponseSchema,
   syncIssuanceWithTraveosSchema,
   uncancelIssuanceSchema,
   updateIssuanceSchema,
@@ -187,6 +189,71 @@ export async function deleteIssuanceAction(issuanceId: string) {
     }
 
     return { success: true }
+  } catch {
+    return { error: "Erro de conexão com o servidor." }
+  }
+}
+
+// Records an alteration (adjustmentId null) or rewrites one already recorded. The body is
+// the same either way: an alteration is always sent whole.
+export async function saveIssuanceAdjustmentAction(
+  issuanceId: string,
+  adjustmentId: string | null,
+  data: z.infer<typeof issuanceAdjustmentRequestSchema>,
+) {
+  const cookieStore = await cookies()
+  const token = cookieStore.get("auth_token")?.value
+  const path = adjustmentId
+    ? `${issuanceId}/adjustments/${adjustmentId}`
+    : `${issuanceId}/adjustments`
+
+  try {
+    const res = await fetch(`${env.BACKEND_URL}/api/v1/issuances/${path}`, {
+      method: adjustmentId ? "PATCH" : "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(data),
+    })
+
+    const json = await res.json()
+    const parsed = issuanceAdjustmentResponseSchema.safeParse(json)
+
+    if (!res.ok) {
+      return { error: parsed.data?.message || "Erro ao salvar a alteração." }
+    }
+
+    const adjustment = parsed.data?.data
+    if (!adjustment) {
+      return { error: "Erro ao salvar a alteração." }
+    }
+    return { success: true as const, adjustment }
+  } catch {
+    return { error: "Erro de conexão com o servidor." }
+  }
+}
+
+export async function deleteIssuanceAdjustmentAction(issuanceId: string, adjustmentId: string) {
+  const cookieStore = await cookies()
+  const token = cookieStore.get("auth_token")?.value
+
+  try {
+    const res = await fetch(
+      `${env.BACKEND_URL}/api/v1/issuances/${issuanceId}/adjustments/${adjustmentId}`,
+      {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      },
+    )
+
+    const json = await res.json()
+    const parsed = deleteIssuanceSchema.response.safeParse(json)
+
+    if (!res.ok) {
+      return { error: parsed.data?.message || "Erro ao excluir a alteração." }
+    }
+    return { success: true as const }
   } catch {
     return { error: "Erro de conexão com o servidor." }
   }

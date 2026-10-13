@@ -1,4 +1,4 @@
-import { Issuance, IssuanceStatus } from "@/schemas/issuance"
+import { Issuance, IssuanceAdjustment, IssuanceStatus } from "@/schemas/issuance"
 
 export type SaveStatus = "idle" | "saving" | "success" | "error"
 
@@ -78,6 +78,9 @@ export interface IssuanceRow {
   // The row stands for an estorno alone: the booking was made outside the panel, so
   // the supplier balance counts the refund and not the points. Set at cancellation.
   cancellation_only: boolean
+  // Alterations to the ticket after it was issued, oldest first. Read-only on the row:
+  // they are written through their own endpoints and folded back in from the response.
+  adjustments: IssuanceAdjustment[]
   saveStatus: SaveStatus
   // Sticks until the row next saves successfully, unlike saveStatus which flashes
   // for 900ms and resets. Drives the persistent red row highlight so a failed save
@@ -134,6 +137,7 @@ export function issuanceToRow(issuance: Issuance): IssuanceRow {
     refunded_taxes: issuance.refunded_taxes,
     cancellation_fee: issuance.cancellation_fee,
     cancellation_only: issuance.cancellation_only,
+    adjustments: issuance.adjustments,
     saveStatus: "idle",
     hasError: false,
   }
@@ -187,6 +191,7 @@ export function makeDraftRow(
     refunded_taxes: null,
     cancellation_fee: null,
     cancellation_only: false,
+    adjustments: [],
     saveStatus: "idle",
     hasError: false,
   }

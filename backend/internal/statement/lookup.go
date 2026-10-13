@@ -28,6 +28,15 @@ func LoadPanel(db *gorm.DB, accountID string, from, to time.Time) ([]PanelBookin
 		return nil, nil, fmt.Errorf("statement.LoadPanel: loading issuances: %w", err)
 	}
 
+	issuanceIDs := make([]string, 0, len(issuances))
+	for _, issuance := range issuances {
+		issuanceIDs = append(issuanceIDs, issuance.ID)
+	}
+	adjusted, err := LoadAdjustedPoints(db, issuanceIDs)
+	if err != nil {
+		return nil, nil, fmt.Errorf("statement.LoadPanel: %w", err)
+	}
+
 	bookings := make([]PanelBooking, 0, len(issuances))
 	for _, issuance := range issuances {
 		// A cancellation-only row never took points out of the account - it exists to
@@ -36,14 +45,14 @@ func LoadPanel(db *gorm.DB, accountID string, from, to time.Time) ([]PanelBookin
 		if issuance.CancellationOnly {
 			continue
 		}
+		// The booking's alterations ride on its locator, as they do on the statement.
+		resolved := ResolvedBooking{Issuance: issuance, Adjusted: adjusted[issuance.ID]}
 		booking := PanelBooking{
-			IssuanceID: issuance.ID,
-			Locator:    issuance.ProgramLocator,
-			IssuedOn:   issuance.CreatedAt,
-			Points:     issuance.Points,
-		}
-		if issuance.RefundedPoints != nil {
-			booking.RefundedPoints = *issuance.RefundedPoints
+			IssuanceID:     issuance.ID,
+			Locator:        issuance.ProgramLocator,
+			IssuedOn:       issuance.CreatedAt,
+			Points:         resolved.RedeemedPoints(),
+			RefundedPoints: resolved.RefundedPoints(),
 		}
 		bookings = append(bookings, booking)
 	}

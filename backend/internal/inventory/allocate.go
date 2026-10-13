@@ -60,6 +60,10 @@ type Event struct {
 	// it is on that day instead - otherwise they would vanish from the costing while the
 	// account, and the expected balance, has them back.
 	WithoutBooking bool
+	// AdjustmentID is set when the event is an alteration to the ticket rather than the
+	// booking or its cancellation (data.IssuanceAdjustment). Its slices carry the id so the
+	// closing can price them at the alteration's own rate.
+	AdjustmentID string
 }
 
 // Allocation is one slice: this many of an issuance's points, paid for by this batch, at
@@ -70,6 +74,9 @@ type Allocation struct {
 	OccurredOn time.Time
 	Points     int
 	CostCents  int
+	// AdjustmentID is the alteration this slice belongs to, empty for the booking itself
+	// and for its cancellation. See Event.AdjustmentID.
+	AdjustmentID string
 }
 
 // Pending reports whether this slice found no batch to charge to.
@@ -167,7 +174,7 @@ func Allocate(batches []Batch, events []Event, prior map[string][]Allocation) []
 		}
 
 		if event.Points < 0 {
-			returns := reverseAgainst(held[event.IssuanceID], -event.Points, event.OccurredOn)
+			returns := reverseAgainst(held[event.IssuanceID], -event.Points, event.OccurredOn, event.AdjustmentID)
 			for _, ret := range returns {
 				allocations = append(allocations, ret)
 				held[event.IssuanceID] = append(held[event.IssuanceID], ret)
@@ -211,11 +218,12 @@ func Allocate(batches []Batch, events []Event, prior map[string][]Allocation) []
 			remaining -= slice
 
 			allocation := Allocation{
-				IssuanceID: event.IssuanceID,
-				BatchID:    batch.ID,
-				OccurredOn: event.OccurredOn,
-				Points:     slice,
-				CostCents:  cost,
+				IssuanceID:   event.IssuanceID,
+				BatchID:      batch.ID,
+				OccurredOn:   event.OccurredOn,
+				Points:       slice,
+				CostCents:    cost,
+				AdjustmentID: event.AdjustmentID,
 			}
 			allocations = append(allocations, allocation)
 			held[event.IssuanceID] = append(held[event.IssuanceID], allocation)
@@ -225,10 +233,11 @@ func Allocate(batches []Batch, events []Event, prior map[string][]Allocation) []
 		// these points cost - which is different from them having been free.
 		if remaining > 0 {
 			allocation := Allocation{
-				IssuanceID: event.IssuanceID,
-				OccurredOn: event.OccurredOn,
-				Points:     remaining,
-				CostCents:  0,
+				IssuanceID:   event.IssuanceID,
+				OccurredOn:   event.OccurredOn,
+				Points:       remaining,
+				CostCents:    0,
+				AdjustmentID: event.AdjustmentID,
 			}
 			allocations = append(allocations, allocation)
 			held[event.IssuanceID] = append(held[event.IssuanceID], allocation)
