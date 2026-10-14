@@ -762,12 +762,29 @@ export function useIssuanceBoard({
       }
 
       setSyncingRowKeys((prev) => ({ ...prev, [row.key]: true }))
+      // The taxes as they were when the pull started, to tell whether the operator has typed
+      // over them while it ran.
+      const taxesBefore = row.taxes
       try {
         const result = await syncIssuanceWithTraveosAction(row.id)
         if ("error" in result)
           return { error: result.error ?? "Erro ao puxar os dados da cia." }
         const issuance = result.issuance
+        // On an exempt account (Azul's Diamante Unique) the sync works out the redemption fee
+        // and folds it into the taxes (issuance.RecalculateRedemptionFee). The grid picked that
+        // up from the refresh that followed; the board cannot, because the open panel's row is
+        // protected from refreshes - so the response is applied here. The taxes only when the
+        // operator has not typed over them meanwhile: that edit is the newer one.
+        const current = rowsRef.current.find((candidate) => candidate.key === key)
+        const feeFields: Partial<IssuanceRow> = issuance
+          ? {
+              redemption_fee_saved_cents: issuance.redemption_fee_saved_cents ?? null,
+              redemption_fee_manual: issuance.redemption_fee_manual,
+              ...(current?.taxes === taxesBefore ? { taxes: issuance.taxes } : {}),
+            }
+          : {}
         updateRow(row.key, {
+          ...feeFields,
           status: issuance?.status ?? "complete",
           traveos_synced_at:
             issuance?.traveos_synced_at ?? new Date().toISOString(),
