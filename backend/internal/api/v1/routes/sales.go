@@ -19,6 +19,9 @@ func RegisterSaleRoutes(r chi.Router, db *gorm.DB, broker *events.Broker) {
 		// get sales (Visão Clientes)
 		r.Get("/", saleHandler.GetSales)
 
+		// one window of the same listing, for the panel's scrolled list
+		r.Get("/page", saleHandler.GetSalesPage)
+
 		// export filtered sales as an .xlsx spreadsheet
 		r.Get("/export", saleHandler.GetSalesExport)
 

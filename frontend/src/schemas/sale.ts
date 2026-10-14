@@ -138,6 +138,23 @@ export const getSalesSchema = {
   }),
 }
 
+// One window of the clients view (GET /sales/page): the sales at [offset, offset + limit)
+// of the filtered list, how long the whole list is, and - with one client filtered - what
+// that client owes over all of it.
+export const getSalesPageSchema = {
+  response: z.object({
+    success: z.boolean(),
+    message: z.string(),
+    data: z.object({
+      sales: z.array(saleSchema),
+      total: z.number(),
+      offset: z.number(),
+      limit: z.number(),
+      owed_cents: z.number().default(0),
+    }),
+  }),
+}
+
 export const updateSaleSchema = {
   // client_id is nullable rather than optional-only: an explicit null is what unlinks the
   // client, and the backend tells the two apart by key presence.

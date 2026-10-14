@@ -552,6 +552,115 @@ func (h *SaleHandler) GetSales(w http.ResponseWriter, r *http.Request) {
 	utils.SendJSON(w, r, http.StatusOK, "Sales fetched successfully", resp)
 }
 
+// The window GET /sales/page serves at most. The panel asks for 100 at a time; the cap
+// keeps a hand-made request from turning the page back into the whole history.
+const (
+	salePageDefaultLimit = 100
+	salePageMaxLimit     = 200
+)
+
+// GetSalesPage handles the GET /sales/page route.
+// @Summary      Listar uma janela de vendas (Visão Clientes)
+// @Description  Mesmos filtros e mesma ordem de GET /sales (da emissão mais antiga para a mais recente), mas devolvendo só a janela pedida por offset/limit, junto do total de vendas no filtro. É o que deixa o painel mostrar o histórico inteiro sem carregar tudo: ele pede só o trecho que está na tela. owed_cents é o total devido quando o filtro tem exatamente um cliente, e zero fora disso.
+// @Tags         Vendas
+// @Produce      json
+// @Security     BearerAuth
+// @Param        offset              query  int     false  "Posição da primeira venda da janela (0 = a mais antiga)"
+// @Param        limit               query  int     false  "Tamanho da janela (padrão 100, máximo 200)"
+// @Param        date_from           query  string  false  "Data inicial da emissão (YYYY-MM-DD), inclusiva"
+// @Param        date_to             query  string  false  "Data final da emissão (YYYY-MM-DD), inclusiva"
+// @Param        agency_id           query  string  false  "UUID da agência (padrão: a agência principal)"
+// @Param        client_ids          query  string  false  "UUIDs de clientes separados por vírgula; 'none' inclui as vendas sem cliente"
+// @Param        paid                query  boolean false  "Filtra por vendas pagas (true) ou em aberto (false)"
+// @Success      200  {object}  schemas.SalePageSingleResponse
+// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      500  {object}  schemas.ErrorResponse "Erro ao buscar vendas"
+// @Router       /sales/page [get]
+func (h *SaleHandler) GetSalesPage(w http.ResponseWriter, r *http.Request) {
+	agencyID, err := resolveAgencyFilter(h.DB, r)
+	if err != nil {
+		sendAgencyFilterError(w, r, err)
+		return
+	}
+
+	offset := 0
+	if raw := r.URL.Query().Get("offset"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			offset = parsed
+		}
+	}
+	limit := parsePositiveInt(r.URL.Query().Get("limit"), salePageDefaultLimit)
+	if limit > salePageMaxLimit {
+		limit = salePageMaxLimit
+	}
+
+	query := applySaleListFilters(
+		saleListQuery(h.DB).Where("issuances.agency_id = ?", agencyID),
+		r,
+	)
+
+	// Counted over the filtered listing as a subquery: saleListQuery selects a long list of
+	// columns, and GORM's Count does not rewrite that select reliably.
+	var total int64
+	if err := h.DB.Raw("SELECT COUNT(*) FROM (?) AS filtered", query.Session(&gorm.Session{})).
+		Scan(&total).Error; err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to count sales")
+		return
+	}
+
+	// The same order as GET /sales, with the id as a tiebreaker so two windows never
+	// disagree about which sale sits at a position.
+	var rows []saleRow
+	if err := query.Session(&gorm.Session{}).
+		Order("issuances.created_at asc, sales.id").
+		Offset(offset).Limit(limit).
+		Scan(&rows).Error; err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch sales")
+		return
+	}
+
+	from, to := parseDateRange(r)
+	alterations := alterationCentsInWindow(h.DB, rows, from, to)
+	sales := make([]schemas.SaleResponse, 0, len(rows))
+	for _, row := range rows {
+		sales = append(sales, asAlterationDay(toSaleResponse(row), alterations, from, to))
+	}
+
+	// "Total devido" is shown for one client at a time, and has to cover every sale of
+	// theirs, not the window on screen. One client's sales are few, so they are read whole.
+	owed := 0
+	if singleClientFilter(r) {
+		var all []saleRow
+		if err := query.Session(&gorm.Session{}).Scan(&all).Error; err != nil {
+			utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch sales")
+			return
+		}
+		allAlterations := alterationCentsInWindow(h.DB, all, from, to)
+		for _, row := range all {
+			owed += asAlterationDay(toSaleResponse(row), allAlterations, from, to).BalanceCents
+		}
+	}
+
+	utils.SendJSON(w, r, http.StatusOK, "Sales fetched successfully", schemas.SalePageResponse{
+		Sales:     sales,
+		Total:     total,
+		Offset:    offset,
+		Limit:     limit,
+		OwedCents: owed,
+	})
+}
+
+// singleClientFilter says the listing is narrowed to exactly one real client - the case
+// the panel shows a "Total devido" for.
+func singleClientFilter(r *http.Request) bool {
+	raw := strings.TrimSpace(r.URL.Query().Get("client_ids"))
+	if raw == "" {
+		raw = strings.TrimSpace(r.URL.Query().Get("client_id"))
+	}
+	ids := splitIDs(raw)
+	return len(ids) == 1 && ids[0] != noClientToken
+}
+
 // GetSalesExport handles the GET /sales/export route.
 // @Summary      Exportar vendas (.xlsx)
 // @Description  Gera uma planilha .xlsx das vendas filtradas, com as colunas DATA, CLIENTE, LOCALIZADOR, EMISSÃO e STATUS, da mais antiga para a mais recente. Aceita os mesmos filtros da listagem. STATUS é PG (paga), APG (em aberto) ou CANC (emissão cancelada, tenha sido paga ou não).

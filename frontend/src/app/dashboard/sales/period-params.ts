@@ -54,6 +54,27 @@ export function resolveSalesPeriod(params: SalesSearchParams): ResolvedPeriod {
   return resolvePeriod(params, "day")
 }
 
+// ALL_PERIOD is the clients view's "Todas as emissões": no date filter at all. It travels
+// as period=all in the URL - an explicit value, not just missing dates - so the sticky-filter
+// cookie can remember it and a bare URL can still mean "the default".
+export const ALL_PERIOD = "all"
+
+export type SalesClientsPeriod = ResolvedPeriod & {
+  // all says the list is every issuance; date_from/date_to are empty then.
+  all: boolean
+}
+
+// The clients view defaults to every issuance: it is the list of who still owes what, and
+// a debt does not stop being one when the day it was made scrolls out of the filter. The
+// suppliers view keeps resolveSalesPeriod and its "today".
+export function resolveSalesClientsPeriod(params: SalesSearchParams): SalesClientsPeriod {
+  const chosePeriod = Boolean(params.period || params.date_from || params.date_to)
+  if (params.period === ALL_PERIOD || !chosePeriod) {
+    return { preset: "custom", reference: "", date_from: "", date_to: "", all: true }
+  }
+  return { ...resolvePeriod(params, "day"), all: false }
+}
+
 export function resolveSalesFilters(params: SalesSearchParams): SalesFilterState {
   return {
     agency_id: params.agency_id ?? "",
@@ -124,10 +145,11 @@ export function buildSalesQuery(
   period: ResolvedPeriod,
   filters: SalesFilterState,
 ): URLSearchParams {
-  const query = new URLSearchParams({
-    date_from: period.date_from,
-    date_to: period.date_to,
-  })
+  // No dates at all is the "every issuance" period: the backend reads absent bounds as
+  // unfiltered, and the exports follow the same query.
+  const query = new URLSearchParams()
+  if (period.date_from) query.set("date_from", period.date_from)
+  if (period.date_to) query.set("date_to", period.date_to)
   for (const key of SALES_FILTER_KEYS) {
     if (filters[key]) query.set(key, filters[key])
   }
