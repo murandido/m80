@@ -67,6 +67,13 @@ func RateLimit() func(http.Handler) http.Handler {
 	return httprate.Limit(300, 1*time.Minute, httprate.WithKeyFuncs(keyByTokenSubject))
 }
 
+// CredentialRateLimit caps how many account passwords one user can pull through the vault per
+// minute. Thirty is far more than anyone logging into programs by hand needs, and far fewer than
+// a script copying every account would want; the panel-wide RateLimit still applies on top.
+func CredentialRateLimit() func(http.Handler) http.Handler {
+	return httprate.Limit(30, 1*time.Minute, httprate.WithKeyFuncs(keyByTokenSubject))
+}
+
 // LoginRateLimit guards the one route where the IP really is the right identity:
 // there is no authenticated user yet, and the traffic worth throttling is someone
 // guessing passwords.

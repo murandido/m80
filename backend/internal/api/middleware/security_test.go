@@ -101,3 +101,32 @@ func TestLoginRateLimit_IsStricterAndPerIP(t *testing.T) {
 		t.Fatalf("the 11th login attempt got %d, want 429", code)
 	}
 }
+
+// The vault's limit is per user like the panel-wide one, but an order of magnitude tighter:
+// thirty passwords a minute is plenty by hand and nowhere near a bulk copy.
+func TestCredentialRateLimit_IsPerUserAndTight(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-secret-for-rate-limit-tests")
+
+	first, err := auth.GenerateToken("33333333-3333-3333-3333-333333333333", "11999999993", "user")
+	if err != nil {
+		t.Fatalf("failed to generate the first token: %v", err)
+	}
+	second, err := auth.GenerateToken("44444444-4444-4444-4444-444444444444", "11999999994", "user")
+	if err != nil {
+		t.Fatalf("failed to generate the second token: %v", err)
+	}
+
+	limiter := CredentialRateLimit()
+
+	for i := range 30 {
+		if code := callWithToken(t, limiter, first, i); code != http.StatusOK {
+			t.Fatalf("credential read %d was throttled with %d", i+1, code)
+		}
+	}
+	if code := callWithToken(t, limiter, first, 30); code != http.StatusTooManyRequests {
+		t.Fatalf("the 31st credential read in a minute got %d, want 429", code)
+	}
+	if code := callWithToken(t, limiter, second, 31); code != http.StatusOK {
+		t.Fatalf("another user got %d, want 200 - the vault limit must be per user", code)
+	}
+}
