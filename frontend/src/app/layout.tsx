@@ -18,8 +18,8 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "M-80",
-    template: "%s · M-80",
+    default: "M80",
+    template: "%s · M80",
   },
   description: "Painel de gestão de emissões, contas e programas de fidelidade.",
 }
