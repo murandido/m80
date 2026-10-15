@@ -123,6 +123,11 @@ services:
       - SMILES_SYNC_INTERVAL=$SMILES_SYNC_INTERVAL_DEV
       # Optional egress proxy for every Smiles host. Empty dials directly.
       - SMILES_PROXY_URL=$SMILES_PROXY_URL_DEV
+      # Passenger autofill for the browser extension (internal/passengerextract). Blank key
+      # turns the feature off; blank models use the defaults.
+      - ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY_DEV
+      - PASSENGER_EXTRACTION_MODEL=$PASSENGER_EXTRACTION_MODEL_DEV
+      - PASSENGER_EXTRACTION_ESCALATION_MODEL=$PASSENGER_EXTRACTION_ESCALATION_MODEL_DEV
     depends_on:
       db-dev:
         condition: service_healthy
@@ -409,6 +414,11 @@ services:
       # Optional egress proxy for every Smiles host, like LATAM_PROXY_URL/AIRFRANCE_PROXY_URL
       # above.
       - SMILES_PROXY_URL=$SMILES_PROXY_URL_PROD
+      # Passenger autofill for the browser extension (internal/passengerextract). Blank key
+      # turns the feature off; blank models use the defaults.
+      - ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY_PROD
+      - PASSENGER_EXTRACTION_MODEL=$PASSENGER_EXTRACTION_MODEL_PROD
+      - PASSENGER_EXTRACTION_ESCALATION_MODEL=$PASSENGER_EXTRACTION_ESCALATION_MODEL_PROD
       # Only here. Behind Caddy r.RemoteAddr is the proxy on every request, so
       # middleware.RealIP has to read X-Forwarded-For - and it must stay off
       # everywhere the API is reachable directly, where that header is nothing
