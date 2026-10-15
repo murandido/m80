@@ -75,6 +75,13 @@ func CredentialRateLimit() func(http.Handler) http.Handler {
 	return httprate.LimitBy(30, 1*time.Minute, keyByTokenSubject)
 }
 
+// PassengerExtractRateLimit caps how many extraction requests one user can make per minute.
+// Each one costs money and reads personal documents; twenty covers someone working through a
+// large booking and stops a loop from running up the bill.
+func PassengerExtractRateLimit() func(http.Handler) http.Handler {
+	return httprate.Limit(20, 1*time.Minute, httprate.WithKeyFuncs(keyByTokenSubject))
+}
+
 // LoginRateLimit guards the one route where the IP really is the right identity:
 // there is no authenticated user yet, and the traffic worth throttling is someone
 // guessing passwords.

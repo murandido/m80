@@ -62,6 +62,8 @@ func NewRouter(db *gorm.DB, broker *events.Broker, bookings *booking.Registry, m
 		routes.RegisterSmilesStatementRoutes(r, db, smilesGuard)
 		routes.RegisterLatamRoutes(r, db, latamGuard)
 		routes.RegisterInventoryPeriodRoutes(r, db)
+		// Reads passengers out of pasted text or document photos for the browser extension.
+		routes.RegisterPassengerRoutes(r)
 		// SSE stream, behind the same auth as everything else in this group
 		routes.RegisterEventRoutes(r, broker)
 		// Dependency lights (bot + Traveos) for everyone, not just admins -
