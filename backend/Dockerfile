@@ -36,7 +36,10 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o app ./cmd/${SERVICE_NAME}
 
 # prod image
-FROM alpine:latest AS prod
+#
+# Pinned rather than :latest, so a rebuild of the same commit gets the same base;
+# Dependabot proposes the bumps.
+FROM alpine:3.24.2 AS prod
 
 # The DSN in internal/data/db.go pins TimeZone=America/Sao_Paulo, and a bare
 # alpine ships no IANA timezone database - so the driver dies with "unknown
@@ -49,11 +52,16 @@ FROM alpine:latest AS prod
 # ca-certificates would be redundant.
 RUN apk add --no-cache tzdata
 
-WORKDIR /root/
-RUN mkdir -p /root/data
+# api and bot write nothing to disk (the WhatsApp session lives in Postgres), so
+# the process needs no privilege at all: an unprivileged user with no home. A
+# fixed uid keeps file ownership predictable should a volume ever be mounted.
+RUN adduser -D -H -u 10001 app
+
+WORKDIR /app
 
 COPY --from=builder /app/app ./server
 
+USER app
 
 CMD ["./server"]
 # prod image for the promo service
@@ -73,7 +81,7 @@ CMD ["./server"]
 #
 # curl is here for the Compose healthcheck alone: the base image carries neither it nor
 # wget, and probing the port with bash's /dev/tcp instead is unreadable inside YAML.
-FROM chromedp/headless-shell:latest AS prod-chrome
+FROM chromedp/headless-shell:156.0.8078.12 AS prod-chrome
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         tzdata \
@@ -91,8 +99,15 @@ ENTRYPOINT []
 # renamed binary fails at startup with a clear message instead of on the first campaign.
 ENV CHROME_PATH=/headless-shell/headless-shell
 
-WORKDIR /root/
+# Unprivileged, but with a home: Chrome writes its crash and config files under
+# $HOME, and its per-run profile under /tmp. It already runs with --no-sandbox
+# (enroll.go), which is what lets it start without root or extra capabilities.
+RUN useradd -m -u 10001 app
+
+WORKDIR /app
 
 COPY --from=builder /app/app ./server
+
+USER app
 
 CMD ["./server"]
