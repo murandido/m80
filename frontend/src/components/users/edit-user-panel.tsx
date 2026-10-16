@@ -72,6 +72,7 @@ export function EditUserPanel({ user, isOpen, onSaved, viewerIsDev, agencies }: 
         role: user.role,
         agency_ids: viewerIsDev ? user.agency_ids : undefined,
       })
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- resets the panel each time it opens for a user
       setShowPassword(false)
     }
   }, [isOpen, user]) // eslint-disable-line react-hooks/exhaustive-deps

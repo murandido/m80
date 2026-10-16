@@ -7,3 +7,14 @@ linters:
     - gosec
     - bodyclose
     - contextcheck
+    - errorlint
+    - nilerr
+    - sqlclosecheck
+    - rowserrcheck
+  settings:
+    errorlint:
+      # The codebase wraps a sentinel with %w and formats the cause with %v on
+      # purpose ("%w: %v"): callers match the sentinel, and the transport error
+      # stays text. In some of those calls the cause can be nil, where %w would
+      # print "%!w(<nil>)". The comparison and type-assertion checks stay on.
+      errorf: false

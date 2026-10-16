@@ -339,6 +339,7 @@ export function useIssuanceBoard({
   useEffect(() => {
     const stored = readStoredDrafts()
     if (stored.length === 0) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- drafts come from localStorage, which only exists after hydration
     setRows((prev) => {
       const known = new Set(prev.map((row) => row.key))
       const missing = stored.filter((row) => !known.has(row.key))
@@ -498,6 +499,7 @@ export function useIssuanceBoard({
     },
     [updateRow, flashSaveStatus, reconcileCreatedRow],
   )
+  // eslint-disable-next-line react-hooks/refs -- latest-ref read by callbacks memoized without persist in their deps
   persistRef.current = persist
 
   // The single entry point for an edit: optimistic, then persisted. Addressed by key, since

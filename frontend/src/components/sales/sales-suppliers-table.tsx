@@ -279,6 +279,7 @@ function AdministratorExport({
   // Follow the server value when it changes underneath us - e.g. after "Gerar PDF de todas"
   // bumps this administrator among others and the page refetches.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- follows the server value when the page refetches underneath
     setCounter(initialCounter)
     setText(String(initialCounter))
   }, [initialCounter])

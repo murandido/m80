@@ -64,6 +64,7 @@ export function IssuanceBoardScreen({
 
   // The live refresh protects the row being typed into from being rebuilt under the operator.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/immutability -- hands the open row to the hook's live refresh, which reads it outside React
     board.openKeyRef.current = panelOpen ? openKey : null
   }, [board.openKeyRef, openKey, panelOpen])
 
@@ -112,8 +113,10 @@ export function IssuanceBoardScreen({
 
   // Shortcuts that work wherever the focus is on this screen.
   const boardRef = useRef(board)
+  // eslint-disable-next-line react-hooks/refs -- latest-ref so the keydown listener is bound once and still sees the current board
   boardRef.current = board
   const openRowRef = useRef(openRow)
+  // eslint-disable-next-line react-hooks/refs -- latest-ref, same as boardRef above
   openRowRef.current = openRow
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {

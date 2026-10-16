@@ -12,7 +12,7 @@ import { z } from "zod"
 // memoized with React's cache() so a render resolves the session once.
 
 export async function loginAction(
-  prevState: any,
+  _prevState: unknown,
   data: z.infer<typeof loginSchema.request>,
 ) {
   const validateFields = loginSchema.request.safeParse(data)

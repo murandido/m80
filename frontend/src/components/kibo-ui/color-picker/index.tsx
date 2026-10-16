@@ -88,6 +88,7 @@ export const ColorPicker = ({
     if (value) {
       const color = Color.rgb(value).rgb().object();
 
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- vendored Kibo UI component, synced from the controlled value as upstream does
       setHue(color.r);
       setSaturation(color.g);
       setLightness(color.b);
