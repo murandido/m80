@@ -59,8 +59,9 @@ function formatShortDay(day: string): string {
 
 export function SaleStatusButton({ sale, onToggle, disabled }: SaleStatusButtonProps) {
   const status = saleStatus(sale)
-  // Paid entirely by the client's lump sums: the switch has nothing of its own to take
-  // back, and the backend refuses it. The way back is undoing the payment in the history.
+  // Paid entirely by the client's lump sums, or by credit another sale of theirs had left
+  // over: the switch has nothing of its own to take back, and the backend refuses it. The
+  // way back is undoing the payment in the history, or the payment on the other sale.
   const coveredByClientPayment =
     status === "paid" &&
     sale.client_payment_cents > 0 &&
@@ -94,9 +95,9 @@ export function SaleStatusButton({ sale, onToggle, disabled }: SaleStatusButtonP
 
   const hint = {
     paid: coveredByClientPayment
-      ? `Paga pelo pagamento do cliente de ${formatCurrencyBRL(sale.client_payment_cents)}` +
+      ? `Paga pelo pagamento ou crédito do cliente de ${formatCurrencyBRL(sale.client_payment_cents)}` +
         (sale.client_payment_paid_on ? ` em ${formatShortDay(sale.client_payment_paid_on)}` : "") +
-        " — desfaça no Histórico"
+        " — só muda pelo Histórico ou pela emissão que gerou o crédito"
       : "Clique para voltar a A Pagar",
     partial: `${Math.round(paidShare)}% pago — só um novo pagamento parcial altera`,
     unpaid: "Clique para marcar como pago",

@@ -35,6 +35,14 @@ COPY . .
 # -ldflags="-s -w" removes debug infos for less size
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o app ./cmd/${SERVICE_NAME}
 
+# One-off maintenance commands ride in the api image, so they run on the production box with
+# its own .env and network (docker compose run --rm api-prod ./tools/...) instead of
+# needing an image of their own. The directory exists for every service, empty outside
+# the api, because the prod stage copies it unconditionally.
+RUN mkdir -p tools && if [ "${SERVICE_NAME}" = "api" ]; then \
+        CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o tools/rebalance-clients ./cmd/rebalance-clients; \
+    fi
+
 # prod image
 #
 # Pinned rather than :latest, so a rebuild of the same commit gets the same base;
@@ -60,6 +68,7 @@ RUN adduser -D -H -u 10001 app
 WORKDIR /app
 
 COPY --from=builder /app/app ./server
+COPY --from=builder /app/tools ./tools
 
 USER app
 

@@ -52,6 +52,17 @@ func (h *SaleHandler) broadcastSaleUpdated(saleID string) {
 	})
 }
 
+// broadcastSalesUpdated announces a sale and the others a replay of its client changed, each
+// once.
+func (h *SaleHandler) broadcastSalesUpdated(saleID string, rebalancedSaleIDs []string) {
+	h.broadcastSaleUpdated(saleID)
+	for _, otherID := range rebalancedSaleIDs {
+		if otherID != saleID {
+			h.broadcastSaleUpdated(otherID)
+		}
+	}
+}
+
 func NewSaleHandler(db *gorm.DB, broker *events.Broker) *SaleHandler {
 	return &SaleHandler{
 		DB:        db,
@@ -140,12 +151,16 @@ func saleListQuery(db *gorm.DB) *gorm.DB {
 		// What the ticket's alterations added to (or took off) the price.
 		Joins("LEFT JOIN " + sale.AdjustmentCentsJoin + " AS adjustments ON adjustments.issuance_id = issuances.id").
 		// Aggregated in the join rather than per row: the statement of every sale on the
-		// screen in one pass, instead of one query per line.
+		// screen in one pass, instead of one query per line. Credit carried in from another
+		// sale's surplus counts as the client's payment: it is their money, and only the
+		// replay moves it, so the switch has to treat it the same way.
 		Joins(`LEFT JOIN (
 			SELECT sale_id,
 				SUM(amount_cents) AS paid_cents,
-				SUM(amount_cents) FILTER (WHERE client_payment_id IS NOT NULL) AS client_payment_cents,
-				MAX(paid_on) FILTER (WHERE client_payment_id IS NOT NULL) AS client_payment_paid_on
+				SUM(amount_cents) FILTER (WHERE client_payment_id IS NOT NULL
+					OR credit_from_sale_id <> sale_id) AS client_payment_cents,
+				MAX(paid_on) FILTER (WHERE client_payment_id IS NOT NULL
+					OR credit_from_sale_id <> sale_id) AS client_payment_paid_on
 			FROM sale_payments
 			GROUP BY sale_id
 		) AS payments ON payments.sale_id = sales.id`).
@@ -871,15 +886,18 @@ func (h *SaleHandler) UpdateSale(w http.ResponseWriter, r *http.Request) {
 	// The switch only takes back what the switch (or the old per-sale statement) put on the
 	// sale. Money a client's payment put here is taken back by undoing that payment:
 	// clearing its lines would last until the next replay put them back. So a sale covered
-	// only by client payments has nothing the switch can undo, and says so.
+	// only by client payments has nothing the switch can undo, and says so. Credit carried
+	// in from another sale's surplus is the same: it moves when that sale's payments do.
 	if req.Paid != nil && !*req.Paid {
 		var lines struct {
 			Own    int64
 			Spread int64
+			Credit int64
 		}
 		if err := h.DB.Model(&data.SalePayment{}).
-			Select(`COUNT(*) FILTER (WHERE client_payment_id IS NULL) AS own,
-				COUNT(*) FILTER (WHERE client_payment_id IS NOT NULL) AS spread`).
+			Select(`COUNT(*) FILTER (WHERE client_payment_id IS NULL AND credit_from_sale_id IS NULL) AS own,
+				COUNT(*) FILTER (WHERE client_payment_id IS NOT NULL) AS spread,
+				COUNT(*) FILTER (WHERE credit_from_sale_id IS NOT NULL) AS credit`).
 			Where("sale_id = ?", sale.ID).
 			Scan(&lines).Error; err != nil {
 			utils.SendError(w, r, http.StatusInternalServerError, "Failed to update sale: "+err.Error())
@@ -887,6 +905,10 @@ func (h *SaleHandler) UpdateSale(w http.ResponseWriter, r *http.Request) {
 		}
 		if lines.Own == 0 && lines.Spread > 0 {
 			utils.SendError(w, r, http.StatusConflict, "Essa venda foi paga por um pagamento do cliente; desfaça o pagamento no histórico")
+			return
+		}
+		if lines.Own == 0 && lines.Credit > 0 {
+			utils.SendError(w, r, http.StatusConflict, "Essa venda foi paga com crédito do cliente vindo de outra emissão; ela muda sozinha com os pagamentos daquela emissão")
 			return
 		}
 	}

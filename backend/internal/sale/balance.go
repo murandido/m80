@@ -183,7 +183,8 @@ func Recalculate(tx *gorm.DB, saleID string) error {
 // what a lump sum had put on a ticket that is now cancelled is the client's money again,
 // and goes to their next open sale or to their credit instead of waiting to be handed
 // back; a restored ticket is a debt again and takes its turn in the queue. The ledger
-// lines recorded on the sale itself are still left alone.
+// lines recorded on the sale itself are still left alone, but what they paid beyond the
+// fee is surplus, and the replay carries it to the client's other sales or credit too.
 func RecalculateByIssuance(tx *gorm.DB, issuanceID string) error {
 	var found data.Sale
 	err := tx.Select("id", "client_id").
