@@ -1020,6 +1020,9 @@ type supplierIssuanceRow struct {
 	DestinationIATACode *string
 	Taxes               *int
 	RefundedTaxes       *int
+	// CancelledCPFFee is the supplier's charge for the CPFs the cancellation burned. It
+	// rides on the refund line, dated with it.
+	CancelledCPFFee     *int
 	CostOfTheThousand   *int
 	TaxesIncludedInCost bool
 	Reviewed            bool
@@ -1118,6 +1121,7 @@ func (h *SaleHandler) fetchSupplierRows(r *http.Request) ([]supplierIssuanceRow,
 			issuances.destination_iata_code,
 			issuances.taxes,
 			issuances.refunded_taxes,
+			issuances.cancelled_cpf_fee,
 			issuances.cost_of_the_thousand,
 			issuances.taxes_included_in_cost,
 		issuances.reviewed,
@@ -1299,10 +1303,14 @@ func aggregateSupplierBalances(
 		}
 		if inRange(row.CancelledAt, from, to) && row.RefundedPoints != nil {
 			acc.refundedPoints += *row.RefundedPoints
-			acc.statement = append(acc.statement, supplierStatementLine(
+			line := supplierStatementLine(
 				row, "refund", *row.CancelledAt, -*row.RefundedPoints, negateCents(row.RefundedTaxes),
 				refundedCents(inventoryCosts, row),
-			))
+			)
+			// Only the cancellation's own refund carries the fee: an alteration giving miles
+			// back burns no CPF, and putting it there too would charge it twice.
+			line.CancelledCPFFee = row.CancelledCPFFee
+			acc.statement = append(acc.statement, line)
 		}
 
 		// An alteration is more miles out of the account, or miles back into it, on its
@@ -1384,7 +1392,7 @@ func aggregateSupplierBalances(
 
 // UpdateSupplierIssuances handles the POST /sales/suppliers/issuances route.
 // @Summary      Definir os termos de pagamento ao fornecedor
-// @Description  Grava o milheiro de custo (em centavos) e/ou se as taxas entram no valor, nas emissões informadas. Recebe a lista explícita de ids, nunca um filtro: um id é a edição de uma linha, vários são a aplicação em massa. Campo omitido é preservado; cost_of_the_thousand explicitamente nulo limpa o valor. Rota restrita a administradores.
+// @Description  Grava o milheiro de custo (em centavos), se as taxas entram no valor e/ou a taxa de CPF cancelado (em centavos, só em emissões canceladas), nas emissões informadas. Recebe a lista explícita de ids, nunca um filtro: um id é a edição de uma linha, vários são a aplicação em massa. Campo omitido é preservado; cost_of_the_thousand ou cancelled_cpf_fee explicitamente nulo limpa o valor. Rota restrita a administradores.
 // @Tags         Vendas
 // @Accept       json
 // @Produce      json
@@ -1394,6 +1402,7 @@ func aggregateSupplierBalances(
 // @Failure      400  {object}  schemas.ErrorResponse "Payload inválido"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      403  {object}  schemas.ErrorResponse "Usuário não é administrador"
+// @Failure      422  {object}  schemas.ErrorResponse "Custo vindo do estoque, ou taxa de CPF em emissão não cancelada"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao gravar os termos de pagamento"
 // @Router       /sales/suppliers/issuances [post]
 func (h *SaleHandler) UpdateSupplierIssuances(w http.ResponseWriter, r *http.Request) {
@@ -1468,6 +1477,24 @@ func (h *SaleHandler) UpdateSupplierIssuances(w http.ResponseWriter, r *http.Req
 	}
 	if req.Reviewed != nil {
 		updates["reviewed"] = *req.Reviewed
+	}
+	if _, ok := present["cancelled_cpf_fee"]; ok {
+		// The fee is for CPFs a cancellation burned, so it has nowhere to show on a booking
+		// that is still live - the screen only offers it on refund lines, and this keeps a
+		// stray value from sitting unseen on an issuance until the day it is cancelled.
+		var live int64
+		if err := h.DB.Model(&data.Issuance{}).
+			Where("id IN ? AND cancelled_at IS NULL", req.IssuanceIDs).
+			Count(&live).Error; err != nil {
+			utils.SendError(w, r, http.StatusInternalServerError, "Failed to check the issuances: "+err.Error())
+			return
+		}
+		if live > 0 {
+			utils.SendError(w, r, http.StatusUnprocessableEntity,
+				"A taxa de CPF só vale para emissões canceladas")
+			return
+		}
+		updates["cancelled_cpf_fee"] = req.CancelledCPFFee
 	}
 	if len(updates) == 0 {
 		utils.SendError(w, r, http.StatusBadRequest, "No fields to update")

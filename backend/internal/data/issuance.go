@@ -124,6 +124,10 @@ type Issuance struct {
 	RefundedPoints     *int                 `gorm:"column:refunded_points" json:"refunded_points"`
 	RefundedTaxes      *int                 `gorm:"column:refunded_taxes" json:"refunded_taxes"`
 	CancellationFee    *int                 `gorm:"column:cancellation_fee" json:"cancellation_fee"`
+	// CancelledCPFFee is what the supplier charges, in centavos, for the CPFs a cancelled
+	// booking burned on their account - the miles come back, the passengers do not. It is
+	// owed to the supplier, unlike CancellationFee, which the client pays.
+	CancelledCPFFee *int `gorm:"column:cancelled_cpf_fee" json:"cancelled_cpf_fee"`
 	// CancellationOnly marks a row that exists only to carry an estorno. The
 	// spreadsheet importer writes one when a negative row names a booking the panel
 	// never had: there is nothing to cancel, so it invents an issuance to hang the

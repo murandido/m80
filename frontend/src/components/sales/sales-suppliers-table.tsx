@@ -81,14 +81,16 @@ interface SalesSuppliersTableProps {
 //   5 Milhas líquidas  / Pontos       (a line's signed points are its net contribution)
 //   6 Taxas
 //   7 Milheiro de custo
-//   8 Valor
-//   9 Conferido
-const COLUMN_COUNT = 9
+//   8 Taxa CPF         (the supplier's fee for the CPFs a cancellation burned)
+//   9 Valor
+//  10 Conferido
+const COLUMN_COUNT = 10
 
 type PaymentTerms = {
   costOfTheThousand?: number | null
   taxesIncludedInCost?: boolean
   reviewed?: boolean
+  cancelledCpfFee?: number | null
 }
 
 function formatDate(iso: string): string {
@@ -639,6 +641,7 @@ export function SalesSuppliersTable({ balances, query, groupBy }: SalesSuppliers
                 </div>
               </TableHead>
 
+              <TableHead className="text-right">Taxa CPF</TableHead>
               <TableHead className="text-right">Valor</TableHead>
 
               {/* Same placement rule as the two controls above: the bulk button lives in
@@ -718,6 +721,9 @@ export function SalesSuppliersTable({ balances, query, groupBy }: SalesSuppliers
                   {formatCurrencyBRL(totals.taxes)}
                 </TableCell>
                 <TableCell />
+                <TableCell className="text-right font-medium tabular-nums text-muted-foreground">
+                  {totals.cpfFees > 0 ? formatCurrencyBRL(totals.cpfFees) : ""}
+                </TableCell>
                 <TableCell
                   className={cn(
                     "text-right font-semibold tabular-nums",
@@ -887,6 +893,9 @@ function SupplierAccountRows({
           {formatCurrencyBRL(lines.taxes)}
         </TableCell>
         <TableCell />
+        <TableCell className="text-right tabular-nums text-muted-foreground">
+          {lines.cpfFees > 0 ? formatCurrencyBRL(lines.cpfFees) : ""}
+        </TableCell>
         <TableCell
           className={cn(
             "text-right font-medium tabular-nums",
@@ -1055,6 +1064,24 @@ function SupplierIssuanceRow({
             onCommit={(cents) =>
               onCommit([line.issuance_id], { costOfTheThousand: cents }, () =>
                 "Milheiro de custo atualizado.",
+              )
+            }
+          />
+        )}
+      </TableCell>
+
+      {/* Only the cancellation's own credit can carry the fee: that is where CPFs were
+          burned. An alteration giving miles back burns none, and a booking is still live. */}
+      <TableCell className="text-right">
+        {isRefund && !line.adjustment_id && (
+          <SupplierCostCell
+            value={line.cancelled_cpf_fee}
+            saving={saving}
+            ariaLabel="Taxa de CPF cancelado"
+            highlightEmpty={false}
+            onCommit={(cents) =>
+              onCommit([line.issuance_id], { cancelledCpfFee: cents }, () =>
+                cents === null ? "Taxa de CPF removida." : "Taxa de CPF atualizada.",
               )
             }
           />

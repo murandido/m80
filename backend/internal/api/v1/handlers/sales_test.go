@@ -1299,3 +1299,106 @@ func TestGetSupplierBalances_ARealIssuanceCancelledTheSameDayStillNetsToZero(t *
 		}
 	})
 }
+
+func cancelledCPFFee(t *testing.T, tx *gorm.DB, issuanceID string) *int {
+	t.Helper()
+	var issuance data.Issuance
+	if err := tx.First(&issuance, "id = ?", issuanceID).Error; err != nil {
+		t.Fatalf("failed to re-read issuance %s: %v", issuanceID, err)
+	}
+	return issuance.CancelledCPFFee
+}
+
+// The fee is for CPFs the cancellation burned, so it belongs to the cancellation's refund
+// line and to no other: the booking line, issued the same day, stays without it.
+func TestGetSupplierBalances_CancelledCPFFeeRidesOnTheRefundLine(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		main := defaultAgency(t, tx)
+		issuance, _ := seedSaleFixture(t, tx, main.ID)
+
+		if err := tx.Model(&issuance).Updates(map[string]any{
+			"points":               10000,
+			"cost_of_the_thousand": 1650,
+			"active":               false,
+			"cancelled_at":         time.Now(),
+			"refunded_points":      10000,
+			"cancelled_cpf_fee":    12000,
+		}).Error; err != nil {
+			t.Fatalf("failed to set up the cancelled issuance: %v", err)
+		}
+
+		today := spDay(t, 0)
+		got := findBalance(callGetSupplierBalances(t, tx, "date_from="+today+"&date_to="+today), issuance.AccountID)
+		if got == nil {
+			t.Fatal("account missing from the supplier balances")
+		}
+		if len(got.Issuances) != 2 {
+			t.Fatalf("statement lines: got %d, want 2 (%+v)", len(got.Issuances), got.Issuances)
+		}
+		for _, line := range got.Issuances {
+			switch line.Kind {
+			case "refund":
+				if line.CancelledCPFFee == nil || *line.CancelledCPFFee != 12000 {
+					t.Errorf("refund line fee: got %v, want 12000", line.CancelledCPFFee)
+				}
+			default:
+				if line.CancelledCPFFee != nil {
+					t.Errorf("%s line carries the fee: got %v, want nil", line.Kind, *line.CancelledCPFFee)
+				}
+			}
+		}
+	})
+}
+
+func TestUpdateSupplierIssuances_SetsAndClearsTheCancelledCPFFee(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		main := defaultAgency(t, tx)
+		issuance, _ := seedSaleFixture(t, tx, main.ID)
+		if err := tx.Model(&issuance).Updates(map[string]any{
+			"active":          false,
+			"cancelled_at":    time.Now(),
+			"refunded_points": 10000,
+		}).Error; err != nil {
+			t.Fatalf("failed to cancel the issuance: %v", err)
+		}
+
+		if rec := callSetSupplierCost(t, tx, `{"issuance_ids":["`+issuance.ID+`"],"cancelled_cpf_fee":12000}`); rec.Code != http.StatusOK {
+			t.Fatalf("setting the fee failed: %d (%s)", rec.Code, rec.Body.String())
+		}
+		if got := cancelledCPFFee(t, tx, issuance.ID); got == nil || *got != 12000 {
+			t.Fatalf("fee after setting: got %v, want 12000", got)
+		}
+
+		// A write of another term leaves the fee alone.
+		if rec := callSetSupplierCost(t, tx, `{"issuance_ids":["`+issuance.ID+`"],"reviewed":true}`); rec.Code != http.StatusOK {
+			t.Fatalf("setting reviewed failed: %d (%s)", rec.Code, rec.Body.String())
+		}
+		if got := cancelledCPFFee(t, tx, issuance.ID); got == nil || *got != 12000 {
+			t.Errorf("the fee was touched by a reviewed-only write: got %v, want 12000", got)
+		}
+
+		if rec := callSetSupplierCost(t, tx, `{"issuance_ids":["`+issuance.ID+`"],"cancelled_cpf_fee":null}`); rec.Code != http.StatusOK {
+			t.Fatalf("clearing the fee failed: %d (%s)", rec.Code, rec.Body.String())
+		}
+		if got := cancelledCPFFee(t, tx, issuance.ID); got != nil {
+			t.Errorf("fee after clearing: got %v, want nil", *got)
+		}
+	})
+}
+
+// A live booking burned no CPF yet, so the fee is refused there rather than stored where
+// no line would ever show it.
+func TestUpdateSupplierIssuances_RejectsTheCPFFeeOnALiveIssuance(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		main := defaultAgency(t, tx)
+		issuance, _ := seedSaleFixture(t, tx, main.ID)
+
+		rec := callSetSupplierCost(t, tx, `{"issuance_ids":["`+issuance.ID+`"],"cancelled_cpf_fee":12000}`)
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("status: got %d, want 422 (body: %s)", rec.Code, rec.Body.String())
+		}
+		if got := cancelledCPFFee(t, tx, issuance.ID); got != nil {
+			t.Errorf("the fee was stored on a live issuance: got %v", *got)
+		}
+	})
+}

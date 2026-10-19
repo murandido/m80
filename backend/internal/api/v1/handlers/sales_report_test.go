@@ -706,3 +706,32 @@ func TestSupplierLineAmount_FallsBackToTheRateWhenNotYetCosted(t *testing.T) {
 		t.Errorf("got %d, want the typed rate's 82500", got)
 	}
 }
+
+// The supplier is paid for the CPFs a cancellation burned, so the fee shrinks the credit in
+// the total - and is printed as a line of its own under it, so the document says why.
+func TestBuildSupplierReport_ItemisesTheCancelledCPFFee(t *testing.T) {
+	cost := intPtr(2000)
+	refund := statementLine("refund", -10000, nil, cost)
+	refund.CancelledCPFFee = intPtr(12000)
+	balances := oneBalance(statementLine("issued", 10000, nil, cost), refund)
+
+	model, missing := buildSupplierReport(balances, noBrands, "03/08/2026", groupByAccount)
+	if missing != 0 {
+		t.Fatalf("missing: got %d, want 0", missing)
+	}
+	section := model.Groups[0].Sections[0]
+	if len(section.Lines) != 3 {
+		t.Fatalf("lines: got %d, want 3 (booking, credit, fee)", len(section.Lines))
+	}
+	fee := section.Lines[2]
+	if !fee.CPFFee || fee.Refund || fee.Amount != "R$ 120,00" || fee.Points != "" {
+		t.Errorf("fee line: got %+v, want a R$ 120,00 CPF fee line with no points", fee)
+	}
+	if section.TotalAmount != "R$ 120,00" {
+		t.Errorf("total: got %q, want %q - the booking and credit net to zero, the fee remains",
+			section.TotalAmount, "R$ 120,00")
+	}
+	if section.TotalPoints != supplierreport.FormatPoints(0) {
+		t.Errorf("points: got %q, want the fee to add no miles", section.TotalPoints)
+	}
+}
