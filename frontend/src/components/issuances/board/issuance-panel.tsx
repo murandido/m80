@@ -72,6 +72,7 @@ import type { AccountOption } from "@/schemas/account"
 import type { Airport } from "@/schemas/airport"
 import type { IssuanceStatus } from "@/schemas/issuance"
 import type { PersonOption } from "@/schemas/person"
+import { rememberIssuanceForTicketReturn } from "@/components/issuances/board/reopen-after-ticket"
 
 // The blue of a lookup in flight (design image 7): the fields it was asked with, while the
 // airline answers.
@@ -833,7 +834,10 @@ export function IssuancePanel({
                   className={iconButton}
                   title="Ver bilhete"
                 >
-                  <Link href={`/dashboard/issuances/${row.id}/ticket`}>
+                  <Link
+                    href={`/dashboard/issuances/${row.id}/ticket`}
+                    onClick={() => rememberIssuanceForTicketReturn(row.id!)}
+                  >
                     <Ticket className="text-violet-600" />
                   </Link>
                 </Button>
