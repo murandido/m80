@@ -198,8 +198,9 @@ func applyCorrection(tx *gorm.DB, issuance data.Issuance, fields alteracaoFields
 
 	// A correction to the points, the rate or the taxes changes what the sale is worth.
 	// Without this the sale kept the old figure as settled, and a surplus or a missing
-	// amount sat unseen until something else replayed the client.
-	if err := sale.RecalculateByIssuance(tx, corrected.ID); err != nil {
+	// amount sat unseen until something else replayed the client. A sale settled by hand
+	// follows the new price and stays settled.
+	if err := sale.RecalculateRepriced(tx, corrected.ID); err != nil {
 		return correctionOutcome{}, err
 	}
 

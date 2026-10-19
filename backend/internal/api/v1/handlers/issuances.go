@@ -1132,8 +1132,9 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 		// The points, the rate and the taxes are what the sale is worth. Editing them used
 		// to leave sales.paid and the client's replay on the old figure, so a ticket paid
 		// and then corrected kept a surplus (or a missing amount) nobody saw until the
-		// next payment of that client.
-		return sale.RecalculateByIssuance(tx, issuance.ID)
+		// next payment of that client. A sale settled by hand follows the new price and
+		// stays settled.
+		return sale.RecalculateRepriced(tx, issuance.ID)
 	})
 
 	if err != nil {

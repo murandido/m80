@@ -47,9 +47,10 @@ func TestUpdateIssuance_RepricingReachesTheSalesAndTheClient(t *testing.T) {
 	})
 }
 
-// Without a client there is nobody to carry money to, but sales.paid still has to follow
-// the new price: a ticket paid and then made dearer is not settled any more.
-func TestUpdateIssuance_RepricingReopensAPaidSale(t *testing.T) {
+// "Pago" means the client paid for the ticket, so correcting its price does not reopen it:
+// the switch's line follows the new figure. Without a client too, where there is nobody to
+// carry money to.
+func TestUpdateIssuance_RepricingKeepsAHandPaidSalePaid(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		client := seedClient(t, tx)
 		paid := seedClientSale(t, tx, client.ID, 10000, time.Now().Add(-time.Hour))
@@ -62,8 +63,77 @@ func TestUpdateIssuance_RepricingReopensAPaidSale(t *testing.T) {
 		if rec := callPatchIssuance(tx, paid.IssuanceID, actor.ID, `{"value_of_the_thousand":12000}`); rec.Code != http.StatusOK {
 			t.Fatalf("patch status: got %d (body: %s)", rec.Code, rec.Body.String())
 		}
-		if isPaid(t, tx, paid.ID) {
-			t.Error("a sale whose price went up past what was paid should be open again")
+		if !isPaid(t, tx, paid.ID) {
+			t.Error("a sale paid by hand should stay paid after its price went up")
+		}
+		if got := paidCentsOf(t, tx, paid.ID); got != 12000 {
+			t.Errorf("paid: got %d, want the new price 12000", got)
 		}
 	})
+}
+
+// The same through the amount typed in the payments control, both ways: up is not a new
+// debt, down is not credit - and the switch still works on the sale afterwards.
+func TestUpdateSale_RepricingKeepsAHandPaidSalePaid(t *testing.T) {
+	for _, newPrice := range []int{12000, 8000} {
+		t.Run(strconv.Itoa(newPrice), func(t *testing.T) {
+			runInTx(t, func(tx *gorm.DB) {
+				client := seedClient(t, tx)
+				paid := seedClientSale(t, tx, client.ID, 10000, time.Now().Add(-time.Hour))
+				settleByHand(t, tx, paid.ID)
+
+				setPrice(t, tx, paid.ID, strconv.Itoa(newPrice))
+
+				if !isPaid(t, tx, paid.ID) {
+					t.Error("a sale paid by hand should stay paid after its price changed")
+				}
+				if got := paidCentsOf(t, tx, paid.ID); got != newPrice {
+					t.Errorf("paid: got %d, want the new price %d", got, newPrice)
+				}
+				if got := creditOf(t, tx, client.ID); got != 0 {
+					t.Errorf("credit: got %d, want 0", got)
+				}
+				if rec := callUpdateSale(t, tx, paid.ID, `{"paid":false}`); rec.Code != http.StatusOK {
+					t.Errorf("switch off: got %d (body: %s)", rec.Code, rec.Body.String())
+				}
+			})
+		})
+	}
+}
+
+// A sale paid in part by a client's payment is where their money ran out, so a new price
+// reorganizes it instead: dearer, it still owes the difference; cheaper than what it got,
+// it is paid and the rest is the client's credit.
+func TestUpdateSale_RepricingReorganizesAPartlyPaidSale(t *testing.T) {
+	for _, tc := range []struct {
+		price  int
+		paid   int
+		settle bool
+		credit int
+	}{
+		{price: 12000, paid: 6000, settle: false, credit: 0},
+		{price: 5000, paid: 5000, settle: true, credit: 1000},
+	} {
+		t.Run(strconv.Itoa(tc.price), func(t *testing.T) {
+			runInTx(t, func(tx *gorm.DB) {
+				client := seedClient(t, tx)
+				partial := seedClientSale(t, tx, client.ID, 10000, time.Now().Add(-time.Hour))
+				if rec := callCreateClientPayment(t, tx, clientPaymentBody(client.ID, 6000)); rec.Code != http.StatusCreated {
+					t.Fatalf("client payment status: got %d (body: %s)", rec.Code, rec.Body.String())
+				}
+
+				setPrice(t, tx, partial.ID, strconv.Itoa(tc.price))
+
+				if got := paidCentsOf(t, tx, partial.ID); got != tc.paid {
+					t.Errorf("paid: got %d, want %d", got, tc.paid)
+				}
+				if got := isPaid(t, tx, partial.ID); got != tc.settle {
+					t.Errorf("settled: got %v, want %v", got, tc.settle)
+				}
+				if got := creditOf(t, tx, client.ID); got != tc.credit {
+					t.Errorf("credit: got %d, want %d", got, tc.credit)
+				}
+			})
+		})
+	}
 }

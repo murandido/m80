@@ -626,8 +626,8 @@ func saleAmountOf(db *gorm.DB, saleID string) (sale.Amount, error) {
 	return sale.AmountOf(db, saleID)
 }
 
-func recalculateSale(tx *gorm.DB, issuanceID string) error {
-	return sale.RecalculateByIssuance(tx, issuanceID)
+func recalculateRepricedSale(tx *gorm.DB, issuanceID string) error {
+	return sale.RecalculateRepriced(tx, issuanceID)
 }
 
 func optionalText(value *string) *string {

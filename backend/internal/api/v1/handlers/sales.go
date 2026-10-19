@@ -953,10 +953,11 @@ func (h *SaleHandler) UpdateSale(w http.ResponseWriter, r *http.Request) {
 			}
 			rebalancedSaleIDs = append(rebalancedSaleIDs, changed...)
 		}
-		// What is owed moved: sales.paid follows, and the client's lump sums are replayed
-		// over the new figure - more to cover, or money freed for the next sale.
+		// What is owed moved: a sale settled by hand stays settled at the new figure, and
+		// the client's lump sums are replayed over it - more to cover, or money freed for
+		// the next sale.
 		if priceChanged {
-			if err := recalculateSale(tx, sale.IssuanceID); err != nil {
+			if err := recalculateRepricedSale(tx, sale.IssuanceID); err != nil {
 				return err
 			}
 		}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/events"
 	issuancesvc "github.com/murandido/m-80-backend/internal/issuance"
+	"github.com/murandido/m-80-backend/internal/sale"
 	"gorm.io/gorm"
 )
 
@@ -31,6 +33,23 @@ func setPrice(t *testing.T, tx *gorm.DB, saleID, amountCents string) {
 	}
 }
 
+// overpay leaves money on a sale beyond its price: the sale is priced first, then a line of
+// its own records what was handed over. A reprice no longer makes such a surplus, since a
+// sale settled by hand follows its new price, so it is written straight to the statement,
+// followed by the same recalculation a payment gets.
+func overpay(t *testing.T, tx *gorm.DB, s data.Sale, priceCents, paidCents int) {
+	t.Helper()
+	setPrice(t, tx, s.ID, strconv.Itoa(priceCents))
+	actor := createUser(t, tx, "Operador "+uuid.New().String()[:8])
+	line := data.SalePayment{SaleID: s.ID, AmountCents: paidCents, PaidOn: time.Now(), CreatedByID: actor.ID}
+	if err := tx.Create(&line).Error; err != nil {
+		t.Fatalf("failed to record the payment: %v", err)
+	}
+	if err := sale.RecalculateByIssuance(tx, s.IssuanceID); err != nil {
+		t.Fatalf("failed to recalculate the sale: %v", err)
+	}
+}
+
 func lineOnSaleFrom(t *testing.T, tx *gorm.DB, saleID, sourceSaleID string) data.SalePayment {
 	t.Helper()
 	var line data.SalePayment
@@ -40,20 +59,16 @@ func lineOnSaleFrom(t *testing.T, tx *gorm.DB, saleID, sourceSaleID string) data
 	return line
 }
 
-// The case that started this: two tickets paid by hand, then R$ 69,90 of taxes moved from
-// one to the other. The cheaper one's surplus pays the dearer one - nobody owes anything,
-// nothing is to be handed back.
+// Two tickets each paid on its own, with R$ 69,90 handed over on the wrong one. The cheaper
+// one's surplus pays the dearer one - nobody owes anything, nothing is to be handed back.
 func TestSurplus_PaysTheClientsOtherSale(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		client := seedClient(t, tx)
 		base := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
 		cheaper := seedClientSale(t, tx, client.ID, 71505, base)
 		dearer := seedClientSale(t, tx, client.ID, 79414, base.Add(time.Minute))
-		settleByHand(t, tx, cheaper.ID)
-		settleByHand(t, tx, dearer.ID)
-
-		setPrice(t, tx, cheaper.ID, "64515")
-		setPrice(t, tx, dearer.ID, "86404")
+		overpay(t, tx, cheaper, 64515, 71505)
+		overpay(t, tx, dearer, 86404, 79414)
 
 		if got := paidCentsOf(t, tx, cheaper.ID); got != 64515 {
 			t.Errorf("cheaper sale: got %d, want its new price 64515", got)
@@ -86,8 +101,7 @@ func TestSurplus_WithNothingOpenIsCreditForTheNextTicket(t *testing.T) {
 		client := seedClient(t, tx)
 		base := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 		paid := seedClientSale(t, tx, client.ID, 10000, base)
-		settleByHand(t, tx, paid.ID)
-		setPrice(t, tx, paid.ID, "7000")
+		overpay(t, tx, paid, 7000, 10000)
 
 		if got := paidCentsOf(t, tx, paid.ID); got != 7000 {
 			t.Errorf("cheaper sale: got %d, want 7000 (no refund due)", got)
@@ -151,8 +165,7 @@ func TestSurplus_FollowsTheSaleToAnotherClient(t *testing.T) {
 		source := seedClientSale(t, tx, oldOwner.ID, 10000, base)
 		oldOpen := seedClientSale(t, tx, oldOwner.ID, 2000, base.Add(time.Hour))
 		newOpen := seedClientSale(t, tx, newOwner.ID, 5000, base.Add(2*time.Hour))
-		settleByHand(t, tx, source.ID)
-		setPrice(t, tx, source.ID, "7000")
+		overpay(t, tx, source, 7000, 10000)
 
 		if got := paidCentsOf(t, tx, oldOpen.ID); got != 2000 {
 			t.Fatalf("setup: old owner's open sale got %d, want 2000", got)
@@ -185,8 +198,7 @@ func TestSurplus_DeletingTheSourceReopensTheSaleItCovered(t *testing.T) {
 		base := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 		source := seedClientSale(t, tx, client.ID, 10000, base)
 		covered := seedClientSale(t, tx, client.ID, 3000, base.Add(time.Hour))
-		settleByHand(t, tx, source.ID)
-		setPrice(t, tx, source.ID, "7000")
+		overpay(t, tx, source, 7000, 10000)
 		if !isPaid(t, tx, covered.ID) {
 			t.Fatal("setup: expected the second sale covered by the surplus")
 		}
@@ -217,8 +229,7 @@ func TestSurplus_CreditLinesAreNotEditedByHand(t *testing.T) {
 		base := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 		source := seedClientSale(t, tx, client.ID, 10000, base)
 		covered := seedClientSale(t, tx, client.ID, 3000, base.Add(time.Hour))
-		settleByHand(t, tx, source.ID)
-		setPrice(t, tx, source.ID, "7000")
+		overpay(t, tx, source, 7000, 10000)
 
 		if rec := callUpdateSale(t, tx, covered.ID, `{"paid":false}`); rec.Code != http.StatusConflict {
 			t.Errorf("switch: got %d, want 409 (body: %s)", rec.Code, rec.Body.String())

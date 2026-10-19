@@ -543,8 +543,8 @@ func seedAirport(t *testing.T, tx *gorm.DB, code, name string) {
 	}
 }
 
-// A correction to the price reaches the sale: one settled at the old price is open again at
-// the new one, instead of reading "Pago" with an amount missing.
+// A correction to the price reaches the sale: one settled by hand at the old price stays
+// settled at the new one, instead of reading as half paid.
 func TestHandleAlteracao_RepricingReachesTheSale(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		s := newCorrectionScenario(t, tx, data.Airline{})
@@ -570,8 +570,15 @@ func TestHandleAlteracao_RepricingReachesTheSale(t *testing.T) {
 		if err := tx.First(&found, "id = ?", found.ID).Error; err != nil {
 			t.Fatalf("failed to reload the sale: %v", err)
 		}
-		if found.Paid {
-			t.Error("a sale paid at the old price should be open after the price went up")
+		if !found.Paid {
+			t.Error("a sale paid by hand should stay paid after the price went up")
+		}
+		repriced, err := sale.AmountOf(tx, found.ID)
+		if err != nil {
+			t.Fatalf("failed to read the new price: %v", err)
+		}
+		if paid, err := sale.PaidCents(tx, found.ID); err != nil || paid != repriced.Cents {
+			t.Errorf("paid: got %d, want the new price %d (err %v)", paid, repriced.Cents, err)
 		}
 	})
 }
