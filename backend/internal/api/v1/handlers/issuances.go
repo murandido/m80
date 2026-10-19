@@ -1122,7 +1122,15 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 		// the itinerary this very PATCH is replacing. Moving the issuance to another
 		// account matters just as much - the account is what decides whether the amount
 		// is owed or saved.
-		return issuancesvc.RecalculateRedemptionFee(tx, issuance.ID)
+		if err := issuancesvc.RecalculateRedemptionFee(tx, issuance.ID); err != nil {
+			return err
+		}
+
+		// The points, the rate and the taxes are what the sale is worth. Editing them used
+		// to leave sales.paid and the client's replay on the old figure, so a ticket paid
+		// and then corrected kept a surplus (or a missing amount) nobody saw until the
+		// next payment of that client.
+		return sale.RecalculateByIssuance(tx, issuance.ID)
 	})
 
 	if err != nil {

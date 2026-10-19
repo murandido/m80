@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/murandido/m-80-backend/internal/data"
+	"github.com/murandido/m-80-backend/internal/sale"
 	"gorm.io/gorm"
 )
 
@@ -540,4 +541,37 @@ func seedAirport(t *testing.T, tx *gorm.DB, code, name string) {
 		FirstOrCreate(&airport).Error; err != nil {
 		t.Fatalf("failed to seed the %s airport: %v", code, err)
 	}
+}
+
+// A correction to the price reaches the sale: one settled at the old price is open again at
+// the new one, instead of reading "Pago" with an amount missing.
+func TestHandleAlteracao_RepricingReachesTheSale(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		s := newCorrectionScenario(t, tx, data.Airline{})
+
+		var found data.Sale
+		if err := tx.First(&found, "issuance_id = ?", s.Issuance.ID).Error; err != nil {
+			t.Fatalf("the EMISSAO left no sale: %v", err)
+		}
+		amount, err := sale.AmountOf(tx, found.ID)
+		if err != nil {
+			t.Fatalf("failed to read the price: %v", err)
+		}
+		payment := data.SalePayment{SaleID: found.ID, AmountCents: amount.Cents, PaidOn: time.Now(), CreatedByID: s.Issuance.IssuerID}
+		if err := tx.Create(&payment).Error; err != nil {
+			t.Fatalf("failed to pay the sale: %v", err)
+		}
+		if err := sale.Recalculate(tx, found.ID); err != nil {
+			t.Fatalf("failed to settle the sale: %v", err)
+		}
+
+		s.Bot.handleAlteracao(context.Background(), s.event(), s.alteracao("50k * 33,00 + 100 tx = 1.750,00"), time.Now())
+
+		if err := tx.First(&found, "id = ?", found.ID).Error; err != nil {
+			t.Fatalf("failed to reload the sale: %v", err)
+		}
+		if found.Paid {
+			t.Error("a sale paid at the old price should be open after the price went up")
+		}
+	})
 }
