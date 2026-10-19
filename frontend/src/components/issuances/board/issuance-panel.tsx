@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useId, useMemo, useRef, useState } from "react"
 import Link from "next/link"
 import {
   ArrowLeft,
@@ -168,6 +168,7 @@ export function IssuancePanel({
   onDeleteRequestedChange,
 }: IssuancePanelProps) {
   const formRef = useRef<HTMLDivElement>(null)
+  const identificationId = useId()
   const headingRef = useRef<HTMLHeadingElement>(null)
   const {
     airlines,
@@ -201,10 +202,24 @@ export function IssuancePanel({
 
   // A lookup that just came back with the itinerary opens the full form, which is where
   // what it filled in is shown.
+  //
+  // Unless the operator is typing in it: the account field sits in a different place in each
+  // view, so switching mid-edit remounts it and throws away what was typed and the focus.
+  // The switch then waits for the focus to leave the section, after the field has resolved
+  // its own text on blur.
+  // The section is found by id rather than a ref because this runs during render, and a
+  // lookup only ever finishes in the browser.
   const [wasLookingUp, setWasLookingUp] = useState(lookingUp)
+  const [pendingFullView, setPendingFullView] = useState(false)
   if (wasLookingUp !== lookingUp) {
     setWasLookingUp(lookingUp)
-    if (!lookingUp && row.destination_iata_code) setPreferLookupView(false)
+    if (!lookingUp && row.destination_iata_code) {
+      const editing = document
+        .getElementById(identificationId)
+        ?.contains(document.activeElement)
+      if (editing) setPendingFullView(true)
+      else setPreferLookupView(false)
+    }
   }
 
   // The second locator is shown when the airline is not the program's own, and also on
@@ -734,7 +749,16 @@ export function IssuancePanel({
           </div>
         </div>
 
-        <section className="flex flex-col gap-4">
+        <section
+          id={identificationId}
+          className="flex flex-col gap-4"
+          onBlur={(event) => {
+            if (!pendingFullView) return
+            if (event.currentTarget.contains(event.relatedTarget as Node | null)) return
+            setPendingFullView(false)
+            setPreferLookupView(false)
+          }}
+        >
           <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
               <h2
@@ -888,7 +912,11 @@ export function IssuancePanel({
           {lookupViewPossible && (
             <button
               type="button"
-              onClick={() => setPreferLookupView((current) => !current)}
+              onClick={() => {
+                // A manual choice wins over a switch still waiting for the focus to leave.
+                setPendingFullView(false)
+                setPreferLookupView((current) => !current)
+              }}
               className="flex cursor-pointer items-center gap-1.5 self-end rounded-sm text-sm text-slate-500 underline-offset-4 outline-none hover:text-slate-700 hover:underline focus-visible:text-slate-700 focus-visible:underline"
             >
               {showLookupView
