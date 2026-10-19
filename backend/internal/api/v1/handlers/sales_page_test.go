@@ -4,9 +4,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/murandido/m-80-backend/internal/access"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
@@ -64,6 +68,45 @@ func TestGetSalesPageIsAWindowOfTheListing(t *testing.T) {
 
 		if huge := callGetSalesPage(t, tx, filter+"&limit=100000"); huge.Limit != salePageMaxLimit {
 			t.Errorf("limit = %d, want capped at %d", huge.Limit, salePageMaxLimit)
+		}
+	})
+}
+
+// The search finds a sale by what the operator has in hand - here the PNR and the passenger,
+// spelled without the accent - and stays inside the other filters: a match of another
+// client's does not leak in through the OR of the search.
+func TestGetSalesPageSearchesByLocatorAndPassenger(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		client := seedClient(t, tx)
+		other := seedClient(t, tx)
+		issuedAt := time.Now().AddDate(0, 0, -1)
+		target := seedClientSale(t, tx, client.ID, 1_000, issuedAt)
+		seedClientSale(t, tx, client.ID, 2_000, issuedAt)
+		elsewhere := seedClientSale(t, tx, other.ID, 3_000, issuedAt)
+
+		// The locator is unique among live issuances, so the other client's one only
+		// contains it - which the search still matches.
+		locator := "Q" + strings.ToUpper(uuid.New().String()[:5])
+		for saleID, saleLocator := range map[string]string{
+			target.ID:    locator,
+			elsewhere.ID: locator + "X",
+		} {
+			err := tx.Exec(`UPDATE issuances SET program_locator = ?, main_passenger_name = ?
+				WHERE id = (SELECT issuance_id FROM sales WHERE id = ?)`, saleLocator, "João Buscável", saleID).Error
+			if err != nil {
+				t.Fatalf("failed to name the issuance: %v", err)
+			}
+		}
+
+		for _, search := range []string{locator, strings.ToLower(locator), "joao buscavel"} {
+			page := callGetSalesPage(t, tx, "client_ids="+client.ID+"&q="+url.QueryEscape(search))
+			if page.Total != 1 || len(page.Sales) != 1 || page.Sales[0].ID != target.ID {
+				t.Errorf("q=%q: total %d, want only the matching sale of the filtered client", search, page.Total)
+			}
+		}
+
+		if page := callGetSalesPage(t, tx, "client_ids="+client.ID+"&q=ZZZNADA"); page.Total != 0 {
+			t.Errorf("a search matching nothing returned %d sales", page.Total)
 		}
 	})
 }

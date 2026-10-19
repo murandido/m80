@@ -345,6 +345,14 @@ func applySaleListFilters(query *gorm.DB, r *http.Request) *gorm.DB {
 
 	query = applySaleClientFilter(query, r)
 
+	// The same free-text search as the issuances list, so a sale is found by the PNR,
+	// passenger or route the operator has in hand. The group is built on a fresh session:
+	// chained onto query it would carry the listing's joins and conditions into the
+	// parentheses.
+	if search := strings.TrimSpace(q.Get("q")); search != "" {
+		query = query.Where(issuanceSearchGroup(query.Session(&gorm.Session{NewDB: true}), search))
+	}
+
 	if value := q.Get("paid"); value != "" {
 		if paid, err := strconvParseBool(value); err == nil {
 			query = query.Where("sales.paid = ?", paid)
@@ -531,6 +539,7 @@ func applySaleClientFilter(query *gorm.DB, r *http.Request) *gorm.DB {
 // @Param        client_id           query  string  false  "UUID do cliente vinculado (ignorado quando client_ids vem)"
 // @Param        client_ids          query  string  false  "UUIDs de clientes separados por vírgula; 'none' inclui as vendas sem cliente"
 // @Param        paid                query  boolean false  "Filtra por vendas pagas (true) ou em aberto (false)"
+// @Param        q                   query  string  false  "Busca por localizador, passageiro, origem ou destino da emissão"
 // @Success      200  {object}  schemas.SaleListResponse
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      500  {object}  schemas.ErrorResponse "Nenhuma agência principal configurada ou erro ao buscar vendas"
@@ -587,6 +596,7 @@ const (
 // @Param        agency_id           query  string  false  "UUID da agência (padrão: a agência principal)"
 // @Param        client_ids          query  string  false  "UUIDs de clientes separados por vírgula; 'none' inclui as vendas sem cliente"
 // @Param        paid                query  boolean false  "Filtra por vendas pagas (true) ou em aberto (false)"
+// @Param        q                   query  string  false  "Busca por localizador, passageiro, origem ou destino da emissão"
 // @Success      200  {object}  schemas.SalePageSingleResponse
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao buscar vendas"
@@ -691,6 +701,7 @@ func singleClientFilter(r *http.Request) bool {
 // @Param        client_id           query  string  false  "UUID do cliente vinculado (ignorado quando client_ids vem)"
 // @Param        client_ids          query  string  false  "UUIDs de clientes separados por vírgula; 'none' inclui as vendas sem cliente"
 // @Param        paid                query  boolean false  "Filtra por vendas pagas (true) ou em aberto (false)"
+// @Param        q                   query  string  false  "Busca por localizador, passageiro, origem ou destino da emissão"
 // @Success      200  {file}    binary  "Planilha .xlsx das vendas filtradas"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      500  {object}  schemas.ErrorResponse "Nenhuma agência principal configurada ou erro ao gerar a planilha"

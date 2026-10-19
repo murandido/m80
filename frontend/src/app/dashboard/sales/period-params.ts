@@ -32,6 +32,10 @@ export const SALES_FILTER_KEYS = [
   // cookie and the PDF link for free; anything other than "administrator" means account,
   // on both sides.
   "group_by",
+  // q is the clients view's free-text search (PNR, passenger, route), the same one the
+  // issuances screen has. Riding with the filters gives it the sticky cookie, "Limpar
+  // filtros" and the export/PDF links without wiring of its own.
+  "q",
 ] as const
 
 // ALL_AGENCIES is the explicit "every agency" token. It has to match allAgenciesToken in
@@ -90,6 +94,7 @@ export function resolveSalesFilters(params: SalesSearchParams): SalesFilterState
     client_ids: params.client_ids || params.client_id || "",
     paid: params.paid ?? "",
     group_by: params.group_by ?? "",
+    q: params.q?.trim() ?? "",
   }
 }
 
@@ -148,8 +153,13 @@ export function buildSalesQuery(
   // No dates at all is the "every issuance" period: the backend reads absent bounds as
   // unfiltered, and the exports follow the same query.
   const query = new URLSearchParams()
-  if (period.date_from) query.set("date_from", period.date_from)
-  if (period.date_to) query.set("date_to", period.date_to)
+  // A search drops the period, as it does on the issuances screen: whoever types a PNR wants
+  // that sale wherever it falls, not "no results" because it was issued last month. The
+  // period stays in the URL, so clearing the search brings it back.
+  if (!filters.q) {
+    if (period.date_from) query.set("date_from", period.date_from)
+    if (period.date_to) query.set("date_to", period.date_to)
+  }
   for (const key of SALES_FILTER_KEYS) {
     if (filters[key]) query.set(key, filters[key])
   }
