@@ -304,6 +304,18 @@ func issuanceErrorResponse(err error) (int, string) {
 	}
 }
 
+// loadIssuanceForResponse reloads one issuance the way the single-issuance
+// responses show it: the standard associations plus only the outbound legs, in
+// order. Every mutation re-reads the row after committing, so the response carries
+// what was persisted, with its associations, rather than the request it was given.
+func loadIssuanceForResponse(db *gorm.DB, issuance *data.Issuance, id string) error {
+	return preloadIssuanceAssociations(db).
+		Preload("Flights", func(db *gorm.DB) *gorm.DB {
+			return db.Where("direction = ?", "outbound").Order("leg_order asc")
+		}).
+		First(issuance, "id = ?", id).Error
+}
+
 // preloadIssuanceAssociations applies the standard set of preloads used by the
 // list and single-issuance responses.
 //
@@ -833,11 +845,7 @@ func (h *IssuanceHandler) CreateIssuance(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if err := preloadIssuanceAssociations(h.DB).
-		Preload("Flights", func(db *gorm.DB) *gorm.DB {
-			return db.Where("direction = ?", "outbound").Order("leg_order asc")
-		}).
-		First(&created, "id = ?", created.ID).Error; err != nil {
+	if err := loadIssuanceForResponse(h.DB, &created, created.ID); err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch created issuance")
 		return
 	}
@@ -1148,11 +1156,7 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if err := preloadIssuanceAssociations(h.DB).
-		Preload("Flights", func(db *gorm.DB) *gorm.DB {
-			return db.Where("direction = ?", "outbound").Order("leg_order asc")
-		}).
-		First(&issuance, "id = ?", issuance.ID).Error; err != nil {
+	if err := loadIssuanceForResponse(h.DB, &issuance, issuance.ID); err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch updated issuance")
 		return
 	}
@@ -1338,11 +1342,7 @@ func (h *IssuanceHandler) CancelIssuance(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if err := preloadIssuanceAssociations(h.DB).
-		Preload("Flights", func(db *gorm.DB) *gorm.DB {
-			return db.Where("direction = ?", "outbound").Order("leg_order asc")
-		}).
-		First(&issuance, "id = ?", issuance.ID).Error; err != nil {
+	if err := loadIssuanceForResponse(h.DB, &issuance, issuance.ID); err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch cancelled issuance")
 		return
 	}
@@ -1449,11 +1449,7 @@ func (h *IssuanceHandler) UncancelIssuance(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if err := preloadIssuanceAssociations(h.DB).
-		Preload("Flights", func(db *gorm.DB) *gorm.DB {
-			return db.Where("direction = ?", "outbound").Order("leg_order asc")
-		}).
-		First(&issuance, "id = ?", issuance.ID).Error; err != nil {
+	if err := loadIssuanceForResponse(h.DB, &issuance, issuance.ID); err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch restored issuance")
 		return
 	}
@@ -1531,11 +1527,7 @@ func (h *IssuanceHandler) SyncIssuanceWithTraveos(w http.ResponseWriter, r *http
 	}
 
 	var issuance data.Issuance
-	if err := preloadIssuanceAssociations(h.DB).
-		Preload("Flights", func(db *gorm.DB) *gorm.DB {
-			return db.Where("direction = ?", "outbound").Order("leg_order asc")
-		}).
-		First(&issuance, "id = ?", id).Error; err != nil {
+	if err := loadIssuanceForResponse(h.DB, &issuance, id); err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch synced issuance")
 		return
 	}
