@@ -45,6 +45,12 @@ func Recompute(db *gorm.DB, accountID string) error {
 // is re-entrant within the session, so Close can take it and then call Recompute, which
 // takes it again inside a savepoint. Keyed by account alone, so recomputes of different
 // accounts never wait on each other and no lock ordering exists to deadlock on.
+//
+// That last guarantee holds only while a transaction locks one account. Never call this -
+// or Recompute, Close or Reopen - in a loop over several accounts inside one outer
+// transaction: the locks would pile up until it commits, and two such loops visiting the
+// accounts in different orders deadlock. Loop outside the transaction, as
+// supplierInventoryCosts does, so each account commits on its own.
 func lockAccountCosting(tx *gorm.DB, accountID string) error {
 	err := tx.Exec("SELECT pg_advisory_xact_lock(hashtextextended('inventory:' || ?::text, 0))", accountID).Error
 	if err != nil {
