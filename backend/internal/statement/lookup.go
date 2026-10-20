@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/murandido/m-80-backend/internal/businessday"
 	"github.com/murandido/m-80-backend/internal/data"
 	"gorm.io/gorm"
 )
@@ -19,9 +20,14 @@ import (
 // its points left the account and the statement says so, and dropping it would report a
 // real redemption as missing.
 func LoadPanel(db *gorm.DB, accountID string, from, to time.Time) ([]PanelBooking, []PanelBatch, error) {
+	// from and to are calendar days (midnight UTC, the statement's own shape), so the window
+	// opens and closes at São Paulo midnight - the day the costing files a booking under
+	// (inventory.DayOf). Taken as raw instants it ran three hours early on both ends: a
+	// booking at 22:00 on the statement's last day was reported missing from the panel.
 	var issuances []data.Issuance
 	err := db.Where("account_id = ?", accountID).
-		Where("created_at >= ? AND created_at < ?", from, to.AddDate(0, 0, 1)).
+		Where("created_at >= ? AND created_at < ?",
+			businessday.Start(from), businessday.Start(to).AddDate(0, 0, 1)).
 		Order("created_at ASC").
 		Find(&issuances).Error
 	if err != nil {
