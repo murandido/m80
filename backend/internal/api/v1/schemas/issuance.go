@@ -79,14 +79,6 @@ type UpdateIssuanceRequest struct {
 	// IssuedOn (YYYY-MM-DD) moves the issuance to another day. The time of day is kept,
 	// so two rows recorded in the same session keep their order in the FIFO queue.
 	IssuedOn *string `json:"issued_on" validate:"omitempty,datetime=2006-01-02" example:"2026-09-03"`
-	// The redemption fee this issuance avoided, in centavos, corrected by hand. A value pins
-	// the correction against the automatic recalculation; an explicit null releases the
-	// issuance back to the rule and recomputes it on the spot.
-	//
-	// This field is the reason the handler reads the raw body as well as the struct: for
-	// every other field here an absent key and a JSON null both decode to nil and mean
-	// "leave alone", and that is exactly the distinction the override needs.
-	RedemptionFeeSavedCents *int `json:"redemption_fee_saved_cents" validate:"omitempty,min=0" example:"6990"`
 }
 
 // CancelIssuanceRequest is the optional body for POST /issuances/{id}/cancel.
@@ -217,18 +209,6 @@ type IssuanceResponse struct {
 	// what the panel needs in order to explain a cancelled issuance whose points never
 	// show up as issued anywhere.
 	CancellationOnly bool `json:"cancellation_only"`
-	// RedemptionFeeSavedCents is the airline's redemption fee this issuance did not pay,
-	// because the account it was made on is exempt. Null on every ordinary account and
-	// whenever the rule could not be applied (no synced itinerary, or a program with no fee
-	// configured) - which is not the same as zero, and zero is a real answer: the rule ran
-	// and there was no fee to avoid.
-	//
-	// It does not take part in what the client owes: it is recorded for control and billed
-	// nowhere. See data.Issuance.
-	RedemptionFeeSavedCents *int `json:"redemption_fee_saved_cents"`
-	// RedemptionFeeManual says an operator typed the amount by hand, which is what stops
-	// the next Traveos sync from recomputing over the correction.
-	RedemptionFeeManual bool `json:"redemption_fee_manual"`
 	// Status is derived: "incomplete" | "complete" | "cancelled".
 	Status     string                      `json:"status" example:"incomplete"`
 	Flights    []IssuanceFlightResponse    `json:"flights,omitempty"`

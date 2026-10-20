@@ -81,15 +81,7 @@ func applyBooking(
 		}
 	}
 
-	if err := tx.Save(issuance).Error; err != nil {
-		return err
-	}
-
-	// Last, and after the Save rather than before it: this is the only moment the fee's
-	// three inputs exist at once - the legs, the passengers and the trip type all just
-	// landed - and the recalculation re-reads the issuance, so traveos_synced_at has to
-	// already be in the database for it to agree there is enough information to compute.
-	return RecalculateRedemptionFee(tx, issuance.ID)
+	return tx.Save(issuance).Error
 }
 
 // normaliseForStorage upper-cases the two fields whose case is the provider's
