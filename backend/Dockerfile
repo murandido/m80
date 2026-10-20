@@ -90,7 +90,7 @@ CMD ["./server"]
 #
 # curl is here for the Compose healthcheck alone: the base image carries neither it nor
 # wget, and probing the port with bash's /dev/tcp instead is unreadable inside YAML.
-FROM chromedp/headless-shell:156.0.8078.12 AS prod-chrome
+FROM chromedp/headless-shell:156.0.8078.17 AS prod-chrome
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         tzdata \
