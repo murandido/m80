@@ -61,18 +61,20 @@ export const getAirlinesSchema = {
   }),
 }
 
+const airlineRequestFields = {
+  name: z.string().min(1, "Nome é obrigatório"),
+  code: z.string().min(1, "Código é obrigatório"),
+  traveos_supported: z.boolean(),
+  direct_booking_enabled: z.boolean(),
+  requires_last_name: z.boolean(),
+  requires_purchase_number: z.boolean(),
+  requires_origin: z.boolean(),
+  traveos_airline_id: traveosAirlineIdField,
+  brand_color: brandColorField,
+}
+
 export const createAirlineSchema = {
-  request: z.object({
-    name: z.string().min(1, "Nome é obrigatório"),
-    code: z.string().min(1, "Código é obrigatório"),
-    traveos_supported: z.boolean(),
-    direct_booking_enabled: z.boolean(),
-    requires_last_name: z.boolean(),
-    requires_purchase_number: z.boolean(),
-    requires_origin: z.boolean(),
-    traveos_airline_id: traveosAirlineIdField,
-    brand_color: brandColorField,
-  }),
+  request: z.object(airlineRequestFields),
   response: z.object({
     success: z.boolean(),
     message: z.string(),
@@ -81,17 +83,7 @@ export const createAirlineSchema = {
 }
 
 export const updateAirlineSchema = {
-  request: z.object({
-    name: z.string().min(1, "Nome é obrigatório"),
-    code: z.string().min(1, "Código é obrigatório"),
-    traveos_supported: z.boolean(),
-    direct_booking_enabled: z.boolean(),
-    requires_last_name: z.boolean(),
-    requires_purchase_number: z.boolean(),
-    requires_origin: z.boolean(),
-    traveos_airline_id: traveosAirlineIdField,
-    brand_color: brandColorField,
-  }),
+  request: z.object(airlineRequestFields),
   response: z.object({
     success: z.boolean(),
     message: z.string(),
