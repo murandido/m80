@@ -187,3 +187,135 @@ func TestExpectedBalancesWithNoAccounts(t *testing.T) {
 		}
 	})
 }
+
+// Several accounts in one call must each get exactly what they would get alone. The
+// account list asks for a whole page of holders at once, and the figure it shows is the
+// one compared against the real balance at the closing - so a query that let one
+// account's cut, refunds or alterations leak into another's would move money silently.
+// The four accounts cover the shapes that matter: no closed period at all, several closed
+// periods (plus one still open, which must not count as a cut), a cut that splits an
+// issuance's alterations with a cancellation without refund after it, and an account
+// outside the inventory, which gets no answer.
+func TestExpectedBalancesAgreeAcrossSeveralAccountsInOneCall(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		cancelIssuance := func(issuance data.Issuance, on string, fields map[string]any) {
+			t.Helper()
+			fields["cancelled_at"] = day(on)
+			if err := tx.Model(&issuance).Updates(fields).Error; err != nil {
+				t.Fatalf("cancelling: %v", err)
+			}
+		}
+
+		// No closed period: everything is open. An archived batch and an archived booking
+		// (with an alteration of its own) stay out of the figure.
+		noPeriod := seedFixture(t, tx)
+		seedBatch(t, tx, noPeriod, "2026-09-01", 100000, 150000)
+		archivedBatch := seedBatch(t, tx, noPeriod, "2026-09-02", 50000, 75000)
+		if err := tx.Delete(&archivedBatch).Error; err != nil {
+			t.Fatalf("archiving the batch: %v", err)
+		}
+		booked := seedIssuance(t, tx, noPeriod, "2026-09-06", 30000)
+		seedAdjustment(t, tx, noPeriod, booked, "2026-09-07", 5000, 1500)
+		seedAdjustment(t, tx, noPeriod, booked, "2026-09-08", -2000, 1500)
+		archivedIssuance := seedIssuance(t, tx, noPeriod, "2026-09-09", 10000)
+		seedAdjustment(t, tx, noPeriod, archivedIssuance, "2026-09-10", 3000, 1500)
+		if err := tx.Delete(&archivedIssuance).Error; err != nil {
+			t.Fatalf("archiving the issuance: %v", err)
+		}
+
+		// Two closed periods, so the cut is the later one, and a period opened after them
+		// that has not been settled.
+		closedTwice := seedFixture(t, tx)
+		seedBatch(t, tx, closedTwice, "2026-07-01", 100000, 150000)
+		seedIssuance(t, tx, closedTwice, "2026-07-10", 10000)
+		if _, err := Close(tx, closedTwice.account.ID, day("2026-07-01"), day("2026-07-31"), closedTwice.user.ID); err != nil {
+			t.Fatalf("closing July: %v", err)
+		}
+		seedIssuance(t, tx, closedTwice, "2026-08-10", 30000)
+		if _, err := Close(tx, closedTwice.account.ID, day("2026-08-01"), day("2026-08-31"), closedTwice.user.ID); err != nil {
+			t.Fatalf("closing August: %v", err)
+		}
+		mustCreate(t, tx, &data.InventoryPeriod{
+			AccountID: closedTwice.account.ID,
+			StartsOn:  day("2026-09-01"),
+			EndsOn:    day("2026-09-30"),
+		})
+		seedIssuance(t, tx, closedTwice, "2026-09-02", 20000)
+		refunded := seedIssuance(t, tx, closedTwice, "2026-09-03", 15000)
+		cancelIssuance(refunded, "2026-09-04", map[string]any{"refunded_points": 15000})
+
+		// A mid-month cut that falls between an issuance's two alterations, then a
+		// cancellation without an explicit refund (which gives back the booking and its
+		// alteration) and an estorno-only row after it.
+		splitCut := seedFixture(t, tx)
+		seedBatch(t, tx, splitCut, "2026-08-01", 200000, 300000)
+		beforeCut := seedIssuance(t, tx, splitCut, "2026-08-05", 40000)
+		seedAdjustment(t, tx, splitCut, beforeCut, "2026-08-10", 10000, 1500)
+		if _, err := Close(tx, splitCut.account.ID, day("2026-08-01"), day("2026-08-15"), splitCut.user.ID); err != nil {
+			t.Fatalf("closing the first half of August: %v", err)
+		}
+		seedAdjustment(t, tx, splitCut, beforeCut, "2026-08-20", 5000, 1500)
+		cancelledWithoutRefund := seedIssuance(t, tx, splitCut, "2026-09-03", 30000)
+		seedAdjustment(t, tx, splitCut, cancelledWithoutRefund, "2026-09-04", 6000, 1500)
+		cancelIssuance(cancelledWithoutRefund, "2026-09-06", map[string]any{})
+		estorno := seedIssuance(t, tx, splitCut, "2026-09-05", 7000)
+		cancelIssuance(estorno, "2026-09-06", map[string]any{
+			"cancellation_only": true,
+			"refunded_points":   7000,
+		})
+
+		// Outside the inventory: no answer, whatever it has recorded.
+		withoutInventory := seedFixture(t, tx)
+		if err := tx.Model(&data.Account{}).Where("id = ?", withoutInventory.account.ID).
+			Update("owns_point_inventory", false).Error; err != nil {
+			t.Fatalf("turning the inventory off: %v", err)
+		}
+		seedBatch(t, tx, withoutInventory, "2026-09-01", 100000, 150000)
+		seedIssuance(t, tx, withoutInventory, "2026-09-02", 10000)
+
+		want := map[string]int{
+			// 100.000 bought, 30.000 issued, +5.000 and -2.000 altered.
+			noPeriod.account.ID: 67000,
+			// 100.000 bought, 40.000 frozen in July and August, 20.000 issued after; the
+			// refunded booking nets to zero.
+			closedTwice.account.ID: 40000,
+			// 200.000 bought, 50.000 frozen (the booking and its first alteration), 5.000
+			// altered after the cut, the cancelled booking and its alteration both given
+			// back, and 7.000 that only ever came in.
+			splitCut.account.ID: 152000,
+		}
+
+		ids := []string{
+			noPeriod.account.ID,
+			closedTwice.account.ID,
+			splitCut.account.ID,
+			withoutInventory.account.ID,
+		}
+		together, err := ExpectedBalances(tx, ids)
+		if err != nil {
+			t.Fatalf("ExpectedBalances for all four: %v", err)
+		}
+		if len(together) != len(want) {
+			t.Errorf("got %d balances, want %d: %v", len(together), len(want), together)
+		}
+
+		for _, id := range ids {
+			alone, err := ExpectedBalances(tx, []string{id})
+			if err != nil {
+				t.Fatalf("ExpectedBalances for %s alone: %v", id, err)
+			}
+			gotTogether, inTogether := together[id]
+			gotAlone, inAlone := alone[id]
+			if inTogether != inAlone || gotTogether != gotAlone {
+				t.Errorf("account %s: together %d (present=%v), alone %d (present=%v)",
+					id, gotTogether, inTogether, gotAlone, inAlone)
+			}
+
+			wanted, expected := want[id]
+			if inTogether != expected || gotTogether != wanted {
+				t.Errorf("account %s: got %d (present=%v), want %d (present=%v)",
+					id, gotTogether, inTogether, wanted, expected)
+			}
+		}
+	})
+}
