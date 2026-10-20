@@ -17,6 +17,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/lib/pq v1.11.2
+	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/swaggo/http-swagger v1.3.4
 	github.com/swaggo/swag v1.16.6
 	github.com/xuri/excelize/v2 v2.11.1-0.20260930021559-01a9ff32fb3c
@@ -32,7 +33,13 @@ require (
 
 require (
 	github.com/JulianKnodt/vector v0.0.0-20181001195531-754854b81217 // indirect
+	github.com/google/jsonschema-go v0.4.3 // indirect
+	github.com/segmentio/asm v1.1.3 // indirect
+	github.com/segmentio/encoding v0.5.4 // indirect
+	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	go.mongodb.org/mongo-driver v1.11.4 // indirect
+	golang.org/x/oauth2 v0.35.0 // indirect
+	golang.org/x/time v0.15.0 // indirect
 )
 
 require (

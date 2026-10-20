@@ -17,14 +17,21 @@ func jwtSecret() []byte {
 	return []byte(os.Getenv("JWT_SECRET"))
 }
 
+// GenerateToken issues the login session: it lasts 7 days.
 func GenerateToken(userID, phone, role string) (string, error) {
+	return GenerateTokenWithTTL(userID, phone, role, 7*24*time.Hour)
+}
+
+// GenerateTokenWithTTL issues a token that lasts ttl. The MCP server mints one per call to act
+// as the token owner on the v1 router, and a few minutes is all that call needs - a token
+// that never leaves the process should not outlive it by a week.
+func GenerateTokenWithTTL(userID, phone, role string, ttl time.Duration) (string, error) {
 	secret := jwtSecret()
 	if len(secret) == 0 {
 		return "", errors.New("JWT secret not set in .env")
 	}
 
-	// the token expires in 7 days
-	expirationTime := time.Now().Add(7 * 24 * time.Hour)
+	expirationTime := time.Now().Add(ttl)
 
 	claims := jwt.MapClaims{
 		"user_id": userID,

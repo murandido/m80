@@ -15,6 +15,7 @@ import (
 	"github.com/murandido/m-80-backend/internal/events"
 	"github.com/murandido/m-80-backend/internal/health"
 	"github.com/murandido/m-80-backend/internal/latamsync"
+	"github.com/murandido/m-80-backend/internal/mcp"
 	"github.com/murandido/m-80-backend/internal/smilessync"
 	httpSwagger "github.com/swaggo/http-swagger"
 	"gorm.io/gorm"
@@ -54,6 +55,18 @@ func NewRouter(db *gorm.DB, broker *events.Broker, bookings *booking.Registry, m
 	}
 
 	r.Mount("/api/v1", v1.NewRouter(db, broker, bookings, monitor, smilesGuard, latamGuard, azulConnector))
+
+	// MCP server for Claude, authenticated by its own personal tokens rather than the login
+	// JWT. It is handed this same router: every tool calls back into /api/v1 through all of the
+	// middleware above, so it can never see more than its owner sees in the panel. Like the
+	// rest of the API it has no public address; it is reached only through the panel's
+	// /api/mcp relay.
+	// The three verbs of the Streamable HTTP transport, not r.Handle: a catch-all would also
+	// register CONNECT and TRACE, which nothing here answers.
+	mcpHandler := mcp.NewHandler(db, r)
+	r.Post("/mcp", mcpHandler.ServeHTTP)
+	r.Get("/mcp", mcpHandler.ServeHTTP)
+	r.Delete("/mcp", mcpHandler.ServeHTTP)
 
 	return r
 }
