@@ -11,6 +11,13 @@ import {
   makeDraftRow,
 } from "@/components/issuances/types"
 import { reconcileRows } from "@/components/issuances/reconcile-rows"
+import {
+  autoRetryDelay,
+  forgetFields,
+  rememberFields,
+  retryPatch,
+  type UnsavedFields,
+} from "@/components/issuances/board/unsaved-fields"
 import { parseAccountEntry } from "@/components/issuances/account-entry"
 import { useAutocompletePreference } from "@/hooks/use-autocomplete-preference"
 import { useAirports } from "@/hooks/use-airports"
@@ -249,6 +256,9 @@ function isSyncCandidate(
   return hasLookupFields(row, airline)
 }
 
+// What started a save: an edit, or a retry of fields an earlier save failed to write.
+type SaveOrigin = "edit" | "automatic-retry" | "manual-retry"
+
 interface UseIssuanceBoardOptions {
   initialIssuances: Issuance[]
   currentUserId: string | null
@@ -317,6 +327,39 @@ export function useIssuanceBoard({
   const creatingKeysRef = useRef(new Set<string>())
   const queuedPatchesRef = useRef(new Map<string, Partial<IssuanceRow>>())
 
+  // Fields of a saved row whose PATCH failed (see unsaved-fields.ts). Before this, a failed
+  // save left the typed value on screen looking saved, with only a red ring and a toast that
+  // went away - nothing kept it to be sent again.
+  const unsavedFieldsRef = useRef<UnsavedFields>(new Map())
+  const [unsavedRowKeys, setUnsavedRowKeys] = useState<Record<string, true>>(
+    {},
+  )
+  const publishUnsavedRowKeys = useCallback(() => {
+    setUnsavedRowKeys(
+      Object.fromEntries(
+        [...unsavedFieldsRef.current.keys()].map((key) => [key, true as const]),
+      ),
+    )
+  }, [])
+  // How many automatic retries a row has used since its last user-made save, and the timer
+  // of the next one.
+  const autoRetryAttemptsRef = useRef(new Map<string, number>())
+  const autoRetryTimersRef = useRef(
+    new Map<string, ReturnType<typeof setTimeout>>(),
+  )
+  const cancelAutoRetry = useCallback((key: string) => {
+    const timer = autoRetryTimersRef.current.get(key)
+    if (timer) clearTimeout(timer)
+    autoRetryTimersRef.current.delete(key)
+  }, [])
+  useEffect(() => {
+    const timers = autoRetryTimersRef.current
+    return () => {
+      for (const timer of timers.values()) clearTimeout(timer)
+      timers.clear()
+    }
+  }, [])
+
   // Publishes this board's unsaved drafts for the next instance - see readCarriedDrafts.
   useEffect(() => {
     const unsavedDrafts = () =>
@@ -366,6 +409,7 @@ export function useIssuanceBoard({
     function warnAboutUnsavedWork(event: BeforeUnloadEvent) {
       const saving =
         creatingKeysRef.current.size > 0 ||
+        unsavedFieldsRef.current.size > 0 ||
         rowsRef.current.some((row) => row.saveStatus === "saving")
       if (!saving) return
       event.preventDefault()
@@ -384,7 +428,13 @@ export function useIssuanceBoard({
 
   const flashSaveStatus = useCallback(
     (key: string, status: "success" | "error") => {
-      updateRow(key, { saveStatus: status, hasError: status === "error" })
+      // A success on one field does not clear the error while another field of the row is
+      // still unsaved: hasError is also what keeps reconcileRows from overwriting the row
+      // with the server's older values before the retry gets through.
+      updateRow(key, {
+        saveStatus: status,
+        hasError: status === "error" || unsavedFieldsRef.current.has(key),
+      })
       setTimeout(() => updateRow(key, { saveStatus: "idle" }), 900)
     },
     [updateRow],
@@ -414,12 +464,24 @@ export function useIssuanceBoard({
   )
 
   const persistRef =
-    useRef<(row: IssuanceRow, patch: Partial<IssuanceRow>) => Promise<void>>(
-      null,
-    )
+    useRef<
+      (
+        row: IssuanceRow,
+        patch: Partial<IssuanceRow>,
+        origin?: SaveOrigin,
+      ) => Promise<void>
+    >(null)
+
+  const retrySaveRef = useRef<(key: string, origin: SaveOrigin) => void>(
+    () => {},
+  )
 
   const persist = useCallback(
-    async (row: IssuanceRow, patch: Partial<IssuanceRow>) => {
+    async (
+      row: IssuanceRow,
+      patch: Partial<IssuanceRow>,
+      origin: SaveOrigin = "edit",
+    ) => {
       const merged = { ...row, ...patch }
 
       if (row.isDraft) {
@@ -477,15 +539,48 @@ export function useIssuanceBoard({
         return
       }
 
+      const sentFields = Object.keys(patch)
+      forgetFields(unsavedFieldsRef.current, row.key, sentFields)
       updateRow(row.key, { saveStatus: "saving" })
       const result = await updateIssuanceAction(
         row.id!,
         patch as z.infer<typeof updateIssuanceSchema.request>,
       )
       if ("error" in result) {
-        toast.error(result.error)
+        rememberFields(unsavedFieldsRef.current, row.key, sentFields)
+        publishUnsavedRowKeys()
+        // An automatic retry fails quietly: the panel already says the row is not saved,
+        // and a toast every few seconds would bury everything else.
+        if (origin !== "automatic-retry") toast.error(result.error)
         flashSaveStatus(row.key, "error")
+
+        // An edit starts a fresh round of automatic retries; a manual retry that fails
+        // leaves the button to the operator.
+        const attempt =
+          origin === "edit"
+            ? 0
+            : origin === "automatic-retry"
+              ? (autoRetryAttemptsRef.current.get(row.key) ?? 0)
+              : null
+        const delay = attempt === null ? null : autoRetryDelay(attempt)
+        cancelAutoRetry(row.key)
+        if (attempt !== null && delay !== null) {
+          autoRetryAttemptsRef.current.set(row.key, attempt + 1)
+          autoRetryTimersRef.current.set(
+            row.key,
+            setTimeout(() => {
+              autoRetryTimersRef.current.delete(row.key)
+              retrySaveRef.current(row.key, "automatic-retry")
+            }, delay),
+          )
+        }
         return
+      }
+      forgetFields(unsavedFieldsRef.current, row.key, sentFields)
+      publishUnsavedRowKeys()
+      if (!unsavedFieldsRef.current.has(row.key)) {
+        cancelAutoRetry(row.key)
+        autoRetryAttemptsRef.current.delete(row.key)
       }
       if (result.issuance) {
         updateRow(row.key, {
@@ -497,10 +592,32 @@ export function useIssuanceBoard({
       }
       flashSaveStatus(row.key, "success")
     },
-    [updateRow, flashSaveStatus, reconcileCreatedRow],
+    [
+      updateRow,
+      flashSaveStatus,
+      reconcileCreatedRow,
+      publishUnsavedRowKeys,
+      cancelAutoRetry,
+    ],
   )
   // eslint-disable-next-line react-hooks/refs -- latest-ref read by callbacks memoized without persist in their deps
   persistRef.current = persist
+
+  // Sends a saved row's unsaved fields again, with the values the row holds now. Only saved
+  // rows: a draft whose create failed is retried by its next edit, under the creatingKeysRef
+  // guard against a second POST, as before.
+  const retrySave = useCallback(
+    (key: string, origin: SaveOrigin = "manual-retry") => {
+      cancelAutoRetry(key)
+      const row = rowsRef.current.find((candidate) => candidate.key === key)
+      const fields = unsavedFieldsRef.current.get(key)
+      if (!row || row.isDraft || !row.id || !fields || fields.size === 0) return
+      void persist(row, retryPatch(row, fields), origin)
+    },
+    [persist, cancelAutoRetry],
+  )
+  // eslint-disable-next-line react-hooks/refs -- the retry timer set inside persist reads the latest retrySave
+  retrySaveRef.current = retrySave
 
   // The single entry point for an edit: optimistic, then persisted. Addressed by key, since
   // the panel outlives index shifts from a live refresh.
@@ -625,6 +742,10 @@ export function useIssuanceBoard({
   }, [currentUserId, draftAgencyId])
 
   const removeRow = useCallback((key: string) => {
+    unsavedFieldsRef.current.delete(key)
+    autoRetryAttemptsRef.current.delete(key)
+    cancelAutoRetry(key)
+    publishUnsavedRowKeys()
     setRows((prev) => prev.filter((row) => row.key !== key))
     setAccountClearedKeys((prev) => {
       if (!prev.has(key)) return prev
@@ -632,7 +753,7 @@ export function useIssuanceBoard({
       next.delete(key)
       return next
     })
-  }, [])
+  }, [cancelAutoRetry, publishUnsavedRowKeys])
 
   const deleteRow = useCallback(
     async (key: string): Promise<ActionResult> => {
@@ -1011,10 +1132,12 @@ export function useIssuanceBoard({
     pendingAccountLabels,
     syncingRowKeys,
     lookingUpKeys,
+    unsavedRowKeys,
     autocompleteEnabled,
     setAutocompleteEnabled,
     addDraft,
     applyPatch,
+    retrySave,
     resolveAccountEntry,
     deleteRow,
     cancelRow,
