@@ -40,17 +40,6 @@ type LoyaltyProgram struct {
 	// someone already used costs nothing; LATAM counts every issuance, so it does. The two
 	// dimensions vary independently, which is why this is not folded into the window.
 	CPFLimitMode *string `gorm:"column:cpf_limit_mode;type:cpf_limit_mode" json:"cpf_limit_mode"`
-	// The airline's redemption fee ("taxa de resgate"), charged per passenger and per
-	// trecho when the ticket is issued fewer than RedemptionFeeAdvanceDays days before the
-	// flight. All three are nil for a program nobody has configured, which is not the same
-	// as a fee of zero: the calculation refuses to run rather than claim the trip was free.
-	//
-	// Parameters rather than constants because the published rule moves - Azul launched
-	// this in July 2025 at 90 days with a price per tier and had flattened it by June 2026.
-	// See migration 40.
-	RedemptionFeeDomesticCents      *int `gorm:"column:redemption_fee_domestic_cents" json:"redemption_fee_domestic_cents"`
-	RedemptionFeeInternationalCents *int `gorm:"column:redemption_fee_international_cents" json:"redemption_fee_international_cents"`
-	RedemptionFeeAdvanceDays        *int `gorm:"column:redemption_fee_advance_days" json:"redemption_fee_advance_days"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
