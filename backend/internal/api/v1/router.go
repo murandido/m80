@@ -73,6 +73,8 @@ func NewRouter(db *gorm.DB, broker *events.Broker, bookings *booking.Registry, m
 		// Pure admin-only proxy to the bot's internal API - the gate lives
 		// inside RegisterBotRoutes itself, same as the suppliers view above.
 		routes.RegisterBotRoutes(r)
+		// Dev-only: personal tokens for the MCP server (internal/mcp).
+		routes.RegisterMCPTokenRoutes(r, db)
 		// Admin-only chat approval flow for !registrar-chat - a static
 		// "/bot/chats" child, never shadowed by RegisterBotRoutes' "/bot/*"
 		// catch-all proxy above (see RegisterListenedChatRoutes doc comment).
