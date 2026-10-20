@@ -5,6 +5,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/murandido/m-80-backend/internal/businessday"
 	"github.com/murandido/m-80-backend/internal/data"
 )
 
@@ -12,7 +13,7 @@ import (
 // calendar days between two dates an operator reads off a screen, not a duration, so it has
 // to be resolved against the zone they live in - the same reasoning as handlers.listTimezone
 // and export.exportTimezone.
-const feeTimezone = "America/Sao_Paulo"
+const feeTimezone = businessday.Timezone
 
 // domesticCountry is the country code a leg has to stay inside for the domestic fee to
 // apply. Airports seed with 'BR' as their default, so an airport nobody classified counts as

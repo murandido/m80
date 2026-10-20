@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/murandido/m-80-backend/internal/businessday"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/xuri/excelize/v2"
 )
@@ -37,7 +38,7 @@ const (
 
 // exportTimezone matches the timezone the issuance list uses to resolve "today", so the
 // dates written to the sheet are the operator's local calendar days, not UTC.
-const exportTimezone = "America/Sao_Paulo"
+const exportTimezone = businessday.Timezone
 
 // The thirteen columns of the manual sheet, in its order, plus the redemption fee after them.
 // The widths are not fixed here any more: autoFitColumns sizes each one to what the export
