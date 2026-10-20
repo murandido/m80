@@ -977,7 +977,7 @@ func (h *SaleHandler) UpdateSale(w http.ResponseWriter, r *http.Request) {
 		if req.Paid == nil {
 			return nil
 		}
-		if err := settleSaleFromLegacyFlag(tx, sale.ID, *req.Paid, userCtx.ID); err != nil {
+		if err := settleSaleFromLegacyFlag(tx, sale.ID, *req.Paid, userCtx.ID, time.Now()); err != nil {
 			return err
 		}
 		// Clearing the sale's own lines leaves room the client's credit can fill, and

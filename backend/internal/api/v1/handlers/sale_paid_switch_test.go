@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -182,4 +183,29 @@ func TestUpdateSale_ConcurrentPaidSwitchRecordsThePaymentOnce(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The switch dates its payment by the operator's day. 00:30 UTC on 1 November is 21:30 on
+// 31 October in São Paulo: the payment belongs to October, and to October's closing.
+// paid_on is a DATE, so the instant has to be turned into the São Paulo day before it
+// reaches the driver - the driver itself takes the day from the value's own zone.
+func TestSettleSaleFromLegacyFlag_DatesThePaymentByTheSaoPauloDay(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		sale := seedPricedSale(t, tx)
+		actor := createUser(t, tx, "Operador "+uuid.New().String()[:8])
+
+		lateEveningInSaoPaulo := time.Date(2026, 11, 1, 0, 30, 0, 0, time.UTC)
+		if err := settleSaleFromLegacyFlag(tx, sale.ID, true, actor.ID, lateEveningInSaoPaulo); err != nil {
+			t.Fatalf("settling: %v", err)
+		}
+
+		var paidOn string
+		if err := tx.Raw(`SELECT paid_on::text FROM sale_payments WHERE sale_id = ?`, sale.ID).
+			Scan(&paidOn).Error; err != nil {
+			t.Fatalf("reading paid_on: %v", err)
+		}
+		if paidOn != "2026-10-31" {
+			t.Errorf("paid_on = %s, want 2026-10-31", paidOn)
+		}
+	})
 }
