@@ -360,6 +360,16 @@ dig +short <domínio>     # tem que devolver o IP antes de qualquer start
 Subir o Caddy antes do A record resolver faz o Let's Encrypt falhar em loop e **queimar rate limit**
 (5 falhas por hora, por domínio) — aí você espera, não conserta.
 
+#### Outros projetos na mesma máquina
+
+O `caddy-prod` é dono do 80/443, então outro projeto na máquina publica por ele em vez de subir
+um Caddy próprio. O Caddyfile termina com `import /etc/caddy/sites/*.caddy`, e o Compose monta
+`/opt/caddy-sites` do host (dono `deploy`, crie antes da primeira subida) nesse caminho, só leitura.
+Cada projeto põe um `<nome>.caddy` lá com o próprio bloco de site; diretório vazio não quebra nada.
+Arquivo novo ou alterado só vale depois de
+`docker exec caddy-prod caddy reload --config /etc/caddy/Caddyfile`, e o container de destino
+precisa estar numa rede Docker que o `caddy-prod` alcance.
+
 ### 10. Secrets do deploy
 
 O workflow entra por SSH como `deploy`. Autorize a chave do CI na máquina nova e aponte os secrets
