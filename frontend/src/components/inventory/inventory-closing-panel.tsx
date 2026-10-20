@@ -12,7 +12,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
-import { applyPaddedThousandsMask } from "@/lib/points"
+import { formatSignedPaddedPoints } from "@/lib/points"
 import { formatCurrencyBRL } from "@/lib/currency"
 import {
   closeInventoryPeriodAction,
@@ -30,13 +30,6 @@ interface Props {
   closing: InventoryClosing | null
   startsOn: string
   endsOn: string
-}
-
-// Point counts read the way they do on the issuances grid: the absolute number, grouped in
-// threes. 632.700, not 632,7 - one grammar for points across the panel.
-function formatPoints(points: number): string {
-  const sign = points < 0 ? "-" : ""
-  return sign + applyPaddedThousandsMask(String(Math.abs(points)))
 }
 
 // Money is where the colour goes. A figure the eye has to judge - is this earning or
@@ -161,7 +154,7 @@ function SettlementCalculation({
                   {agency.agency_name ?? "?"}
                 </td>
                 <td className="py-1 pr-4 text-right tabular-nums">
-                  {formatPoints(agency.points)}
+                  {formatSignedPaddedPoints(agency.points)}
                 </td>
                 <td
                   className={`py-1 pr-4 text-right tabular-nums ${moneyTone(agency.profit_cents)}`}
@@ -304,7 +297,7 @@ function BatchLines({ batch }: { batch: InventoryBatchResult }) {
                 <td
                   className={`py-1 pr-3 text-right tabular-nums ${line.points < 0 ? "text-red-700 dark:text-red-400" : ""}`}
                 >
-                  {formatPoints(line.points)}
+                  {formatSignedPaddedPoints(line.points)}
                 </td>
                 <td className="py-1 pr-3 text-right text-amber-800 tabular-nums dark:text-amber-300">
                   {formatCurrencyBRL(line.cost_cents)}
@@ -413,7 +406,7 @@ export function InventoryClosingPanel({ closing, startsOn, endsOn }: Props) {
         <Alert className="border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/40">
           <AlertTriangle className="size-4 text-amber-700 dark:text-amber-400" />
           <AlertTitle className="text-amber-900 dark:text-amber-200">
-            {formatPoints(closing.totals.pending_points)} pontos sem lote
+            {formatSignedPaddedPoints(closing.totals.pending_points)} pontos sem lote
           </AlertTitle>
           <AlertDescription className="text-amber-800 dark:text-amber-300">
             Foram emitidos pontos que nenhum lote cobre ainda. Lance a compra
@@ -522,7 +515,7 @@ export function InventoryClosingPanel({ closing, startsOn, endsOn }: Props) {
             <span className="text-slate-500">
               Saldo previsto{" "}
               <span className="font-medium text-slate-700 tabular-nums dark:text-slate-200">
-                {formatPoints(entry.expected_balance_points)}
+                {formatSignedPaddedPoints(entry.expected_balance_points)}
               </span>
             </span>
             {entry.real_balance_points === null ||
@@ -535,7 +528,7 @@ export function InventoryClosingPanel({ closing, startsOn, endsOn }: Props) {
                 <span className="text-slate-500">
                   Saldo real{" "}
                   <span className="font-medium text-slate-700 tabular-nums dark:text-slate-200">
-                    {formatPoints(entry.real_balance_points)}
+                    {formatSignedPaddedPoints(entry.real_balance_points)}
                   </span>
                   {entry.real_balance_checked_on && (
                     <span className="text-slate-400">
@@ -555,7 +548,7 @@ export function InventoryClosingPanel({ closing, startsOn, endsOn }: Props) {
                 ) : (
                   <span className="text-amber-800 dark:text-amber-300">
                     Diferença de{" "}
-                    {formatPoints(
+                    {formatSignedPaddedPoints(
                       Math.abs(
                         entry.expected_balance_points -
                           entry.real_balance_points,
@@ -641,7 +634,7 @@ export function InventoryClosingPanel({ closing, startsOn, endsOn }: Props) {
                           </td>
                           {/* Points, not money: no colour, and the grid's own grammar. */}
                           <td className="px-4 py-2 text-right text-slate-600 tabular-nums dark:text-slate-300">
-                            {formatPoints(batch.remaining_points)}
+                            {formatSignedPaddedPoints(batch.remaining_points)}
                           </td>
                           {/* The row shows what is actually transferred; the parts are in the
                           opened batch below. */}

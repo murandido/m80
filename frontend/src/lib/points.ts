@@ -22,6 +22,14 @@ export function applyPaddedThousandsMask(raw: string): string {
   return padded.replace(/\B(?=(\d{3})+(?!\d))/g, ".")
 }
 
+// A signed point count in the padded grammar above, for the inventory screens (closing and the
+// statement reconciliation) where a net movement can be negative. The mask itself only knows
+// digits, so the sign is put back in front of it.
+export function formatSignedPaddedPoints(points: number): string {
+  const sign = points < 0 ? "-" : ""
+  return sign + applyPaddedThousandsMask(String(Math.abs(points)))
+}
+
 // Digits and at most one separator, keeping whichever the operator reached for. No thousands
 // grouping while typing: in milheiros the number has one or two digits before the separator,
 // so a grouping dot would only get in the way - and a dot typed here is the decimal point,
