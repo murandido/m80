@@ -75,15 +75,21 @@ func backendPID(t *testing.T, tx *gorm.DB) int {
 	return pid
 }
 
-// waitForWaitersOn blocks until n backends are waiting on a lock held by blockerPID.
-// Asking about this pid specifically, rather than counting every lock wait in the
-// database, keeps other packages' tests running against the same server out of it.
+// waitForWaitersOn blocks until n backends are queued behind blockerPID. Two levels are
+// counted because Postgres queues a second writer on the first waiter's tuple lock, not
+// on the holder itself. Asking about this pid specifically, rather than counting every
+// lock wait in the database, keeps other packages' tests on the same server out of it.
 func waitForWaitersOn(t *testing.T, db *gorm.DB, blockerPID, n int) {
 	t.Helper()
 	deadline := time.Now().Add(15 * time.Second)
 	for {
 		var waiting int
-		if err := db.Raw("SELECT count(*) FROM pg_stat_activity WHERE ? = ANY(pg_blocking_pids(pid))", blockerPID).
+		if err := db.Raw(`
+			SELECT count(*) FROM pg_stat_activity
+			WHERE pg_blocking_pids(pid) && (
+				SELECT ARRAY[?]::int[] || array_agg(pid) FROM pg_stat_activity
+				WHERE ? = ANY(pg_blocking_pids(pid))
+			)`, blockerPID, blockerPID).
 			Scan(&waiting).Error; err != nil {
 			t.Fatalf("failed to read lock waits: %v", err)
 		}
@@ -106,6 +112,9 @@ func TestUpdateIssuance_AnEditInFlightDoesNotUndoACancellation(t *testing.T) {
 	db, issuance, user, linked := seedCommittedIssuance(t)
 
 	cancelTx := db.Begin()
+	// Registered after the seed's cleanup, so it runs first: a failed assertion must not
+	// leave the row locked under the DELETEs. Rolling back a committed tx is a no-op.
+	t.Cleanup(func() { cancelTx.Rollback() })
 	fee := 15000
 	if _, err := issuancesvc.Cancel(cancelTx, issuance, issuancesvc.CancelInput{CancellationFee: &fee}, user.ID); err != nil {
 		cancelTx.Rollback()
@@ -182,4 +191,101 @@ func TestUpdateIssuance_EditingACancelledIssuanceKeepsItCancelled(t *testing.T) 
 			t.Errorf("observation: got %v, want %q", persisted.Observation, "corrigido")
 		}
 	})
+}
+
+// holdIssuanceRow opens a transaction that locks the issuance row and returns it with its
+// backend pid, so requests aimed at the row can be lined up behind it.
+func holdIssuanceRow(t *testing.T, db *gorm.DB, issuanceID string) (*gorm.DB, int) {
+	t.Helper()
+	blocker := db.Begin()
+	// Runs before the seed's cleanup (LIFO), so a failed wait never leaves the row locked
+	// under the DELETEs. A second rollback is harmless.
+	t.Cleanup(func() { blocker.Rollback() })
+	if err := blocker.Exec("SELECT id FROM issuances WHERE id = ? FOR UPDATE", issuanceID).Error; err != nil {
+		blocker.Rollback()
+		t.Fatalf("failed to lock the issuance: %v", err)
+	}
+	return blocker, backendPID(t, blocker)
+}
+
+// raceTwice fires the same request twice, waits until both are blocked on the row, lets
+// them go and returns their status codes.
+func raceTwice(t *testing.T, db *gorm.DB, issuanceID string, request func() *httptest.ResponseRecorder) []int {
+	t.Helper()
+	blocker, blockerPID := holdIssuanceRow(t, db, issuanceID)
+
+	results := make(chan *httptest.ResponseRecorder, 2)
+	for range 2 {
+		go func() { results <- request() }()
+	}
+	waitForWaitersOn(t, db, blockerPID, 2)
+	blocker.Rollback()
+
+	var codes []int
+	for range 2 {
+		rec := <-results
+		if rec.Code != http.StatusOK && rec.Code != http.StatusUnprocessableEntity {
+			t.Errorf("unexpected response %d: %s", rec.Code, rec.Body.String())
+		}
+		codes = append(codes, rec.Code)
+	}
+	return codes
+}
+
+func assertOneWinner(t *testing.T, codes []int) {
+	t.Helper()
+	ok, refused := 0, 0
+	for _, code := range codes {
+		switch code {
+		case http.StatusOK:
+			ok++
+		case http.StatusUnprocessableEntity:
+			refused++
+		}
+	}
+	if ok != 1 || refused != 1 {
+		t.Errorf("responses %v: want exactly one 200 and one 422", codes)
+	}
+}
+
+func countAuditLogs(t *testing.T, db *gorm.DB, issuanceID, action string) int64 {
+	t.Helper()
+	var count int64
+	if err := db.Model(&data.AuditLog{}).Where("issuance_id = ? AND action = ?", issuanceID, action).Count(&count).Error; err != nil {
+		t.Fatalf("failed to count audit logs: %v", err)
+	}
+	return count
+}
+
+// A double click on Cancelar, or two operators on the same card: both requests read the
+// row while it was still active, both passed the guard, and both wrote - two "cancelled"
+// audit lines, and the second request's refunds silently replacing the first's.
+func TestCancelIssuance_TwoAtOnceCancelOnlyOnce(t *testing.T) {
+	db, issuance, user, _ := seedCommittedIssuance(t)
+
+	codes := raceTwice(t, db, issuance.ID, func() *httptest.ResponseRecorder {
+		return callCancel(db, issuance.ID, user.ID, `{"cancellation_fee": 15000}`)
+	})
+
+	assertOneWinner(t, codes)
+	if got := countAuditLogs(t, db, issuance.ID, auditActionCancelled); got != 1 {
+		t.Errorf("cancelled audit lines: got %d, want 1", got)
+	}
+}
+
+// The same on the way back: two Reverter clicks must restore once and write one line.
+func TestUncancelIssuance_TwoAtOnceRestoreOnlyOnce(t *testing.T) {
+	db, issuance, user, _ := seedCommittedIssuance(t)
+	if rec := callCancel(db, issuance.ID, user.ID, ""); rec.Code != http.StatusOK {
+		t.Fatalf("cancel: got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+
+	codes := raceTwice(t, db, issuance.ID, func() *httptest.ResponseRecorder {
+		return callUncancel(db, issuance.ID, user.ID)
+	})
+
+	assertOneWinner(t, codes)
+	if got := countAuditLogs(t, db, issuance.ID, auditActionRestored); got != 1 {
+		t.Errorf("restored audit lines: got %d, want 1", got)
+	}
 }
