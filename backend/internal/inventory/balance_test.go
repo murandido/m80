@@ -187,3 +187,69 @@ func TestExpectedBalancesWithNoAccounts(t *testing.T) {
 		}
 	})
 }
+
+// A booking from a closed month cancelled after the closing. The closed period froze its
+// consumption, and the recompute lands the reversal in the open period, dated by the
+// cancellation - so the open half has to count the refund by that day as well, not by the
+// booking's created_at, or the points come back on the costing and never on the balance.
+func TestExpectedBalanceCountsALateRefundOfAClosedBooking(t *testing.T) {
+	cases := []struct {
+		name     string
+		refunded *int // nil is a full cancellation without an explicit refund
+		altered  int  // points an alteration in the closed month added to the booking
+		want     int
+	}{
+		{name: "full cancellation", want: 500000},
+		{name: "explicit partial refund", refunded: ptr(20000), want: 470000},
+		// A full cancellation returns the alteration's points too (refundedPoints).
+		{name: "full cancellation of an altered booking", altered: 10000, want: 500000},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			runInTx(t, func(tx *gorm.DB) {
+				f := seedFixture(t, tx)
+				seedBatch(t, tx, f, "2026-08-01", 500000, 700000)
+				booking := seedIssuance(t, tx, f, "2026-08-10", 50000)
+				if c.altered != 0 {
+					seedAdjustment(t, tx, f, booking, "2026-08-12", c.altered, 1500)
+				}
+				if _, err := Close(tx, f.account.ID, day("2026-08-01"), day("2026-08-31"), f.user.ID); err != nil {
+					t.Fatalf("closing August: %v", err)
+				}
+
+				updates := map[string]any{"active": false, "cancelled_at": day("2026-09-05")}
+				if c.refunded != nil {
+					updates["refunded_points"] = *c.refunded
+				}
+				if err := tx.Model(&booking).Updates(updates).Error; err != nil {
+					t.Fatalf("cancelling: %v", err)
+				}
+
+				balances, err := ExpectedBalances(tx, []string{f.account.ID})
+				if err != nil {
+					t.Fatalf("ExpectedBalances failed: %v", err)
+				}
+				if got := balances[f.account.ID]; got != c.want {
+					t.Errorf("balance: got %d, want %d", got, c.want)
+				}
+
+				// And the costing agrees: what the batches still hold after the recompute is
+				// the same figure.
+				if err := Recompute(tx, f.account.ID); err != nil {
+					t.Fatalf("Recompute: %v", err)
+				}
+				backed := 0
+				for _, row := range allocationsOf(t, tx, f.account.ID) {
+					if row.BatchID != nil {
+						backed += row.Points
+					}
+				}
+				if got := 500000 - backed; got != c.want {
+					t.Errorf("batches less their slices: got %d, want %d", got, c.want)
+				}
+			})
+		})
+	}
+}
+
+func ptr(value int) *int { return &value }

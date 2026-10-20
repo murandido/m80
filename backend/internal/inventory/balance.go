@@ -116,29 +116,41 @@ func ExpectedBalances(db *gorm.DB, accountIDs []string) (map[string]int, error) 
 	// And the open half, read from the issuances themselves so it is current to the second.
 	// A cancellation-only row never took points out of the account, and a refund puts them
 	// back - the same two rules the timeline follows in loadIssuanceActivity.
-	type openTotal struct {
-		AccountID string
-		Issued    int
-		Refunded  int
-	}
 	for accountID, cut := range frozenUntil {
-		var open openTotal
+		// Two structs, not one: a second Scan into the same struct zeroes the column the
+		// first one filled.
+		var issued struct{ Issued int }
+		var refunded struct{ Refunded int }
+		// Each half is cut on its own event's day, the way loadIssuanceActivity dates them:
+		// the booking by created_at, the refund by cancelled_at (created_at when there is
+		// none). A single created_at cut lost the refund of a booking from a closed month
+		// cancelled after the closing - the recompute returns those points in the open
+		// period, and the balance never saw them come back.
 		query := db.Model(&data.Issuance{}).
-			Select(`COALESCE(SUM(CASE WHEN cancellation_only THEN 0 ELSE points END), 0) AS issued,
-			        COALESCE(SUM(CASE
+			Select(`COALESCE(SUM(CASE WHEN cancellation_only THEN 0 ELSE points END), 0) AS issued`).
+			Where("account_id = ?", accountID)
+		if !cut.IsZero() {
+			// The same boundary the recompute draws, on the UTC day of created_at.
+			query = query.Where("DATE(created_at AT TIME ZONE 'UTC') > ?", cut)
+		}
+		if err := query.Scan(&issued).Error; err != nil {
+			return nil, fmt.Errorf("inventory.ExpectedBalances: summing issuances: %w", err)
+		}
+
+		query = db.Model(&data.Issuance{}).
+			Select(`COALESCE(SUM(CASE
 			            WHEN refunded_points IS NOT NULL THEN refunded_points
 			            WHEN cancelled_at IS NOT NULL AND NOT cancellation_only THEN points
 			            ELSE 0
 			        END), 0) AS refunded`).
 			Where("account_id = ?", accountID)
 		if !cut.IsZero() {
-			// The same boundary the recompute draws, on the UTC day of created_at.
-			query = query.Where("DATE(created_at AT TIME ZONE 'UTC') > ?", cut)
+			query = query.Where("DATE(COALESCE(cancelled_at, created_at) AT TIME ZONE 'UTC') > ?", cut)
 		}
-		if err := query.Scan(&open).Error; err != nil {
-			return nil, fmt.Errorf("inventory.ExpectedBalances: summing issuances: %w", err)
+		if err := query.Scan(&refunded).Error; err != nil {
+			return nil, fmt.Errorf("inventory.ExpectedBalances: summing refunds: %w", err)
 		}
-		balances[accountID] += open.Refunded - open.Issued
+		balances[accountID] += refunded.Refunded - issued.Issued
 
 		adjusted, err := openAdjustedPoints(db, accountID, cut)
 		if err != nil {
@@ -153,8 +165,8 @@ func ExpectedBalances(db *gorm.DB, accountIDs []string) (map[string]int, error) 
 // openAdjustedPoints is what the account's alterations took out of the open period, net of
 // what they gave back, the same two rules loadIssuanceActivity follows. Each alteration
 // counts on its own day. A booking cancelled without an explicit refund returns its
-// alterations' points too (refundedPoints), on the same created_at boundary the refund
-// above is read by.
+// alterations' points too (refundedPoints), on the same cancellation-day boundary the
+// refund above is read by.
 func openAdjustedPoints(db *gorm.DB, accountID string, cut time.Time) (int, error) {
 	var taken struct{ Points int }
 	query := db.Model(&data.IssuanceAdjustment{}).
@@ -175,7 +187,7 @@ func openAdjustedPoints(db *gorm.DB, accountID string, cut time.Time) (int, erro
 		Where("issuances.account_id = ? AND issuances.deleted_at IS NULL", accountID).
 		Where("issuances.cancelled_at IS NOT NULL AND issuances.refunded_points IS NULL AND NOT issuances.cancellation_only")
 	if !cut.IsZero() {
-		query = query.Where("DATE(issuances.created_at AT TIME ZONE 'UTC') > ?", cut)
+		query = query.Where("DATE(issuances.cancelled_at AT TIME ZONE 'UTC') > ?", cut)
 	}
 	if err := query.Scan(&returned).Error; err != nil {
 		return 0, fmt.Errorf("inventory.ExpectedBalances: summing cancelled adjustments: %w", err)
