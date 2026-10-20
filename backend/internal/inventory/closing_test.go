@@ -101,7 +101,7 @@ func TestReadClosingNetsABookingCancelledInTheSamePeriod(t *testing.T) {
 		seedBatch(t, tx, f, "2026-08-01", 500000, 500000)
 		issuance := seedIssuance(t, tx, f, "2026-08-15", 100000)
 
-		cancelledAt := day("2026-08-20")
+		cancelledAt := instantOn("2026-08-20")
 		if err := tx.Model(&issuance).Updates(map[string]any{
 			"active":       false,
 			"cancelled_at": cancelledAt,
@@ -274,7 +274,7 @@ func TestReadClosingGivesTheFeeBackWithARefund(t *testing.T) {
 		if err := tx.Model(&booking).Updates(map[string]any{
 			"redemption_fee_saved_cents": 8000,
 			"active":                     false,
-			"cancelled_at":               day("2026-09-12"),
+			"cancelled_at":               instantOn("2026-09-12"),
 		}).Error; err != nil {
 			t.Fatalf("setting the booking: %v", err)
 		}

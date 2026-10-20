@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/murandido/m-80-backend/internal/businessday"
 	"github.com/murandido/m-80-backend/internal/data"
 	"gorm.io/gorm"
 )
@@ -132,8 +133,9 @@ func ExpectedBalances(db *gorm.DB, accountIDs []string) (map[string]int, error) 
 			        END), 0) AS refunded`).
 			Where("account_id = ?", accountID)
 		if !cut.IsZero() {
-			// The same boundary the recompute draws, on the UTC day of created_at.
-			query = query.Where("DATE(created_at AT TIME ZONE 'UTC') > ?", cut)
+			// The same boundary the recompute draws (DayOf), on the São Paulo day of
+			// created_at - bound as a parameter so the zone has a single definition.
+			query = query.Where("DATE(created_at AT TIME ZONE ?) > ?", businessday.Timezone, cut)
 		}
 		if err := query.Scan(&open).Error; err != nil {
 			return nil, fmt.Errorf("inventory.ExpectedBalances: summing issuances: %w", err)
@@ -175,7 +177,7 @@ func openAdjustedPoints(db *gorm.DB, accountID string, cut time.Time) (int, erro
 		Where("issuances.account_id = ? AND issuances.deleted_at IS NULL", accountID).
 		Where("issuances.cancelled_at IS NOT NULL AND issuances.refunded_points IS NULL AND NOT issuances.cancellation_only")
 	if !cut.IsZero() {
-		query = query.Where("DATE(issuances.created_at AT TIME ZONE 'UTC') > ?", cut)
+		query = query.Where("DATE(issuances.created_at AT TIME ZONE ?) > ?", businessday.Timezone, cut)
 	}
 	if err := query.Scan(&returned).Error; err != nil {
 		return 0, fmt.Errorf("inventory.ExpectedBalances: summing cancelled adjustments: %w", err)

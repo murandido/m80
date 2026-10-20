@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/murandido/m-80-backend/internal/businessday"
 	"github.com/murandido/m-80-backend/internal/data"
 	"gorm.io/gorm"
 )
@@ -159,7 +160,9 @@ func loadIssuanceActivity(db *gorm.DB, accountID string, frozenUntil time.Time) 
 	// the day of its own booking finds the booking's slices to return to, and a same-day
 	// cancellation finds the alteration's to give back.
 	for k, adjustment := range adjustments {
-		occurredOn := DayOf(adjustment.OccurredOn)
+		// Already a calendar day (a DATE column), so it is taken as is: DayOf would read
+		// its midnight UTC in São Paulo and file it under the day before.
+		occurredOn := dateOf(adjustment.OccurredOn)
 		if adjustment.Points == 0 || !occurredOn.After(frozenUntil) {
 			continue
 		}
@@ -329,14 +332,25 @@ func persist(db *gorm.DB, accountID string, frozenUntil time.Time, allocations [
 	})
 }
 
-// DayOf drops the clock from a timestamp. The queue is ordered by day - a booking's
-// created_at is UTC in the database, and letting the time of day into the comparison would
-// make the same booking fall on either side of a period boundary depending on the reader.
+// DayOf is the business day of an instant - its São Paulo calendar day. The queue is
+// ordered by day, and letting the time of day into the comparison would make the same
+// booking fall on either side of a period boundary depending on the reader.
+//
+// São Paulo, not the year/month/day the time.Time happens to carry: that is the process
+// zone for a value read from the database, UTC in the production container, so a booking
+// made at 22:30 on the 31st used to be costed on the 1st - in the next month's closing,
+// and in a different month than the supplier report and the sales screen put it in.
 //
 // Exported alongside ClosedThrough, and for the same reason: the guard on the issuance
 // routes has to ask the question exactly the way the costing answers it.
 func DayOf(moment time.Time) time.Time {
-	return time.Date(moment.Year(), moment.Month(), moment.Day(), 0, 0, 0, 0, time.UTC)
+	return businessday.Of(moment)
+}
+
+// dateOf normalises a value that already is a calendar day (a DATE column) to the
+// midnight-UTC shape DayOf returns, without moving it across a zone.
+func dateOf(date time.Time) time.Time {
+	return time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, time.UTC)
 }
 
 // adjustmentIDOf reads the nullable column the way Allocation carries it.

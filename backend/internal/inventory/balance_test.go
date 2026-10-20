@@ -55,7 +55,7 @@ func TestExpectedBalanceGivesBackWhatWasRefunded(t *testing.T) {
 		seedBatch(t, tx, f, "2026-09-01", 100000, 150000)
 
 		cancelled := seedIssuance(t, tx, f, "2026-09-02", 40000)
-		cancelledAt := day("2026-09-03")
+		cancelledAt := instantOn("2026-09-03")
 		if err := tx.Model(&cancelled).Updates(map[string]any{
 			"cancelled_at":    cancelledAt,
 			"refunded_points": 40000,

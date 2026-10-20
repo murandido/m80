@@ -124,7 +124,7 @@ func TestRecomputeCancellationReturnsTheAlterationsPoints(t *testing.T) {
 		issuance := seedIssuance(t, tx, f, "2026-08-10", 100000)
 		seedAdjustment(t, tx, f, issuance, "2026-08-12", 10000, 0)
 
-		cancelledAt := day("2026-08-20")
+		cancelledAt := instantOn("2026-08-20")
 		if err := tx.Model(&issuance).Updates(map[string]any{"cancelled_at": cancelledAt, "active": false}).Error; err != nil {
 			t.Fatalf("cancelling: %v", err)
 		}
