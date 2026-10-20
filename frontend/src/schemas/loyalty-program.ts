@@ -117,10 +117,3 @@ export const updateLoyaltyProgramSchema = {
     data: loyaltyProgramSchema.nullish(),
   }),
 }
-
-export const deleteLoyaltyProgramSchema = {
-  response: z.object({
-    message: z.string(),
-    data: z.null().nullish(),
-  }),
-}

@@ -195,14 +195,6 @@ export const getAccountAdministratorSchema = {
   }),
 }
 
-export const getAccountsSchema = {
-  response: z.object({
-    success: z.boolean(),
-    message: z.string(),
-    data: z.array(accountSchema).nullish(),
-  }),
-}
-
 // GET /accounts/{id}: the full account, read whole for the per-account statement page header.
 export const getAccountSchema = {
   response: z.object({

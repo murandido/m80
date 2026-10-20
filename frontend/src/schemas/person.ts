@@ -50,14 +50,6 @@ export const getPeopleOptionsSchema = {
   }),
 }
 
-export const getPeopleSchema = {
-  response: z.object({
-    success: z.boolean(),
-    message: z.string(),
-    data: z.array(personSchema).nullish(),
-  }),
-}
-
 const optionalTextField = z.string().optional().or(z.literal(""))
 const optionalEmailField = z.union([z.literal(""), z.string().email("Email inválido")])
 

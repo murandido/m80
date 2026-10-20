@@ -53,13 +53,6 @@ export const updateAgencySchema = {
   }),
 }
 
-export const deleteAgencySchema = {
-  response: z.object({
-    message: z.string(),
-    data: z.null().nullish(),
-  }),
-}
-
 export const createAgencyNicknameSchema = {
   request: z.object({
     nickname: z.string().min(1, "Apelido é obrigatório"),

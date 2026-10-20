@@ -251,14 +251,6 @@ export const inventoryPeriodSchema = z.object({
 
 export type InventoryPeriod = z.infer<typeof inventoryPeriodSchema>
 
-export const getInventoryPeriodsSchema = {
-  response: z.object({
-    success: z.boolean(),
-    message: z.string(),
-    data: z.array(inventoryPeriodSchema).nullish(),
-  }),
-}
-
 // --- Conciliação de extrato ---
 
 const statementVerdictSchema = z.enum([
