@@ -28,6 +28,12 @@ export function startOfToday(): Date {
   return new Date(now.getFullYear(), now.getMonth(), now.getDate())
 }
 
+// The operator's calendar day as YYYY-MM-DD. `new Date().toISOString().slice(0, 10)` looks
+// equivalent but returns UTC's day, which is already tomorrow after 21:00 in Sao Paulo.
+export function todayYmd(): string {
+  return formatYmd(startOfToday())
+}
+
 export function addDays(date: Date, days: number): Date {
   const copy = new Date(date)
   copy.setDate(copy.getDate() + days)

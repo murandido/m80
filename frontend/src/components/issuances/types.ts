@@ -1,3 +1,4 @@
+import { todayYmd } from "@/lib/date-range"
 import { Issuance, IssuanceAdjustment, IssuanceStatus } from "@/schemas/issuance"
 
 export type SaveStatus = "idle" | "saving" | "success" | "error"
@@ -161,7 +162,7 @@ export function makeDraftRow(
     airline_locator: null,
     latam_purchase_number: null,
     flight_date: null,
-    issued_on: issuedOn ?? new Date().toISOString().slice(0, 10),
+    issued_on: issuedOn ?? todayYmd(),
     main_passenger_name: null,
     passenger_last_name: null,
     origin_iata_code: null,
