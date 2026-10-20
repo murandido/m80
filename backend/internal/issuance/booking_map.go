@@ -66,7 +66,7 @@ func applyBooking(
 		return err
 	}
 
-	applyIssuanceFields(issuance, fetched, flights, source)
+	syncedColumns := applyIssuanceFields(issuance, fetched, flights, source)
 
 	// Backfill the brand colour from the ticket when the airline has none yet. The
 	// catalog is the tidier source, but this arrives free with data we already
@@ -81,16 +81,12 @@ func applyBooking(
 		}
 	}
 
-	// Only the columns applyIssuanceFields owns, never the whole row: the issuance was
-	// read before the provider was asked, which can take minutes, and in that window the
-	// operator edits points and prices on the grid or cancels the ticket. Saving the
-	// stale snapshot would silently revert all of it. Select also forces zero values of
-	// the listed columns through, which is what Save did for them.
-	if err := tx.Model(issuance).Select(
-		"trip_type", "origin_iata_code", "destination_iata_code",
-		"main_passenger_name", "latam_purchase_number", "additional_services",
-		"booking_source", "traveos_synced_at", "complete", "updated_at",
-	).Updates(issuance).Error; err != nil {
+	// Only the columns this answer actually filled in, never the whole row: the issuance
+	// was read before the provider was asked, which can take minutes, and in that window
+	// the operator edits points and prices on the grid, types the LATAM purchase number
+	// or cancels the ticket. Writing the stale snapshot back - even just of a column the
+	// provider left blank - would silently revert those edits.
+	if err := tx.Model(issuance).Updates(syncedColumns).Error; err != nil {
 		return err
 	}
 
@@ -395,19 +391,26 @@ func insertPassengerFlights(
 // applyIssuanceFields fills in the columns the operator's own input never
 // carries. Errors here are not fatal: every field it touches is nullable, and a
 // missing route is a smaller loss than a rejected itinerary.
+//
+// It returns the columns it filled in, and only those, so that the write can leave
+// alone every column this answer had nothing to say about - see applyBooking.
 func applyIssuanceFields(
 	issuance *data.Issuance,
 	fetched *booking.Booking,
 	flights insertedFlights,
 	source string,
-) {
+) map[string]any {
+	columns := map[string]any{}
+
 	tripType := fetched.TripType
 	issuance.TripType = &tripType
+	columns["trip_type"] = tripType
 
 	legs := flights.all()
 	if len(legs) > 0 {
 		if code := legs[0].OriginIATACode; code != nil {
 			issuance.OriginIATACode = code
+			columns["origin_iata_code"] = *code
 		}
 	}
 
@@ -423,6 +426,7 @@ func applyIssuanceFields(
 	if len(outbound) > 0 {
 		if code := outbound[len(outbound)-1].DestinationIATACode; code != nil {
 			issuance.DestinationIATACode = code
+			columns["destination_iata_code"] = *code
 		}
 	}
 
@@ -430,11 +434,13 @@ func applyIssuanceFields(
 		main := fetched.Passengers[0]
 		if name := strings.TrimSpace(cleanGivenName(main.FirstName) + " " + strings.TrimSpace(main.LastName)); name != "" {
 			issuance.MainPassengerName = &name
+			columns["main_passenger_name"] = name
 		}
 	}
 
 	if number := strings.TrimSpace(fetched.PurchaseNumber); number != "" {
 		issuance.LatamPurchaseNumber = &number
+		columns["latam_purchase_number"] = number
 	}
 
 	// Stored verbatim: three mutually incompatible shapes across airlines
@@ -442,16 +448,22 @@ func applyIssuanceFields(
 	// reads it structurally, so normalising it would be invented work.
 	if len(fetched.AdditionalServices) > 0 {
 		issuance.AdditionalServices = datatypes.JSON(fetched.AdditionalServices)
+		columns["additional_services"] = issuance.AdditionalServices
 	}
 
 	if source != "" {
 		issuance.BookingSource = &source
+		columns["booking_source"] = source
 	}
 
 	now := time.Now()
 	issuance.TraveosSyncedAt = &now
 	// The airline confirmed the itinerary - that is exactly what complete means.
 	issuance.Complete = true
+	columns["traveos_synced_at"] = now
+	columns["complete"] = true
+	columns["updated_at"] = now
+	return columns
 }
 
 // cleanGivenName strips a trailing courtesy title from the given name.

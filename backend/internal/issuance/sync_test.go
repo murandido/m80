@@ -741,17 +741,23 @@ func TestSyncKeepsEditsMadeWhileTheProviderAnswers(t *testing.T) {
 		}
 
 		const editedPoints = 123456
+		const typedPurchaseNumber = "LA9988776655"
+		const typedPassengerName = "MARIA PRADO FERREIRA"
 		cancelledAt := time.Now().Truncate(time.Second)
 		provider := &fakeProvider{
 			fetchResults: []*booking.Booking{existingBooking()},
 			// Stands in for a PATCH from the grid and a cancellation landing while
-			// the vendor is still answering.
+			// the vendor is still answering. The purchase number and the passenger
+			// name are columns the sync may write, but this answer carries neither,
+			// so the operator's values must survive too.
 			duringCall: func() {
 				if err := tx.Model(&data.Issuance{}).Where("id = ?", created.ID).
 					UpdateColumns(map[string]any{
-						"points":       editedPoints,
-						"active":       false,
-						"cancelled_at": cancelledAt,
+						"points":                editedPoints,
+						"active":                false,
+						"cancelled_at":          cancelledAt,
+						"latam_purchase_number": typedPurchaseNumber,
+						"main_passenger_name":   typedPassengerName,
 					}).Error; err != nil {
 					t.Fatalf("editing the issuance mid-sync: %v", err)
 				}
@@ -772,6 +778,15 @@ func TestSyncKeepsEditsMadeWhileTheProviderAnswers(t *testing.T) {
 		if issuance.Active || issuance.CancelledAt == nil {
 			t.Errorf("active = %v, cancelled_at = %v: the sync reverted a cancellation made while it ran",
 				issuance.Active, issuance.CancelledAt)
+		}
+
+		if issuance.LatamPurchaseNumber == nil || *issuance.LatamPurchaseNumber != typedPurchaseNumber {
+			t.Errorf("latam_purchase_number = %v, want the %q typed during the sync - the booking had none",
+				issuance.LatamPurchaseNumber, typedPurchaseNumber)
+		}
+		if issuance.MainPassengerName == nil || *issuance.MainPassengerName != typedPassengerName {
+			t.Errorf("main_passenger_name = %v, want the %q typed during the sync - the booking had no passengers",
+				issuance.MainPassengerName, typedPassengerName)
 		}
 
 		// And the itinerary columns, which are the sync's to write, still land.
