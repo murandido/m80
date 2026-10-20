@@ -941,6 +941,16 @@ func (h *SaleHandler) UpdateSale(w http.ResponseWriter, r *http.Request) {
 	// Sales the replay changed besides this one, so their rows refresh too.
 	var rebalancedSaleIDs []string
 	err = h.DB.Transaction(func(tx *gorm.DB) error {
+		// Serialize every edit of this sale. The paid switch reads what is missing and
+		// records it; two clicks at once (two operators, or two tabs) would otherwise both
+		// read nothing paid and both insert the full amount, and a client's rebalance then
+		// turns the duplicate into credit that pays another sale. The second request waits
+		// here and finds nothing missing. The sale is locked before the client (which
+		// rebalanceClient locks), the same order this transaction already took them in.
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").
+			First(&data.Sale{}, "id = ?", sale.ID).Error; err != nil {
+			return err
+		}
 		if len(updates) > 0 {
 			if err := tx.Model(&sale).Updates(updates).Error; err != nil {
 				return err
