@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -287,5 +288,53 @@ func TestUncancelIssuance_TwoAtOnceRestoreOnlyOnce(t *testing.T) {
 	assertOneWinner(t, codes)
 	if got := countAuditLogs(t, db, issuance.ID, auditActionRestored); got != 1 {
 		t.Errorf("restored audit lines: got %d, want 1", got)
+	}
+}
+
+// The other direction of the same race: A edits a cancelled issuance while B reverts the
+// cancellation. The edit no longer writes the cancellation back, but its response used to
+// be read over the struct it started from, and GORM does not reset a pointer when the
+// column comes back NULL - so A's board got a 200 saying "cancelled" for a row the
+// database already had live, and kept showing it that way.
+func TestUpdateIssuance_AnEditInFlightReportsARevertCommittedMeanwhile(t *testing.T) {
+	db, issuance, user, _ := seedCommittedIssuance(t)
+	if rec := callCancel(db, issuance.ID, user.ID, `{"cancellation_fee": 15000}`); rec.Code != http.StatusOK {
+		t.Fatalf("cancel: got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+
+	// The same write UncancelIssuance makes, held open so the edit lines up behind it.
+	revertTx := db.Begin()
+	t.Cleanup(func() { revertTx.Rollback() })
+	if err := revertTx.Model(&data.Issuance{}).Where("id = ? AND active = FALSE", issuance.ID).
+		Updates(map[string]any{
+			"active": true, "cancelled_at": nil, "cancelled_by_id": nil,
+			"refunded_points": nil, "refunded_taxes": nil, "cancellation_fee": nil,
+		}).Error; err != nil {
+		t.Fatalf("revert: %v", err)
+	}
+	revertPID := backendPID(t, revertTx)
+
+	patched := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		patched <- callPatchIssuance(db, issuance.ID, user.ID, `{"observation":"corrigido"}`)
+	}()
+
+	waitForWaitersOn(t, db, revertPID, 1)
+	if err := revertTx.Commit().Error; err != nil {
+		t.Fatalf("commit revert: %v", err)
+	}
+
+	rec := <-patched
+	if rec.Code != http.StatusOK {
+		t.Fatalf("patch: got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	var resp cancelResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if !resp.Data.Active || resp.Data.CancelledAt != nil || resp.Data.Status == "cancelled" ||
+		resp.Data.CancellationFee != nil {
+		t.Errorf("response disagrees with the database: active=%v cancelled_at=%v status=%q fee=%v",
+			resp.Data.Active, resp.Data.CancelledAt, resp.Data.Status, resp.Data.CancellationFee)
 	}
 }

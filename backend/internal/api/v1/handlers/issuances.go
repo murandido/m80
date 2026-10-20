@@ -1174,18 +1174,23 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Read into a fresh struct: the cancellation columns were left out of the write, so a
+	// cancel or revert committed meanwhile is what the row holds now, and scanning a NULL
+	// over the struct read before the transaction does not reset its pointers - the board
+	// would be told "cancelled" about a row that is live again.
+	var updatedIssuance data.Issuance
 	if err := preloadIssuanceAssociations(h.DB).
 		Preload("Flights", func(db *gorm.DB) *gorm.DB {
 			return db.Where("direction = ?", "outbound").Order("leg_order asc")
 		}).
-		First(&issuance, "id = ?", issuance.ID).Error; err != nil {
+		First(&updatedIssuance, "id = ?", issuance.ID).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch updated issuance")
 		return
 	}
 
-	h.broadcastIssuance(eventIssuanceUpdated, issuance.ID)
+	h.broadcastIssuance(eventIssuanceUpdated, updatedIssuance.ID)
 
-	utils.SendJSON(w, r, http.StatusOK, "Issuance updated successfully", toIssuanceResponse(issuance))
+	utils.SendJSON(w, r, http.StatusOK, "Issuance updated successfully", toIssuanceResponse(updatedIssuance))
 }
 
 // syncIssuanceBeneficiary keeps the account's CPF consumption in step with a patched
