@@ -43,6 +43,14 @@ const (
 	auditActionRestored  = "restored"
 )
 
+// issuanceCancellationColumns are the columns a cancellation writes and a revert clears.
+// Only POST /cancel and POST /uncancel may change them, each as one whole operation; the
+// edit route leaves them out of its write - see UpdateIssuance.
+var issuanceCancellationColumns = []string{
+	"active", "cancelled_at", "cancelled_by_id",
+	"refunded_points", "refunded_taxes", "cancellation_fee", "cancellation_only",
+}
+
 // SSE event types published by this handler. The payload is always just the
 // affected issuance id: every connected panel refetches the list with its own
 // filters anyway, and the filter rules (the creation/cancellation OR branch,
@@ -1102,7 +1110,12 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 			return err
 		}
 
-		if err := tx.Save(&issuance).Error; err != nil {
+		// The cancellation columns are never this route's to write: cancel and revert own
+		// them, and the status switch above refuses to touch them. Leaving them out of the
+		// Save matters because the row was read before this transaction, without a lock -
+		// a cancellation committed in between would otherwise be written back over with
+		// the stale "active, nothing refunded" this request started from.
+		if err := tx.Omit(issuanceCancellationColumns...).Save(&issuance).Error; err != nil {
 			return err
 		}
 
