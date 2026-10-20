@@ -2,7 +2,6 @@ package inventory
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/murandido/m-80-backend/internal/data"
 	"gorm.io/gorm"
@@ -26,8 +25,12 @@ import (
 //	  + points refunded after the cut
 //
 // The open half comes straight from the issuances table, so a booking made a second ago is
-// in it. Three aggregates, each grouped by account, so a list of accounts costs the same
-// three queries as one.
+// in it.
+//
+// Every figure is one aggregate grouped by account, with each account's own cut joined in
+// from the periods, so a page of accounts costs the same six queries as one. It used to
+// loop over the accounts with four or five queries each, which is what made the account
+// list slow to search: the list asks for every account on the page at once.
 func ExpectedBalances(db *gorm.DB, accountIDs []string) (map[string]int, error) {
 	if len(accountIDs) == 0 {
 		return map[string]int{}, nil
@@ -44,14 +47,15 @@ func ExpectedBalances(db *gorm.DB, accountIDs []string) (map[string]int, error) 
 		return map[string]int{}, nil
 	}
 
-	// The cut is per account: each one freezes its own periods.
-	frozenUntil := make(map[string]time.Time, len(owning))
-	for _, accountID := range owning {
-		cut, err := ClosedThrough(db, accountID)
-		if err != nil {
-			return nil, err
-		}
-		frozenUntil[accountID] = cut
+	// The cut is per account: each one freezes its own periods. MAX(ends_on) over the closed
+	// ones is the same date ClosedThrough reads one account at a time. It is a function rather
+	// than a value because each query below embeds it as its own subquery; an account with no
+	// closed period is simply absent from it, which every query reads as "no cut".
+	closedCuts := func() *gorm.DB {
+		return db.Model(&data.InventoryPeriod{}).
+			Select("account_id, MAX(ends_on) AS cut").
+			Where("closed_at IS NOT NULL AND account_id IN ?", owning).
+			Group("account_id")
 	}
 
 	balances := make(map[string]int, len(owning))
@@ -92,94 +96,114 @@ func ExpectedBalances(db *gorm.DB, accountIDs []string) (map[string]int, error) 
 	// After the cut the same shortfall is real news, and the open half below counts every
 	// issuance - so an unexplained consumption drives the balance negative rather than
 	// disappearing quietly.
-	type frozenTotal struct {
+	type accountTotal struct {
 		AccountID string
 		Points    int
 	}
-	for accountID, cut := range frozenUntil {
-		if cut.IsZero() {
-			continue
-		}
-		var frozen frozenTotal
-		err = db.Model(&data.PointBatchAllocation{}).
-			Select("COALESCE(SUM(point_batch_allocations.points), 0) AS points").
-			Joins("JOIN issuances ON issuances.id = point_batch_allocations.issuance_id").
-			Where("issuances.account_id = ? AND point_batch_allocations.occurred_on <= ?", accountID, cut).
-			Where("point_batch_allocations.batch_id IS NOT NULL").
-			Scan(&frozen).Error
-		if err != nil {
-			return nil, fmt.Errorf("inventory.ExpectedBalances: summing frozen allocations: %w", err)
-		}
-		balances[accountID] -= frozen.Points
+	// The inner join leaves out the accounts with no cut, which have nothing frozen.
+	var frozen []accountTotal
+	err = db.Model(&data.PointBatchAllocation{}).
+		Select("issuances.account_id, COALESCE(SUM(point_batch_allocations.points), 0) AS points").
+		Joins("JOIN issuances ON issuances.id = point_batch_allocations.issuance_id").
+		Joins("JOIN (?) AS cuts ON cuts.account_id = issuances.account_id", closedCuts()).
+		Where("point_batch_allocations.occurred_on <= cuts.cut").
+		Where("point_batch_allocations.batch_id IS NOT NULL").
+		Group("issuances.account_id").
+		Scan(&frozen).Error
+	if err != nil {
+		return nil, fmt.Errorf("inventory.ExpectedBalances: summing frozen allocations: %w", err)
+	}
+	for _, total := range frozen {
+		balances[total.AccountID] -= total.Points
 	}
 
 	// And the open half, read from the issuances themselves so it is current to the second.
 	// A cancellation-only row never took points out of the account, and a refund puts them
 	// back - the same two rules the timeline follows in loadIssuanceActivity.
+	//
+	// The boundary is the same one the recompute draws, on the UTC day of created_at; an
+	// account without a cut (no row in cuts) counts every issuance.
 	type openTotal struct {
 		AccountID string
 		Issued    int
 		Refunded  int
 	}
-	for accountID, cut := range frozenUntil {
-		var open openTotal
-		query := db.Model(&data.Issuance{}).
-			Select(`COALESCE(SUM(CASE WHEN cancellation_only THEN 0 ELSE points END), 0) AS issued,
-			        COALESCE(SUM(CASE
-			            WHEN refunded_points IS NOT NULL THEN refunded_points
-			            WHEN cancelled_at IS NOT NULL AND NOT cancellation_only THEN points
-			            ELSE 0
-			        END), 0) AS refunded`).
-			Where("account_id = ?", accountID)
-		if !cut.IsZero() {
-			// The same boundary the recompute draws, on the UTC day of created_at.
-			query = query.Where("DATE(created_at AT TIME ZONE 'UTC') > ?", cut)
-		}
-		if err := query.Scan(&open).Error; err != nil {
-			return nil, fmt.Errorf("inventory.ExpectedBalances: summing issuances: %w", err)
-		}
-		balances[accountID] += open.Refunded - open.Issued
+	var open []openTotal
+	err = db.Model(&data.Issuance{}).
+		Select(`issuances.account_id,
+		        COALESCE(SUM(CASE WHEN issuances.cancellation_only THEN 0 ELSE issuances.points END), 0) AS issued,
+		        COALESCE(SUM(CASE
+		            WHEN issuances.refunded_points IS NOT NULL THEN issuances.refunded_points
+		            WHEN issuances.cancelled_at IS NOT NULL AND NOT issuances.cancellation_only THEN issuances.points
+		            ELSE 0
+		        END), 0) AS refunded`).
+		Joins("LEFT JOIN (?) AS cuts ON cuts.account_id = issuances.account_id", closedCuts()).
+		Where("issuances.account_id IN ?", owning).
+		Where("cuts.cut IS NULL OR DATE(issuances.created_at AT TIME ZONE 'UTC') > cuts.cut").
+		Group("issuances.account_id").
+		Scan(&open).Error
+	if err != nil {
+		return nil, fmt.Errorf("inventory.ExpectedBalances: summing issuances: %w", err)
+	}
+	for _, total := range open {
+		balances[total.AccountID] += total.Refunded - total.Issued
+	}
 
-		adjusted, err := openAdjustedPoints(db, accountID, cut)
-		if err != nil {
-			return nil, err
-		}
-		balances[accountID] -= adjusted
+	adjusted, err := openAdjustedPoints(db, owning, closedCuts)
+	if err != nil {
+		return nil, err
+	}
+	for accountID, points := range adjusted {
+		balances[accountID] -= points
 	}
 
 	return balances, nil
 }
 
-// openAdjustedPoints is what the account's alterations took out of the open period, net of
-// what they gave back, the same two rules loadIssuanceActivity follows. Each alteration
+// openAdjustedPoints is what each account's alterations took out of the open period, net
+// of what they gave back, the same two rules loadIssuanceActivity follows. Each alteration
 // counts on its own day. A booking cancelled without an explicit refund returns its
 // alterations' points too (refundedPoints), on the same created_at boundary the refund
-// above is read by.
-func openAdjustedPoints(db *gorm.DB, accountID string, cut time.Time) (int, error) {
-	var taken struct{ Points int }
-	query := db.Model(&data.IssuanceAdjustment{}).
-		Select("COALESCE(SUM(issuance_adjustments.points), 0) AS points").
-		Joins("JOIN issuances ON issuances.id = issuance_adjustments.issuance_id").
-		Where("issuances.account_id = ? AND issuances.deleted_at IS NULL", accountID)
-	if !cut.IsZero() {
-		query = query.Where("issuance_adjustments.occurred_on > ?", cut)
-	}
-	if err := query.Scan(&taken).Error; err != nil {
-		return 0, fmt.Errorf("inventory.ExpectedBalances: summing adjustments: %w", err)
+// above is read by. Accounts with nothing to report are absent from the result.
+func openAdjustedPoints(db *gorm.DB, accountIDs []string, closedCuts func() *gorm.DB) (map[string]int, error) {
+	type accountTotal struct {
+		AccountID string
+		Points    int
 	}
 
-	var returned struct{ Points int }
-	query = db.Model(&data.IssuanceAdjustment{}).
-		Select("COALESCE(SUM(issuance_adjustments.points), 0) AS points").
+	var taken []accountTotal
+	err := db.Model(&data.IssuanceAdjustment{}).
+		Select("issuances.account_id, COALESCE(SUM(issuance_adjustments.points), 0) AS points").
 		Joins("JOIN issuances ON issuances.id = issuance_adjustments.issuance_id").
-		Where("issuances.account_id = ? AND issuances.deleted_at IS NULL", accountID).
-		Where("issuances.cancelled_at IS NOT NULL AND issuances.refunded_points IS NULL AND NOT issuances.cancellation_only")
-	if !cut.IsZero() {
-		query = query.Where("DATE(issuances.created_at AT TIME ZONE 'UTC') > ?", cut)
-	}
-	if err := query.Scan(&returned).Error; err != nil {
-		return 0, fmt.Errorf("inventory.ExpectedBalances: summing cancelled adjustments: %w", err)
+		Joins("LEFT JOIN (?) AS cuts ON cuts.account_id = issuances.account_id", closedCuts()).
+		Where("issuances.account_id IN ? AND issuances.deleted_at IS NULL", accountIDs).
+		Where("cuts.cut IS NULL OR issuance_adjustments.occurred_on > cuts.cut").
+		Group("issuances.account_id").
+		Scan(&taken).Error
+	if err != nil {
+		return nil, fmt.Errorf("inventory.ExpectedBalances: summing adjustments: %w", err)
 	}
 
-	return taken.Points - returned.Points, nil
+	var returned []accountTotal
+	err = db.Model(&data.IssuanceAdjustment{}).
+		Select("issuances.account_id, COALESCE(SUM(issuance_adjustments.points), 0) AS points").
+		Joins("JOIN issuances ON issuances.id = issuance_adjustments.issuance_id").
+		Joins("LEFT JOIN (?) AS cuts ON cuts.account_id = issuances.account_id", closedCuts()).
+		Where("issuances.account_id IN ? AND issuances.deleted_at IS NULL", accountIDs).
+		Where("issuances.cancelled_at IS NOT NULL AND issuances.refunded_points IS NULL AND NOT issuances.cancellation_only").
+		Where("cuts.cut IS NULL OR DATE(issuances.created_at AT TIME ZONE 'UTC') > cuts.cut").
+		Group("issuances.account_id").
+		Scan(&returned).Error
+	if err != nil {
+		return nil, fmt.Errorf("inventory.ExpectedBalances: summing cancelled adjustments: %w", err)
+	}
+
+	net := make(map[string]int, len(taken))
+	for _, total := range taken {
+		net[total.AccountID] += total.Points
+	}
+	for _, total := range returned {
+		net[total.AccountID] -= total.Points
+	}
+	return net, nil
 }
