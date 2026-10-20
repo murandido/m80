@@ -64,7 +64,7 @@ func TestUpdateAccount_NoReconnectWithoutANewPasswordOrARefusedKey(t *testing.T)
 			t.Errorf("same password: starts = %v, want none", starter.starts)
 		}
 		// Editing something else on a parked account does not log in either.
-		if starter := updateWithStarter(t, tx, parked.ID, `{"waives_redemption_fee":true}`); len(starter.starts) != 0 {
+		if starter := updateWithStarter(t, tx, parked.ID, `{"category":"standard"}`); len(starter.starts) != 0 {
 			t.Errorf("no password: starts = %v, want none", starter.starts)
 		}
 		// A healthy account does not need a browser login because its password changed.
