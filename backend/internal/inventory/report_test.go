@@ -231,53 +231,24 @@ func TestSummariseBatchIgnoresOtherBatchesSlices(t *testing.T) {
 	}
 }
 
-// A Diamante account's saved redemption fee is split by the batch's percent, like the
-// profit but without the cost term: TIAGO kept R$ 300 of fees on a WILMARA batch and
-// WILMARA kept R$ 100, so at half each TIAGO owes 150 - 50 = R$ 100. The points
-// settlement is left exactly as it was.
-func TestSummariseBatchSplitsTheRedemptionFeeSavedByTheSamePercent(t *testing.T) {
+// Lines come back in date order, whatever order the slices arrived in.
+func TestSummariseBatchListsTheLinesInDateOrder(t *testing.T) {
 	t.Parallel()
 
 	slices := []Slice{
-		{BatchID: "b", AgencyID: tiago, Points: 10000, CostCents: 10000, RevenueCents: 15000, RedemptionFeeSavedCents: 30000, ProgramLocator: "TTT111", OccurredOn: day("2026-09-10")},
-		{BatchID: "b", AgencyID: wilmara, Points: 10000, CostCents: 10000, RevenueCents: 15000, RedemptionFeeSavedCents: 10000, ProgramLocator: "WWW111", OccurredOn: day("2026-09-05")},
+		{BatchID: "b", AgencyID: tiago, Points: 10000, CostCents: 10000, RevenueCents: 15000, ProgramLocator: "TTT111", OccurredOn: day("2026-09-10")},
+		{BatchID: "b", AgencyID: wilmara, Points: 10000, CostCents: 10000, RevenueCents: 15000, ProgramLocator: "WWW111", OccurredOn: day("2026-09-05")},
 	}
 	batch := Batch{ID: "b", Points: 20000, CostCents: 20000}
 
 	result := SummariseBatch(batch, wilmara, 50, slices, []string{wilmara, tiago})
 
-	if result.RedemptionFeeSavedCents != 40000 {
-		t.Errorf("fee saved = %d, want 40000", result.RedemptionFeeSavedCents)
-	}
 	// Points: tiago spent 10000, made 5000, wilmara made 5000 -> 10000 + 2500 - 2500.
 	if len(result.Settlements) != 1 || result.Settlements[0].AmountCents != 10000 {
-		t.Fatalf("points settlement = %+v, want tiago owing 10000", result.Settlements)
+		t.Fatalf("settlement = %+v, want tiago owing 10000", result.Settlements)
 	}
-	if len(result.FeeSettlements) != 1 || result.FeeSettlements[0].AgencyID != tiago || result.FeeSettlements[0].AmountCents != 10000 {
-		t.Fatalf("fee settlement = %+v, want tiago owing 10000", result.FeeSettlements)
-	}
-	if len(result.TotalSettlements) != 1 || result.TotalSettlements[0].AgencyID != tiago ||
-		result.TotalSettlements[0].ToAgencyID != wilmara || result.TotalSettlements[0].AmountCents != 20000 {
-		t.Fatalf("total settlement = %+v, want tiago owing wilmara 20000", result.TotalSettlements)
-	}
-	// The lines come back in date order, whatever order the slices arrived in.
 	if len(result.Lines) != 2 || result.Lines[0].ProgramLocator != "WWW111" {
 		t.Errorf("lines = %+v, want both, earliest first", result.Lines)
-	}
-}
-
-// With a percent other than half, each side owes its partner that share of what it kept.
-func TestSummariseBatchSplitsTheFeeByAPercentOtherThanHalf(t *testing.T) {
-	t.Parallel()
-
-	slices := []Slice{
-		{BatchID: "b", AgencyID: tiago, Points: 1000, CostCents: 1000, RevenueCents: 1000, RedemptionFeeSavedCents: 10000},
-	}
-	result := SummariseBatch(Batch{ID: "b", Points: 1000, CostCents: 1000}, wilmara, 30, slices, []string{wilmara, tiago})
-
-	// tiago keeps 30% of its own fee and owes wilmara the other 70%.
-	if len(result.FeeSettlements) != 1 || result.FeeSettlements[0].AmountCents != 7000 {
-		t.Fatalf("fee settlement = %+v, want tiago owing 7000", result.FeeSettlements)
 	}
 }
 
@@ -341,8 +312,8 @@ func TestSummariseBatchPartsAddUpToTheSettlement(t *testing.T) {
 	for _, part := range result.Parts {
 		kinds[part.Kind]++
 	}
-	// The cost tiago used, its profit share and wilmara's profit share; no fee on this batch.
-	if kinds[PartCost] != 1 || kinds[PartProfitShare] != 2 || kinds[PartFeeShare] != 0 {
+	// The cost tiago used, its profit share and wilmara's profit share.
+	if kinds[PartCost] != 1 || kinds[PartProfitShare] != 2 || len(kinds) != 2 {
 		t.Errorf("parts = %+v, want one cost and two profit shares", result.Parts)
 	}
 }
@@ -372,11 +343,11 @@ func TestSummariseAgenciesAddsConsumersAcrossBatches(t *testing.T) {
 	t.Parallel()
 
 	summaries := SummariseAgencies([]BatchResult{
-		{Consumers: []Consumer{{AgencyID: tiago, Points: 10, ProfitCents: 100, RedemptionFeeSavedCents: 7}}},
+		{Consumers: []Consumer{{AgencyID: tiago, Points: 10, ProfitCents: 100}}},
 		{Consumers: []Consumer{{AgencyID: tiago, Points: 5, ProfitCents: 50}, {AgencyID: wilmara, Points: 1}}},
 	})
 
-	if len(summaries) != 2 || summaries[0].Points != 15 || summaries[0].ProfitCents != 150 || summaries[0].RedemptionFeeSavedCents != 7 {
-		t.Errorf("summaries = %+v, want tiago 15 points, 150 profit, 7 fee", summaries)
+	if len(summaries) != 2 || summaries[0].Points != 15 || summaries[0].ProfitCents != 150 {
+		t.Errorf("summaries = %+v, want tiago 15 points, 150 profit", summaries)
 	}
 }
