@@ -25,17 +25,12 @@ func renderLegacyForTest(t *testing.T, issuances []data.Issuance) *excelize.File
 	return f
 }
 
-// The legacy sheet fills the embedded MODELO: its B:P columns, plus the TAXA RESGATE column
-// the template does not have.
+// The legacy sheet fills the embedded MODELO: its B:P columns.
 func TestRenderLegacyIssuancesXLSXLayout(t *testing.T) {
-	exempt := sampleIssuance("Smiles", "ABC123", "Conta VIP", "João Emissor")
-	exempt.RedemptionFeeSavedCents = intptr(4200)
-	exempt.Agency = &data.Agency{Name: "Agência Central"}
+	issuance := sampleIssuance("Smiles", "ABC123", "Conta VIP", "João Emissor")
+	issuance.Agency = &data.Agency{Name: "Agência Central"}
 
-	f := renderLegacyForTest(t, []data.Issuance{
-		exempt,
-		sampleIssuance("Smiles", "DEF456", "Conta Comum", "João Emissor"),
-	})
+	f := renderLegacyForTest(t, []data.Issuance{issuance})
 
 	assertCells(t, f, legacyIssuanceSheet, map[string]string{
 		"B2": "COMPANHIA",
@@ -48,10 +43,9 @@ func TestRenderLegacyIssuancesXLSXLayout(t *testing.T) {
 		"M3": "Conta VIP",
 		"O3": "João Emissor",
 		"P3": "Agência Central",
-		"Q2": "TAXA RESGATE",
-		"Q3": "R$ 42.00",
-		// An ordinary account saved nothing, so the cell stays blank.
-		"Q4": "",
+		// Nothing is written past the MODELO's own table.
+		"Q2": "",
+		"Q3": "",
 	})
 }
 
@@ -63,13 +57,11 @@ func TestRenderLegacyIssuancesXLSXRefundOnlyOnLaterCancellation(t *testing.T) {
 	issuance.CancelledAt = &cancelledAt
 	issuance.RefundedPoints = intptr(10000)
 	issuance.RefundedTaxes = intptr(3550)
-	issuance.RedemptionFeeSavedCents = intptr(4200)
 
 	f := renderLegacyForTest(t, []data.Issuance{issuance})
 
 	assertCells(t, f, legacyIssuanceSheet, map[string]string{
 		"I3": "-10.000",
 		"K3": "-R$ 35.50",
-		"Q3": "-R$ 42.00",
 	})
 }

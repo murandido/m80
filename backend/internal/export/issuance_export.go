@@ -13,9 +13,9 @@ import (
 // The sheet mirrors the manual "Controle de Emissões - <mês> <ano>" workbook the team still
 // keeps while the migration to the M-80 finishes: the same thirteen columns in the same order
 // (A:M), same per-airline blocks, same Total formula, so a stretch pastes into the shared sheet
-// with nothing to rearrange first. Two columns the manual sheet does not have sit after them:
-// Taxa Resgate in N, and Emissor in O - every issuer is on this one tab, so Emissor is what
-// says who made each row (it used to be one tab per person).
+// with nothing to rearrange first. One column the manual sheet does not have sits after them:
+// Emissor in N - every issuer is on this one tab, so Emissor is what says who made each row
+// (it used to be one tab per person).
 //
 // It is built from scratch with excelize, like sale_export.go. It used to be a copy of a
 // MODELO downloaded from Google Sheets at runtime and cached on disk; that made the export
@@ -25,9 +25,9 @@ const (
 	issuanceExportTitleRow     = 1
 	issuanceExportHeaderRow    = 2
 	issuanceExportFirstDataRow = 3
-	// The data table ends at O (Emissor); P is left empty as the gutter before the
-	// per-account summary that starts at Q.
-	issuanceExportLastColumn = "O"
+	// The data table ends at N (Emissor); O is left empty as the gutter before the
+	// per-account summary that starts at P.
+	issuanceExportLastColumn = "N"
 
 	// The single tab holding every issuance, and what the Emissor cell shows for a row whose
 	// issuer could not be resolved (a soft-deleted user, or none at all).
@@ -39,7 +39,7 @@ const (
 // dates written to the sheet are the operator's local calendar days, not UTC.
 const exportTimezone = "America/Sao_Paulo"
 
-// The thirteen columns of the manual sheet, in its order, plus the redemption fee after them.
+// The thirteen columns of the manual sheet, in its order, plus Emissor after them.
 // The widths are not fixed here any more: autoFitColumns sizes each one to what the export
 // actually wrote.
 var issuanceExportColumns = []struct {
@@ -59,10 +59,9 @@ var issuanceExportColumns = []struct {
 	{"K", "Total"},
 	{"L", "Conta"},
 	{"M", "Observação"},
-	{"N", "Taxa Resgate"},
 	// Emissor closes the table: with every issuer on one sheet it is what says who made each
 	// row, the job the separate per-issuer tabs used to do.
-	{"O", "Emissor"},
+	{"N", "Emissor"},
 }
 
 // exportRow is one issuance reduced to what the sheet writes. Resolved once, up front, so
@@ -87,9 +86,6 @@ type exportRow struct {
 	// Who the row is attributed to: the canceller on a cancelled row, the issuer otherwise -
 	// the same rule the per-issuer tabs used (issuanceSheetOwner).
 	issuer string
-	// The fee the exempt account (Azul Diamante Unique) did not pay, signed like the taxes.
-	// Nil on an ordinary account, where nothing was saved.
-	redemptionFee *float64
 	// Cancelled rows are tinted so a reconciled block shows at a glance which lines are
 	// giving miles back rather than spending them.
 	cancelled bool
@@ -242,7 +238,6 @@ func toAdjustmentExportRow(issuance data.Issuance, adjustment data.IssuanceAdjus
 		amount := centsToReais(adjustment.Taxes)
 		row.taxes = &amount
 	}
-	row.redemptionFee = nil
 	row.observation = adjustmentObservation(adjustment)
 	row.issuer = issuanceExportNoIssuerLabel
 	if adjustment.CreatedBy != nil && adjustment.CreatedBy.Name != "" {
@@ -303,10 +298,6 @@ func toExportRow(issuance data.Issuance, loc *time.Location) exportRow {
 	if taxes != nil {
 		amount := centsToReais(*taxes)
 		row.taxes = &amount
-	}
-	if fee := signedRedemptionFee(issuance, loc); fee != nil {
-		amount := centsToReais(*fee)
-		row.redemptionFee = &amount
 	}
 
 	return row
@@ -904,10 +895,8 @@ func writeIssuanceRow(
 		{"K", nil, body(cellStyle{numFmt: issuanceMoneyFormat, bold: true})},
 		{"L", row.account, body(cellStyle{bold: true})},
 		{"M", row.observation, body(cellStyle{})},
-		// N Taxa Resgate - blank on an ordinary account, like Taxa on an issuance with none.
-		{"N", row.redemptionFee, body(cellStyle{numFmt: issuanceMoneyFormat})},
-		// O Emissor - who made the row; closes the table on the right.
-		{"O", row.issuer, body(cellStyle{right: borderMedium})},
+		// N Emissor - who made the row; closes the table on the right.
+		{"N", row.issuer, body(cellStyle{right: borderMedium})},
 	}
 
 	for _, cell := range cells {
@@ -993,13 +982,6 @@ func writeIssuanceTotals(
 		{"K", fmt.Sprintf("SUM(K%d:K%d)", issuanceExportFirstDataRow, lastDataRow), cellStyle{
 			fill: issuanceExportSumBG, bold: true, numFmt: issuanceMoneyFormat,
 			right: borderMedium, top: borderMedium, bottom: borderMedium,
-		}},
-		// Summed apart from the billing: the fee was never charged to anyone, so it only
-		// reports what the exempt accounts saved.
-		{"N", fmt.Sprintf("SUM(N%d:N%d)", issuanceExportFirstDataRow, lastDataRow), cellStyle{
-			fill: issuanceExportTaxSumBG, fontColor: issuanceExportWhite, bold: true,
-			numFmt: issuanceMoneyFormat,
-			left:   borderMedium, right: borderMedium, top: borderMedium, bottom: borderMedium,
 		}},
 	}
 	for _, sum := range sums {
@@ -1340,15 +1322,15 @@ func writeMergedRows(
 	return nil
 }
 
-// Where the per-account summary lives: column P is the gutter, so the boxes start at Q and
+// Where the per-account summary lives: column O is the gutter, so the boxes start at P and
 // span four columns, one box per account, stacked with a blank row between them. The look
 // is the operator's own block: a dark green banner, a green header row, and rows on pale
 // green with the airline cell coloured and the total in red.
 const (
-	issuanceSummaryProgramColumn = "Q"
-	issuanceSummaryLocatorColumn = "R"
-	issuanceSummaryPointsColumn  = "S"
-	issuanceSummaryTotalColumn   = "T"
+	issuanceSummaryProgramColumn = "P"
+	issuanceSummaryLocatorColumn = "Q"
+	issuanceSummaryPointsColumn  = "R"
+	issuanceSummaryTotalColumn   = "S"
 	// The summary writes points with the same three decimals as the table, without the
 	// thousands separator the block beside the issuances uses.
 	issuanceSummaryPointsFormat = "0.000"
@@ -1609,30 +1591,6 @@ func signedIssuanceAmounts(issuance data.Issuance, loc *time.Location) (int, *in
 	}
 
 	return points, taxes
-}
-
-// signedRedemptionFee is signedIssuanceAmounts' rule applied to the saved redemption fee.
-// Nil - a blank cell - whenever the account is not exempt, because zero would claim a
-// saving of nothing. Both sheets write it: Taxa Resgate here, TAXA RESGATE on the legacy one.
-func signedRedemptionFee(issuance data.Issuance, loc *time.Location) *int {
-	if issuance.RedemptionFeeSavedCents == nil {
-		return nil
-	}
-
-	saved := !issuance.CancellationOnly
-	refunded := issuance.CancelledAt != nil
-	if refunded && !sameCalendarDay(issuance.CreatedAt, *issuance.CancelledAt, loc) {
-		saved = false
-	}
-
-	total := 0
-	if saved {
-		total += *issuance.RedemptionFeeSavedCents
-	}
-	if refunded {
-		total -= *issuance.RedemptionFeeSavedCents
-	}
-	return &total
 }
 
 // sameCalendarDay compares two instants as the operator's local calendar days.
