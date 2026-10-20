@@ -528,14 +528,18 @@ func issuanceSearchGroup(db *gorm.DB, search string) *gorm.DB {
 func (h *IssuanceHandler) GetIssuances(w http.ResponseWriter, r *http.Request) {
 	var issuances []data.Issuance
 
-	query := preloadIssuanceAssociations(h.DB).
+	// Bound to the request so a search the operator abandoned (closed tab, new keystroke)
+	// stops in Postgres instead of holding a pooled connection until the unbounded result
+	// is built. Safe here because this route only reads.
+	db := h.DB.WithContext(r.Context())
+	query := preloadIssuanceAssociations(db).
 		Preload("Flights", func(db *gorm.DB) *gorm.DB {
 			return db.Where("direction = ?", "outbound").Order("leg_order asc")
 		})
 	// Oldest first: the grid is read top to bottom in the order the issuances actually
 	// happened, and its draft row lives at the bottom - so a row created there stays
 	// where it was typed instead of jumping to the top on the next refresh.
-	query = applyIssuanceListFilters(h.DB, query, r).Order("created_at asc")
+	query = applyIssuanceListFilters(db, query, r).Order("created_at asc")
 
 	if err := query.Find(&issuances).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch issuances")
@@ -592,14 +596,18 @@ func (h *IssuanceHandler) GetIssuancesExport(w http.ResponseWriter, r *http.Requ
 	// (aliasless accounts fall back to the holder's name) and the canceller, whose name decides
 	// which tab a cancelled issuance lands on. Neither is preloaded for the listing, which shows
 	// no such column.
-	query := preloadIssuanceAssociations(h.DB).
+	//
+	// Bound to the request, like the listing: an export nobody is waiting for any more
+	// should not keep reading the whole period. The route only reads.
+	db := h.DB.WithContext(r.Context())
+	query := preloadIssuanceAssociations(db).
 		// Unscoped: an archived holder still names the issuances made on their accounts.
 		Preload("Account.Holder", func(db *gorm.DB) *gorm.DB { return db.Unscoped() }).
 		Preload("CancelledBy").
 		Preload("Flights", func(db *gorm.DB) *gorm.DB {
 			return db.Where("direction = ?", "outbound").Order("leg_order asc")
 		})
-	query = applyIssuanceListFilters(h.DB, query, r).Order("created_at asc")
+	query = applyIssuanceListFilters(db, query, r).Order("created_at asc")
 
 	if err := query.Find(&issuances).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch issuances")

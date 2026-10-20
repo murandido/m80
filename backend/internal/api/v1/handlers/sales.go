@@ -619,15 +619,19 @@ func (h *SaleHandler) GetSalesPage(w http.ResponseWriter, r *http.Request) {
 		limit = salePageMaxLimit
 	}
 
+	// The count, the window and the whole-client read below are bound to the request, so
+	// scrolling past a window or leaving the screen stops them in Postgres. The route only
+	// reads; the small alteration lookup keeps the plain handle.
+	db := h.DB.WithContext(r.Context())
 	query := applySaleListFilters(
-		saleListQuery(h.DB).Where("issuances.agency_id = ?", agencyID),
+		saleListQuery(db).Where("issuances.agency_id = ?", agencyID),
 		r,
 	)
 
 	// Counted over the filtered listing as a subquery: saleListQuery selects a long list of
 	// columns, and GORM's Count does not rewrite that select reliably.
 	var total int64
-	if err := h.DB.Raw("SELECT COUNT(*) FROM (?) AS filtered", query.Session(&gorm.Session{})).
+	if err := db.Raw("SELECT COUNT(*) FROM (?) AS filtered", query.Session(&gorm.Session{})).
 		Scan(&total).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to count sales")
 		return
@@ -714,9 +718,10 @@ func (h *SaleHandler) GetSalesExport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Same filters and the same chronological order as the listing, so the spreadsheet
-	// reads like the screen it was exported from.
+	// reads like the screen it was exported from. Bound to the request: an export nobody is
+	// waiting for any more stops in Postgres. The route only reads.
 	query := applySaleListFilters(
-		saleListQuery(h.DB).Where("issuances.agency_id = ?", agencyID),
+		saleListQuery(h.DB.WithContext(r.Context())).Where("issuances.agency_id = ?", agencyID),
 		r,
 	)
 
