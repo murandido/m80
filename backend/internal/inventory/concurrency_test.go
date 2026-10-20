@@ -1,10 +1,12 @@
 package inventory
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
 
+	"github.com/murandido/m-80-backend/internal/data"
 	"gorm.io/gorm"
 )
 
@@ -175,5 +177,52 @@ func TestCloseRacingRecomputesFreezesOneComputation(t *testing.T) {
 	if len(rows) != want || sumCost(rows) != wantCost {
 		t.Fatalf("%d slices costing %d cents after closing under concurrent recomputes, want %d costing %d",
 			len(rows), sumCost(rows), want, wantCost)
+	}
+}
+
+// Two closings of the same stretch at once - a double click, two tabs - must settle it
+// once. Each used to check for an earlier period before either had written one, and both
+// went through, leaving two closed periods over the same days.
+func TestConcurrentClosesSettleThePeriodOnce(t *testing.T) {
+	db := setupTestDB(t)
+	f := seedCommittedAccount(t, db)
+
+	const attempts = 4
+	var start, done sync.WaitGroup
+	start.Add(1)
+	errs := make(chan error, attempts)
+	for i := 0; i < attempts; i++ {
+		done.Add(1)
+		go func() {
+			defer done.Done()
+			start.Wait()
+			_, err := Close(db, f.account.ID, day("2026-07-01"), day("2026-08-31"), f.user.ID)
+			errs <- err
+		}()
+	}
+	start.Done()
+	done.Wait()
+	close(errs)
+
+	succeeded := 0
+	for err := range errs {
+		switch {
+		case err == nil:
+			succeeded++
+		case errors.Is(err, ErrPeriodOutOfOrder):
+		default:
+			t.Fatalf("concurrent Close: %v", err)
+		}
+	}
+	if succeeded != 1 {
+		t.Errorf("%d closings went through, want exactly 1", succeeded)
+	}
+
+	var periods int64
+	if err := db.Model(&data.InventoryPeriod{}).Where("account_id = ?", f.account.ID).Count(&periods).Error; err != nil {
+		t.Fatalf("counting periods: %v", err)
+	}
+	if periods != 1 {
+		t.Errorf("%d periods recorded, want 1", periods)
 	}
 }

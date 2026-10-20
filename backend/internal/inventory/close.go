@@ -44,28 +44,43 @@ func Close(db *gorm.DB, accountID string, startsOn, endsOn time.Time, closedByID
 		return period, ErrPeriodInverted
 	}
 
-	frozenUntil, err := ClosedThrough(db, accountID)
+	// One transaction under the account's costing lock, from the order check to the period
+	// row. Split, a recompute landing between the rebuild and the insert could have its
+	// figures frozen instead of these, and two closings of the same stretch would both pass
+	// the order check before either had written its period.
+	err := db.Transaction(func(tx *gorm.DB) error {
+		if err := lockAccountCosting(tx, accountID); err != nil {
+			return err
+		}
+
+		frozenUntil, err := ClosedThrough(tx, accountID)
+		if err != nil {
+			return err
+		}
+		if !frozenUntil.IsZero() && !endsOn.After(frozenUntil) {
+			return ErrPeriodOutOfOrder
+		}
+
+		// Takes the same lock again, which the session already holds.
+		if err := Recompute(tx, accountID); err != nil {
+			return err
+		}
+
+		closedAt := time.Now()
+		period = data.InventoryPeriod{
+			AccountID:  accountID,
+			StartsOn:   startsOn,
+			EndsOn:     endsOn,
+			ClosedAt:   &closedAt,
+			ClosedByID: &closedByID,
+		}
+		if err := tx.Create(&period).Error; err != nil {
+			return fmt.Errorf("inventory.Close: creating the period: %w", err)
+		}
+		return nil
+	})
 	if err != nil {
-		return period, err
-	}
-	if !frozenUntil.IsZero() && !endsOn.After(frozenUntil) {
-		return period, ErrPeriodOutOfOrder
-	}
-
-	if err := Recompute(db, accountID); err != nil {
-		return period, err
-	}
-
-	closedAt := time.Now()
-	period = data.InventoryPeriod{
-		AccountID:  accountID,
-		StartsOn:   startsOn,
-		EndsOn:     endsOn,
-		ClosedAt:   &closedAt,
-		ClosedByID: &closedByID,
-	}
-	if err := db.Create(&period).Error; err != nil {
-		return period, fmt.Errorf("inventory.Close: creating the period: %w", err)
+		return data.InventoryPeriod{}, err
 	}
 
 	return period, nil
