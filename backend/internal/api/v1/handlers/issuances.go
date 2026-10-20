@@ -1027,17 +1027,25 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 		issuance.AdditionalServices = req.AdditionalServices
 	}
 
+	// Cancelling and reverting are whole operations - active, the refunds, the canceller
+	// and the audit line move together - and each has its own route. This switch used to
+	// touch cancelled_at alone, which left the row half-cancelled or half-restored (a sale
+	// charging the full price for a cancelled ticket, a FIFO refund on a live one). So
+	// status only toggles complete/incomplete on a live issuance. "cancelled" stays in the
+	// schema's oneof so it gets this message instead of a generic 400.
 	if req.Status != nil {
+		if !issuance.Active {
+			utils.SendError(w, r, http.StatusUnprocessableEntity, "Emissão cancelada: use Reverter cancelamento.")
+			return
+		}
 		switch *req.Status {
 		case "incomplete":
 			issuance.Complete = false
-			issuance.CancelledAt = nil
 		case "complete":
 			issuance.Complete = true
-			issuance.CancelledAt = nil
 		case "cancelled":
-			now := time.Now()
-			issuance.CancelledAt = &now
+			utils.SendError(w, r, http.StatusUnprocessableEntity, "Use Cancelar emissão.")
+			return
 		}
 	}
 
