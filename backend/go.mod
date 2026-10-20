@@ -5,8 +5,8 @@ go 1.26.9
 require (
 	github.com/bogdanfinn/fhttp v0.6.9
 	github.com/bogdanfinn/tls-client v1.16.0
-	github.com/chromedp/cdproto v0.0.0-20260714215040-dc233986426f
-	github.com/chromedp/chromedp v0.16.0
+	github.com/chromedp/cdproto v0.157.8
+	github.com/chromedp/chromedp v0.21.0
 	github.com/go-chi/chi/v5 v5.3.0
 	github.com/go-chi/cors v1.2.2
 	github.com/go-chi/httprate v0.15.0
@@ -46,7 +46,6 @@ require (
 	github.com/bogdanfinn/quic-go-utls v1.0.10-utls // indirect
 	github.com/bogdanfinn/utls v1.7.8-barnius // indirect
 	github.com/bogdanfinn/websocket v1.5.6-barnius // indirect
-	github.com/chromedp/sysutil v1.1.0 // indirect
 	github.com/cloudflare/circl v1.6.3 // indirect
 	github.com/coder/websocket v1.8.15 // indirect
 	github.com/elliotchance/orderedmap/v3 v3.1.0 // indirect
@@ -65,9 +64,6 @@ require (
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/go-sql-driver/mysql v1.8.1 // indirect
-	github.com/gobwas/httphead v0.1.0 // indirect
-	github.com/gobwas/pool v0.2.1 // indirect
-	github.com/gobwas/ws v1.4.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
