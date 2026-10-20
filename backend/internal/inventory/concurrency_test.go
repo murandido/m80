@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/murandido/m-80-backend/internal/data"
 	"gorm.io/gorm"
@@ -224,5 +225,79 @@ func TestConcurrentClosesSettleThePeriodOnce(t *testing.T) {
 	}
 	if periods != 1 {
 		t.Errorf("%d periods recorded, want 1", periods)
+	}
+}
+
+// A reopening racing the closing of the next period must come out as one of the two serial
+// orders. Reopen used to count later periods outside the lock, so it missed a closing still
+// in flight, deleted its period, and the closing then froze everything on top of it with
+// the old figures: the reopen answered success and changed nothing.
+//
+// A cheaper batch is backdated ahead of the queue once the first half is closed, so a
+// reopening that really happened shows up as early-August slices priced on that batch.
+func TestReopenRacingTheNextCloseIsNeverSilentlyLost(t *testing.T) {
+	db := setupTestDB(t)
+	f := seedCommittedAccount(t, db)
+
+	firstHalfEnd := day("2026-08-15")
+	for round, delay := range []time.Duration{0, time.Millisecond, 2 * time.Millisecond, 5 * time.Millisecond, 10 * time.Millisecond, 20 * time.Millisecond} {
+		// Each round starts from the first half closed and the second half open.
+		for _, statement := range []string{
+			`DELETE FROM point_batch_allocations WHERE issuance_id IN (SELECT id FROM issuances WHERE account_id = ?)`,
+			`DELETE FROM inventory_periods WHERE account_id = ?`,
+			`DELETE FROM point_batches WHERE account_id = ? AND acquired_on = '2026-06-01'`,
+		} {
+			if err := db.Exec(statement, f.account.ID).Error; err != nil {
+				t.Fatalf("round %d: resetting: %v", round, err)
+			}
+		}
+		firstHalf, err := Close(db, f.account.ID, day("2026-08-01"), firstHalfEnd, f.user.ID)
+		if err != nil {
+			t.Fatalf("round %d: closing the first half: %v", round, err)
+		}
+		cheap := seedBatch(t, db, f, "2026-06-01", 5000000, 5000)
+
+		var done sync.WaitGroup
+		var closeErr, reopenErr error
+		done.Add(2)
+		go func() {
+			defer done.Done()
+			_, closeErr = Close(db, f.account.ID, day("2026-08-16"), day("2026-08-31"), f.user.ID)
+		}()
+		go func() {
+			defer done.Done()
+			time.Sleep(delay)
+			reopenErr = Reopen(db, firstHalf.ID)
+		}()
+		done.Wait()
+
+		if closeErr != nil {
+			t.Fatalf("round %d: closing the second half: %v", round, closeErr)
+		}
+		switch {
+		case errors.Is(reopenErr, ErrPeriodNotLast):
+			// The closing went first: the first half must still be closed.
+			var remaining int64
+			db.Model(&data.InventoryPeriod{}).Where("id = ?", firstHalf.ID).Count(&remaining)
+			if remaining != 1 {
+				t.Errorf("round %d: reopen refused but the first half is gone", round)
+			}
+		case reopenErr != nil:
+			t.Fatalf("round %d: Reopen: %v", round, reopenErr)
+		default:
+			// The reopening went first, so the closing recomputed the first half too.
+			var repriced int64
+			err := db.Model(&data.PointBatchAllocation{}).
+				Joins("JOIN issuances ON issuances.id = point_batch_allocations.issuance_id").
+				Where("issuances.account_id = ? AND point_batch_allocations.batch_id = ? AND point_batch_allocations.occurred_on <= ?",
+					f.account.ID, cheap.ID, firstHalfEnd).
+				Count(&repriced).Error
+			if err != nil {
+				t.Fatalf("round %d: counting repriced slices: %v", round, err)
+			}
+			if repriced == 0 {
+				t.Errorf("round %d (reopen after %v): the reopen succeeded but the first half was frozen again with its old figures", round, delay)
+			}
+		}
 	}
 }
