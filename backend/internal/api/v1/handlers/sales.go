@@ -945,9 +945,18 @@ func (h *SaleHandler) UpdateSale(w http.ResponseWriter, r *http.Request) {
 		// records it; two clicks at once (two operators, or two tabs) would otherwise both
 		// read nothing paid and both insert the full amount, and a client's rebalance then
 		// turns the duplicate into credit that pays another sale. The second request waits
-		// here and finds nothing missing. The sale is locked before the client (which
-		// rebalanceClient locks), the same order this transaction already took them in.
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").
+		// here and finds nothing missing.
+		//
+		// NO KEY UPDATE, not UPDATE: it still conflicts with another PATCH of this sale, but
+		// not with the KEY SHARE lock a sale_payments insert takes on its foreign key, so a
+		// client payment spreading money onto this sale is not held back by it.
+		//
+		// Lock order is sale, then client (rebalanceClient), while the client-payment paths
+		// in internal/sale lock the client and then update its sales. That inversion is
+		// older than this lock (Recalculate already updated the sale before the rebalance
+		// here); taking the sale first only widens it. Postgres detects the deadlock and
+		// fails one side, which surfaces as a 500 the operator can retry.
+		if err := tx.Clauses(clause.Locking{Strength: "NO KEY UPDATE"}).Select("id").
 			First(&data.Sale{}, "id = ?", sale.ID).Error; err != nil {
 			return err
 		}
