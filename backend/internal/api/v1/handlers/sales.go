@@ -416,10 +416,14 @@ func applySaleListFilters(query *gorm.DB, r *http.Request) *gorm.DB {
 // alterationCentsInWindow sums, per issuance, what the alterations inside the period charge
 // or give back to the client - for the sales that are listed only because of them (issued
 // outside the period). Empty when the listing has no period, or no such sale.
-func alterationCentsInWindow(db *gorm.DB, rows []saleRow, from, to *time.Time) map[string]int {
+//
+// A failed read is returned, not swallowed: with an empty map asAlterationDay shows the
+// whole sale instead of just the alteration, so the listing and the "Total devido" would
+// come back 200 with a wrong amount the operator then charges the client.
+func alterationCentsInWindow(db *gorm.DB, rows []saleRow, from, to *time.Time) (map[string]int, error) {
 	totals := map[string]int{}
 	if from == nil && to == nil {
-		return totals
+		return totals, nil
 	}
 	issuanceIDs := make([]string, 0)
 	for _, row := range rows {
@@ -429,20 +433,20 @@ func alterationCentsInWindow(db *gorm.DB, rows []saleRow, from, to *time.Time) m
 		}
 	}
 	if len(issuanceIDs) == 0 {
-		return totals
+		return totals, nil
 	}
 
 	clauses, args := appendAdjustmentDayBounds([]string{"issuance_id IN ?"}, []any{issuanceIDs}, from, to)
 	var adjustments []data.IssuanceAdjustment
 	if err := db.Where(strings.Join(clauses, " AND "), args...).Find(&adjustments).Error; err != nil {
 		slog.Error("failed to read the alterations of the listed sales", "err", err)
-		return totals
+		return nil, err
 	}
 	for _, adjustment := range adjustments {
 		totals[adjustment.IssuanceID] += sale.AdjustmentClientCents(
 			adjustment.Points, adjustment.ValueOfTheThousand, adjustment.Taxes, adjustment.TaxesPassedToClient)
 	}
-	return totals
+	return totals, nil
 }
 
 // asAlterationDay reshapes a sale listed on the day its ticket was altered. If everything
@@ -566,7 +570,11 @@ func (h *SaleHandler) GetSales(w http.ResponseWriter, r *http.Request) {
 	}
 
 	from, to := parseDateRange(r)
-	alterations := alterationCentsInWindow(h.DB, rows, from, to)
+	alterations, err := alterationCentsInWindow(h.DB, rows, from, to)
+	if err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch the alterations of the sales")
+		return
+	}
 
 	resp := make([]schemas.SaleResponse, 0, len(rows))
 	for _, row := range rows {
@@ -645,7 +653,11 @@ func (h *SaleHandler) GetSalesPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	from, to := parseDateRange(r)
-	alterations := alterationCentsInWindow(h.DB, rows, from, to)
+	alterations, err := alterationCentsInWindow(h.DB, rows, from, to)
+	if err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch the alterations of the sales")
+		return
+	}
 	sales := make([]schemas.SaleResponse, 0, len(rows))
 	for _, row := range rows {
 		sales = append(sales, asAlterationDay(toSaleResponse(row), alterations, from, to))
@@ -660,7 +672,11 @@ func (h *SaleHandler) GetSalesPage(w http.ResponseWriter, r *http.Request) {
 			utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch sales")
 			return
 		}
-		allAlterations := alterationCentsInWindow(h.DB, all, from, to)
+		allAlterations, err := alterationCentsInWindow(h.DB, all, from, to)
+		if err != nil {
+			utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch the alterations of the sales")
+			return
+		}
 		for _, row := range all {
 			owed += asAlterationDay(toSaleResponse(row), allAlterations, from, to).BalanceCents
 		}
@@ -727,7 +743,11 @@ func (h *SaleHandler) GetSalesExport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	from, to := parseDateRange(r)
-	alterations := alterationCentsInWindow(h.DB, rows, from, to)
+	alterations, err := alterationCentsInWindow(h.DB, rows, from, to)
+	if err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch the alterations of the sales")
+		return
+	}
 
 	sales := make([]export.SaleRow, 0, len(rows))
 	for _, row := range rows {

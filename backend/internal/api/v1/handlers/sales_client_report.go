@@ -59,7 +59,11 @@ func (h *SaleHandler) GetClientReportPDF(w http.ResponseWriter, r *http.Request)
 	// Shaped like the listing's rows, so the statement shows on an alteration day what the
 	// screen shows there.
 	from, to := parseDateRange(r)
-	alterations := alterationCentsInWindow(h.DB, rows, from, to)
+	alterations, err := alterationCentsInWindow(h.DB, rows, from, to)
+	if err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch the alterations of the sales")
+		return
+	}
 
 	sales := make([]schemas.SaleResponse, 0, len(rows))
 	credits := map[string]int{}
