@@ -22,7 +22,41 @@ import (
 // even by accident.
 //
 // Safe to call as often as anything wants: the result is a function of the current rows.
+// That includes concurrently - it runs on GETs, so two people opening the suppliers screen
+// at once recompute the same accounts side by side. The whole read-compute-write cycle runs
+// in one transaction behind a per-account lock (see lockAccountCosting), because two
+// unserialised rebuilds both survive: the second DELETE never sees the slices the first one
+// inserted, and every booking ends up costed twice.
+//
+// Accepts a transaction already open, which is how Close freezes the result atomically.
 func Recompute(db *gorm.DB, accountID string) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		if err := lockAccountCosting(tx, accountID); err != nil {
+			return err
+		}
+		return recomputeLocked(tx, accountID)
+	})
+}
+
+// lockAccountCosting serialises everything that rebuilds or freezes one account's slices,
+// until the surrounding transaction ends.
+//
+// Transaction-scoped on purpose: it can never be left held by a request that died, and it
+// is re-entrant within the session, so Close can take it and then call Recompute, which
+// takes it again inside a savepoint. Keyed by account alone, so recomputes of different
+// accounts never wait on each other and no lock ordering exists to deadlock on.
+func lockAccountCosting(tx *gorm.DB, accountID string) error {
+	err := tx.Exec("SELECT pg_advisory_xact_lock(hashtextextended('inventory:' || ?::text, 0))", accountID).Error
+	if err != nil {
+		return fmt.Errorf("inventory: locking the account's costing: %w", err)
+	}
+	return nil
+}
+
+// recomputeLocked is Recompute's body. The reads happen after the lock, not before it: a
+// rebuild computed from rows read ahead of a concurrent Close would carry the old frozen
+// boundary into persist and rewrite slices the closing had just settled.
+func recomputeLocked(db *gorm.DB, accountID string) error {
 	frozenUntil, err := ClosedThrough(db, accountID)
 	if err != nil {
 		return err
@@ -286,7 +320,8 @@ func loadFrozenAllocations(db *gorm.DB, accountID string, frozenUntil time.Time)
 }
 
 // persist swaps the open period's slices for the ones just computed, in one transaction so
-// no reader ever sees the account half-costed.
+// no reader ever sees the account half-costed. Called inside Recompute's locked transaction,
+// where this one becomes a savepoint.
 func persist(db *gorm.DB, accountID string, frozenUntil time.Time, allocations []Allocation) error {
 	return db.Transaction(func(tx *gorm.DB) error {
 		deletion := tx.Where(
