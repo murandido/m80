@@ -7,6 +7,7 @@ import {
   FileUp,
   HandCoins,
   IdCard,
+  KeyRound,
   Landmark,
   LayoutDashboard,
   MapPin,
@@ -107,6 +108,8 @@ export const navSections: NavSection[] = [
       // points the bot at the wrong form. Being in the panel is what removes the
       // deploy from the loop; it does not have to be open to everyone on shift.
       { title: "Automação de Promoções", url: "/dashboard/promotions", icon: Sparkles, roles: [] },
+      // Dev-only: a token reads the panel's data as its owner, through the MCP relay.
+      { title: "Tokens MCP", url: "/dashboard/mcp-tokens", icon: KeyRound, roles: [] },
     ],
   },
 ]
