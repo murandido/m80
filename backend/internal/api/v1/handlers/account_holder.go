@@ -112,7 +112,7 @@ func personRank(q, fingerprint string) (string, []any) {
 		unaccentedLike("people.name"), nicknameMatch("person_nicknames", "person_id", "people", false), holderRankContains,
 		holderRankOther)
 	like := likePattern(q)
-	args = append(args, q+"%", "% "+q+"%", like, like)
+	args = append(args, escapeLike(q)+"%", "% "+escapeLike(q)+"%", like, like)
 	return sql, args
 }
 

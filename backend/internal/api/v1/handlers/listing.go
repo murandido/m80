@@ -73,10 +73,23 @@ func orderClause(order string, allowed map[string]string, fallback string) strin
 	return fallback
 }
 
+// likeWildcardEscaper neutralizes the characters LIKE treats as special. Postgres uses
+// backslash as the default escape character, so no ESCAPE clause is needed - and the
+// backslash itself must be escaped too, or a term ending in "\" would swallow the
+// closing "%" and silently turn the contains-match into a suffix match.
+var likeWildcardEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
+// escapeLike makes a search term match literally inside a LIKE pattern. Without it a
+// search for "50%" matched every row and "a_b" matched "axb", because the operator's
+// text was spliced in as pattern syntax.
+func escapeLike(q string) string {
+	return likeWildcardEscaper.Replace(q)
+}
+
 // likePattern wraps a search term for a case-insensitive contains match. Returned
 // separately from the query so callers can bind it once per column.
 func likePattern(q string) string {
-	return "%" + q + "%"
+	return "%" + escapeLike(q) + "%"
 }
 
 // unaccentedLike renders a contains-match that ignores case and accents. ILIKE alone
