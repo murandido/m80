@@ -191,3 +191,18 @@ func TestListAccountHolders_SearchRanksExactThenPrefixThenContains(t *testing.T)
 		}
 	})
 }
+
+// Outside a transaction the count and the page run at the same time, on two pooled
+// connections - the path production takes, which the tests above (each inside a
+// transaction, so in sequence) never reach. Nothing is seeded, since nothing outside a
+// rolled-back transaction may be left behind; a search that matches nothing still runs
+// both queries and has to agree with itself.
+func TestListAccountHolders_CountsAndPagesConcurrentlyOutsideATransaction(t *testing.T) {
+	db := setupTestDB(t)
+	t.Parallel()
+
+	page := callListAccountHolders(t, db, url.Values{"q": {"nobody-" + uuid.New().String()}})
+	if page.Total != 0 || len(page.Rows) != 0 {
+		t.Errorf("got total %d and %d rows, want nothing", page.Total, len(page.Rows))
+	}
+}

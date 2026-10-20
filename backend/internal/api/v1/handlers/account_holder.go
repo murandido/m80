@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/utils"
+	"gorm.io/gorm"
 )
 
 // The panel no longer shows people and accounts as two screens. To the operator "Fulana's
@@ -207,20 +209,45 @@ func (h *AccountHandler) ListAccountHolders(w http.ResponseWriter, r *http.Reque
 	}
 	rowsSQL, args := holderRowsQuery(params, filter, parseOptionalBool(r.URL.Query().Get("complete")))
 
+	// The count and the page each run the whole search, which is the expensive part of
+	// this route, so they run side by side instead of one after the other. A transaction is
+	// a single connection that cannot carry two queries at once, so inside one they stay in
+	// sequence.
 	var total int64
-	if err := h.DB.Raw("SELECT COUNT(*) FROM ("+rowsSQL+") AS holder_rows", args...).
-		Scan(&total).Error; err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Failed to count accounts")
-		return
-	}
-
 	var personIDs []string
+	countHolders := func() error {
+		return h.DB.Raw("SELECT COUNT(*) FROM ("+rowsSQL+") AS holder_rows", args...).Scan(&total).Error
+	}
 	// rank first: with a search, how a row matched outweighs the chosen order, which then
 	// settles the rows that matched the same way (see holderRankExact).
 	pageSQL := "SELECT id FROM (" + rowsSQL + ") AS holder_rows ORDER BY rank ASC, " +
 		orderClause(params.Order, holderRowOrder, holderRowOrder["name_asc"]) + " LIMIT ? OFFSET ?"
-	if err := h.DB.Raw(pageSQL, append(args, params.Limit, (params.Page-1)*params.Limit)...).
-		Scan(&personIDs).Error; err != nil {
+	// A copy, so the page's two extra arguments never land in the backing array the count
+	// is reading at the same time.
+	pageArgs := append(append(make([]any, 0, len(args)+2), args...), params.Limit, (params.Page-1)*params.Limit)
+	pageHolders := func() error {
+		return h.DB.Raw(pageSQL, pageArgs...).Scan(&personIDs).Error
+	}
+
+	var countErr, pageErr error
+	if _, inTransaction := h.DB.Statement.ConnPool.(gorm.TxCommitter); inTransaction {
+		countErr = countHolders()
+		if countErr == nil {
+			pageErr = pageHolders()
+		}
+	} else {
+		// A plain WaitGroup rather than an errgroup: each failure keeps its own message, so
+		// there is no first error to pick.
+		var both sync.WaitGroup
+		both.Go(func() { countErr = countHolders() })
+		both.Go(func() { pageErr = pageHolders() })
+		both.Wait()
+	}
+	if countErr != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to count accounts")
+		return
+	}
+	if pageErr != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch accounts")
 		return
 	}
