@@ -81,11 +81,20 @@ func applyBooking(
 		}
 	}
 
-	if err := tx.Save(issuance).Error; err != nil {
+	// Only the columns applyIssuanceFields owns, never the whole row: the issuance was
+	// read before the provider was asked, which can take minutes, and in that window the
+	// operator edits points and prices on the grid or cancels the ticket. Saving the
+	// stale snapshot would silently revert all of it. Select also forces zero values of
+	// the listed columns through, which is what Save did for them.
+	if err := tx.Model(issuance).Select(
+		"trip_type", "origin_iata_code", "destination_iata_code",
+		"main_passenger_name", "latam_purchase_number", "additional_services",
+		"booking_source", "traveos_synced_at", "complete", "updated_at",
+	).Updates(issuance).Error; err != nil {
 		return err
 	}
 
-	// Last, and after the Save rather than before it: this is the only moment the fee's
+	// Last, and after the write rather than before it: this is the only moment the fee's
 	// three inputs exist at once - the legs, the passengers and the trip type all just
 	// landed - and the recalculation re-reads the issuance, so traveos_synced_at has to
 	// already be in the database for it to agree there is enough information to compute.
