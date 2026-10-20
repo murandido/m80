@@ -624,27 +624,3 @@ export async function disconnectSmilesAccountAction(
     return { error: "Erro de conexão com o servidor." }
   }
 }
-
-// The per-account statement page, for Smiles. Same shape as the Azul entries.
-export async function getSmilesStatementEntriesAction(
-  accountId: string,
-): Promise<EntriesResult> {
-  try {
-    const { base, token } = await accountsAuth()
-    const res = await fetch(
-      `${base}/${encodeURIComponent(accountId)}/smiles-statement/entries`,
-      { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" },
-    )
-    const json = await res.json().catch(() => null)
-    if (!res.ok) {
-      return { error: json?.message || "Erro ao carregar o extrato." }
-    }
-    const parsed = statementEntriesResponseSchema.safeParse(json)
-    if (!parsed.success || !parsed.data.data) {
-      return { error: "Resposta inesperada do servidor." }
-    }
-    return { success: true, entries: parsed.data.data }
-  } catch {
-    return { error: "Erro de conexão com o servidor." }
-  }
-}
