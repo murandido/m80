@@ -92,9 +92,12 @@ type UpdateIssuanceRequest struct {
 // CancelIssuanceRequest is the optional body for POST /issuances/{id}/cancel.
 // All fields are optional: a bare cancel with no refund is valid. Amounts are in cents.
 type CancelIssuanceRequest struct {
-	RefundedPoints  *int `json:"refunded_points" validate:"omitempty"`
-	RefundedTaxes   *int `json:"refunded_taxes" validate:"omitempty"`
-	CancellationFee *int `json:"cancellation_fee" validate:"omitempty"`
+	// Never negative, mirroring the panel's own form: a negative fee would make the sale
+	// owe the client back more than came in, and a negative refund would skew the
+	// account's expected balance.
+	RefundedPoints  *int `json:"refunded_points" validate:"omitempty,min=0"`
+	RefundedTaxes   *int `json:"refunded_taxes" validate:"omitempty,min=0"`
+	CancellationFee *int `json:"cancellation_fee" validate:"omitempty,min=0"`
 	// CancellationOnly marks the issuance as a row that exists only to carry this
 	// estorno: the booking was made outside the panel, so its points were never miles
 	// issued here and the supplier balance must count the refund alone. Registering the
