@@ -147,6 +147,29 @@ export function SalesClientsTable({
   const list = useSalesWindow(query)
   const total = list.total ?? 0
   const loaded = list.sales
+
+  // The rows' own pickers also know the clients the loaded sales already carry. The client
+  // register only comes back on a route refresh, and without a client filter this screen no
+  // longer refreshes the route on every event: a client a colleague created and linked would
+  // otherwise make its sale look unlinked here, inviting someone to create that client again.
+  const rowClientOptions = useMemo(() => {
+    const known = new Set(clientOptions.map((c) => c.id))
+    const carried: Client[] = []
+    for (const sale of loaded) {
+      if (!sale.client_id || !sale.client_name || known.has(sale.client_id)) continue
+      known.add(sale.client_id)
+      carried.push({
+        id: sale.client_id,
+        name: sale.client_name,
+        phone: null,
+        agency_id: agencyId,
+        created_at: "",
+        updated_at: "",
+      })
+    }
+    return carried.length === 0 ? clientOptions : [...clientOptions, ...carried]
+  }, [clientOptions, loaded, agencyId])
+
   const scrollRef = useRef<HTMLDivElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
   // The sale whose amount is being typed. Its draft lives in the row, so the row has to stay
@@ -696,7 +719,7 @@ export function SalesClientsTable({
               )}
               <div role="cell" className={WIDE_CELL}>
                 <ClientCombobox
-                  clients={clientOptions}
+                  clients={rowClientOptions}
                   value={sale.client_id ?? ""}
                   onChange={(clientId) => handleClientChange(sale, clientId)}
                   onCreate={(name) => handleClientCreate(sale, name)}
