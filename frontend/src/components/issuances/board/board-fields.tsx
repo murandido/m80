@@ -13,9 +13,8 @@ import { cn } from "@/lib/utils"
 import { normalizeSearch } from "@/lib/search"
 import {
   applyDateMask,
-  isCompleteDateMask,
   isoDateToMasked,
-  maskedDateToISO,
+  parseMaskedDate,
 } from "@/lib/date-mask"
 import { formatCurrencyBRL } from "@/lib/currency"
 import { applyPaddedThousandsMask } from "@/lib/points"
@@ -314,6 +313,9 @@ export function NumberField({
 }: NumberFieldProps) {
   const id = useId()
   const [draft, setDraft] = useState<string | null>(null)
+  // Text that did not parse stays in the field, marked, instead of silently snapping back
+  // to the stored value: the operator has to see that what they typed was not saved.
+  const [rejected, setRejected] = useState(false)
   const display =
     value === null
       ? ""
@@ -324,13 +326,20 @@ export function NumberField({
   function commit() {
     if (draft === null) return
     const text = draft.trim()
-    setDraft(null)
     if (text === "") {
+      setDraft(null)
+      setRejected(false)
       if (value !== null) onCommit(null)
       return
     }
     const parsed = parseNumberText(text, mode)
-    if (parsed !== null && parsed !== value) onCommit(parsed)
+    if (parsed === null) {
+      setRejected(true)
+      return
+    }
+    setDraft(null)
+    setRejected(false)
+    if (parsed !== value) onCommit(parsed)
   }
 
   return (
@@ -339,8 +348,8 @@ export function NumberField({
       inputId={id}
       tint={tint}
       join={join}
-      invalid={invalid}
-      hint={hint}
+      invalid={invalid || rejected}
+      hint={rejected ? "Valor inválido" : hint}
       className={className}
     >
       {(shell) => (
@@ -361,11 +370,19 @@ export function NumberField({
           }
           onFocus={(event) => {
             if (readOnly) return
+            // Coming back to a rejected entry keeps it, so it can be fixed rather than retyped.
+            if (rejected) {
+              event.currentTarget.select()
+              return
+            }
             const text = formatNumberText(value, mode)
             setDraft(text)
             selectWhenSeeded(event.currentTarget, text)
           }}
-          onChange={(event) => setDraft(event.target.value)}
+          onChange={(event) => {
+            setDraft(event.target.value)
+            setRejected(false)
+          }}
           onBlur={commit}
           onKeyDown={(event) => {
             if (event.key === "Enter") {
@@ -374,6 +391,7 @@ export function NumberField({
             } else if (event.key === "Escape" && draft !== null) {
               event.stopPropagation()
               setDraft(formatNumberText(value, mode))
+              setRejected(false)
             }
           }}
         />
@@ -435,18 +453,33 @@ export function DateField({
 }: DateFieldProps) {
   const id = useId()
   const [draft, setDraft] = useState<string | null>(null)
+  // Why the typed date was not saved, if it was not. Like NumberField, the text stays in the
+  // field instead of quietly going back to the stored date.
+  const [rejectedHint, setRejectedHint] = useState<string | null>(null)
   const display = value ? isoDateToMasked(value) : ""
 
   function commit() {
     if (draft === null) return
     const text = draft.trim()
-    setDraft(null)
     if (text === "") {
+      setDraft(null)
+      setRejectedHint(null)
       if (!required && value !== null) onCommit(null)
       return
     }
-    if (!isCompleteDateMask(text)) return
-    const iso = maskedDateToISO(text)
+    const iso = parseMaskedDate(text)
+    if (iso === null) {
+      // "Incompleta" while digits are missing; "inválida" for a whole date that does not
+      // exist, like 31/02 - telling the operator to type more would be wrong there.
+      setRejectedHint(
+        /^\d{2}\/\d{2}\/(\d{2}|\d{4})$/.test(text)
+          ? "Data inválida"
+          : "Data incompleta",
+      )
+      return
+    }
+    setDraft(null)
+    setRejectedHint(null)
     if (iso !== value) onCommit(iso)
   }
 
@@ -456,8 +489,8 @@ export function DateField({
       inputId={id}
       tint={tint}
       join={join}
-      invalid={invalid}
-      hint={hint}
+      invalid={invalid || rejectedHint !== null}
+      hint={rejectedHint ?? hint}
       className={className}
       adornment={
         busy ? <Loader2 className="h-4 w-4 animate-spin text-sky-500" /> : null
@@ -475,7 +508,10 @@ export function DateField({
           inputMode="numeric"
           autoComplete="off"
           onFocus={(event) => event.currentTarget.select()}
-          onChange={(event) => setDraft(applyDateMask(event.target.value))}
+          onChange={(event) => {
+            setDraft(applyDateMask(event.target.value))
+            setRejectedHint(null)
+          }}
           onBlur={commit}
           onKeyDown={(event) => {
             if (event.key === "Enter") {
@@ -484,6 +520,7 @@ export function DateField({
             } else if (event.key === "Escape" && draft !== null) {
               event.stopPropagation()
               setDraft(null)
+              setRejectedHint(null)
             }
           }}
         />
