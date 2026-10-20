@@ -9,6 +9,7 @@ import { AlertTriangle, Link2, Loader2, Unlink } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { disconnectLatamAccountAction } from "@/actions/latam"
 import { LatamConnectDialog } from "@/components/accounts/latam-connect-dialog"
+import { formatSignedPaddedPoints } from "@/lib/points"
 import { Account } from "@/schemas/account"
 
 // The stable identifier of the LATAM program is its code, not its name or id.
@@ -97,7 +98,7 @@ export function LatamAccountControls({ account }: { account: Account }) {
 
   const balance =
     account.real_balance_points != null
-      ? `${account.real_balance_points.toLocaleString("pt-BR")} milhas`
+      ? `${formatSignedPaddedPoints(account.real_balance_points)} milhas`
       : "Saldo ainda não lido"
   const syncedAt = account.latam_last_synced_at
     ? `atualizado ${formatDistanceToNow(new Date(account.latam_last_synced_at), {

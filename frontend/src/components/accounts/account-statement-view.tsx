@@ -62,6 +62,7 @@ import {
   type IssuanceLinkOption,
 } from "@/actions/statement"
 import { formatCurrencyBRL } from "@/lib/currency"
+import { formatSignedPaddedPoints } from "@/lib/points"
 
 // The kinds, in the panel's Portuguese, with a colour and an icon each. Mirrors data.AzulLine*.
 const KIND_META: Record<
@@ -145,7 +146,7 @@ function isAssignedCode(value: string): boolean {
 
 function formatPoints(points: number): string {
   const sign = points > 0 ? "+" : points < 0 ? "−" : ""
-  return `${sign}${Math.abs(points).toLocaleString("pt-BR")}`
+  return `${sign}${formatSignedPaddedPoints(Math.abs(points))}`
 }
 
 // "2026-09-10" -> "10/09/2026", without constructing a Date (which would shift by timezone).
@@ -261,7 +262,7 @@ export function AccountStatementView({
   const syncMeta = SYNC_STATE_META[syncState.state]
   const balance =
     syncState.last_balance_points != null
-      ? `${syncState.last_balance_points.toLocaleString("pt-BR")} pts`
+      ? `${formatSignedPaddedPoints(syncState.last_balance_points)} pts`
       : "—"
   const lastSynced = syncState.last_synced_at
     ? formatDistanceToNow(new Date(syncState.last_synced_at), { addSuffix: true, locale: ptBR })
@@ -494,7 +495,7 @@ export function AccountStatementView({
                 </div>
                 {group.balance != null && (
                   <span className="text-xs text-slate-400 tabular-nums">
-                    saldo do dia {group.balance.toLocaleString("pt-BR")}
+                    saldo do dia {formatSignedPaddedPoints(group.balance)}
                   </span>
                 )}
               </div>
@@ -1166,7 +1167,7 @@ function BatchPicker({ accountId, disabled, onPick }: BatchPickerProps) {
                   >
                     <span className="text-xs font-medium text-slate-700">{batch.origin}</span>
                     <span className="text-xs text-slate-500">
-                      {batch.points.toLocaleString("pt-BR")} pts ·{" "}
+                      {formatSignedPaddedPoints(batch.points)} pts ·{" "}
                       {formatCurrencyBRL(batch.cost_cents)} · {formatDay(batch.acquired_on)}
                     </span>
                   </button>

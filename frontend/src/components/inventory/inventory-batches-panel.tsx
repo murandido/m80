@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { formatCurrencyBRL, parseCurrencyBRLInput } from "@/lib/currency"
-import { applyPaddedThousandsMask, parsePointsFromThousands } from "@/lib/points"
+import { formatSignedPaddedPoints, parsePointsFromThousands } from "@/lib/points"
 import {
   createPointBatchAction,
   deletePointBatchAction,
@@ -51,10 +51,6 @@ function parsePoints(text: string): number | null {
   const points = parsePointsFromThousands(text)
   if (points === null || points <= 0) return null
   return points
-}
-
-function formatPoints(points: number): string {
-  return applyPaddedThousandsMask(String(points))
 }
 
 // The rate is fractional on purpose - 1413,2638 centavos per thousand - so it is shown
@@ -313,7 +309,7 @@ export function InventoryBatchesPanel({
                       {batch.acquired_on.split("-").reverse().join("/")}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
-                      {formatPoints(batch.points)}
+                      {formatSignedPaddedPoints(batch.points)}
                     </TableCell>
                     <TableCell className="text-right tabular-nums text-amber-800 dark:text-amber-300">
                       {formatCurrencyBRL(batch.cost_cents)}

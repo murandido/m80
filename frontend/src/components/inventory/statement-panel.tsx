@@ -13,7 +13,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { applyPaddedThousandsMask } from "@/lib/points"
+import { formatSignedPaddedPoints } from "@/lib/points"
 import { formatCurrencyBRL, parseCurrencyBRLInput } from "@/lib/currency"
 import { formatConnectingElapsed } from "@/lib/elapsed"
 import {
@@ -60,11 +60,6 @@ interface Props {
   programName: string
   origins: PointBatchOrigin[]
   agencies: Agency[]
-}
-
-function formatPoints(points: number): string {
-  const sign = points < 0 ? "-" : ""
-  return sign + applyPaddedThousandsMask(String(Math.abs(points)))
 }
 
 function formatDate(value: string): string {
@@ -569,7 +564,7 @@ function SyncBadge({
           <span className="text-slate-500">
             Saldo lido:{" "}
             <span className="font-medium tabular-nums text-slate-700 dark:text-slate-200">
-              {formatPoints(state.last_balance_points)}
+              {formatSignedPaddedPoints(state.last_balance_points)}
             </span>
           </span>
         )}
@@ -826,15 +821,15 @@ function ReconciliationResult({
       {balanceAgrees ? (
         <p className="flex items-center gap-2 text-sm text-emerald-700 dark:text-emerald-400">
           <Check className="size-4" />
-          A variação de saldo do extrato bate com a do painel: {formatPoints(result.statement_net_points)} pontos.
+          A variação de saldo do extrato bate com a do painel: {formatSignedPaddedPoints(result.statement_net_points)} pontos.
         </p>
       ) : (
         <div className="flex gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-950/40">
           <X className="mt-0.5 size-4 shrink-0 text-amber-700 dark:text-amber-400" />
           <p className="text-amber-900 dark:text-amber-200">
             A variação de saldo não bate: o extrato diz{" "}
-            <strong>{formatPoints(result.statement_net_points)}</strong> e o painel diz{" "}
-            <strong>{formatPoints(result.panel_net_points)}</strong>. A diferença está nas listas
+            <strong>{formatSignedPaddedPoints(result.statement_net_points)}</strong> e o painel diz{" "}
+            <strong>{formatSignedPaddedPoints(result.panel_net_points)}</strong>. A diferença está nas listas
             abaixo — resolva o que estiver marcado e os dois números se encontram.
           </p>
         </div>
@@ -1054,11 +1049,11 @@ function CreditRow({
           checked={checked}
           onChange={onToggle}
           className="size-4 accent-slate-800"
-          aria-label={`Marcar crédito de ${formatPoints(credit.points)} pontos`}
+          aria-label={`Marcar crédito de ${formatSignedPaddedPoints(credit.points)} pontos`}
         />
       </td>
       <td className="px-3 py-2 tabular-nums">{formatDate(credit.occurred_on)}</td>
-      <td className="px-3 py-2 text-right tabular-nums">{formatPoints(credit.points)}</td>
+      <td className="px-3 py-2 text-right tabular-nums">{formatSignedPaddedPoints(credit.points)}</td>
       <td className="max-w-xs truncate px-3 py-2 text-slate-500" title={credit.description}>
         {credit.description || "—"}
       </td>
@@ -1173,14 +1168,14 @@ function Comparison({
                       {row.statement === 0 ? (
                         <span className="text-slate-400">—</span>
                       ) : (
-                        formatPoints(row.statement)
+                        formatSignedPaddedPoints(row.statement)
                       )}
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums">
                       {row.panel === 0 ? (
                         <span className="text-slate-400">—</span>
                       ) : (
-                        formatPoints(row.panel)
+                        formatSignedPaddedPoints(row.panel)
                       )}
                     </td>
                     <td className={`px-3 py-2 text-xs font-medium ${className}`}>{label}</td>

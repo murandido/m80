@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { cn } from "@/lib/utils"
 import { formatCurrencyBRL } from "@/lib/currency"
-import { applyPaddedThousandsMask } from "@/lib/points"
+import { formatSignedPaddedPoints } from "@/lib/points"
 import { AdjustmentDialog } from "@/components/issuances/board/adjustment-dialog"
 import type { IssuanceBoardState } from "@/components/issuances/board/use-issuance-board"
 import type { IssuanceRow } from "@/components/issuances/types"
@@ -28,7 +28,7 @@ function formatDay(isoDay: string): string {
 }
 
 function signedPoints(points: number): string {
-  const formatted = applyPaddedThousandsMask(String(Math.abs(points)))
+  const formatted = formatSignedPaddedPoints(Math.abs(points))
   return `${points < 0 ? "−" : "+"}${formatted} pts`
 }
 

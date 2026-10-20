@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button"
 import { connectAzulAccountAction } from "@/actions/statement"
 import { statementSyncStateSchema, type StatementSyncState } from "@/schemas/inventory"
 import { formatConnectingElapsed } from "@/lib/elapsed"
+import { formatSignedPaddedPoints } from "@/lib/points"
 import { Account } from "@/schemas/account"
 
 // The stable identifier of the Azul program is its code, not its name or id (see the loyalty
@@ -22,10 +23,6 @@ const AZUL_PROGRAM_CODE = "AZUL"
 // couple of minutes (edge retries), so a five-second poll is plenty to catch the finish without
 // hammering the API.
 const POLL_INTERVAL_MS = 5000
-
-function formatPoints(points: number): string {
-  return points.toLocaleString("pt-BR")
-}
 
 interface AzulAccountControlsProps {
   account: Account
@@ -186,7 +183,7 @@ export function AzulAccountControls({ account }: AzulAccountControlsProps) {
   // round that read the statement, so on an account that does not track it it is empty or stale.
   const balancePoints = account.real_balance_points ?? status?.last_balance_points
   const balance =
-    balancePoints != null ? `${formatPoints(balancePoints)} pts` : "Saldo ainda não sincronizado"
+    balancePoints != null ? `${formatSignedPaddedPoints(balancePoints)} pts` : "Saldo ainda não sincronizado"
   const lastSyncedAt = status?.last_synced_at ?? account.azul_last_synced_at
   const syncedAt = lastSyncedAt
     ? `atualizado ${formatDistanceToNow(new Date(lastSyncedAt), {

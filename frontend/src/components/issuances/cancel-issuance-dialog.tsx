@@ -30,7 +30,7 @@ import { DateInput } from "@/components/ui/date-input"
 import { useGridContext } from "@/components/issuances/grid-context"
 import { parseCurrencyBRLInput } from "@/lib/currency"
 import {
-  applyPaddedThousandsMask,
+  formatSignedPaddedPoints,
   parsePointsFromThousands,
   sanitizeThousandsInput,
 } from "@/lib/points"
@@ -192,7 +192,7 @@ export function CancelIssuanceButton({ r }: { r: number }) {
                   ) : (
                     refundedPoints !== null && (
                       <p className="text-xs text-slate-500">
-                        = {applyPaddedThousandsMask(String(refundedPoints))} pontos
+                        = {formatSignedPaddedPoints(refundedPoints)} pontos
                       </p>
                     )
                   )}

@@ -12,7 +12,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { formatCurrencyBRL } from "@/lib/currency"
-import { formatPoints } from "@/lib/format"
+import { formatSignedPaddedPoints } from "@/lib/points"
 import { cn } from "@/lib/utils"
 import type { Agency } from "@/schemas/agency"
 import type {
@@ -59,10 +59,10 @@ function cancellationSummary(row: LegacyImportRow): string[] {
           "Ela não conta como emitida — o dia fica negativo, como na planilha.",
         ]
 
-  lines.push(`Estorno de ${formatPoints(plan.refunded_points)} pontos.`)
+  lines.push(`Estorno de ${formatSignedPaddedPoints(plan.refunded_points)} pontos.`)
   if (plan.partial && plan.original_points != null) {
     lines.push(
-      `Estorno parcial de ${formatPoints(plan.original_points)} — a emissão é cancelada por inteiro.`,
+      `Estorno parcial de ${formatSignedPaddedPoints(plan.original_points)} — a emissão é cancelada por inteiro.`,
     )
   }
   return lines
@@ -216,7 +216,7 @@ export function LegacyImportPreviewTable({
                             {row.destination_iata_code || "—"}
                           </TableCell>
                           <TableCell className="text-right text-xs tabular-nums">
-                            {formatPoints(row.points)}
+                            {formatSignedPaddedPoints(row.points)}
                           </TableCell>
                           <TableCell className="text-right text-xs tabular-nums">
                             {formatCurrencyBRL(row.value_of_the_thousand)}
