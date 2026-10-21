@@ -51,7 +51,6 @@ import {
   issuanceTotalCents,
 } from "@/components/issuances/emissao-message"
 import { parseAccountEntry } from "@/components/issuances/account-entry"
-import { acceptsRedemptionFee } from "@/components/issuances/redemption-fee"
 import { isRowSyncing, type IssuanceRow } from "@/components/issuances/types"
 import {
   ComboField,
@@ -648,17 +647,6 @@ export function IssuancePanel({
           readOnly={cancelled}
         />
       </div>
-      {acceptsRedemptionFee(row, accounts) && (
-        <NumberField
-          name="redemption_fee"
-          label="Taxa de resgate economizada"
-          mode="currency"
-          value={row.redemption_fee_saved_cents}
-          onCommit={(value) => patch({ redemption_fee_saved_cents: value })}
-          className="sm:w-1/3"
-          readOnly={cancelled}
-        />
-      )}
     </>
   )
 
@@ -974,16 +962,6 @@ export function IssuancePanel({
             </p>
           )}
           <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 text-sm text-slate-500">
-            {row.redemption_fee_saved_cents !== null && (
-              <>
-                <CopyableText
-                  text={`Taxa de resgate = ${formatCurrencyBRL(row.redemption_fee_saved_cents)}`}
-                  copyValue={formatCurrencyBRL(row.redemption_fee_saved_cents)}
-                  message="Taxa de resgate copiada"
-                />
-                <span className="text-slate-400">|</span>
-              </>
-            )}
             {"text" in calculo ? (
               <CopyableText
                 text={calculo.text.replace(/= (.*)$/, "= R$ $1")}

@@ -10,7 +10,6 @@ import { PersonOption } from "@/schemas/person"
 import { LoyaltyProgram } from "@/schemas/loyalty-program"
 import { LoyaltyProgramBadge } from "./loyalty-program-badge"
 import { AccountCategoryBadge } from "./account-category-badge"
-import { RedemptionFeeWaiverBadge } from "./redemption-fee-waiver-badge"
 import { CPFUsageMeter } from "./cpf-usage-meter"
 import { AccountBeneficiariesPanel } from "./account-beneficiaries-panel"
 import { CopyCredentialsMenu } from "./copy-credentials-menu"
@@ -71,7 +70,6 @@ export function AccountProgramBlock({
             <div className="flex flex-wrap items-center gap-2">
               <LoyaltyProgramBadge loyaltyProgram={account.loyalty_program} />
               <AccountCategoryBadge category={account.category} />
-              {account.waives_redemption_fee && <RedemptionFeeWaiverBadge />}
               {account.cpf_usage && <CPFUsageMeter usage={account.cpf_usage} />}
             </div>
             <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">

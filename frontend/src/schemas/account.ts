@@ -56,13 +56,6 @@ export const accountSchema = z.object({
   // Defaulted rather than required: an older API that predates the category still answers
   // the panel, and the two are published by independent labels.
   category: accountCategorySchema.nullish().transform((value) => value ?? "unidentified"),
-  // The account pays no redemption fee at all - on Azul that is the Diamante Unique tier.
-  // Defaulted for the same reason as category: an API published before this field still
-  // parses, and false is what every account meant before it existed.
-  waives_redemption_fee: z
-    .boolean()
-    .nullish()
-    .transform((value) => value ?? false),
   // Defaulted for the same reason: an account from before the points inventory existed
   // owns none, and a split of zero leaves the profit whole with whoever funded the batch.
   owns_point_inventory: z
@@ -148,14 +141,8 @@ export const accountOptionSchema = z.object({
   login: z.string().nullable(),
   holder_id: z.string().nullable(),
   nicknames: z.array(accountNicknameOptionSchema),
-  // Both are omitted by the API whenever they carry no information - false and null -
-  // which on an unpaginated feed is most rows. Defaulted here for the same reason
-  // accountSchema defaults them: absent and false have always meant the same thing.
-  waives_redemption_fee: z
-    .boolean()
-    .nullish()
-    .transform((value) => value ?? false),
-  // Absent means false, the same contract as the flag above: the API omits it on every
+  // The flags are omitted by the API whenever they carry no information - false and null -
+  // which on an unpaginated feed is most rows. Absent means false: the API omits it on every
   // ordinary account, which is nearly all of them.
   owns_point_inventory: z
     .boolean()
@@ -252,7 +239,6 @@ export const createAccountSchema = {
     holder_id: z.string().uuid("Informe o titular"),
     administrator_id: optionalUuidField,
     category: accountCategorySchema.optional(),
-    waives_redemption_fee: z.boolean().optional(),
     owns_point_inventory: z.boolean().optional(),
     tracks_statement: z.boolean().optional(),
     default_profit_share_percent: z.number().min(0).max(100).optional(),
@@ -273,7 +259,6 @@ export const updateAccountSchema = {
     holder_id: optionalUuidField,
     administrator_id: optionalUuidField,
     category: accountCategorySchema.optional(),
-    waives_redemption_fee: z.boolean().optional(),
     owns_point_inventory: z.boolean().optional(),
     tracks_statement: z.boolean().optional(),
     default_profit_share_percent: z.number().min(0).max(100).optional(),

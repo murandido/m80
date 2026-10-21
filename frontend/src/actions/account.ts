@@ -31,13 +31,12 @@ export async function createAccountAction(
 
   // These are pulled out of stripEmptyFields on purpose: that helper drops every falsy
   // value, and `false` and `0` are real answers here, not empty fields. Left inside,
-  // turning the exemption off would send nothing and the account would stay exempt - and a
-  // profit split of zero, which means "the profit stays whole with whoever funded the
-  // batch", would silently become no split at all.
+  // turning a flag off would send nothing and the account would keep it on - and a profit
+  // split of zero, which means "the profit stays whole with whoever funded the batch",
+  // would silently become no split at all.
   const {
     loyalty_program_id,
     nicknames,
-    waives_redemption_fee,
     owns_point_inventory,
     tracks_statement,
     default_profit_share_percent,
@@ -45,7 +44,6 @@ export async function createAccountAction(
   } = data
   const body = {
     loyalty_program_id,
-    waives_redemption_fee: waives_redemption_fee ?? false,
     owns_point_inventory: owns_point_inventory ?? false,
     tracks_statement: tracks_statement ?? false,
     ...(default_profit_share_percent === undefined
@@ -157,7 +155,6 @@ export async function updateAccountAction(
 
   // Same reason as in createAccountAction: `false` and `0` must survive the strip.
   const {
-    waives_redemption_fee,
     owns_point_inventory,
     tracks_statement,
     default_profit_share_percent,
@@ -165,7 +162,6 @@ export async function updateAccountAction(
   } = data
   const body = {
     ...stripEmptyFields(rest),
-    ...(waives_redemption_fee === undefined ? {} : { waives_redemption_fee }),
     ...(owns_point_inventory === undefined ? {} : { owns_point_inventory }),
     ...(tracks_statement === undefined ? {} : { tracks_statement }),
     ...(default_profit_share_percent === undefined ? {} : { default_profit_share_percent }),

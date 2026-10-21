@@ -18,7 +18,7 @@ import {
 interface NumberCellProps extends CellStateProps {
   r: number
   c: number
-  field: "points" | "value_of_the_thousand" | "taxes" | "redemption_fee_saved_cents"
+  field: "points" | "value_of_the_thousand" | "taxes"
   mode: "integer" | "currency"
 }
 

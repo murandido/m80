@@ -40,7 +40,7 @@ Tudo abaixo desta seção descreve a planilha.
 - **Divergências conscientes do design:** o link "Visualizar informações completas/simplificadas"
   sempre nomeia a *outra* visão. Conta aparece na visão do autocompletar, mas não dispara a busca.
   A cor do card é a do programa, e cancelado fica cinza. O card é quadrado a partir de duas
-  colunas; no celular ele ocupa a largura toda. Data da emissão, Nº da compra, taxa de resgate e status manual foram encaixados no
+  colunas; no celular ele ocupa a largura toda. Data da emissão, Nº da compra e status manual foram encaixados no
   formulário.
 - **Simular Emissão:** calculadora de milheiro (pontos, milheiro e taxas → total + linha de
   cálculo). Não salva nada.

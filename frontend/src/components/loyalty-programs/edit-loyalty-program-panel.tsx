@@ -15,7 +15,6 @@ import {
 } from "@/components/ui/input-group"
 import { Separator } from "@/components/ui/separator"
 import { CPFLimitFields } from "./cpf-limit-fields"
-import { RedemptionFeeFields } from "./redemption-fee-fields"
 import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 import { LoyaltyProgram, updateLoyaltyProgramSchema } from "@/schemas/loyalty-program"
@@ -31,14 +30,6 @@ interface EditLoyaltyProgramPanelProps {
   airlines: Airline[]
   isOpen: boolean
   onSaved: () => void
-}
-
-// centsToInput renders a stored amount for a text field the operator types reais into.
-// Null stays empty, which is how the form says the program charges no redemption fee -
-// distinct from a fee of zero.
-function centsToInput(cents: number | null | undefined): string {
-  if (cents == null) return ""
-  return (cents / 100).toFixed(2).replace(".", ",")
 }
 
 export function EditLoyaltyProgramPanel({
@@ -58,15 +49,6 @@ export function EditLoyaltyProgramPanel({
     cpf_limit: loyaltyProgram.cpf_limit != null ? String(loyaltyProgram.cpf_limit) : "",
     cpf_limit_window: loyaltyProgram.cpf_limit_window ?? "",
     cpf_limit_mode: loyaltyProgram.cpf_limit_mode ?? "",
-    // Centavos on the way in, reais in the field: the action converts back on the way out.
-    redemption_fee_domestic: centsToInput(loyaltyProgram.redemption_fee_domestic_cents),
-    redemption_fee_international: centsToInput(
-      loyaltyProgram.redemption_fee_international_cents,
-    ),
-    redemption_fee_advance_days:
-      loyaltyProgram.redemption_fee_advance_days != null
-        ? String(loyaltyProgram.redemption_fee_advance_days)
-        : "",
   }
 
   const form = useForm<FormData>({
@@ -250,12 +232,6 @@ export function EditLoyaltyProgramPanel({
                 idPrefix={`edit-${loyaltyProgram.id}`}
               />
 
-              <Separator />
-              <RedemptionFeeFields
-                control={form.control}
-                disabled={isPending}
-                idPrefix={`edit-${loyaltyProgram.id}`}
-              />
 
               <Separator />
 
