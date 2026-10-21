@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/murandido/m-80-backend/internal/smiles"
+	"github.com/murandido/m-80-backend/carriers/smiles"
 )
 
 func trackerAt(now *time.Time) *LoginTracker {
