@@ -21,10 +21,9 @@ import (
 //     token, a timeout, a body that did not parse. Here a fallback is exactly
 //     right, and the carrier's light should go out.
 //
-// This is not a distinction invented for this codebase - it is the control every
-// measurement in the research study repo runs: a JSON body means the
-// request reached the airline's application, an HTML "Access Denied" from the
-// edge means it did not.
+// The same test tells the two apart on the wire: a JSON body means the request
+// reached the airline's application, an HTML "Access Denied" from the edge
+// means it did not.
 var (
 	ErrNotFound    = errors.New("booking: the provider has no such booking")
 	ErrUnavailable = errors.New("booking: the provider could not be reached")

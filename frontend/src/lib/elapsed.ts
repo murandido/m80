@@ -1,5 +1,5 @@
 // The elapsed time since a connect login started, as a running "há 45s" / "há 1min 20s". The
-// login legitimately takes a couple of minutes across edge retries, so a ticking counter reads
+// login legitimately takes a couple of minutes across retries, so a ticking counter reads
 // as working where date-fns' coarse phrasing ("menos de um minuto") reads as stalled. Shared by
 // the account card and the inventory statement panel, which both show the connecting state.
 export function formatConnectingElapsed(sinceIso: string, nowMs: number): string {
