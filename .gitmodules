@@ -1,0 +1,8 @@
+[submodule "backend/carriers"]
+	path = backend/carriers
+	url = ../m80-carriers.git
+	branch = main
+[submodule "extension"]
+	path = extension
+	url = ../m80-extension.git
+	branch = main

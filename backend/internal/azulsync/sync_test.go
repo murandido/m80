@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/murandido/m-80-backend/internal/azul"
+	"github.com/murandido/m-80-backend/carriers/azul"
 	"github.com/murandido/m-80-backend/internal/data"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
