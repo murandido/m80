@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/murandido/m-80-backend/carriers/traveos"
 	"github.com/murandido/m-80-backend/internal/booking"
 	"github.com/murandido/m-80-backend/internal/data"
-	"github.com/murandido/m-80-backend/internal/traveos"
 	"gorm.io/gorm"
 )
 
