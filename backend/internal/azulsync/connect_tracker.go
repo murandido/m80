@@ -16,7 +16,7 @@ import (
 // stay isolated and race-free.
 //
 // Each in-flight account carries the instant its login started, so the panel can show a running
-// timer ("conectando há 1 min"): the edge gate makes a login legitimately take a couple of
+// timer ("conectando há 1 min"): a login legitimately takes a couple of
 // minutes across retries, and a mute spinner reads as "stuck" rather than "working".
 type ConnectTracker struct {
 	mu       sync.Mutex

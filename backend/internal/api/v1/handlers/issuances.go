@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
+	"github.com/murandido/m-80-backend/carriers/traveos"
 	"github.com/murandido/m-80-backend/internal/access"
 	"github.com/murandido/m-80-backend/internal/account"
 	"github.com/murandido/m-80-backend/internal/api/middleware"
@@ -23,7 +24,6 @@ import (
 	"github.com/murandido/m-80-backend/internal/events"
 	"github.com/murandido/m-80-backend/internal/export"
 	"github.com/murandido/m-80-backend/internal/sale"
-	"github.com/murandido/m-80-backend/internal/traveos"
 
 	// Aliased because "issuance" is the local variable name for a data.Issuance
 	// throughout this file - importing it unaliased would shadow the package in
