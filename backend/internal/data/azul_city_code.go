@@ -3,7 +3,7 @@ package data
 import (
 	"time"
 
-	"github.com/murandido/m-80-backend/internal/azul"
+	"github.com/murandido/m-80-backend/carriers/azul"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )

@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/murandido/m-80-backend/internal/smiles"
+	"github.com/murandido/m-80-backend/carriers/smiles"
 )
 
 // pendingTTL is how long a half-finished login is kept. The tenant's mfa_token is short-lived
