@@ -6,3 +6,7 @@
 	path = extension
 	url = ../m80-extension.git
 	branch = main
+[submodule "frontend/src/carriers"]
+	path = frontend/src/carriers
+	url = ../m80-panel-carriers.git
+	branch = main
