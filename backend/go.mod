@@ -31,8 +31,8 @@ require (
 )
 
 require (
-	github.com/JulianKnodt/vector v0.0.0-20181001195531-754854b81217 // indirect
-	go.mongodb.org/mongo-driver v1.17.7 // indirect
+	github.com/JulianKnodt/vector v0.0.0-20181001195531-754854b81217
+	go.mongodb.org/mongo-driver v1.17.7
 )
 
 require (
@@ -97,4 +97,3 @@ require (
 	golang.org/x/tools v0.51.0 // indirect
 	gorm.io/driver/mysql v1.5.6 // indirect
 )
-

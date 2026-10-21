@@ -1,6 +1,11 @@
-.PHONY: dev front back-up back-down back-logs clean db-backup db-backup-list db-restore ext-dev ext-build
+.PHONY: init dev front back-up back-down back-logs clean db-backup db-backup-list db-restore ext-dev ext-build
 
 # LOCAL DEVELOPMENT (DOCKER-FIRST)
+
+# The carrier clients (backend/carriers) and the extension are private submodules.
+# The backend does not compile without them, so run this once after cloning.
+init:
+	git submodule update --init --recursive
 
 # Master Command: Backend setup and run native frontend
 dev: back-up front
