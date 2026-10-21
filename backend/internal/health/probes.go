@@ -9,8 +9,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/murandido/m-80-backend/carriers/traveos"
 	"github.com/murandido/m-80-backend/internal/booking"
-	"github.com/murandido/m-80-backend/internal/traveos"
 )
 
 // probeHTTPTimeout is below the monitor's own probeTimeout so a slow bot loses
