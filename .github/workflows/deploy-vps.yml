@@ -1,0 +1,277 @@
+name: Deploy VPS
+
+# Merging and publishing are two separate acts on purpose: main is not always a
+# finished version. Apply the deploy:vps label to an already merged PR when
+# what it merged should go live.
+on:
+  pull_request:
+    types: [labeled]
+
+# Two deploys must never interleave, and none may be killed halfway through - a
+# cancelled deploy leaves the stack in whatever state it happened to reach.
+concurrency:
+  group: deploy-vps
+  cancel-in-progress: false
+
+env:
+  APP_DIR: /opt/m80
+  REGISTRY: ghcr.io
+
+jobs:
+  # On a pull_request event the default checkout is the PR ref. The PR here is
+  # already merged, so what goes live is main - this job pins the exact commit
+  # once, and every job below works from that SHA. A push to main midway
+  # through a deploy then cannot split the run across two commits.
+  resolve:
+    name: Resolve main
+    # The base branch is checked as well as the label. Both deploy workflows
+    # listen to the same event on the same repository, so the label alone is a
+    # convention, not a gate: a deploy:vps dropped on a PR into another
+    # long-lived branch would publish main to production from a context that has
+    # nothing to do with it. This is the condition that actually decides.
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.label.name == 'deploy:vps' &&
+      github.event.pull_request.base.ref == 'main'
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.head.outputs.sha }}
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Read the head commit
+        id: head
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  # The label is a gate, not a button of faith: nothing is published before
+  # lint, tests and govulncheck agree on the commit being published.
+  ci:
+    name: CI
+    needs: resolve
+    uses: ./.github/workflows/ci.yml
+    # This block is the one that matters. A called workflow can never hold more
+    # permission than the job that calls it, and without it this job falls back
+    # to the repository default, which is read-only - so ci.yml's caches fail
+    # when a deploy runs them and work everywhere else. That asymmetry is why
+    # the "failed to reserve cache" hunt kept coming up empty: the same workflow
+    # cached fine on every pull request.
+    permissions:
+      contents: read
+      actions: write
+    # ci.yml checks out the private submodules with CARRIERS_READ_TOKEN, and a
+    # called workflow sees no secret it is not handed.
+    secrets: inherit
+    with:
+      ref: ${{ needs.resolve.outputs.sha }}
+
+  build:
+    name: Build ${{ matrix.image }}
+    needs: [resolve, ci]
+    # The VPS is an Ampere A1, so the images have to be arm64. Building on an
+    # arm64 runner rather than emulating one means every base image resolves to
+    # arm64 on its own and `go build` needs no GOARCH - the Dockerfiles are
+    # untouched. QEMU was the alternative and is not viable here: the promo
+    # image installs a browser and the pdf-service compiles WeasyPrint's
+    # bindings, and both are slow enough under emulation to threaten the job.
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      # One image failing should not cancel the others. They are independent
+      # pushes, the deploy is skipped either way, and learning about every
+      # failure in one run beats discovering them one run at a time.
+      fail-fast: false
+      matrix:
+        include:
+          - image: m80-api
+            context: backend
+            target: prod
+            build-args: SERVICE_NAME=api
+          - image: m80-bot
+            context: backend
+            target: prod
+            build-args: SERVICE_NAME=bot
+          - image: m80-promo
+            context: backend
+            target: prod-chrome
+            build-args: SERVICE_NAME=promo
+          - image: m80-pdf-service
+            context: backend/pdf-service
+            target: ""
+            build-args: ""
+          # The Azul login service. Like the promo image it installs a browser,
+          # so building on the native arm64 runner (not QEMU) is what keeps it
+          # viable.
+          - image: m80-azul-login-service
+            context: backend/carriers/azul-login-service
+            target: ""
+            build-args: ""
+          # The panel. Building it here also gives it the CI it never had on
+          # Vercel, where `next build` at deploy time was the only gate.
+          # BACKEND_URL is a build arg because next.config.ts parses the env
+          # schema during the build; the value is a Compose service name, so it
+          # is the same in every environment.
+          - image: m80-frontend
+            context: frontend
+            target: ""
+            build-args: BACKEND_URL=http://api-prod:8080
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          # The Go images and the Azul login service build from the private
+          # carriers submodule; the frontend and pdf-service do not need it, but
+          # one checkout for the whole matrix keeps the job uniform.
+          submodules: recursive
+          token: ${{ secrets.CARRIERS_READ_TOKEN }}
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          target: ${{ matrix.target }}
+          build-args: ${{ matrix.build-args }}
+          push: true
+          # The SHA tag is what a deploy and a rollback name. "latest" exists
+          # so that a bare `docker compose` on the VPS - the nightly backup
+          # runs one - still resolves the image reference.
+          tags: |
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}:${{ needs.resolve.outputs.sha }}
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}:latest
+          # Still no layer cache. type=gha failed every build here with "failed
+          # to reserve cache" - after the image was already built and pushed, so
+          # it read as a build failure - and two deploys were spent on it.
+          #
+          # The likely cause surfaced later, in this job's neighbour: the cache
+          # service answers "cache write denied: token has no writable scopes"
+          # when the token lacks actions: write, and this block grants only
+          # contents and packages, so actions lands on none. The same fix that
+          # unblocked ci.yml would probably unblock this.
+          #
+          # It stays off until that is proven cheaply somewhere that is not the
+          # production deploy path. A cache is an optimisation; this one already
+          # blocked production once.
+
+  deploy:
+    name: Deploy
+    needs: [resolve, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Open an SSH session and deploy
+        env:
+          SHA: ${{ needs.resolve.outputs.sha }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_SSH_PORT: ${{ secrets.VPS_SSH_PORT || '22' }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+          # Pinning the host key is the stronger option and is what the runbook
+          # recommends. ssh-keyscan is the fallback, and it trusts whatever
+          # answers on the first connection of every run.
+          if [ -n "${VPS_KNOWN_HOSTS:-}" ]; then
+            printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            echo "::warning::VPS_KNOWN_HOSTS is not set; falling back to ssh-keyscan"
+            ssh-keyscan -p "$VPS_SSH_PORT" -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          fi
+          chmod 600 ~/.ssh/known_hosts
+
+          # IdentitiesOnly stops ssh offering the runner's other keys first,
+          # which would burn attempts against the MaxAuthTries 3 the VPS sets.
+          ssh_opts=(
+            -i ~/.ssh/deploy_key
+            -p "$VPS_SSH_PORT"
+            -o IdentitiesOnly=yes
+            -o ConnectTimeout=15
+            -o ServerAliveInterval=30
+          )
+
+          # Probe first, and retry only the *connection*. Deploys have died here
+          # on "connect to host: Connection timed out" without ever reaching the
+          # VPS, and a single attempt with no retry is fragile by construction.
+          #
+          # Retrying the deploy itself would be a different and much worse
+          # thing: it repeats the database dump and recreates every container.
+          # So once a connection succeeds, the deploy runs exactly once.
+          #
+          # The window is a deadline rather than a fixed attempt count. The
+          # previous 5 tries 15s apart covered 2m30, and the failure of 27/08
+          # ran the whole window out without a single packet getting through
+          # while every other cause had already been ruled out on the box:
+          # sshd up and listening, fail2ban silent that day, firewall unchanged,
+          # the host key the same one from two months earlier. What is left is
+          # a transient route, and 2m30 is simply too short to ride one out.
+          # Ten minutes costs nothing on a healthy deploy - the first probe
+          # answers and the loop exits.
+          probe_deadline=$(( SECONDS + 600 ))
+          connected=""
+          attempt=0
+          while :; do
+            attempt=$(( attempt + 1 ))
+            if ssh "${ssh_opts[@]}" -o BatchMode=yes "$VPS_USER@$VPS_HOST" true; then
+              connected=1
+              break
+            fi
+            echo "::warning::ssh probe $attempt did not get through"
+            [ "$SECONDS" -lt "$probe_deadline" ] || break
+            sleep 30
+          done
+
+          if [ -z "$connected" ]; then
+            # The runner's egress address is the missing piece when this fails:
+            # it is what tells whether one address is blocked, a whole range is,
+            # or the route is down. Every deploy comes from a different one.
+            echo "runner egress IP: $(curl -sS --max-time 10 https://api.ipify.org || echo unknown)"
+
+            # And this separates the two diagnoses that the timeout alone cannot
+            # tell apart. Caddy answers on 443 whenever the VPS is up, so a box
+            # that takes 443 but not 22 is being filtered specifically on SSH -
+            # look at a firewall. A box that takes neither is not reachable from
+            # this runner at all, and there is nothing on our side to fix.
+            # Two earlier failures left exactly this question open.
+            if timeout 10 bash -c "cat < /dev/null > /dev/tcp/$VPS_HOST/443" 2>/dev/null; then
+              echo "::error::port 443 answers from this runner but 22 does not - SSH is being filtered"
+            else
+              echo "::error::neither 22 nor 443 answers - the VPS is unreachable from this runner"
+            fi
+
+            echo "::error::could not open an SSH connection to the VPS after $attempt attempts"
+            exit 1
+          fi
+
+          # The checkout happens here rather than inside vps-deploy.sh: bash
+          # reads a script incrementally, and a script that rewrites its own
+          # file mid-run behaves in ways nobody wants to debug at 3am.
+          #
+          # $SHA expanding on the runner rather than on the VPS is the point:
+          # the box must be told which commit to deploy, it cannot know.
+          # shellcheck disable=SC2029
+          ssh "${ssh_opts[@]}" "$VPS_USER@$VPS_HOST" \
+            "set -euo pipefail
+             cd '${{ env.APP_DIR }}'
+             git fetch --quiet origin main
+             git checkout --quiet --detach '$SHA'
+             deploy/vps-deploy.sh '$SHA'"
