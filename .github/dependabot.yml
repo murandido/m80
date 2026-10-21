@@ -1,0 +1,67 @@
+# Version updates once a week, grouped so each ecosystem lands as one PR per run and
+# patch/minor noise does not drown the review queue. Security updates do not wait for
+# this schedule: they come as soon as an advisory is published, once Dependabot alerts
+# and security updates are enabled in the repository settings.
+#
+# Every update is an ordinary PR: CI gates it, and nothing deploys without the label.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /backend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      go-minor-and-patch:
+        update-types: [minor, patch]
+        # chromedp and cdproto are still 0.x, so a "minor" bump is allowed to break the
+        # API (0.16 -> 0.21 did). Left out of the group they arrive as their own PR,
+        # which can be ported and smoke-tested without holding back the rest of the Go
+        # updates.
+        exclude-patterns:
+          - github.com/chromedp/chromedp
+          - github.com/chromedp/cdproto
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      frontend-minor-and-patch:
+        update-types: [minor, patch]
+
+  # The extension and the services under backend/carriers are private submodules,
+  # which Dependabot cannot update from here; their own repositories handle them.
+  - package-ecosystem: pip
+    directory: /backend/pdf-service
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 2
+
+  - package-ecosystem: docker
+    directories:
+      - /backend
+      - /frontend
+      - /backend/pdf-service
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    ignore:
+      # The Go version lives in go.mod, backend/Dockerfile and ci.yml and moves in all
+      # three at once; a Dockerfile-only bump would split them.
+      - dependency-name: golang
+      # Node and Python majors are deliberate upgrades, not weekly chores.
+      - dependency-name: node
+        update-types: [version-update:semver-major]
+      - dependency-name: python
+        update-types: [version-update:semver-major, version-update:semver-minor]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 2
+    groups:
+      actions:
+        patterns: ['*']
