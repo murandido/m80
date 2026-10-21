@@ -2,7 +2,8 @@
 
 # LOCAL DEVELOPMENT (DOCKER-FIRST)
 
-# The carrier clients (backend/carriers) and the extension are private submodules.
+# The carrier clients (backend/carriers and frontend/src/carriers) and the extension are
+# private submodules.
 # The backend does not compile without them, so run this once after cloning.
 init:
 	git submodule update --init --recursive

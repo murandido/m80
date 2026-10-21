@@ -1,0 +1,307 @@
+name: CI
+
+on:
+  pull_request:
+    # ca-mode is the designer's long-lived branch and takes its own merges, so
+    # it needs the same gate main has: without it the first thing to notice a
+    # broken experiment would be its deploy.
+    branches: [main, ca-mode]
+  workflow_call:
+    inputs:
+      ref:
+        description: >-
+          Commit-ish to check out. Leave empty for the default of the
+          triggering event, which is what a plain pull_request run wants. The
+          deploy workflows pass an explicit SHA: they run on an already merged
+          PR, so what has to be verified is main, not the PR branch.
+        type: string
+        required: false
+        default: ''
+
+# Declared for the caches these jobs write - setup-go's module download and the
+# golangci-lint analysis cache. On a plain pull_request run they were already
+# working without it; what failed, and only there, was this workflow invoked
+# through workflow_call from deploy-vps.yml:
+#
+#   Cache reservation failed: cache write denied: token has no writable scopes
+#
+# A called workflow can hold no more permission than its caller, so the fix that
+# matters is the matching block on the calling job. This one states the
+# requirement where the caches actually live, so that a future caller that
+# forgets it has something to be measured against.
+permissions:
+  contents: read
+  actions: write
+
+# The carrier clients, the panel's carrier pieces and the extension are private
+# submodules. Every job that compiles or tests them checks them out with
+# CARRIERS_READ_TOKEN, a fine-grained token that can only read those three
+# repositories. Dependabot runs get their secrets from a separate store, so the
+# token has to be set there as well.
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          submodules: recursive
+          token: ${{ secrets.CARRIERS_READ_TOKEN }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache: true
+          cache-dependency-path: backend/go.sum
+
+      - name: Check formatting (gofmt)
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "The following files are not gofmt-formatted:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      # Pinned, not `latest`: a new golangci-lint release ships new checks, and a PR
+      # should not go red over code it never touched. Keep it in step with the
+      # version the lefthook pre-commit runs locally. Third-party action by SHA.
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.12.2
+          working-directory: backend
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: m80_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=5
+    env:
+      DB_HOST: localhost
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: m80_test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          submodules: recursive
+          token: ${{ secrets.CARRIERS_READ_TOKEN }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache: true
+          cache-dependency-path: backend/go.sum
+
+      - name: Test
+        run: go test ./... -race -coverprofile=coverage.out
+
+      - name: Coverage summary
+        run: go tool cover -func=coverage.out | tail -1
+
+  vulncheck:
+    name: Vulnerability check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          submodules: recursive
+          token: ${{ secrets.CARRIERS_READ_TOKEN }}
+
+      # Pinned to the same Go as backend/go.mod and backend/Dockerfile; the three move together.
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.9'
+
+      # Runs govulncheck ourselves rather than golang/govulncheck-action, because the action is
+      # all-or-nothing and govulncheck has no per-id ignore. The gate still fails on any
+      # vulnerability our code calls, except a short, documented allowlist of false positives
+      # (currently one: an incomplete Go vuln DB entry for a dependency we already run patched).
+      # See the script header and the session TODO for the removal condition.
+      - name: govulncheck
+        working-directory: backend
+        run: bash ../.github/scripts/govulncheck-gate.sh
+
+  # The panel is the one public surface, and until this job it reached main with no
+  # check at all - the image build in the deploy was its only gate.
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    # next.config.ts parses the env schema at load, so typegen needs both values. They
+    # are the same ones the image build bakes in.
+    env:
+      NODE_ENV: production
+      BACKEND_URL: http://api-prod:8080
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          submodules: recursive
+          token: ${{ secrets.CARRIERS_READ_TOKEN }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # Same pnpm major as frontend/Dockerfile, through corepack rather than a
+      # third-party action.
+      - name: Set up pnpm
+        run: corepack enable && corepack prepare pnpm@10 --activate
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      # tsc needs next-env.d.ts and the route types, which are generated, not committed.
+      - name: Typecheck
+        run: pnpm typecheck
+
+      # Production dependencies only: those are what ship in the image. Fails on high
+      # and critical, the level the Next.js RCE (#255) sat at for weeks unnoticed.
+      - name: Audit
+        run: pnpm audit --prod --audit-level=high
+
+  extension:
+    name: Extension
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: extension
+    # The postinstall (wxt prepare) loads wxt.config.ts, which refuses to run without
+    # it. Any origin does for checking; store builds set the real one.
+    env:
+      WXT_PANEL_URL: http://localhost:3000
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          submodules: recursive
+          token: ${{ secrets.CARRIERS_READ_TOKEN }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Set up pnpm
+        run: corepack enable && corepack prepare pnpm@10 --activate
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      # Everything is a devDependency here, but the bundler inlines what the
+      # extension imports, so the whole tree is audited.
+      - name: Audit
+        run: pnpm audit --audit-level=high
+
+  python:
+    name: Python services
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          submodules: recursive
+          token: ${{ secrets.CARRIERS_READ_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # Pinned: ruff's default rule set grows between releases.
+      - name: Install tools
+        run: pip install ruff==0.17.1 pip-audit==2.10.1
+
+      - name: Ruff
+        run: ruff check pdf-service carriers/azul-login-service
+
+      # Mock-only, no browser and no network.
+      - name: Test azul-login-service
+        working-directory: backend/carriers/azul-login-service
+        run: |
+          pip install -r requirements.txt
+          python -m unittest test_login
+
+      - name: Audit pdf-service
+        run: pip-audit -r pdf-service/requirements.txt
+
+      - name: Audit azul-login-service
+        run: pip-audit -r carriers/azul-login-service/requirements.txt
+
+  secrets:
+    name: Secrets
+    runs-on: ubuntu-latest
+    steps:
+      # Full history: a secret committed and then deleted in a later commit is still
+      # in the repository, and the PR diff alone would miss it.
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.9'
+          cache: false
+
+      # Built from source at a pinned tag rather than through gitleaks-action, which
+      # needs a paid license on organization accounts and is one more third party.
+      # Known non-secrets are listed by fingerprint in .gitleaksignore.
+      - name: gitleaks
+        run: |
+          go install github.com/zricethezav/gitleaks/v8@v8.30.1
+          "$(go env GOPATH)/bin/gitleaks" git --redact --no-banner .
