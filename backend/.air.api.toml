@@ -11,7 +11,7 @@ bin = "./tmp/api"
 cmd = "go build -buildvcs=false -o ./tmp/api ./cmd/api"
 delay = 1000
 entrypoint = ["./tmp/api"]
-exclude_dir = ["assets", "tmp", "vendor", "testdata", "cmd/bot", "cmd/promo"]
+exclude_dir = ["assets", "tmp", "vendor", "testdata", "cmd/bot", "carriers/cmd/promo"]
 exclude_file = []
 exclude_regex = ["_test.go"]
 exclude_unchanged = false

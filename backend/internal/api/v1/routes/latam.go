@@ -2,9 +2,9 @@ package routes
 
 import (
 	"github.com/go-chi/chi/v5"
+	"github.com/murandido/m-80-backend/carriers/latam"
 	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/handlers"
-	"github.com/murandido/m-80-backend/internal/latam"
 	"github.com/murandido/m-80-backend/internal/latamsync"
 	"gorm.io/gorm"
 )

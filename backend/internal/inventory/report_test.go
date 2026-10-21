@@ -4,7 +4,7 @@ import "testing"
 
 const (
 	wilmara = "wilmara"
-	tiago    = "tiago"
+	tiago   = "tiago"
 )
 
 // The ESFERA batch of August 2026, line for line off the spreadsheet.
@@ -16,9 +16,9 @@ func esferaSlices() []Slice {
 	return []Slice{
 		// points x 15,00 per thousand, except EJC5NP at 15,25.
 		{BatchID: "esfera", AgencyID: wilmara, Points: 251798, CostCents: 341942, RevenueCents: 377697}, // MJF6HC
-		{BatchID: "esfera", AgencyID: tiago, Points: 120000, CostCents: 162960, RevenueCents: 180000},    // PKFM7M
+		{BatchID: "esfera", AgencyID: tiago, Points: 120000, CostCents: 162960, RevenueCents: 180000},   // PKFM7M
 		{BatchID: "esfera", AgencyID: wilmara, Points: 120000, CostCents: 162960, RevenueCents: 180000}, // XRGM2H
-		{BatchID: "esfera", AgencyID: tiago, Points: 150000, CostCents: 203700, RevenueCents: 228750},    // EJC5NP
+		{BatchID: "esfera", AgencyID: tiago, Points: 150000, CostCents: 203700, RevenueCents: 228750},   // EJC5NP
 		{BatchID: "esfera", AgencyID: wilmara, Points: 9402, CostCents: 12768, RevenueCents: 14103},     // EPU9MK
 	}
 }
@@ -145,8 +145,8 @@ func TestSummariseBatchHonoursASplitOtherThanHalf(t *testing.T) {
 	result := SummariseBatch(esferaBatch(), wilmara, 60, esferaSlices(), []string{wilmara, tiago})
 
 	const (
-		tiagoCost      = 162960 + 203700
-		tiagoProfit    = (180000 + 228750) - tiagoCost
+		tiagoCost     = 162960 + 203700
+		tiagoProfit   = (180000 + 228750) - tiagoCost
 		wilmaraProfit = (377697 + 180000 + 14103) - (341942 + 162960 + 12768)
 	)
 	// TIAGO keeps 60% of its own profit and takes 60% of WILMARA's.
