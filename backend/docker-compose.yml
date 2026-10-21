@@ -1,0 +1,552 @@
+services:
+# dev containers
+  db-dev:
+    image: postgres:16-alpine
+    container_name: m-80-db-dev
+    restart: always
+    environment:
+      POSTGRES_USER: $DB_USER_DEV
+      POSTGRES_PASSWORD: $DB_PASSWORD_DEV
+      POSTGRES_DB: $DB_NAME_DEV
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_dev_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    profiles: ["dev"]
+
+  whatsapp-bot-dev:
+    build:
+      context: .
+      target: dev
+    container_name: whatsapp-bot-dev
+    command: air -c .air.bot.toml
+    volumes:
+      - .:/app
+    environment:
+      - DB_HOST=$DB_HOST_DEV
+      - DB_PORT=$DB_PORT_DEV
+      - DB_USER=$DB_USER_DEV
+      - DB_PASSWORD=$DB_PASSWORD_DEV
+      - DB_NAME=$DB_NAME_DEV
+      - ENV=development
+      - BOT_STATUS_CALLBACK_URL=$BOT_STATUS_CALLBACK_URL_DEV
+      - BOT_CHAT_REQUESTED_CALLBACK_URL=$BOT_CHAT_REQUESTED_CALLBACK_URL_DEV
+      - BOT_ISSUANCE_CREATED_CALLBACK_URL=$BOT_ISSUANCE_CREATED_CALLBACK_URL_DEV
+      - BOT_ISSUANCE_UPDATED_CALLBACK_URL=$BOT_ISSUANCE_UPDATED_CALLBACK_URL_DEV
+      - BOT_ISSUANCE_CANCELLED_CALLBACK_URL=$BOT_ISSUANCE_CANCELLED_CALLBACK_URL_DEV
+      - BOT_ISSUANCE_DELETED_CALLBACK_URL=$BOT_ISSUANCE_DELETED_CALLBACK_URL_DEV
+      - BOT_PROMO_ENROLLED_CALLBACK_URL=$BOT_PROMO_ENROLLED_CALLBACK_URL_DEV
+      - TRAVEOS_BASE_URL=$TRAVEOS_BASE_URL_DEV
+      - TRAVEOS_EMAIL=$TRAVEOS_EMAIL_DEV
+      - TRAVEOS_PASSWORD=$TRAVEOS_PASSWORD_DEV
+      # The bot writes passenger documents (encrypted) and renders the ticket PDF
+      # itself, so it needs the same two the API has. Without ENCRYPTION_KEY every
+      # Traveos sync from an EMISSAO dies at the last step, after the vendor call.
+      - ENCRYPTION_KEY=$ENCRYPTION_KEY_DEV
+      - CPF_INDEX_KEY=$CPF_INDEX_KEY_DEV
+      - PDF_SERVICE_URL=$PDF_SERVICE_URL_DEV
+      - PROMO_SERVICE_URL=$PROMO_SERVICE_URL_DEV
+      - AZUL_LOGIN_SERVICE_URL=$AZUL_LOGIN_SERVICE_URL_DEV
+      # The bot syncs every EMISSAO through the same direct integrations as the API
+      # (backend/carriers), and the Azul booking lookup needs this config.
+      - AZUL_FIREBASE_API_KEY=$AZUL_FIREBASE_API_KEY_DEV
+      - AZUL_FIREBASE_APP_ID=$AZUL_FIREBASE_APP_ID_DEV
+      - AZUL_FIREBASE_PROJECT_ID=$AZUL_FIREBASE_PROJECT_ID_DEV
+      - AZUL_FIREBASE_PROJECT_NUMBER=$AZUL_FIREBASE_PROJECT_NUMBER_DEV
+      - AZUL_USER_AGENT=$AZUL_USER_AGENT_DEV
+      - AVIANCA_GUEST_TOKEN=$AVIANCA_GUEST_TOKEN_DEV
+      - AVIANCA_SUBSCRIPTION_KEY=$AVIANCA_SUBSCRIPTION_KEY_DEV
+      - LATAM_PROXY_URL=$LATAM_PROXY_URL_DEV
+      - AIRFRANCE_PROXY_URL=$AIRFRANCE_PROXY_URL_DEV
+      - GOL_PROXY_URL=$GOL_PROXY_URL_DEV
+    depends_on:
+      db-dev:
+        condition: service_healthy
+      api-dev:
+        condition: service_started
+    profiles: ["dev"]
+
+  api-dev:
+    build:
+      context: .
+      target: dev
+    container_name: http-server-dev
+    command: air -c .air.api.toml
+    ports:
+      - "8080:8080"
+    volumes:
+      - .:/app
+    environment:
+      - DB_HOST=$DB_HOST_DEV
+      - DB_PORT=$DB_PORT_DEV
+      - DB_USER=$DB_USER_DEV
+      - DB_PASSWORD=$DB_PASSWORD_DEV
+      - DB_NAME=$DB_NAME_DEV
+      - JWT_SECRET=$JWT_SECRET_DEV
+      - ENV=development
+      - PORT=8080
+      - PDF_SERVICE_URL=$PDF_SERVICE_URL_DEV
+      - PROMO_SERVICE_URL=$PROMO_SERVICE_URL_DEV
+      - AZUL_LOGIN_SERVICE_URL=$AZUL_LOGIN_SERVICE_URL_DEV
+      - ENCRYPTION_KEY=$ENCRYPTION_KEY_DEV
+      - CPF_INDEX_KEY=$CPF_INDEX_KEY_DEV
+      - BOT_INTERNAL_URL=$BOT_INTERNAL_URL_DEV
+      - TRAVEOS_BASE_URL=$TRAVEOS_BASE_URL_DEV
+      - TRAVEOS_EMAIL=$TRAVEOS_EMAIL_DEV
+      - TRAVEOS_PASSWORD=$TRAVEOS_PASSWORD_DEV
+      - CORS_ALLOWED_ORIGINS=$CORS_ALLOWED_ORIGINS_DEV
+      # Azul statement read/sync. AZUL_SYNC_ENABLED gates only the periodic ticker; the first sync
+      # on connect runs regardless, as long as this config is present.
+      - AZUL_FIREBASE_API_KEY=$AZUL_FIREBASE_API_KEY_DEV
+      - AZUL_FIREBASE_APP_ID=$AZUL_FIREBASE_APP_ID_DEV
+      - AZUL_FIREBASE_PROJECT_ID=$AZUL_FIREBASE_PROJECT_ID_DEV
+      - AZUL_FIREBASE_PROJECT_NUMBER=$AZUL_FIREBASE_PROJECT_NUMBER_DEV
+      - AZUL_USER_AGENT=$AZUL_USER_AGENT_DEV
+      - AVIANCA_GUEST_TOKEN=$AVIANCA_GUEST_TOKEN_DEV
+      - AVIANCA_SUBSCRIPTION_KEY=$AVIANCA_SUBSCRIPTION_KEY_DEV
+      - LATAM_PROXY_URL=$LATAM_PROXY_URL_DEV
+      - AIRFRANCE_PROXY_URL=$AIRFRANCE_PROXY_URL_DEV
+      - GOL_PROXY_URL=$GOL_PROXY_URL_DEV
+      - AZUL_SYNC_ENABLED=$AZUL_SYNC_ENABLED_DEV
+      - AZUL_SYNC_INTERVAL=$AZUL_SYNC_INTERVAL_DEV
+      # Smiles statement read/sync. Nothing to configure for it to work: what a round needs is
+      # the account's own session, stored when an operator connects it with a verification code.
+      # SMILES_SYNC_ENABLED gates only the periodic ticker; the first sync on connect runs
+      # regardless.
+      - SMILES_USER_AGENT=$SMILES_USER_AGENT_DEV
+      - SMILES_SYNC_ENABLED=$SMILES_SYNC_ENABLED_DEV
+      - SMILES_SYNC_INTERVAL=$SMILES_SYNC_INTERVAL_DEV
+      # Optional egress proxy for every Smiles host. Empty dials directly.
+      - SMILES_PROXY_URL=$SMILES_PROXY_URL_DEV
+    depends_on:
+      db-dev:
+        condition: service_healthy
+    profiles: ["dev"]
+
+  promo-service-dev:
+    container_name: promo-service-dev
+    # The only dev service built from the prod target, and deliberately so. The plain
+    # dev image carries the Go toolchain and air but no browser, and installing one from
+    # a distro pulls in the better part of a desktop stack - the first attempt sat on
+    # llvm for twenty minutes. Using the prod image here costs hot reload, which a leaf
+    # service that rarely changes can do without, and buys something better: dev drives
+    # exactly the browser production drives.
+    build:
+      context: .
+      target: prod-chrome
+      args:
+        SERVICE_NAME: promo
+    ports:
+      - "8082:8082"
+    environment:
+      - PROMO_PORT=8082
+    profiles: ["dev"]
+    restart: unless-stopped
+
+  pdf-service-dev:
+    container_name: pdf-service-dev
+    build:
+      context: ./pdf-service
+      dockerfile: Dockerfile
+    ports:
+      - "5000:5000"
+    profiles: ["dev"]
+    restart: unless-stopped
+
+  azul-login-service-dev:
+    # No dns: override on purpose. A hardcoded resolver breaks whenever the dev laptop changes
+    # networks - a stale LAN resolver is unreachable, and a public one (1.1.1.1/8.8.8.8) is blocked
+    # on networks that filter port 53. Inheriting the host's resolver (Docker's default) tracks the
+    # current network, so the login navigation always resolves.
+    # If a network's resolver is ever unreachable from containers, fix it at the host, not here.
+    container_name: azul-login-service-dev
+    build:
+      context: ./carriers/azul-login-service
+      dockerfile: Dockerfile
+    ports:
+      - "8083:8083"
+    environment:
+      - AZUL_LOGIN_PORT=8083
+      - AZUL_LOGIN_CURSOR_MAX_SECONDS=${AZUL_LOGIN_CURSOR_MAX_SECONDS_DEV:-}
+      - AZUL_LOGIN_FLIGHT_WARMUP_MODE=${AZUL_LOGIN_FLIGHT_WARMUP_MODE_DEV:-full}
+      # A failed attempt is retried in a fresh browser, spaced by a growing backoff, and each
+      # attempt is bounded by a watchdog.
+      - AZUL_LOGIN_MAX_ATTEMPTS=${AZUL_LOGIN_MAX_ATTEMPTS_DEV:-3}
+      - AZUL_LOGIN_RETRY_BACKOFF_SECONDS=${AZUL_LOGIN_RETRY_BACKOFF_SECONDS_DEV:-15}
+      - AZUL_LOGIN_ATTEMPT_TIMEOUT_SECONDS=${AZUL_LOGIN_ATTEMPT_TIMEOUT_SECONDS_DEV:-150}
+      # Leave empty unless backend/carriers says otherwise.
+      - AZUL_LOGIN_PROXY=$AZUL_LOGIN_PROXY_DEV
+      - AZUL_LOGIN_PROXY_USER=$AZUL_LOGIN_PROXY_USER_DEV
+      - AZUL_LOGIN_PROXY_PASS=$AZUL_LOGIN_PROXY_PASS_DEV
+    # It drives a real browser on a third-party page, the same reason the promo service is
+    # capped. Keep it bounded so a runaway browser cannot take the box down.
+    mem_limit: 1500m
+    memswap_limit: 1500m
+    shm_size: 256mb
+    profiles: ["dev"]
+    restart: unless-stopped
+
+# test containers
+  db-test:
+    image: postgres:16-alpine
+    container_name: m-80-db-test
+    restart: always
+    environment:
+      POSTGRES_USER: $DB_USER_TEST
+      POSTGRES_PASSWORD: $DB_PASSWORD_TEST
+      POSTGRES_DB: $DB_NAME_TEST
+    volumes:
+      - db_test_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    profiles:
+      - test
+
+  whatsapp-bot-test:
+    build:
+      context: .
+      target: test
+    container_name: whatsapp-bot-test
+    command: go test ./cmd/bot/... ./internal/... ./carriers/... -v
+    environment:
+      - DB_HOST=$DB_HOST_TEST
+      - DB_PORT=$DB_PORT_TEST
+      - DB_USER=$DB_USER_TEST
+      - DB_PASSWORD=$DB_PASSWORD_TEST
+      - DB_NAME=$DB_NAME_TEST
+      - ENV=test
+      - BOT_STATUS_CALLBACK_URL=$BOT_STATUS_CALLBACK_URL_TEST
+      - BOT_CHAT_REQUESTED_CALLBACK_URL=$BOT_CHAT_REQUESTED_CALLBACK_URL_TEST
+      - BOT_ISSUANCE_CREATED_CALLBACK_URL=$BOT_ISSUANCE_CREATED_CALLBACK_URL_TEST
+      - BOT_ISSUANCE_UPDATED_CALLBACK_URL=$BOT_ISSUANCE_UPDATED_CALLBACK_URL_TEST
+      - BOT_ISSUANCE_CANCELLED_CALLBACK_URL=$BOT_ISSUANCE_CANCELLED_CALLBACK_URL_TEST
+      - BOT_ISSUANCE_DELETED_CALLBACK_URL=$BOT_ISSUANCE_DELETED_CALLBACK_URL_TEST
+      - BOT_PROMO_ENROLLED_CALLBACK_URL=$BOT_PROMO_ENROLLED_CALLBACK_URL_TEST
+      - TRAVEOS_BASE_URL=$TRAVEOS_BASE_URL_TEST
+      - TRAVEOS_EMAIL=$TRAVEOS_EMAIL_TEST
+      - TRAVEOS_PASSWORD=$TRAVEOS_PASSWORD_TEST
+      - ENCRYPTION_KEY=$ENCRYPTION_KEY_TEST
+      - CPF_INDEX_KEY=$CPF_INDEX_KEY_TEST
+      - PDF_SERVICE_URL=$PDF_SERVICE_URL_TEST
+      - PROMO_SERVICE_URL=$PROMO_SERVICE_URL_TEST
+    depends_on:
+      db-test:
+        condition: service_healthy
+      api-test:
+        condition: service_started
+    profiles: [ "test" ]
+
+  api-test:
+    build:
+      context: .
+      target: test
+    container_name: http-server-test
+    # ./cmd/api only. whatsapp-bot-test already runs ./internal/... and the two
+    # start together against the same database, so listing it here ran the whole
+    # internal tree twice, concurrently, for one set of results - and doubled the
+    # load the transaction-per-test suite puts on that one Postgres.
+    command: go test ./cmd/api/... -v
+    environment:
+      - DB_HOST=$DB_HOST_TEST
+      - DB_PORT=$DB_PORT_TEST
+      - DB_USER=$DB_USER_TEST
+      - DB_PASSWORD=$DB_PASSWORD_TEST
+      - DB_NAME=$DB_NAME_TEST
+      - JWT_SECRET=$JWT_SECRET_TEST
+      - ENV=test
+      - PDF_SERVICE_URL=$PDF_SERVICE_URL_TEST
+      - PROMO_SERVICE_URL=$PROMO_SERVICE_URL_TEST
+      - ENCRYPTION_KEY=$ENCRYPTION_KEY_TEST
+      - CPF_INDEX_KEY=$CPF_INDEX_KEY_TEST
+      - BOT_INTERNAL_URL=$BOT_INTERNAL_URL_TEST
+      - TRAVEOS_BASE_URL=$TRAVEOS_BASE_URL_TEST
+      - TRAVEOS_EMAIL=$TRAVEOS_EMAIL_TEST
+      - TRAVEOS_PASSWORD=$TRAVEOS_PASSWORD_TEST
+    depends_on:
+      db-test:
+        condition: service_healthy
+    profiles: [ "test" ]
+
+  promo-service-test:
+    container_name: promo-service-test
+    build:
+      context: .
+      target: test
+    command: go test ./carriers/cmd/promo/... -v
+    profiles: [ "test" ]
+
+  pdf-service-test:
+    container_name: pdf-service-test
+    build:
+      context: ./pdf-service
+      dockerfile: Dockerfile
+    profiles: [ "test" ]
+    restart: unless-stopped
+
+# prod containers
+  db-prod:
+    image: postgres:16-alpine
+    container_name: m-80-db-prod
+    restart: always
+    environment:
+      POSTGRES_USER: $DB_USER_PROD
+      POSTGRES_PASSWORD: $DB_PASSWORD_PROD
+      POSTGRES_DB: $DB_NAME_PROD
+    volumes:
+      - db_prod_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    profiles: [ "prod" ]
+
+  whatsapp-bot-prod:
+    # Pulled, not built. Compiling on the VPS costs memory the box does not
+    # have to spare and produces a binary nothing ever verified; the images
+    # here are the exact ones CI built and tested. IMAGE_TAG is the commit SHA
+    # the deploy script exports - "latest" is the fallback so that a plain
+    # `docker compose exec` (the nightly backup does one) still resolves.
+    image: ghcr.io/murandido/m80-bot:${IMAGE_TAG:-latest}
+    container_name: whatsapp-bot-prod
+    environment:
+      - DB_HOST=$DB_HOST_PROD
+      - DB_PORT=$DB_PORT_PROD
+      - DB_USER=$DB_USER_PROD
+      - DB_PASSWORD=$DB_PASSWORD_PROD
+      - DB_NAME=$DB_NAME_PROD
+      - ENV=production
+      - BOT_STATUS_CALLBACK_URL=$BOT_STATUS_CALLBACK_URL_PROD
+      - BOT_CHAT_REQUESTED_CALLBACK_URL=$BOT_CHAT_REQUESTED_CALLBACK_URL_PROD
+      - BOT_ISSUANCE_CREATED_CALLBACK_URL=$BOT_ISSUANCE_CREATED_CALLBACK_URL_PROD
+      - BOT_ISSUANCE_UPDATED_CALLBACK_URL=$BOT_ISSUANCE_UPDATED_CALLBACK_URL_PROD
+      - BOT_ISSUANCE_CANCELLED_CALLBACK_URL=$BOT_ISSUANCE_CANCELLED_CALLBACK_URL_PROD
+      - BOT_ISSUANCE_DELETED_CALLBACK_URL=$BOT_ISSUANCE_DELETED_CALLBACK_URL_PROD
+      - BOT_PROMO_ENROLLED_CALLBACK_URL=$BOT_PROMO_ENROLLED_CALLBACK_URL_PROD
+      - TRAVEOS_BASE_URL=$TRAVEOS_BASE_URL_PROD
+      - TRAVEOS_EMAIL=$TRAVEOS_EMAIL_PROD
+      - TRAVEOS_PASSWORD=$TRAVEOS_PASSWORD_PROD
+      - ENCRYPTION_KEY=$ENCRYPTION_KEY_PROD
+      - CPF_INDEX_KEY=$CPF_INDEX_KEY_PROD
+      - PDF_SERVICE_URL=$PDF_SERVICE_URL_PROD
+      - PROMO_SERVICE_URL=$PROMO_SERVICE_URL_PROD
+      # The bot syncs every EMISSAO through the same direct integrations as the API
+      # (backend/carriers), and the Azul booking lookup needs this config.
+      - AZUL_FIREBASE_API_KEY=$AZUL_FIREBASE_API_KEY_PROD
+      - AZUL_FIREBASE_APP_ID=$AZUL_FIREBASE_APP_ID_PROD
+      - AZUL_FIREBASE_PROJECT_ID=$AZUL_FIREBASE_PROJECT_ID_PROD
+      - AZUL_FIREBASE_PROJECT_NUMBER=$AZUL_FIREBASE_PROJECT_NUMBER_PROD
+      - AZUL_USER_AGENT=$AZUL_USER_AGENT_PROD
+      - AVIANCA_GUEST_TOKEN=$AVIANCA_GUEST_TOKEN_PROD
+      - AVIANCA_SUBSCRIPTION_KEY=$AVIANCA_SUBSCRIPTION_KEY_PROD
+      - LATAM_PROXY_URL=$LATAM_PROXY_URL_PROD
+      - AIRFRANCE_PROXY_URL=$AIRFRANCE_PROXY_URL_PROD
+      - GOL_PROXY_URL=$GOL_PROXY_URL_PROD
+    restart: always
+    depends_on:
+      db-prod:
+        condition: service_healthy
+      api-prod:
+        condition: service_started
+    profiles: [ "prod" ]
+
+  api-prod:
+    # See whatsapp-bot-prod for why this is pulled rather than built.
+    image: ghcr.io/murandido/m80-api:${IMAGE_TAG:-latest}
+    container_name: http-server-prod
+    # No ports: on purpose. Docker writes its own iptables rules ahead of UFW,
+    # so anything published here is reachable from the internet even with the
+    # firewall denying it - the real control is not publishing. Caddy reaches
+    # the API over the Compose network instead.
+    environment:
+      - DB_HOST=$DB_HOST_PROD
+      - DB_PORT=$DB_PORT_PROD
+      - DB_USER=$DB_USER_PROD
+      - DB_PASSWORD=$DB_PASSWORD_PROD
+      - DB_NAME=$DB_NAME_PROD
+      - JWT_SECRET=$JWT_SECRET_PROD
+      - ENV=production
+      - PORT=8080
+      - PDF_SERVICE_URL=$PDF_SERVICE_URL_PROD
+      - PROMO_SERVICE_URL=$PROMO_SERVICE_URL_PROD
+      - AZUL_LOGIN_SERVICE_URL=$AZUL_LOGIN_SERVICE_URL_PROD
+      - ENCRYPTION_KEY=$ENCRYPTION_KEY_PROD
+      - CPF_INDEX_KEY=$CPF_INDEX_KEY_PROD
+      - BOT_INTERNAL_URL=$BOT_INTERNAL_URL_PROD
+      - TRAVEOS_BASE_URL=$TRAVEOS_BASE_URL_PROD
+      - TRAVEOS_EMAIL=$TRAVEOS_EMAIL_PROD
+      - TRAVEOS_PASSWORD=$TRAVEOS_PASSWORD_PROD
+      - ADMIN_PHONE=$ADMIN_PHONE_PROD
+      - ADMIN_PASSWORD=$ADMIN_PASSWORD_PROD
+      - CORS_ALLOWED_ORIGINS=$CORS_ALLOWED_ORIGINS_PROD
+      # Azul statement read/sync. AZUL_SYNC_ENABLED gates only the periodic ticker; the first sync
+      # on connect runs regardless of it.
+      - AZUL_FIREBASE_API_KEY=$AZUL_FIREBASE_API_KEY_PROD
+      - AZUL_FIREBASE_APP_ID=$AZUL_FIREBASE_APP_ID_PROD
+      - AZUL_FIREBASE_PROJECT_ID=$AZUL_FIREBASE_PROJECT_ID_PROD
+      - AZUL_FIREBASE_PROJECT_NUMBER=$AZUL_FIREBASE_PROJECT_NUMBER_PROD
+      - AZUL_USER_AGENT=$AZUL_USER_AGENT_PROD
+      - AVIANCA_GUEST_TOKEN=$AVIANCA_GUEST_TOKEN_PROD
+      - AVIANCA_SUBSCRIPTION_KEY=$AVIANCA_SUBSCRIPTION_KEY_PROD
+      - LATAM_PROXY_URL=$LATAM_PROXY_URL_PROD
+      - AIRFRANCE_PROXY_URL=$AIRFRANCE_PROXY_URL_PROD
+      - GOL_PROXY_URL=$GOL_PROXY_URL_PROD
+      - AZUL_SYNC_ENABLED=$AZUL_SYNC_ENABLED_PROD
+      - AZUL_SYNC_INTERVAL=$AZUL_SYNC_INTERVAL_PROD
+      # Smiles statement read/sync. No configuration of its own: a round runs on the session the
+      # account stored when it was connected. SMILES_SYNC_ENABLED gates only the ticker.
+      - SMILES_USER_AGENT=$SMILES_USER_AGENT_PROD
+      - SMILES_SYNC_ENABLED=$SMILES_SYNC_ENABLED_PROD
+      - SMILES_SYNC_INTERVAL=$SMILES_SYNC_INTERVAL_PROD
+      # Optional egress proxy for every Smiles host, like LATAM_PROXY_URL/AIRFRANCE_PROXY_URL
+      # above.
+      - SMILES_PROXY_URL=$SMILES_PROXY_URL_PROD
+      # Only here. Behind Caddy r.RemoteAddr is the proxy on every request, so
+      # middleware.RealIP has to read X-Forwarded-For - and it must stay off
+      # everywhere the API is reachable directly, where that header is nothing
+      # but client input. See internal/api/middleware/realip.go.
+      - TRUSTED_PROXY=true
+    restart: always
+    depends_on:
+      db-prod:
+        condition: service_healthy
+    profiles: [ "prod" ]
+
+  frontend-prod:
+    # The panel, which used to be a Vercel deployment. Like the API it publishes
+    # no ports: Caddy reaches it over the Compose network, and not publishing is
+    # the real control - Docker writes its iptables rules ahead of UFW.
+    container_name: frontend-prod
+    image: ghcr.io/murandido/m80-frontend:${IMAGE_TAG:-latest}
+    environment:
+      # Not cosmetic: src/actions/auth.ts derives the auth cookie's Secure flag
+      # from this, so a missing value silently ships the session cookie without it.
+      - NODE_ENV=production
+      # Server-side only, and deliberately a service name rather than a public
+      # URL - the browser never talks to the Go API.
+      - BACKEND_URL=http://api-prod:8080
+    restart: always
+    depends_on:
+      api-prod:
+        condition: service_started
+    profiles: [ "prod" ]
+
+  caddy-prod:
+    image: caddy:2-alpine
+    container_name: caddy-prod
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - API_DOMAIN=$API_DOMAIN_PROD
+    volumes:
+      - ../deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Site files for the other projects on this box, imported at the end of
+      # the Caddyfile. The host directory must exist before this starts, or
+      # Docker creates it owned by root.
+      - /opt/caddy-sites:/etc/caddy/sites:ro
+      # The certificate lives in caddy_data. Without the volume every restart
+      # asks Let's Encrypt for a new one and walks straight into the rate limit.
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: always
+    depends_on:
+      api-prod:
+        condition: service_started
+      frontend-prod:
+        condition: service_started
+    profiles: [ "prod" ]
+
+  promo-service-prod:
+    container_name: promo-service-prod
+    # See whatsapp-bot-prod for why this is pulled rather than built.
+    image: ghcr.io/murandido/m80-promo:${IMAGE_TAG:-latest}
+    environment:
+      - PROMO_PORT=8082
+    # Deliberately no ports: Docker writes its iptables rules ahead of UFW, so
+    # publishing one would expose the browser driver to the internet even with the
+    # firewall denying it. Only the api and the bot need to reach it, and they do so
+    # over the compose network.
+    #
+    # This is the only service on the box whose appetite is not ours to predict - a
+    # real browser on a third party's page. Unbounded, a Chrome that runs away takes
+    # the 3.8 GB box to the host OOM killer, which picks its own victim; the fattest
+    # one after Chrome is Postgres. The ceiling turns "the VPS goes down" into "the
+    # promo container restarts".
+    #
+    # 1500m is roughly 2.3x the measured peak: ~530 MB resident for the browser plus
+    # ~100 MB for the tab, and the service idles at 98 MB. It still leaves ~1.9 GB for
+    # the host and page cache once every other container is counted.
+    mem_limit: 1500m
+    # Equal to mem_limit, which means no swap at all for this container. Chrome in swap
+    # thrashes the whole box; dying and coming back clean is the better failure.
+    memswap_limit: 1500m
+    # The Docker default is 64 MB, and a tab dying mid-campaign is the classic symptom.
+    # Note this is tmpfs and is charged to the cgroup: these 256 MB live *inside* the
+    # 1500m above, they do not add to it. Raising this narrows the real ceiling.
+    shm_size: 256mb
+    # Marks the container unhealthy when the browser is gone but the process is not.
+    # It does not restart anything by itself - the service ending is what does that.
+    healthcheck:
+      test: [ "CMD", "curl", "-fsS", "http://localhost:8082/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    profiles: [ "prod" ]
+    restart: always
+
+  pdf-service-prod:
+    container_name: pdf-service-prod
+    # See whatsapp-bot-prod for why this is pulled rather than built.
+    image: ghcr.io/murandido/m80-pdf-service:${IMAGE_TAG:-latest}
+    profiles: [ "prod" ]
+    restart: always
+
+  azul-login-service-prod:
+    container_name: azul-login-service-prod
+    # Pulled, not built, like every prod image (arm64 from GHCR). Publishing this image needs a
+    # matching target in the CI build matrix (.github/workflows) - add it when wiring deploy.
+    image: ghcr.io/murandido/m80-azul-login-service:${IMAGE_TAG:-latest}
+    environment:
+      - AZUL_LOGIN_PORT=8083
+      - AZUL_LOGIN_CURSOR_MAX_SECONDS=${AZUL_LOGIN_CURSOR_MAX_SECONDS_PROD:-}
+      - AZUL_LOGIN_FLIGHT_WARMUP_MODE=${AZUL_LOGIN_FLIGHT_WARMUP_MODE_PROD:-full}
+      # A failed attempt is retried in a fresh browser, spaced by a growing backoff, and each
+      # attempt is bounded by a watchdog.
+      - AZUL_LOGIN_MAX_ATTEMPTS=${AZUL_LOGIN_MAX_ATTEMPTS_PROD:-3}
+      - AZUL_LOGIN_RETRY_BACKOFF_SECONDS=${AZUL_LOGIN_RETRY_BACKOFF_SECONDS_PROD:-15}
+      - AZUL_LOGIN_ATTEMPT_TIMEOUT_SECONDS=${AZUL_LOGIN_ATTEMPT_TIMEOUT_SECONDS_PROD:-150}
+      # Leave empty unless backend/carriers/azul-login-service/CLAUDE.md says otherwise.
+      - AZUL_LOGIN_PROXY=$AZUL_LOGIN_PROXY_PROD
+      - AZUL_LOGIN_PROXY_USER=$AZUL_LOGIN_PROXY_USER_PROD
+      - AZUL_LOGIN_PROXY_PASS=$AZUL_LOGIN_PROXY_PASS_PROD
+    # No ports: only the API reaches it, over the Compose network. A real browser, same appetite
+    # as the promo service - keep it bounded so a runaway one cannot take the box to the host OOM
+    # killer.
+    mem_limit: 1500m
+    memswap_limit: 1500m
+    shm_size: 256mb
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8083/health').read()==b'ok' else 1)" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    profiles: [ "prod" ]
+    restart: always
+
+volumes:
+  db_dev_data:
+  db_test_data:
+  db_prod_data:
+  caddy_data:
+  caddy_config:

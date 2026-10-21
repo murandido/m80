@@ -19,7 +19,7 @@ import { Account } from "@/schemas/account"
 const AZUL_PROGRAM_CODE = "AZUL"
 
 // How often the card re-reads the connect status while a login is in flight. The login runs for a
-// couple of minutes (edge retries), so a five-second poll is plenty to catch the finish without
+// couple of minutes (with retries), so a five-second poll is plenty to catch the finish without
 // hammering the API.
 const POLL_INTERVAL_MS = 5000
 
