@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/murandido/m-80-backend/carriers/azul"
 	"github.com/murandido/m-80-backend/internal/access"
 	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
-	"github.com/murandido/m-80-backend/internal/azul"
 	"github.com/murandido/m-80-backend/internal/azulsync"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/statement"
