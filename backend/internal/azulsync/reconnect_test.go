@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/murandido/m-80-backend/internal/azul"
+	"github.com/murandido/m-80-backend/carriers/azul"
 	"github.com/murandido/m-80-backend/internal/data"
 	"gorm.io/gorm"
 )
