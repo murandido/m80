@@ -1,6 +1,6 @@
 import type { Metadata } from "next"
 import { verifySession } from "@/lib/session"
-import { LatamCallback } from "@/components/accounts/latam-callback"
+import { LatamCallback } from "@/carriers/latam/latam-callback"
 
 export const metadata: Metadata = {
   title: "Conectando a LATAM",
