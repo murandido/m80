@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
+	"github.com/murandido/m-80-backend/carriers/traveos"
 	"github.com/murandido/m-80-backend/internal/access"
 	"github.com/murandido/m-80-backend/internal/account"
 	"github.com/murandido/m-80-backend/internal/api/middleware"
@@ -23,7 +24,6 @@ import (
 	"github.com/murandido/m-80-backend/internal/events"
 	"github.com/murandido/m-80-backend/internal/export"
 	"github.com/murandido/m-80-backend/internal/sale"
-	"github.com/murandido/m-80-backend/internal/traveos"
 
 	// Aliased because "issuance" is the local variable name for a data.Issuance
 	// throughout this file - importing it unaliased would shadow the package in
@@ -480,6 +480,9 @@ func appendAdjustmentDayBounds(clauses []string, args []any, from, to *time.Time
 // query: the caller ANDs other dimensions on top, and an ungrouped Or() would
 // escape those parentheses and widen the whole filter.
 //
+// The columns are qualified because the sales listing applies the same group over a
+// query that joins issuances to accounts, clients and people.
+//
 // The child tables are reached with EXISTS rather than a join - the list only
 // Preloads, and joining would return the same issuance once per passenger and per
 // flight leg.
@@ -489,12 +492,12 @@ func appendAdjustmentDayBounds(clauses []string, args []any, from, to *time.Time
 func issuanceSearchGroup(db *gorm.DB, search string) *gorm.DB {
 	like := likePattern(search)
 
-	return db.Where(unaccentedLike("program_locator"), like).
-		Or(unaccentedLike("airline_locator"), like).
-		Or(unaccentedLike("latam_purchase_number"), like).
-		Or(unaccentedLike("main_passenger_name"), like).
-		Or(unaccentedLike("origin_iata_code"), like).
-		Or(unaccentedLike("destination_iata_code"), like).
+	return db.Where(unaccentedLike("issuances.program_locator"), like).
+		Or(unaccentedLike("issuances.airline_locator"), like).
+		Or(unaccentedLike("issuances.latam_purchase_number"), like).
+		Or(unaccentedLike("issuances.main_passenger_name"), like).
+		Or(unaccentedLike("issuances.origin_iata_code"), like).
+		Or(unaccentedLike("issuances.destination_iata_code"), like).
 		Or("EXISTS (SELECT 1 FROM issuance_passengers"+
 			" WHERE issuance_passengers.issuance_id = issuances.id AND "+
 			unaccentedLike("issuance_passengers.first_name || ' ' || issuance_passengers.last_name")+")", like).
@@ -1122,7 +1125,16 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 		// the itinerary this very PATCH is replacing. Moving the issuance to another
 		// account matters just as much - the account is what decides whether the amount
 		// is owed or saved.
-		return issuancesvc.RecalculateRedemptionFee(tx, issuance.ID)
+		if err := issuancesvc.RecalculateRedemptionFee(tx, issuance.ID); err != nil {
+			return err
+		}
+
+		// The points, the rate and the taxes are what the sale is worth. Editing them used
+		// to leave sales.paid and the client's replay on the old figure, so a ticket paid
+		// and then corrected kept a surplus (or a missing amount) nobody saw until the
+		// next payment of that client. A sale settled by hand follows the new price and
+		// stays settled.
+		return sale.RecalculateRepriced(tx, issuance.ID)
 	})
 
 	if err != nil {

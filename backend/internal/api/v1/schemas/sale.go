@@ -204,6 +204,9 @@ type UpdateSupplierIssuancesRequest struct {
 	// Reviewed marks these issuances as already checked while reconciling. Unlike the two
 	// terms above it changes no money - it records who has already looked.
 	Reviewed *bool `json:"reviewed" example:"true"`
+	// CancelledCPFFee is what the supplier charges, in centavos, for the CPFs a cancelled
+	// booking burned. Only accepted on cancelled issuances; null clears it.
+	CancelledCPFFee *int `json:"cancelled_cpf_fee" validate:"omitempty,min=0" example:"12000"`
 }
 
 // UpdateSupplierIssuancesResponse reports how many issuances the write actually touched,
@@ -266,6 +269,10 @@ type SupplierIssuanceResponse struct {
 	OwnsPointInventory bool `json:"owns_point_inventory" example:"false"`
 	// TaxesIncludedInCost says whether Taxes is part of what is paid for this line.
 	TaxesIncludedInCost bool `json:"taxes_included_in_cost" example:"true"`
+	// CancelledCPFFee is the supplier's charge for the CPFs the cancellation burned, in
+	// centavos. Only ever set on the cancellation's refund line, and part of what is paid
+	// for it: the line's amount is the credit plus this fee.
+	CancelledCPFFee *int `json:"cancelled_cpf_fee" example:"12000"`
 	// Reviewed says somebody already checked this line while reconciling. Both lines of an
 	// issuance that was created and cancelled in the same period carry the same value: the
 	// flag is on the issuance, and the two lines are two views of it.

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/murandido/m-80-backend/internal/azul"
+	"github.com/murandido/m-80-backend/carriers/azul"
 	"github.com/murandido/m-80-backend/internal/data"
 	"gorm.io/gorm"
 )
@@ -391,7 +391,7 @@ func recordFailure(db *gorm.DB, state *data.AzulSyncState, cause error) error {
 	state.ConsecutiveFailures++
 	detail := cause.Error()
 	if errors.Is(cause, azul.ErrEdgeBlocked) {
-		detail = "bloqueado no edge (edge) - verificar User-Agent: " + detail
+		detail = "bloqueado no edge - verificar User-Agent: " + detail
 	}
 	state.Detail = &detail
 	if state.ConsecutiveFailures >= failureThreshold {

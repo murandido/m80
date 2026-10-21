@@ -52,6 +52,17 @@ func (h *SaleHandler) broadcastSaleUpdated(saleID string) {
 	})
 }
 
+// broadcastSalesUpdated announces a sale and the others a replay of its client changed, each
+// once.
+func (h *SaleHandler) broadcastSalesUpdated(saleID string, rebalancedSaleIDs []string) {
+	h.broadcastSaleUpdated(saleID)
+	for _, otherID := range rebalancedSaleIDs {
+		if otherID != saleID {
+			h.broadcastSaleUpdated(otherID)
+		}
+	}
+}
+
 func NewSaleHandler(db *gorm.DB, broker *events.Broker) *SaleHandler {
 	return &SaleHandler{
 		DB:        db,
@@ -140,12 +151,16 @@ func saleListQuery(db *gorm.DB) *gorm.DB {
 		// What the ticket's alterations added to (or took off) the price.
 		Joins("LEFT JOIN " + sale.AdjustmentCentsJoin + " AS adjustments ON adjustments.issuance_id = issuances.id").
 		// Aggregated in the join rather than per row: the statement of every sale on the
-		// screen in one pass, instead of one query per line.
+		// screen in one pass, instead of one query per line. Credit carried in from another
+		// sale's surplus counts as the client's payment: it is their money, and only the
+		// replay moves it, so the switch has to treat it the same way.
 		Joins(`LEFT JOIN (
 			SELECT sale_id,
 				SUM(amount_cents) AS paid_cents,
-				SUM(amount_cents) FILTER (WHERE client_payment_id IS NOT NULL) AS client_payment_cents,
-				MAX(paid_on) FILTER (WHERE client_payment_id IS NOT NULL) AS client_payment_paid_on
+				SUM(amount_cents) FILTER (WHERE client_payment_id IS NOT NULL
+					OR credit_from_sale_id <> sale_id) AS client_payment_cents,
+				MAX(paid_on) FILTER (WHERE client_payment_id IS NOT NULL
+					OR credit_from_sale_id <> sale_id) AS client_payment_paid_on
 			FROM sale_payments
 			GROUP BY sale_id
 		) AS payments ON payments.sale_id = sales.id`).
@@ -329,6 +344,14 @@ func applySaleListFilters(query *gorm.DB, r *http.Request) *gorm.DB {
 	}
 
 	query = applySaleClientFilter(query, r)
+
+	// The same free-text search as the issuances list, so a sale is found by the PNR,
+	// passenger or route the operator has in hand. The group is built on a fresh session:
+	// chained onto query it would carry the listing's joins and conditions into the
+	// parentheses.
+	if search := strings.TrimSpace(q.Get("q")); search != "" {
+		query = query.Where(issuanceSearchGroup(query.Session(&gorm.Session{NewDB: true}), search))
+	}
 
 	if value := q.Get("paid"); value != "" {
 		if paid, err := strconvParseBool(value); err == nil {
@@ -516,6 +539,7 @@ func applySaleClientFilter(query *gorm.DB, r *http.Request) *gorm.DB {
 // @Param        client_id           query  string  false  "UUID do cliente vinculado (ignorado quando client_ids vem)"
 // @Param        client_ids          query  string  false  "UUIDs de clientes separados por vírgula; 'none' inclui as vendas sem cliente"
 // @Param        paid                query  boolean false  "Filtra por vendas pagas (true) ou em aberto (false)"
+// @Param        q                   query  string  false  "Busca por localizador, passageiro, origem ou destino da emissão"
 // @Success      200  {object}  schemas.SaleListResponse
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      500  {object}  schemas.ErrorResponse "Nenhuma agência principal configurada ou erro ao buscar vendas"
@@ -572,6 +596,7 @@ const (
 // @Param        agency_id           query  string  false  "UUID da agência (padrão: a agência principal)"
 // @Param        client_ids          query  string  false  "UUIDs de clientes separados por vírgula; 'none' inclui as vendas sem cliente"
 // @Param        paid                query  boolean false  "Filtra por vendas pagas (true) ou em aberto (false)"
+// @Param        q                   query  string  false  "Busca por localizador, passageiro, origem ou destino da emissão"
 // @Success      200  {object}  schemas.SalePageSingleResponse
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao buscar vendas"
@@ -676,6 +701,7 @@ func singleClientFilter(r *http.Request) bool {
 // @Param        client_id           query  string  false  "UUID do cliente vinculado (ignorado quando client_ids vem)"
 // @Param        client_ids          query  string  false  "UUIDs de clientes separados por vírgula; 'none' inclui as vendas sem cliente"
 // @Param        paid                query  boolean false  "Filtra por vendas pagas (true) ou em aberto (false)"
+// @Param        q                   query  string  false  "Busca por localizador, passageiro, origem ou destino da emissão"
 // @Success      200  {file}    binary  "Planilha .xlsx das vendas filtradas"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      500  {object}  schemas.ErrorResponse "Nenhuma agência principal configurada ou erro ao gerar a planilha"
@@ -871,15 +897,18 @@ func (h *SaleHandler) UpdateSale(w http.ResponseWriter, r *http.Request) {
 	// The switch only takes back what the switch (or the old per-sale statement) put on the
 	// sale. Money a client's payment put here is taken back by undoing that payment:
 	// clearing its lines would last until the next replay put them back. So a sale covered
-	// only by client payments has nothing the switch can undo, and says so.
+	// only by client payments has nothing the switch can undo, and says so. Credit carried
+	// in from another sale's surplus is the same: it moves when that sale's payments do.
 	if req.Paid != nil && !*req.Paid {
 		var lines struct {
 			Own    int64
 			Spread int64
+			Credit int64
 		}
 		if err := h.DB.Model(&data.SalePayment{}).
-			Select(`COUNT(*) FILTER (WHERE client_payment_id IS NULL) AS own,
-				COUNT(*) FILTER (WHERE client_payment_id IS NOT NULL) AS spread`).
+			Select(`COUNT(*) FILTER (WHERE client_payment_id IS NULL AND credit_from_sale_id IS NULL) AS own,
+				COUNT(*) FILTER (WHERE client_payment_id IS NOT NULL) AS spread,
+				COUNT(*) FILTER (WHERE credit_from_sale_id IS NOT NULL) AS credit`).
 			Where("sale_id = ?", sale.ID).
 			Scan(&lines).Error; err != nil {
 			utils.SendError(w, r, http.StatusInternalServerError, "Failed to update sale: "+err.Error())
@@ -887,6 +916,10 @@ func (h *SaleHandler) UpdateSale(w http.ResponseWriter, r *http.Request) {
 		}
 		if lines.Own == 0 && lines.Spread > 0 {
 			utils.SendError(w, r, http.StatusConflict, "Essa venda foi paga por um pagamento do cliente; desfaça o pagamento no histórico")
+			return
+		}
+		if lines.Own == 0 && lines.Credit > 0 {
+			utils.SendError(w, r, http.StatusConflict, "Essa venda foi paga com crédito do cliente vindo de outra emissão; ela muda sozinha com os pagamentos daquela emissão")
 			return
 		}
 	}
@@ -920,10 +953,11 @@ func (h *SaleHandler) UpdateSale(w http.ResponseWriter, r *http.Request) {
 			}
 			rebalancedSaleIDs = append(rebalancedSaleIDs, changed...)
 		}
-		// What is owed moved: sales.paid follows, and the client's lump sums are replayed
-		// over the new figure - more to cover, or money freed for the next sale.
+		// What is owed moved: a sale settled by hand stays settled at the new figure, and
+		// the client's lump sums are replayed over it - more to cover, or money freed for
+		// the next sale.
 		if priceChanged {
-			if err := recalculateSale(tx, sale.IssuanceID); err != nil {
+			if err := recalculateRepricedSale(tx, sale.IssuanceID); err != nil {
 				return err
 			}
 		}
@@ -998,6 +1032,9 @@ type supplierIssuanceRow struct {
 	DestinationIATACode *string
 	Taxes               *int
 	RefundedTaxes       *int
+	// CancelledCPFFee is the supplier's charge for the CPFs the cancellation burned. It
+	// rides on the refund line, dated with it.
+	CancelledCPFFee     *int
 	CostOfTheThousand   *int
 	TaxesIncludedInCost bool
 	Reviewed            bool
@@ -1096,6 +1133,7 @@ func (h *SaleHandler) fetchSupplierRows(r *http.Request) ([]supplierIssuanceRow,
 			issuances.destination_iata_code,
 			issuances.taxes,
 			issuances.refunded_taxes,
+			issuances.cancelled_cpf_fee,
 			issuances.cost_of_the_thousand,
 			issuances.taxes_included_in_cost,
 		issuances.reviewed,
@@ -1277,10 +1315,14 @@ func aggregateSupplierBalances(
 		}
 		if inRange(row.CancelledAt, from, to) && row.RefundedPoints != nil {
 			acc.refundedPoints += *row.RefundedPoints
-			acc.statement = append(acc.statement, supplierStatementLine(
+			line := supplierStatementLine(
 				row, "refund", *row.CancelledAt, -*row.RefundedPoints, negateCents(row.RefundedTaxes),
 				refundedCents(inventoryCosts, row),
-			))
+			)
+			// Only the cancellation's own refund carries the fee: an alteration giving miles
+			// back burns no CPF, and putting it there too would charge it twice.
+			line.CancelledCPFFee = row.CancelledCPFFee
+			acc.statement = append(acc.statement, line)
 		}
 
 		// An alteration is more miles out of the account, or miles back into it, on its
@@ -1362,7 +1404,7 @@ func aggregateSupplierBalances(
 
 // UpdateSupplierIssuances handles the POST /sales/suppliers/issuances route.
 // @Summary      Definir os termos de pagamento ao fornecedor
-// @Description  Grava o milheiro de custo (em centavos) e/ou se as taxas entram no valor, nas emissões informadas. Recebe a lista explícita de ids, nunca um filtro: um id é a edição de uma linha, vários são a aplicação em massa. Campo omitido é preservado; cost_of_the_thousand explicitamente nulo limpa o valor. Rota restrita a administradores.
+// @Description  Grava o milheiro de custo (em centavos), se as taxas entram no valor e/ou a taxa de CPF cancelado (em centavos, só em emissões canceladas), nas emissões informadas. Recebe a lista explícita de ids, nunca um filtro: um id é a edição de uma linha, vários são a aplicação em massa. Campo omitido é preservado; cost_of_the_thousand ou cancelled_cpf_fee explicitamente nulo limpa o valor. Rota restrita a administradores.
 // @Tags         Vendas
 // @Accept       json
 // @Produce      json
@@ -1372,6 +1414,7 @@ func aggregateSupplierBalances(
 // @Failure      400  {object}  schemas.ErrorResponse "Payload inválido"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      403  {object}  schemas.ErrorResponse "Usuário não é administrador"
+// @Failure      422  {object}  schemas.ErrorResponse "Custo vindo do estoque, ou taxa de CPF em emissão não cancelada"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao gravar os termos de pagamento"
 // @Router       /sales/suppliers/issuances [post]
 func (h *SaleHandler) UpdateSupplierIssuances(w http.ResponseWriter, r *http.Request) {
@@ -1446,6 +1489,24 @@ func (h *SaleHandler) UpdateSupplierIssuances(w http.ResponseWriter, r *http.Req
 	}
 	if req.Reviewed != nil {
 		updates["reviewed"] = *req.Reviewed
+	}
+	if _, ok := present["cancelled_cpf_fee"]; ok {
+		// The fee is for CPFs a cancellation burned, so it has nowhere to show on a booking
+		// that is still live - the screen only offers it on refund lines, and this keeps a
+		// stray value from sitting unseen on an issuance until the day it is cancelled.
+		var live int64
+		if err := h.DB.Model(&data.Issuance{}).
+			Where("id IN ? AND cancelled_at IS NULL", req.IssuanceIDs).
+			Count(&live).Error; err != nil {
+			utils.SendError(w, r, http.StatusInternalServerError, "Failed to check the issuances: "+err.Error())
+			return
+		}
+		if live > 0 {
+			utils.SendError(w, r, http.StatusUnprocessableEntity,
+				"A taxa de CPF só vale para emissões canceladas")
+			return
+		}
+		updates["cancelled_cpf_fee"] = req.CancelledCPFFee
 	}
 	if len(updates) == 0 {
 		utils.SendError(w, r, http.StatusBadRequest, "No fields to update")

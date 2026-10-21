@@ -10,6 +10,10 @@ interface SupplierCostCellProps {
   onCommit: (cents: number | null) => void
   saving?: boolean
   disabled?: boolean
+  ariaLabel?: string
+  // Marks an empty cell as the thing to fix. Right for the cost, which the PDF cannot do
+  // without; wrong for an optional amount like the CPF fee, where empty is the norm.
+  highlightEmpty?: boolean
 }
 
 // One editable cost.
@@ -19,7 +23,14 @@ interface SupplierCostCellProps {
 // a rejected save all land on a cell nobody is typing into, with no effect synchronising
 // two copies of the same value. It also means the cell never shows a figure the server has
 // not confirmed - on a failed save it snaps back to the real one, next to the error toast.
-export function SupplierCostCell({ value, onCommit, saving, disabled }: SupplierCostCellProps) {
+export function SupplierCostCell({
+  value,
+  onCommit,
+  saving,
+  disabled,
+  ariaLabel = "Milheiro de custo",
+  highlightEmpty = true,
+}: SupplierCostCellProps) {
   const [draft, setDraft] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   // Escape has to reach the blur that follows it, and a setState would not be visible to
@@ -56,7 +67,7 @@ export function SupplierCostCell({ value, onCommit, saving, disabled }: Supplier
       disabled={disabled}
       inputMode="decimal"
       placeholder="—"
-      aria-label="Milheiro de custo"
+      aria-label={ariaLabel}
       onFocus={(e) => {
         // Strip the R$ while editing: parseCurrencyBRLInput copes with it, but selecting
         // over a prefix to retype a number is needless friction.
@@ -81,7 +92,7 @@ export function SupplierCostCell({ value, onCommit, saving, disabled }: Supplier
         "focus:border-slate-400 focus:bg-white focus:outline-none",
         // An unset cost is the thing the operator is here to fix, so it is marked rather
         // than left looking like an empty column.
-        value === null
+        value === null && highlightEmpty
           ? "border-amber-300 bg-amber-50 placeholder:text-amber-600"
           : "border-transparent hover:border-slate-300",
         saving && "opacity-60",

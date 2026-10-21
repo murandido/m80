@@ -183,7 +183,8 @@ func Recalculate(tx *gorm.DB, saleID string) error {
 // what a lump sum had put on a ticket that is now cancelled is the client's money again,
 // and goes to their next open sale or to their credit instead of waiting to be handed
 // back; a restored ticket is a debt again and takes its turn in the queue. The ledger
-// lines recorded on the sale itself are still left alone.
+// lines recorded on the sale itself are still left alone, but what they paid beyond the
+// fee is surplus, and the replay carries it to the client's other sales or credit too.
 func RecalculateByIssuance(tx *gorm.DB, issuanceID string) error {
 	var found data.Sale
 	err := tx.Select("id", "client_id").
@@ -201,4 +202,66 @@ func RecalculateByIssuance(tx *gorm.DB, issuanceID string) error {
 	}
 	_, err = RebalanceClient(tx, *found.ClientID)
 	return err
+}
+
+// RecalculateRepriced is RecalculateByIssuance for a change to what the sale is worth: the
+// points, the rate, the taxes, or the amount typed in the payments control. A sale that was
+// settled by hand stays settled. "Pago" there means the client paid for the ticket, so
+// correcting the ticket's price is not a new debt (or a refund) to chase. The switch records
+// the figure of the moment, so before this a corrected price left the sale half paid, and
+// the switch then refused it as a partial payment.
+//
+// It has to run before anything recalculates the sale: sales.paid is still the state from
+// before the change, which is what tells a sale that was settled from one that was not.
+func RecalculateRepriced(tx *gorm.DB, issuanceID string) error {
+	var found data.Sale
+	err := tx.Select("id", "paid").
+		Where("issuance_id = ?", issuanceID).
+		Limit(1).
+		Find(&found).Error
+	if err != nil {
+		return err
+	}
+	if found.ID != "" && found.Paid {
+		if err := resizeOwnSettlement(tx, found.ID); err != nil {
+			return err
+		}
+	}
+	return RecalculateByIssuance(tx, issuanceID)
+}
+
+// resizeOwnSettlement moves the sale's latest own line - the paid switch's, or the backfill
+// of a sale marked paid before the statement existed - by whatever the new price left open
+// or over. A sale settled only by a client's payments has no such line and is left to the
+// replay, which spreads the client's money over the new figures as it always has.
+func resizeOwnSettlement(tx *gorm.DB, saleID string) error {
+	amount, err := AmountOf(tx, saleID)
+	if err != nil || amount.Cancelled {
+		return err
+	}
+	paidCents, err := PaidCents(tx, saleID)
+	if err != nil {
+		return err
+	}
+	balance := BalanceCents(amount, paidCents)
+	if balance == 0 {
+		return nil
+	}
+
+	var line data.SalePayment
+	err = tx.Where("sale_id = ? AND client_payment_id IS NULL AND credit_from_sale_id IS NULL", saleID).
+		Order("created_at desc").
+		Limit(1).
+		Find(&line).Error
+	if err != nil || line.ID == "" {
+		return err
+	}
+
+	// A line cannot hold zero, and below zero the client's own payments already cover the
+	// new price: the line goes, and the replay hands the rest back as their credit.
+	resized := line.AmountCents + balance
+	if resized <= 0 {
+		return tx.Delete(&line).Error
+	}
+	return tx.Model(&line).UpdateColumn("amount_cents", resized).Error
 }

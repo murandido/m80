@@ -222,6 +222,14 @@ export const supplierIssuanceSchema = z.object({
     .boolean()
     .nullish()
     .transform((value) => value ?? false),
+  // What the supplier charges, in centavos, for the CPFs a cancelled booking burned. Only
+  // ever on the cancellation's refund line, and part of what is paid for it. Nullish so a
+  // tab opened before the field existed keeps parsing.
+  cancelled_cpf_fee: z
+    .number()
+    .int()
+    .nullish()
+    .transform((value) => value ?? null),
 })
 
 export type SupplierIssuance = z.infer<typeof supplierIssuanceSchema>

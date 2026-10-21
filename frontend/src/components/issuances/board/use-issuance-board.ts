@@ -339,6 +339,7 @@ export function useIssuanceBoard({
   useEffect(() => {
     const stored = readStoredDrafts()
     if (stored.length === 0) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- drafts come from localStorage, which only exists after hydration
     setRows((prev) => {
       const known = new Set(prev.map((row) => row.key))
       const missing = stored.filter((row) => !known.has(row.key))
@@ -498,6 +499,7 @@ export function useIssuanceBoard({
     },
     [updateRow, flashSaveStatus, reconcileCreatedRow],
   )
+  // eslint-disable-next-line react-hooks/refs -- latest-ref read by callbacks memoized without persist in their deps
   persistRef.current = persist
 
   // The single entry point for an edit: optimistic, then persisted. Addressed by key, since
@@ -762,12 +764,29 @@ export function useIssuanceBoard({
       }
 
       setSyncingRowKeys((prev) => ({ ...prev, [row.key]: true }))
+      // The taxes as they were when the pull started, to tell whether the operator has typed
+      // over them while it ran.
+      const taxesBefore = row.taxes
       try {
         const result = await syncIssuanceWithTraveosAction(row.id)
         if ("error" in result)
           return { error: result.error ?? "Erro ao puxar os dados da cia." }
         const issuance = result.issuance
+        // On an exempt account (Azul's Diamante Unique) the sync works out the redemption fee
+        // and folds it into the taxes (issuance.RecalculateRedemptionFee). The grid picked that
+        // up from the refresh that followed; the board cannot, because the open panel's row is
+        // protected from refreshes - so the response is applied here. The taxes only when the
+        // operator has not typed over them meanwhile: that edit is the newer one.
+        const current = rowsRef.current.find((candidate) => candidate.key === key)
+        const feeFields: Partial<IssuanceRow> = issuance
+          ? {
+              redemption_fee_saved_cents: issuance.redemption_fee_saved_cents ?? null,
+              redemption_fee_manual: issuance.redemption_fee_manual,
+              ...(current?.taxes === taxesBefore ? { taxes: issuance.taxes } : {}),
+            }
+          : {}
         updateRow(row.key, {
+          ...feeFields,
           status: issuance?.status ?? "complete",
           traveos_synced_at:
             issuance?.traveos_synced_at ?? new Date().toISOString(),

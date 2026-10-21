@@ -26,6 +26,14 @@ func RegisterAccountRoutes(r chi.Router, db *gorm.DB, azulConnector *azulsync.Co
 		// the sales screens and the importer
 		r.Get("/", accountHandler.GetAccounts)
 
+		// the browser extension's vault: every account, no passwords. Static segment, so it
+		// never gets read as /accounts/{id} either.
+		r.Get("/vault", accountHandler.GetVaultAccounts)
+
+		// one account's password, for the vault. Every call is recorded, and the per-user limit
+		// is far below the panel-wide one: reading passwords in bulk is the misuse to stop.
+		r.With(middleware.CredentialRateLimit()).Post("/{id}/credentials", accountHandler.PostAccountCredentials)
+
 		// the management screen: one row per holder with all of their accounts. Chi resolves
 		// a static segment ahead of a param, so this never gets read as /accounts/{id}.
 		r.Get("/holders", accountHandler.ListAccountHolders)

@@ -28,6 +28,7 @@ import (
 // @Param        agency_id   query  string  false  "UUID da agência (padrão: a agência principal)"
 // @Param        client_ids  query  string  false  "UUIDs de clientes separados por vírgula; 'none' inclui as vendas sem cliente"
 // @Param        paid        query  boolean false  "Filtra por vendas pagas (true) ou em aberto (false)"
+// @Param        q           query  string  false  "Busca por localizador, passageiro, origem ou destino da emissão"
 // @Success      200  {file}    file  "PDF do controle"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      422  {object}  schemas.ErrorResponse "Nenhuma emissão no filtro"

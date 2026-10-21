@@ -12,3 +12,14 @@ pre-commit:
       priority: 2
       run: golangci-lint run --fix --new-from-rev=HEAD ./...
       stage_fixed: true
+    # Catches a secret before it enters history, where the CI scan would only find it
+    # after it is already in a commit. Not installed => warn and pass: CI's Secrets job
+    # is the gate, this is the early warning. Setup in the lefthook-setup skill.
+    gitleaks:
+      priority: 3
+      run: |
+        if ! command -v gitleaks >/dev/null 2>&1; then
+          echo "gitleaks not installed: skipping the local secret scan (CI still runs it)"
+          exit 0
+        fi
+        gitleaks git --pre-commit --staged --redact --no-banner .

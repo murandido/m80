@@ -14,6 +14,8 @@ interface SupplierTerms {
   costOfTheThousand?: number | null
   taxesIncludedInCost?: boolean
   reviewed?: boolean
+  // Centavos; null clears it. Only accepted on cancelled issuances.
+  cancelledCpfFee?: number | null
 }
 
 function buildBody(issuanceIds: string[], terms: SupplierTerms) {
@@ -27,6 +29,8 @@ function buildBody(issuanceIds: string[], terms: SupplierTerms) {
       ? { taxes_included_in_cost: terms.taxesIncludedInCost }
       : {}),
     ...(terms.reviewed !== undefined ? { reviewed: terms.reviewed } : {}),
+    // Same rule as the rate: absent leaves the fee alone, null clears it.
+    ...("cancelledCpfFee" in terms ? { cancelled_cpf_fee: terms.cancelledCpfFee } : {}),
   })
 }
 

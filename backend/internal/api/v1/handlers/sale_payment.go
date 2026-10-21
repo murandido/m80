@@ -140,18 +140,21 @@ func (h *SaleHandler) CreateSalePayment(w http.ResponseWriter, r *http.Request) 
 		CreatedByID: userCtx.ID,
 	}
 
+	var rebalancedSaleIDs []string
 	err = h.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&payment).Error; err != nil {
 			return err
 		}
-		return sale.Recalculate(tx, saleID)
+		var err error
+		rebalancedSaleIDs, err = recalculateWithClient(tx, found)
+		return err
 	})
 	if err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to record the payment: "+err.Error())
 		return
 	}
 
-	h.broadcastSaleUpdated(saleID)
+	h.broadcastSalesUpdated(saleID, rebalancedSaleIDs)
 
 	payment.CreatedBy = &userCtx
 	utils.SendJSON(w, r, http.StatusCreated, "Payment recorded successfully", toSalePaymentResponse(payment))
@@ -501,19 +504,34 @@ func (h *SaleHandler) DeleteSalePayment(w http.ResponseWriter, r *http.Request) 
 		utils.SendError(w, r, http.StatusConflict, "Esse lançamento veio de um pagamento do cliente; desfaça o pagamento no histórico")
 		return
 	}
+	// The same for a line moving a sale's surplus: it follows the payments of the sale it
+	// came from, and changes when those do.
+	if payment.CreditFromSaleID != nil {
+		utils.SendError(w, r, http.StatusConflict, "Esse lançamento é crédito do cliente vindo de outra emissão; ele muda sozinho com os pagamentos daquela emissão")
+		return
+	}
 
+	var found data.Sale
+	if err := h.DB.First(&found, "id = ?", saleID).Error; err != nil {
+		utils.SendError(w, r, http.StatusNotFound, "Sale not found")
+		return
+	}
+
+	var rebalancedSaleIDs []string
 	err := h.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Delete(&payment).Error; err != nil {
 			return err
 		}
-		return sale.Recalculate(tx, saleID)
+		var err error
+		rebalancedSaleIDs, err = recalculateWithClient(tx, found)
+		return err
 	})
 	if err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to delete the payment: "+err.Error())
 		return
 	}
 
-	h.broadcastSaleUpdated(saleID)
+	h.broadcastSalesUpdated(saleID, rebalancedSaleIDs)
 
 	utils.SendJSON(w, r, http.StatusOK, "Payment deleted successfully", nil)
 }
@@ -524,10 +542,10 @@ func (h *SaleHandler) DeleteSalePayment(w http.ResponseWriter, r *http.Request) 
 // built on it again - partial amounts go through CreateClientPayment instead.
 func settleSaleFromLegacyFlag(tx *gorm.DB, saleID string, paid bool, actorID string) error {
 	if !paid {
-		// Only the sale's own lines: those spread from a client payment are rebuilt from
-		// the payment and go away by undoing it (UpdateSale refuses a sale that has nothing
+		// Only the sale's own lines: those spread from a client payment, or moving a sale's
+		// surplus, are rebuilt by the replay (UpdateSale refuses a sale that has nothing
 		// else).
-		if err := tx.Where("sale_id = ? AND client_payment_id IS NULL", saleID).Delete(&data.SalePayment{}).Error; err != nil {
+		if err := tx.Where("sale_id = ? AND client_payment_id IS NULL AND credit_from_sale_id IS NULL", saleID).Delete(&data.SalePayment{}).Error; err != nil {
 			return err
 		}
 		return sale.Recalculate(tx, saleID)
@@ -584,6 +602,19 @@ func salePartlyPaid(db *gorm.DB, saleID string) (bool, error) {
 	return paidCents > 0 && paidCents < bookingCents && sale.BalanceCents(amount, paidCents) > 0, nil
 }
 
+// recalculateWithClient follows a change to a sale's own lines: sales.paid first, then the
+// replay of its client, since money put on or taken off one sale can free credit for the
+// others or need it. It returns the other sales the replay changed.
+func recalculateWithClient(tx *gorm.DB, found data.Sale) ([]string, error) {
+	if err := sale.Recalculate(tx, found.ID); err != nil {
+		return nil, err
+	}
+	if found.ClientID == nil {
+		return nil, nil
+	}
+	return sale.RebalanceClient(tx, *found.ClientID)
+}
+
 // rebalanceClient replays a client's payments after one of their sales changed hands. It
 // lives out here because UpdateSale's own variable is called sale, which hides the package.
 func rebalanceClient(tx *gorm.DB, clientID string) ([]string, error) {
@@ -595,8 +626,8 @@ func saleAmountOf(db *gorm.DB, saleID string) (sale.Amount, error) {
 	return sale.AmountOf(db, saleID)
 }
 
-func recalculateSale(tx *gorm.DB, issuanceID string) error {
-	return sale.RecalculateByIssuance(tx, issuanceID)
+func recalculateRepricedSale(tx *gorm.DB, issuanceID string) error {
+	return sale.RecalculateRepriced(tx, issuanceID)
 }
 
 func optionalText(value *string) *string {

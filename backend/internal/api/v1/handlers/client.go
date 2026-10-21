@@ -120,7 +120,11 @@ var clientOrder = map[string]string{
 // show the same client twice and skip another entirely.
 //
 // The phone is searched alongside the name because those are the only two fields a
-// client has, and "who is this number" is half of why anyone opens this screen.
+// client has, and "who is this number" is half of why anyone opens this screen. The
+// locators of the client's issuances are searched too, the same three the issuances
+// search covers: the operator often has only the booking code in hand and needs to
+// know whose it is. EXISTS rather than a join so a client with several matching sales
+// still comes back once, and removed issuances stay out of it.
 //
 // It is narrowed to the caller's agencies, which also keeps the clients still waiting for an
 // agency (NULL) away from everyone but devs. agency_id narrows it to one agency - the sale's,
@@ -138,7 +142,13 @@ func clientListQuery(db *gorm.DB, r *http.Request, params listQuery) *gorm.DB {
 	if params.Q != "" {
 		like := likePattern(params.Q)
 		query = query.Where(
-			db.Where(unaccentedLike("clients.name"), like).Or("clients.phone LIKE ?", like),
+			db.Where(unaccentedLike("clients.name"), like).
+				Or("clients.phone LIKE ?", like).
+				Or("EXISTS (SELECT 1 FROM sales JOIN issuances ON issuances.id = sales.issuance_id"+
+					" WHERE sales.client_id = clients.id AND issuances.deleted_at IS NULL AND ("+
+					unaccentedLike("issuances.program_locator")+" OR "+
+					unaccentedLike("issuances.airline_locator")+" OR "+
+					unaccentedLike("issuances.latam_purchase_number")+"))", like, like, like),
 		)
 	}
 
@@ -151,7 +161,7 @@ func clientListQuery(db *gorm.DB, r *http.Request, params listQuery) *gorm.DB {
 // @Tags         Clientes
 // @Produce      json
 // @Security     BearerAuth
-// @Param        q      query  string  false  "Busca por nome ou telefone"
+// @Param        q      query  string  false  "Busca por nome, telefone ou localizador de uma emissão do cliente"
 // @Param        order  query  string  false  "Ordenação"  Enums(name_asc, name_desc, created_desc, created_asc)
 // @Success      200  {object}  schemas.ClientListResponse
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
@@ -178,7 +188,7 @@ func (h *ClientHandler) ListClients(w http.ResponseWriter, r *http.Request) {
 // @Tags         Clientes
 // @Produce      json
 // @Security     BearerAuth
-// @Param        q      query  string  false  "Busca por nome ou telefone"
+// @Param        q      query  string  false  "Busca por nome, telefone ou localizador de uma emissão do cliente"
 // @Param        order  query  string  false  "Ordenação"  Enums(name_asc, name_desc, created_desc, created_asc)
 // @Param        page   query  int     false  "Página (padrão 1)"
 // @Param        limit  query  int     false  "Itens por página (padrão 20, máximo 100)"

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation"
 import { Controller, useForm, useWatch } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
-import { UserCog, X, Eye, EyeOff, PhoneCall, User, KeyRound, Save } from "lucide-react"
+import { UserCog, X, Eye, EyeOff, PhoneCall, User, Save } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Field, FieldError, FieldLabel } from "@/components/ui/field"
 import {

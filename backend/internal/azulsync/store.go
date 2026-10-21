@@ -10,6 +10,7 @@
 package azulsync
 
 import (
+	"errors"
 	"time"
 
 	"github.com/murandido/m-80-backend/internal/data"
@@ -26,7 +27,7 @@ func loadOrInitState(db *gorm.DB, accountID string) (*data.AzulSyncState, error)
 	if err == nil {
 		return &state, nil
 	}
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return &data.AzulSyncState{AccountID: accountID, State: data.AzulSyncPending}, nil
 	}
 	return nil, err

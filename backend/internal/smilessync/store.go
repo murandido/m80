@@ -17,6 +17,7 @@
 package smilessync
 
 import (
+	"errors"
 	"time"
 
 	"github.com/murandido/m-80-backend/internal/data"
@@ -34,7 +35,7 @@ func loadOrInitState(db *gorm.DB, accountID string) (*data.SmilesSyncState, erro
 	if err == nil {
 		return &state, nil
 	}
-	if err == gorm.ErrRecordNotFound {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return &data.SmilesSyncState{AccountID: accountID, State: data.SmilesSyncPending}, nil
 	}
 	return nil, err

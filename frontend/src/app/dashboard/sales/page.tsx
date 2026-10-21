@@ -1,4 +1,5 @@
 import type { Metadata } from "next"
+import { Suspense } from "react"
 import { cookies } from "next/headers"
 import Link from "next/link"
 import { ExternalLink, FileText } from "lucide-react"
@@ -18,6 +19,7 @@ import { SalesClientsTable } from "@/components/sales/sales-clients-table"
 import { SalesHelpPopover } from "@/components/sales/sales-help-popover"
 import { ClientReportButton } from "@/components/sales/client-report-button"
 import { LiveRefresh } from "@/components/layout/live-refresh"
+import { ListSearchBar } from "@/components/shared/list-search-bar"
 import {
   buildSalesQuery,
   resolveSalesFilters,
@@ -136,6 +138,16 @@ export default async function SalesClientsPage({
             dateTo={period.date_to}
             all={period.all}
           />
+          <div className="w-full sm:w-72">
+            <Suspense fallback={<div className="h-14" />}>
+              {/* Same box and minimum as the issuances screen: three characters is an IATA
+                  code, and fewer would match most of the history. */}
+              <ListSearchBar
+                placeholder="PNR, passageiro, origem ou destino"
+                minLength={3}
+              />
+            </Suspense>
+          </div>
         </SalesFilterBar>
 
         <SalesClientsTable

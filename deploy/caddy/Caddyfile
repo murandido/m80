@@ -46,3 +46,10 @@ www.{$API_DOMAIN} {
 		}
 	}
 }
+
+# Other projects on this box publish through this same Caddy instead of running
+# a second one, which could not bind 80/443. Each drops one <name>.caddy file
+# into /opt/caddy-sites on the host (mounted read-only here), so adding a site
+# never means editing this file. An empty directory is fine: the glob simply
+# matches nothing.
+import /etc/caddy/sites/*.caddy
