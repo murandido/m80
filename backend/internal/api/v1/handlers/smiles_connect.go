@@ -10,9 +10,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
+	"github.com/murandido/m-80-backend/carriers/smiles"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
-	"github.com/murandido/m-80-backend/internal/smiles"
 	"github.com/murandido/m-80-backend/internal/smilessync"
 	"github.com/murandido/m-80-backend/internal/utils"
 	"gorm.io/gorm"
