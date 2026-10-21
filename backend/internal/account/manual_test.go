@@ -65,7 +65,7 @@ func TestPassengersOf(t *testing.T) {
 func TestRejectBadCPF(t *testing.T) {
 	t.Parallel()
 
-	valid := "714.602.380-01"
+	valid := "111.444.777-35"
 	invalid := "111.111.111-11"
 	empty := ""
 

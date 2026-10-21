@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/murandido/m-80-backend/carriers/latam"
 	"github.com/murandido/m-80-backend/internal/data"
-	"github.com/murandido/m-80-backend/internal/latam"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"

@@ -33,7 +33,10 @@ COPY . .
 
 # compile the static binary (without C dependencies) to be light and safe
 # -ldflags="-s -w" removes debug infos for less size
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o app ./cmd/${SERVICE_NAME}
+# The promo entrypoint lives in the private carriers submodule rather than cmd/, so the
+# package path falls back there when cmd/ has no such service.
+RUN pkg=./cmd/${SERVICE_NAME}; [ -d "$pkg" ] || pkg=./carriers/cmd/${SERVICE_NAME}; \
+    CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o app "$pkg"
 
 # One-off maintenance commands ride in the api image, so they run on the production box with
 # its own .env and network (docker compose run --rm api-prod ./tools/...) instead of

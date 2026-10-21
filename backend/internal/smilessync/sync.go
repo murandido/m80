@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/murandido/m-80-backend/carriers/smiles"
 	"github.com/murandido/m-80-backend/internal/data"
-	"github.com/murandido/m-80-backend/internal/smiles"
 	"gorm.io/gorm"
 )
 
