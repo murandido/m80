@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/murandido/m-80-backend/carriers/latam"
 	"github.com/murandido/m-80-backend/internal/data"
-	"github.com/murandido/m-80-backend/internal/latam"
 	"gorm.io/gorm"
 )
 
