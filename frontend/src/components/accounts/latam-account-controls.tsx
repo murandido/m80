@@ -8,7 +8,7 @@ import { toast } from "sonner"
 import { AlertTriangle, Link2, Loader2, Unlink } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { disconnectLatamAccountAction } from "@/actions/latam"
-import { LatamConnectDialog } from "@/components/accounts/latam-connect-dialog"
+import { LatamConnectDialog } from "@/carriers/latam/latam-connect-dialog"
 import { Account } from "@/schemas/account"
 
 // The stable identifier of the LATAM program is its code, not its name or id.
