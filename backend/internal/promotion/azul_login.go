@@ -10,13 +10,13 @@ import (
 )
 
 // ErrAzulLoginFailed is a login that reached the service but did not produce a customerKey -
-// wrong credentials, or the behavioural/challenge gate turning headless Chromium away. Distinct
+// wrong credentials, or the site turning the login away. Distinct
 // from a transport failure so the caller can tell "try again / fix the password" from "the
 // promo service is down".
 var ErrAzulLoginFailed = errors.New("promotion: azul login did not produce a customerKey")
 
-// AzulLoginRequest carries the account's stored credentials to the promo service, which logs in
-// through the residential proxy and reads the customerKey off the SPA's own requests.
+// AzulLoginRequest carries the account's stored credentials to the login service, which
+// returns the account's customerKey.
 type AzulLoginRequest struct {
 	DocumentNumber string `json:"document_number"`
 	Password       string `json:"password"`
