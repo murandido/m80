@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/murandido/m-80-backend/internal/azul"
+	"github.com/murandido/m-80-backend/carriers/azul"
 	"github.com/murandido/m-80-backend/internal/data"
 	"gorm.io/gorm"
 )
@@ -15,7 +15,7 @@ const (
 	// DefaultInterval is how often the balance is polled when AZUL_SYNC_INTERVAL is unset.
 	DefaultInterval = 10 * time.Minute
 	// maxBackoff caps how far the loop backs off after the edge pushes back. An hour is long
-	// enough to stop hammering edge and short enough that a transient block clears on its own
+	// enough to stop hammering the edge and short enough that a transient block clears on its own
 	// within a working day.
 	maxBackoff = time.Hour
 	// betweenAccounts is a small pause between accounts in a pass, to be gentle on the edge the

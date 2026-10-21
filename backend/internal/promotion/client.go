@@ -52,7 +52,7 @@ type ServiceResponse struct {
 }
 
 // Client talks to the promo service over the internal network. It also reaches the separate
-// azul-login-service (a different process: Python/the browser) for the one-time Azul login, hence
+// azul-login-service (a separate process) for the one-time Azul login, hence
 // the second base URL.
 type Client struct {
 	baseURL      string
