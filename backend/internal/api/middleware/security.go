@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -64,14 +65,14 @@ func CORS() func(http.Handler) http.Handler {
 // quota. Requests without a usable token (login, /health, malformed input) fall
 // back to the IP, which is the only identity available for them.
 func RateLimit() func(http.Handler) http.Handler {
-	return httprate.Limit(300, 1*time.Minute, httprate.WithKeyFuncs(keyByTokenSubject))
+	return httprate.LimitBy(300, 1*time.Minute, keyByTokenSubject)
 }
 
 // CredentialRateLimit caps how many account passwords one user can pull through the vault per
 // minute. Thirty is far more than anyone logging into programs by hand needs, and far fewer than
 // a script copying every account would want; the panel-wide RateLimit still applies on top.
 func CredentialRateLimit() func(http.Handler) http.Handler {
-	return httprate.Limit(30, 1*time.Minute, httprate.WithKeyFuncs(keyByTokenSubject))
+	return httprate.LimitBy(30, 1*time.Minute, keyByTokenSubject)
 }
 
 // LoginRateLimit guards the one route where the IP really is the right identity:
@@ -82,18 +83,18 @@ func CredentialRateLimit() func(http.Handler) http.Handler {
 // is the browser address the panel forwarded (see middleware.RealIP). Without
 // that header every login in the company shares one bucket.
 func LoginRateLimit() func(http.Handler) http.Handler {
-	return httprate.LimitByIP(10, 1*time.Minute)
+	return httprate.LimitBy(10, 1*time.Minute, keyByRemoteAddr)
 }
 
 // keyByTokenSubject buckets a request by the user its Bearer token belongs to.
 //
-// A single KeyFunc rather than two: httprate.WithKeyFuncs concatenates the funcs
-// it is given into one composite key, it does not try them in order - so the
+// A single KeyFunc rather than two: httprate.JoinKeys concatenates the funcs it
+// is given into one composite key, it does not try them in order - so the
 // fallback to the IP has to happen in here.
 func keyByTokenSubject(r *http.Request) (string, error) {
 	parts := strings.Split(r.Header.Get("Authorization"), " ")
 	if len(parts) != 2 || parts[0] != "Bearer" {
-		return httprate.KeyByIP(r)
+		return keyByRemoteAddr(r)
 	}
 
 	claims, err := auth.ValidateToken(parts[1])
@@ -101,13 +102,52 @@ func keyByTokenSubject(r *http.Request) (string, error) {
 		// An invalid or expired token is going to be rejected downstream anyway;
 		// counting it against the IP is what stops someone from dodging the limit
 		// by sending garbage tokens.
-		return httprate.KeyByIP(r)
+		return keyByRemoteAddr(r)
 	}
 
 	userID, ok := claims["user_id"].(string)
 	if !ok || userID == "" {
-		return httprate.KeyByIP(r)
+		return keyByRemoteAddr(r)
 	}
 
 	return "user:" + userID, nil
+}
+
+// keyByRemoteAddr buckets a request by the IP RealIP left in r.RemoteAddr.
+//
+// It returns exactly the key httprate v0.15's KeyByIP did: v0.16 deprecated it in
+// favour of an explicit key function, because a library cannot know what
+// RemoteAddr means behind a proxy. Here it already means the client - RealIP is
+// what resolves it, and it runs before every limiter - so the right key is still
+// RemoteAddr, and the explicit function just states that trust model where the
+// limiter is built instead of leaving it to a library default.
+//
+// The port is dropped so every connection from one host shares a bucket, IPv4
+// stays as is and IPv6 collapses to its /64, since one IPv6 client usually
+// controls the whole /64 and could otherwise rotate into a fresh bucket per
+// request. See TestKeyByRemoteAddr_MatchesHTTPRateV015.
+func keyByRemoteAddr(r *http.Request) (string, error) {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	return canonicalizeClientIP(host), nil
+}
+
+// canonicalizeClientIP is httprate.CanonicalizeIP with the one input where v0.16
+// changed its answer put back to v0.15's.
+//
+// That input is an IPv4-mapped IPv6 address ("::ffff:203.0.113.7"). v0.15 masked
+// it to its /64 like any IPv6 address, which leaves "::" - so every such client,
+// and ::1, shares one bucket. v0.16 returns the dotted IPv4 instead. Neither
+// RealIP's source (Caddy writes plain dotted IPv4) nor net/http produces the
+// mapped form, so this should never fire; it is kept so that upgrading the
+// library does not quietly redraw the buckets of a security control.
+func canonicalizeClientIP(ip string) string {
+	if strings.Contains(ip, ":") {
+		if parsed := net.ParseIP(ip); parsed != nil && parsed.To4() != nil {
+			return parsed.Mask(net.CIDRMask(64, 128)).String()
+		}
+	}
+	return httprate.CanonicalizeIP(ip)
 }

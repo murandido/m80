@@ -33,7 +33,10 @@ COPY . .
 
 # compile the static binary (without C dependencies) to be light and safe
 # -ldflags="-s -w" removes debug infos for less size
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o app ./cmd/${SERVICE_NAME}
+# The promo entrypoint lives in the private carriers submodule rather than cmd/, so the
+# package path falls back there when cmd/ has no such service.
+RUN pkg=./cmd/${SERVICE_NAME}; [ -d "$pkg" ] || pkg=./carriers/cmd/${SERVICE_NAME}; \
+    CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o app "$pkg"
 
 # One-off maintenance commands ride in the api image, so they run on the production box with
 # its own .env and network (docker compose run --rm api-prod ./tools/...) instead of
@@ -90,7 +93,7 @@ CMD ["./server"]
 #
 # curl is here for the Compose healthcheck alone: the base image carries neither it nor
 # wget, and probing the port with bash's /dev/tcp instead is unreadable inside YAML.
-FROM chromedp/headless-shell:156.0.8078.12 AS prod-chrome
+FROM chromedp/headless-shell:156.0.8078.17 AS prod-chrome
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         tzdata \
