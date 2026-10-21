@@ -145,6 +145,9 @@ services:
       - "8082:8082"
     environment:
       - PROMO_PORT=8082
+      # The browser has no proxy of its own; a home connection reaches the campaign
+      # sites directly, so this is normally blank.
+      - PROMO_PROXY_URL=${SMILES_PROXY_URL_DEV}
     profiles: ["dev"]
     restart: unless-stopped
 
@@ -471,6 +474,10 @@ services:
     image: ghcr.io/murandido/m80-promo:${IMAGE_TAG:-latest}
     environment:
       - PROMO_PORT=8082
+      # Optional egress proxy for the browser, borrowed from the Smiles sync so a new
+      # *_PROD does not have to reach /opt/m80/backend/.env before the deploy. See
+      # backend/carriers/CLAUDE.md.
+      - PROMO_PROXY_URL=${SMILES_PROXY_URL_PROD}
     # Deliberately no ports: Docker writes its iptables rules ahead of UFW, so
     # publishing one would expose the browser driver to the internet even with the
     # firewall denying it. Only the api and the bot need to reach it, and they do so
