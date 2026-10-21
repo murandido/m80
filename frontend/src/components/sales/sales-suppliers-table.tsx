@@ -81,14 +81,16 @@ interface SalesSuppliersTableProps {
 //   5 Milhas líquidas  / Pontos       (a line's signed points are its net contribution)
 //   6 Taxas
 //   7 Milheiro de custo
-//   8 Valor
-//   9 Conferido
-const COLUMN_COUNT = 9
+//   8 Taxa CPF         (the supplier's fee for the CPFs a cancellation burned)
+//   9 Valor
+//  10 Conferido
+const COLUMN_COUNT = 10
 
 type PaymentTerms = {
   costOfTheThousand?: number | null
   taxesIncludedInCost?: boolean
   reviewed?: boolean
+  cancelledCpfFee?: number | null
 }
 
 function formatDate(iso: string): string {
@@ -279,6 +281,7 @@ function AdministratorExport({
   // Follow the server value when it changes underneath us - e.g. after "Gerar PDF de todas"
   // bumps this administrator among others and the page refetches.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- follows the server value when the page refetches underneath
     setCounter(initialCounter)
     setText(String(initialCounter))
   }, [initialCounter])
@@ -447,6 +450,19 @@ export function SalesSuppliersTable({ balances, query, groupBy }: SalesSuppliers
     [visible],
   )
 
+  // The rate bulk control leaves out the lines whose cost came from the batches: the backend
+  // refuses a typed rate on those, and one of them in the list would fail the whole write.
+  const typedCostIssuanceIds = useMemo(
+    () => [
+      ...new Set(
+        visible.flatMap((b) =>
+          b.issuances.filter((i) => !i.cost_from_inventory).map((i) => i.issuance_id),
+        ),
+      ),
+    ],
+    [visible],
+  )
+
   // Counted over the visible lines, for the same reason the money totals are: the footer
   // must describe the rows on screen and nothing else.
   const reviewedSummary = useMemo(() => {
@@ -489,14 +505,18 @@ export function SalesSuppliersTable({ balances, query, groupBy }: SalesSuppliers
     })
   }
 
+  function bulkTargetIds(terms: PaymentTerms): string[] {
+    return terms.costOfTheThousand === undefined ? allIssuanceIds : typedCostIssuanceIds
+  }
+
   function askBulk(terms: PaymentTerms, summary: string) {
-    if (allIssuanceIds.length === 0) return
+    if (bulkTargetIds(terms).length === 0) return
     setPendingBulk({ terms, summary })
   }
 
   function confirmBulk() {
     if (!pendingBulk) return
-    commit(allIssuanceIds, pendingBulk.terms, (n) =>
+    commit(bulkTargetIds(pendingBulk.terms), pendingBulk.terms, (n) =>
       n === 1 ? "1 emissão atualizada." : `${n} emissões atualizadas.`,
     )
     setPendingBulk(null)
@@ -504,6 +524,7 @@ export function SalesSuppliersTable({ balances, query, groupBy }: SalesSuppliers
   }
 
   const bulkCents = parseCurrencyBRLInput(bulkText)
+  const bulkCount = pendingBulk ? bulkTargetIds(pendingBulk.terms).length : 0
 
   return (
     <div className="flex flex-col gap-3">
@@ -605,7 +626,7 @@ export function SalesSuppliersTable({ balances, query, groupBy }: SalesSuppliers
                       size="sm"
                       variant="outline"
                       className="h-6 px-2 text-xs"
-                      disabled={bulkCents === null || allIssuanceIds.length === 0}
+                      disabled={bulkCents === null || typedCostIssuanceIds.length === 0}
                       onClick={() =>
                         bulkCents !== null &&
                         askBulk(
@@ -620,6 +641,7 @@ export function SalesSuppliersTable({ balances, query, groupBy }: SalesSuppliers
                 </div>
               </TableHead>
 
+              <TableHead className="text-right">Taxa CPF</TableHead>
               <TableHead className="text-right">Valor</TableHead>
 
               {/* Same placement rule as the two controls above: the bulk button lives in
@@ -699,6 +721,9 @@ export function SalesSuppliersTable({ balances, query, groupBy }: SalesSuppliers
                   {formatCurrencyBRL(totals.taxes)}
                 </TableCell>
                 <TableCell />
+                <TableCell className="text-right font-medium tabular-nums text-muted-foreground">
+                  {totals.cpfFees > 0 ? formatCurrencyBRL(totals.cpfFees) : ""}
+                </TableCell>
                 <TableCell
                   className={cn(
                     "text-right font-semibold tabular-nums",
@@ -732,8 +757,8 @@ export function SalesSuppliersTable({ balances, query, groupBy }: SalesSuppliers
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {pendingBulk?.summary} em {allIssuanceIds.length}{" "}
-              {allIssuanceIds.length === 1 ? "emissão" : "emissões"}?
+              {pendingBulk?.summary} em {bulkCount}{" "}
+              {bulkCount === 1 ? "emissão" : "emissões"}?
             </AlertDialogTitle>
             <AlertDialogDescription>
               Isto grava em todas as emissões filtradas no momento, substituindo o que já
@@ -868,6 +893,9 @@ function SupplierAccountRows({
           {formatCurrencyBRL(lines.taxes)}
         </TableCell>
         <TableCell />
+        <TableCell className="text-right tabular-nums text-muted-foreground">
+          {lines.cpfFees > 0 ? formatCurrencyBRL(lines.cpfFees) : ""}
+        </TableCell>
         <TableCell
           className={cn(
             "text-right font-medium tabular-nums",
@@ -954,10 +982,19 @@ function SupplierIssuanceRow({
               </span>
             )}
           </span>
-          {isRefund && (
-            <span className="rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-red-800 uppercase">
-              estorno
+          {line.adjustment_id ? (
+            <span
+              className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-amber-900 uppercase"
+              title={line.adjustment_reason ?? undefined}
+            >
+              alteração
             </span>
+          ) : (
+            isRefund && (
+              <span className="rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-red-800 uppercase">
+                estorno
+              </span>
+            )
           )}
         </span>
       </TableCell>
@@ -1007,11 +1044,11 @@ function SupplierIssuanceRow({
       </TableCell>
 
       <TableCell className="text-right">
-        {/* On an account that owns its points the rate is derived from the batches that
-            paid for the booking, so it is shown rather than offered for editing - typing
-            over it would be overwritten by the next recompute, and the backend refuses it
-            anyway. The batches are edited in Estoque de pontos. */}
-        {line.owns_point_inventory ? (
+        {/* Once the batches have paid for the booking the rate is derived from them, so
+            it is shown rather than offered for editing - the backend refuses a typed one,
+            and the batches are edited in Estoque de pontos. A booking on the same account
+            that no batch covers yet has no derived rate, and is typed like any other. */}
+        {line.cost_from_inventory ? (
           <span
             className="tabular-nums text-slate-500"
             title="Vem do estoque de pontos da conta. Edite os lotes em Estoque de pontos."
@@ -1027,6 +1064,24 @@ function SupplierIssuanceRow({
             onCommit={(cents) =>
               onCommit([line.issuance_id], { costOfTheThousand: cents }, () =>
                 "Milheiro de custo atualizado.",
+              )
+            }
+          />
+        )}
+      </TableCell>
+
+      {/* Only the cancellation's own credit can carry the fee: that is where CPFs were
+          burned. An alteration giving miles back burns none, and a booking is still live. */}
+      <TableCell className="text-right">
+        {isRefund && !line.adjustment_id && (
+          <SupplierCostCell
+            value={line.cancelled_cpf_fee}
+            saving={saving}
+            ariaLabel="Taxa de CPF cancelado"
+            highlightEmpty={false}
+            onCommit={(cents) =>
+              onCommit([line.issuance_id], { cancelledCpfFee: cents }, () =>
+                cents === null ? "Taxa de CPF removida." : "Taxa de CPF atualizada.",
               )
             }
           />

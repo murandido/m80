@@ -1,0 +1,210 @@
+name: Deploy CA's Mode
+
+# The designer's environment, published the same way production is: a label on
+# an already merged PR. Everything here mirrors deploy-vps.yml, and the comments
+# below cover only what differs - the reasoning behind the shared parts is
+# written out there and is not repeated.
+on:
+  pull_request:
+    types: [labeled]
+
+concurrency:
+  group: deploy-ca
+  cancel-in-progress: false
+
+env:
+  APP_DIR: /opt/m80
+  REGISTRY: ghcr.io
+
+jobs:
+  resolve:
+    name: Resolve ca-mode
+    # Three conditions, not two. The base branch is the one that matters: both
+    # workflows listen to the same event on the same repository, so without it a
+    # deploy:ca label dropped on a PR into main would publish main here, and the
+    # mirror-image mistake would publish an experiment to production. The label
+    # names are a convention; this is the actual gate.
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.label.name == 'deploy:ca' &&
+      github.event.pull_request.base.ref == 'ca-mode'
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.head.outputs.sha }}
+    steps:
+      - name: Checkout ca-mode
+        uses: actions/checkout@v4
+        with:
+          ref: ca-mode
+
+      - name: Read the head commit
+        id: head
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  # ca-mode carries experiments, which is a reason to run CI here rather than an
+  # excuse to skip it: this is where a half-finished idea is most likely to break
+  # something, and the box is still a box somebody has to log into.
+  ci:
+    name: CI
+    needs: resolve
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+      actions: write
+    # ci.yml checks out the private submodules with CARRIERS_READ_TOKEN, and a
+    # called workflow sees no secret it is not handed.
+    secrets: inherit
+    with:
+      ref: ${{ needs.resolve.outputs.sha }}
+
+  build:
+    name: Build ${{ matrix.image }}
+    needs: [resolve, ci]
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: m80-api
+            context: backend
+            target: prod
+            build-args: SERVICE_NAME=api
+          - image: m80-bot
+            context: backend
+            target: prod
+            build-args: SERVICE_NAME=bot
+          - image: m80-promo
+            context: backend
+            target: prod-chrome
+            build-args: SERVICE_NAME=promo
+          - image: m80-pdf-service
+            context: backend/pdf-service
+            target: ""
+            build-args: ""
+          # The Azul login service, which main's Compose file expects on every box
+          # running the prod profile. Built on the native arm64 runner for the same
+          # reason as promo: it installs a browser.
+          - image: m80-azul-login-service
+            context: backend/carriers/azul-login-service
+            target: ""
+            build-args: ""
+          - image: m80-frontend
+            context: frontend
+            target: ""
+            # Still api-prod: the CA box runs the same "prod" Compose profile,
+            # so the service name it talks to is the same one. What separates
+            # the two environments is the .env on each machine, not the profile.
+            build-args: BACKEND_URL=http://api-prod:8080
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          # The Go images and the Azul login service build from the private
+          # carriers submodule.
+          submodules: recursive
+          token: ${{ secrets.CARRIERS_READ_TOKEN }}
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          target: ${{ matrix.target }}
+          build-args: ${{ matrix.build-args }}
+          push: true
+          # Never "latest". Both environments pull from the same registry, and
+          # "latest" is what a bare `docker compose` resolves to through
+          # IMAGE_TAG's default - so pushing it here would quietly hand the CA
+          # box's tag to production. "ca-latest" is the equivalent for this
+          # environment, and the CA box pins IMAGE_TAG=ca-latest in its .env so
+          # that a bare compose there does not reach for production's images
+          # from the other direction.
+          tags: |
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}:${{ needs.resolve.outputs.sha }}
+            ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.image }}:ca-latest
+
+  deploy:
+    name: Deploy
+    needs: [resolve, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Open an SSH session and deploy
+        env:
+          SHA: ${{ needs.resolve.outputs.sha }}
+          VPS_HOST: ${{ secrets.CA_VPS_HOST }}
+          VPS_USER: ${{ secrets.CA_VPS_USER }}
+          VPS_SSH_KEY: ${{ secrets.CA_VPS_SSH_KEY }}
+          VPS_SSH_PORT: ${{ secrets.CA_VPS_SSH_PORT || '22' }}
+          VPS_KNOWN_HOSTS: ${{ secrets.CA_VPS_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+          if [ -n "${VPS_KNOWN_HOSTS:-}" ]; then
+            printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            echo "::warning::CA_VPS_KNOWN_HOSTS is not set; falling back to ssh-keyscan"
+            ssh-keyscan -p "$VPS_SSH_PORT" -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          fi
+          chmod 600 ~/.ssh/known_hosts
+
+          ssh_opts=(
+            -i ~/.ssh/deploy_key
+            -p "$VPS_SSH_PORT"
+            -o IdentitiesOnly=yes
+            -o ConnectTimeout=15
+            -o ServerAliveInterval=30
+          )
+
+          # The same ten-minute connection probe as production. This box sits on
+          # a different Oracle account in the same region, so there is no reason
+          # to expect the route to it to be any steadier than the other one.
+          probe_deadline=$(( SECONDS + 600 ))
+          connected=""
+          attempt=0
+          while :; do
+            attempt=$(( attempt + 1 ))
+            if ssh "${ssh_opts[@]}" -o BatchMode=yes "$VPS_USER@$VPS_HOST" true; then
+              connected=1
+              break
+            fi
+            echo "::warning::ssh probe $attempt did not get through"
+            [ "$SECONDS" -lt "$probe_deadline" ] || break
+            sleep 30
+          done
+
+          if [ -z "$connected" ]; then
+            echo "runner egress IP: $(curl -sS --max-time 10 https://api.ipify.org || echo unknown)"
+            if timeout 10 bash -c "cat < /dev/null > /dev/tcp/$VPS_HOST/443" 2>/dev/null; then
+              echo "::error::port 443 answers from this runner but 22 does not - SSH is being filtered"
+            else
+              echo "::error::neither 22 nor 443 answers - the VPS is unreachable from this runner"
+            fi
+            echo "::error::could not open an SSH connection to the CA box after $attempt attempts"
+            exit 1
+          fi
+
+          # shellcheck disable=SC2029
+          ssh "${ssh_opts[@]}" "$VPS_USER@$VPS_HOST" \
+            "set -euo pipefail
+             cd '${{ env.APP_DIR }}'
+             git fetch --quiet origin ca-mode
+             git checkout --quiet --detach '$SHA'
+             deploy/vps-deploy.sh '$SHA'"

@@ -19,6 +19,7 @@ import {
   type FilterState,
 } from "@/components/issuances/board/board-toolbar"
 import { useIssuanceBoard } from "@/components/issuances/board/use-issuance-board"
+import { takeIssuanceForTicketReturn } from "@/components/issuances/board/reopen-after-ticket"
 import layout from "@/components/issuances/board/board-layout.module.css"
 import type { Issuance } from "@/schemas/issuance"
 
@@ -62,8 +63,20 @@ export function IssuanceBoardScreen({
   // A row that left the list (deleted here or elsewhere) closes its panel.
   const panelOpen = openRow !== undefined
 
+  // Back from the ticket page: the panel that sent the operator there opens again. Only on
+  // mount, and only when the issuance is still in the list the filters brought back.
+  useEffect(() => {
+    const issuanceId = takeIssuanceForTicketReturn()
+    const row = issuanceId && board.rows.find((candidate) => candidate.id === issuanceId)
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- sessionStorage only exists after hydration
+    if (row) setOpenKey(row.key)
+    // Mount only: a later change to the rows must not reopen anything.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // The live refresh protects the row being typed into from being rebuilt under the operator.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/immutability -- hands the open row to the hook's live refresh, which reads it outside React
     board.openKeyRef.current = panelOpen ? openKey : null
   }, [board.openKeyRef, openKey, panelOpen])
 
@@ -112,8 +125,10 @@ export function IssuanceBoardScreen({
 
   // Shortcuts that work wherever the focus is on this screen.
   const boardRef = useRef(board)
+  // eslint-disable-next-line react-hooks/refs -- latest-ref so the keydown listener is bound once and still sees the current board
   boardRef.current = board
   const openRowRef = useRef(openRow)
+  // eslint-disable-next-line react-hooks/refs -- latest-ref, same as boardRef above
   openRowRef.current = openRow
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -212,8 +227,9 @@ export function IssuanceBoardScreen({
             // in view while the list scrolls.
             "fixed inset-0 z-40 overflow-y-auto bg-slate-200",
             // The full height of the screen, whatever the form holds: the header (3rem)
-            // and the page's padding above and below are what is left out.
-            "lg:sticky lg:inset-auto lg:top-8 lg:z-auto lg:h-[calc(100svh-7rem)] lg:rounded-2xl",
+            // and the page's padding above and below are what is left out. It sticks
+            // below the header, which is sticky too, with the same 2rem the page starts at.
+            "lg:sticky lg:inset-auto lg:top-20 lg:z-auto lg:h-[calc(100svh-7rem)] lg:rounded-2xl",
           )}
         >
           <IssuancePanel

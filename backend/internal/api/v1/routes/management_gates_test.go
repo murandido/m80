@@ -82,7 +82,7 @@ func TestManagementRouteGates(t *testing.T) {
 			// Correcting a beneficiary is the operator's daily work and stays open; only
 			// the reconcile - which discards every correction anyone ever made - is gated.
 			name:       "beneficiary reconcile is admin only",
-			register:   RegisterAccountRoutes,
+			register:   registerAccountRoutes,
 			method:     http.MethodPost,
 			path:       "/accounts/00000000-0000-0000-0000-000000000000/beneficiaries/reconcile",
 			refused:    []string{data.RoleUser},

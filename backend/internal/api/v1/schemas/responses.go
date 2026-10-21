@@ -274,6 +274,25 @@ type IssuancePassengerSingleResponse struct {
 }
 
 // SaleListResponse is the GET /sales route response
+// SalePageResponse is one window of the clients view, for GET /sales/page.
+type SalePageResponse struct {
+	Sales []SaleResponse `json:"sales"`
+	// Total is how many sales the filter matches, which is how long the panel's list is.
+	Total  int64 `json:"total"`
+	Offset int   `json:"offset"`
+	Limit  int   `json:"limit"`
+	// OwedCents is what the client owes over every sale in the filter, when the filter is
+	// one client; zero otherwise.
+	OwedCents int `json:"owed_cents"`
+}
+
+// SalePageSingleResponse wraps a window of sales in the standard envelope.
+type SalePageSingleResponse struct {
+	Success bool             `json:"success" example:"true"`
+	Message string           `json:"message" example:"Vendas listadas com sucesso"`
+	Data    SalePageResponse `json:"data"`
+}
+
 type SaleListResponse struct {
 	Success bool           `json:"success" example:"true"`
 	Message string         `json:"message" example:"Vendas listadas com sucesso"`

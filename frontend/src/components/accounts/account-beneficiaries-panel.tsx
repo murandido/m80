@@ -54,6 +54,7 @@ export function AccountBeneficiariesPanel({
     if (!isOpen) return
     let cancelled = false
 
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the loading flag belongs to the fetch this effect starts
     setIsLoading(true)
     getAccountBeneficiariesAction(account.id).then((result) => {
       if (cancelled) return

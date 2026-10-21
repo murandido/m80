@@ -3,8 +3,8 @@ package handlers
 import (
 	"time"
 
+	"github.com/murandido/m-80-backend/carriers/azul"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
-	"github.com/murandido/m-80-backend/internal/azul"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/statement"
 )
@@ -118,13 +118,9 @@ func pointsMismatch(group schemas.AzulStatementGroup, totals map[string]int, res
 	total := totals[group.Locator+"|"+group.Kind]
 	switch group.Kind {
 	case data.AzulLineRedemption:
-		return -total != booking.Issuance.Points
+		return -total != booking.RedeemedPoints()
 	case data.AzulLineRefund:
-		refunded := 0
-		if booking.Issuance.RefundedPoints != nil {
-			refunded = *booking.Issuance.RefundedPoints
-		}
-		return total != refunded
+		return total != booking.RefundedPoints()
 	default:
 		return false
 	}

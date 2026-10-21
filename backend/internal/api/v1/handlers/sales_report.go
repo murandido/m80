@@ -183,6 +183,20 @@ func buildSupplierReport(
 					Amount:      supplierreport.FormatBRL(amount),
 					Refund:      line.Kind == "refund",
 				})
+
+				// The fee is what the supplier is paid for the CPFs the cancellation burned.
+				// It follows its credit as a line of its own so the document shows why the
+				// credit is smaller, and it adds to the amount only - it is neither miles
+				// nor a tax.
+				if line.CancelledCPFFee != nil && *line.CancelledCPFFee > 0 {
+					totals.AmountCents += *line.CancelledCPFFee
+					section.Lines = append(section.Lines, supplierreport.Line{
+						Locator: line.ProgramLocator,
+						Date:    line.Date.In(supplierReportLocation()).Format("02/01/2006"),
+						Amount:  supplierreport.FormatBRL(*line.CancelledCPFFee),
+						CPFFee:  true,
+					})
+				}
 			}
 
 			// An account whose every line was skipped contributes no section - but `missing`

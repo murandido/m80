@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/murandido/m-80-backend/internal/azul"
+	"github.com/murandido/m-80-backend/carriers/azul"
 	"github.com/murandido/m-80-backend/internal/data"
 	"gorm.io/gorm"
 )
@@ -22,6 +22,11 @@ const windowDays = 31
 // died early) and just retried on the next tick.
 const failureThreshold = 5
 
+// ErrCustomerKeyRefused is the balance read answering 404: Azul no longer recognises the stored
+// customerKey. Distinct from a 404 anywhere else (the statement) because only this one parks the
+// account and is worth a login.
+var ErrCustomerKeyRefused = errors.New("azulsync: Azul no longer recognises the customerKey")
+
 // Reader is the slice of the azul client this package needs. An interface so the round can be
 // tested against a fake without a browser or the live edge; internal/azul.Client satisfies it.
 type Reader interface {
@@ -34,7 +39,8 @@ type Reader interface {
 // written regardless of the return.
 //
 // The shape of a round:
-//  1. read the balance (the absolute truth); fill real_balance_points from it
+//  1. read the balance (the absolute truth); fill real_balance_points from it. An account that
+//     does not track its statement stops here
 //  2. if the balance has not moved since last time, there is nothing new to pull - done
 //  3. otherwise pull only today and yesterday (Brazilian days), read the balance AGAIN (a change
 //     mid-pull means a torn read: postpone), and add the movements not stored yet. If the stored
@@ -57,6 +63,14 @@ func SyncAccount(ctx context.Context, db *gorm.DB, reader Reader, account data.A
 	}
 
 	balance, err := reader.Balance(ctx, customerKey)
+	if errors.Is(err, azul.ErrNotFound) {
+		// Azul no longer knows this customerKey - in practice the holder changed the password and
+		// a new key was issued. No read round can fix that, so it is not counted as a failure.
+		if markErr := recordNeedsReconnect(db, state); markErr != nil {
+			return markErr
+		}
+		return fmt.Errorf("%w: %w", ErrCustomerKeyRefused, err)
+	}
 	if err != nil {
 		return recordFailure(db, state, err)
 	}
@@ -65,6 +79,11 @@ func SyncAccount(ctx context.Context, db *gorm.DB, reader Reader, account data.A
 	// against, and it is trustworthy even on a round where the statement is not pulled.
 	if err := setRealBalance(db, account.ID, balance.Points, now); err != nil {
 		return fmt.Errorf("azulsync: writing real balance: %w", err)
+	}
+
+	// An account that does not track its statement stops here: its balance is all a round is for.
+	if !account.TracksStatement {
+		return recordBalanceOnly(db, state, now)
 	}
 
 	if state.LastBalancePoints != nil && *state.LastBalancePoints == balance.Points {
@@ -309,6 +328,19 @@ func recordSynced(db *gorm.DB, state *data.AzulSyncState, balance int, now time.
 	return upsertState(db, state)
 }
 
+// recordBalanceOnly closes a round on an account that does not track its statement: the balance was
+// read and written to real_balance_points, and nothing else was. LastBalancePoints is deliberately left
+// alone - it is the statement's bookmark, the balance the stored window was last reconciled to.
+// Moving it here would make the first round after "Acompanhar extrato" is switched on see an
+// "unchanged" balance and skip the statement it was switched on to read.
+func recordBalanceOnly(db *gorm.DB, state *data.AzulSyncState, now time.Time) error {
+	state.State = data.AzulSyncOK
+	state.LastSyncedAt = &now
+	state.ConsecutiveFailures = 0
+	state.Detail = nil
+	return upsertState(db, state)
+}
+
 func recordUnchanged(db *gorm.DB, state *data.AzulSyncState, balance int, now time.Time) error {
 	state.State = data.AzulSyncOK
 	state.LastBalancePoints = &balance
@@ -340,6 +372,18 @@ func recordPending(db *gorm.DB, state *data.AzulSyncState) error {
 	return upsertState(db, state)
 }
 
+// recordNeedsReconnect parks the account until a login stores a new customerKey: the ticker skips
+// it from then on (see eligibleAccounts). It clears the failure counter on purpose, like
+// smilessync.MarkNeedsMFA: this is a terminal state with exactly one exit, and letting it pile up
+// toward needs_attention would trade a precise message for a vague one.
+func recordNeedsReconnect(db *gorm.DB, state *data.AzulSyncState) error {
+	state.State = data.AzulSyncNeedsReconnect
+	state.ConsecutiveFailures = 0
+	detail := "a Azul não reconhece mais esta conta (a senha provavelmente mudou)"
+	state.Detail = &detail
+	return upsertState(db, state)
+}
+
 // recordFailure increments the failure counter and raises the account for attention once it has
 // failed failureThreshold rounds in a row. An edge block is spelled out because its fix is a
 // transport one, not a credential one.
@@ -347,7 +391,7 @@ func recordFailure(db *gorm.DB, state *data.AzulSyncState, cause error) error {
 	state.ConsecutiveFailures++
 	detail := cause.Error()
 	if errors.Is(cause, azul.ErrEdgeBlocked) {
-		detail = "bloqueado no edge (edge) - verificar User-Agent: " + detail
+		detail = "bloqueado no edge - verificar User-Agent: " + detail
 	}
 	state.Detail = &detail
 	if state.ConsecutiveFailures >= failureThreshold {

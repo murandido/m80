@@ -16,6 +16,13 @@ interface DateRangeFilterProps {
   to: string
   onChange: (range: { from: string; to: string }) => void
   className?: string
+  // An "every date" choice, for the screens that have one. Picking it applies at once -
+  // there is no range to confirm - and the field says its label while it is active.
+  allOption?: {
+    label: string
+    active: boolean
+    onSelect: () => void
+  }
 }
 
 interface Draft {
@@ -60,7 +67,13 @@ function presets(today: Date): { label: string; from: Date; to: Date }[] {
 // Each change here refetches the screen behind it, so clicking through a calendar should
 // not fire one request per click - and closing without confirming is how an operator backs
 // out of a range they did not mean.
-export function DateRangeFilter({ from, to, onChange, className }: DateRangeFilterProps) {
+export function DateRangeFilter({
+  from,
+  to,
+  onChange,
+  className,
+  allOption,
+}: DateRangeFilterProps) {
   const [open, setOpen] = useState(false)
   const [draft, setDraft] = useState<Draft>({ from, to })
   const [month, setMonth] = useState<Date>(() => parseYmd(from) ?? startOfToday())
@@ -118,11 +131,13 @@ export function DateRangeFilter({ from, to, onChange, className }: DateRangeFilt
           variant="outline"
           className={cn(
             "min-w-44 justify-between gap-2 bg-white px-3 font-normal",
-            !from && !to && "text-muted-foreground",
+            !from && !to && !allOption?.active && "text-muted-foreground",
             className,
           )}
         >
-          <span className="truncate">{dateRangeLabel(from, to)}</span>
+          <span className="truncate">
+            {allOption?.active ? allOption.label : dateRangeLabel(from, to)}
+          </span>
           <CalendarDays className="h-4 w-4 shrink-0 text-slate-900" />
         </Button>
       </PopoverTrigger>
@@ -130,6 +145,24 @@ export function DateRangeFilter({ from, to, onChange, className }: DateRangeFilt
         {/* One scrollable row: the presets would otherwise widen the popover past the
             calendar underneath. */}
         <div className="-mx-3 mb-3 flex gap-2 overflow-x-auto px-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          {allOption && (
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => {
+                setOpen(false)
+                if (!allOption.active) allOption.onSelect()
+              }}
+              className={cn(
+                "h-8 shrink-0 rounded-lg px-3 font-normal",
+                allOption.active
+                  ? "bg-slate-800 text-white hover:bg-slate-700 hover:text-white"
+                  : "bg-neutral-100 hover:bg-neutral-200",
+              )}
+            >
+              {allOption.label}
+            </Button>
+          )}
           {presets(startOfToday()).map((preset) => (
             <Button
               key={preset.label}

@@ -24,11 +24,12 @@ import (
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      403  {object}  schemas.ErrorResponse "Requer admin"
 // @Failure      404  {object}  schemas.ErrorResponse "Conta não encontrada"
-// @Failure      422  {object}  schemas.ErrorResponse "Conta sem estoque próprio"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao carregar o estado"
 // @Router       /accounts/{id}/azul-statement/status [get]
 func (h *StatementHandler) AzulConnectStatus(w http.ResponseWriter, r *http.Request) {
-	account, ok := h.statementAccount(w, r)
+	// Any account: the badge carries the balance, which is read for every connected account,
+	// not only the ones tracking their statement.
+	account, ok := h.loadAccount(w, r)
 	if !ok {
 		return
 	}

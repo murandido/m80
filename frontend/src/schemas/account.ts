@@ -99,6 +99,9 @@ export const accountSchema = z.object({
   // When the statement sync last succeeded, for the card's "atualizado há…". Null until
   // the first successful sync.
   azul_last_synced_at: z.string().nullish(),
+  // The sync's current state, so the card can ask for a reconnect. A plain string rather than
+  // the enum: a state this bundle does not know yet must not fail the whole account list.
+  azul_sync_state: z.string().nullish(),
   // The Smiles twins: whether a session is stored for the account, and when its sync last
   // succeeded. Defaulted the same way, for the same reason.
   smiles_connected: z
@@ -106,6 +109,14 @@ export const accountSchema = z.object({
     .nullish()
     .transform((value) => value ?? false),
   smiles_last_synced_at: z.string().nullish(),
+  // The LATAM twins: whether a session is stored (the balance is being read), when it was last
+  // read, and the read's state - a plain string for the same reason as azul_sync_state.
+  latam_connected: z
+    .boolean()
+    .nullish()
+    .transform((value) => value ?? false),
+  latam_last_synced_at: z.string().nullish(),
+  latam_sync_state: z.string().nullish(),
   cpf_usage: cpfUsageSchema.nullish(),
   complete: z.boolean(),
   created_at: z.string(),

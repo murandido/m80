@@ -93,6 +93,31 @@ func TestPointsInventoryRoutesAreAdminOnlyIncludingReads(t *testing.T) {
 			method:   http.MethodDelete,
 			path:     "/accounts/00000000-0000-0000-0000-000000000000/smiles-connect",
 		},
+		// The LATAM connect links a real airline account; the callback stores its session.
+		{
+			name:     "starting a LATAM connect refuses a plain user",
+			register: registerLatamRoutes,
+			method:   http.MethodPost,
+			path:     "/accounts/00000000-0000-0000-0000-000000000000/latam-connect",
+		},
+		{
+			name:     "finishing a LATAM connect refuses a plain user",
+			register: registerLatamRoutes,
+			method:   http.MethodPost,
+			path:     "/latam-connect/callback",
+		},
+		{
+			name:     "disconnecting a LATAM account refuses a plain user",
+			register: registerLatamRoutes,
+			method:   http.MethodDelete,
+			path:     "/accounts/00000000-0000-0000-0000-000000000000/latam-connect",
+		},
+		{
+			name:     "the LATAM badge refuses a plain user",
+			register: registerLatamRoutes,
+			method:   http.MethodGet,
+			path:     "/accounts/00000000-0000-0000-0000-000000000000/latam-status",
+		},
 		{
 			name:     "the Smiles statement refuses a plain user",
 			register: registerSmilesRoutes,
@@ -131,4 +156,10 @@ func TestPointsInventoryRoutesAreAdminOnlyIncludingReads(t *testing.T) {
 // session guard: these cases never reach a handler, because the gate is what is under test.
 func registerSmilesRoutes(r chi.Router, db *gorm.DB) {
 	RegisterSmilesStatementRoutes(r, db, nil)
+}
+
+// registerLatamRoutes adapts the LATAM registration to the table's signature, with no guard for
+// the same reason as registerSmilesRoutes.
+func registerLatamRoutes(r chi.Router, db *gorm.DB) {
+	RegisterLatamRoutes(r, db, nil)
 }

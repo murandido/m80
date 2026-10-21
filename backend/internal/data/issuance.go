@@ -109,18 +109,25 @@ type Issuance struct {
 	// before the row existed, so Traveos may be searched for it but must never be
 	// asked to issue it - see fetchOrImport. The importer goes away after the
 	// migration; this column does not, because the rows it describes stay.
-	Imported           bool                `gorm:"not null;default:false" json:"imported"`
-	Flights            []IssuanceFlight    `gorm:"foreignKey:IssuanceID;references:ID" json:"flights,omitempty"`
-	Passengers         []IssuancePassenger `gorm:"foreignKey:IssuanceID;references:ID" json:"passengers,omitempty"`
-	AdditionalServices datatypes.JSON      `gorm:"column:additional_services;type:jsonb" json:"additional_services"`
-	Observation        *string             `gorm:"type:text" json:"observation"`
-	Active             bool                `gorm:"not null;default:true" json:"active"`
-	CancelledAt        *time.Time          `gorm:"column:cancelled_at" json:"cancelled_at"`
-	CancelledByID      *string             `gorm:"column:cancelled_by_id;type:uuid" json:"cancelled_by_id"`
-	CancelledBy        *User               `gorm:"foreignKey:CancelledByID;references:ID" json:"cancelled_by,omitempty"`
-	RefundedPoints     *int                `gorm:"column:refunded_points" json:"refunded_points"`
-	RefundedTaxes      *int                `gorm:"column:refunded_taxes" json:"refunded_taxes"`
-	CancellationFee    *int                `gorm:"column:cancellation_fee" json:"cancellation_fee"`
+	Imported   bool                `gorm:"not null;default:false" json:"imported"`
+	Flights    []IssuanceFlight    `gorm:"foreignKey:IssuanceID;references:ID" json:"flights,omitempty"`
+	Passengers []IssuancePassenger `gorm:"foreignKey:IssuanceID;references:ID" json:"passengers,omitempty"`
+	// Adjustments are the alterations made to the ticket after it was issued. Points and
+	// Taxes above stay what the booking cost when it was made.
+	Adjustments        []IssuanceAdjustment `gorm:"foreignKey:IssuanceID;references:ID" json:"adjustments,omitempty"`
+	AdditionalServices datatypes.JSON       `gorm:"column:additional_services;type:jsonb" json:"additional_services"`
+	Observation        *string              `gorm:"type:text" json:"observation"`
+	Active             bool                 `gorm:"not null;default:true" json:"active"`
+	CancelledAt        *time.Time           `gorm:"column:cancelled_at" json:"cancelled_at"`
+	CancelledByID      *string              `gorm:"column:cancelled_by_id;type:uuid" json:"cancelled_by_id"`
+	CancelledBy        *User                `gorm:"foreignKey:CancelledByID;references:ID" json:"cancelled_by,omitempty"`
+	RefundedPoints     *int                 `gorm:"column:refunded_points" json:"refunded_points"`
+	RefundedTaxes      *int                 `gorm:"column:refunded_taxes" json:"refunded_taxes"`
+	CancellationFee    *int                 `gorm:"column:cancellation_fee" json:"cancellation_fee"`
+	// CancelledCPFFee is what the supplier charges, in centavos, for the CPFs a cancelled
+	// booking burned on their account - the miles come back, the passengers do not. It is
+	// owed to the supplier, unlike CancellationFee, which the client pays.
+	CancelledCPFFee *int `gorm:"column:cancelled_cpf_fee" json:"cancelled_cpf_fee"`
 	// CancellationOnly marks a row that exists only to carry an estorno. The
 	// spreadsheet importer writes one when a negative row names a booking the panel
 	// never had: there is nothing to cancel, so it invents an issuance to hang the

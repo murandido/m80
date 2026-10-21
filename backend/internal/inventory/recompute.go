@@ -126,7 +126,8 @@ func loadBatches(db *gorm.DB, accountID string, frozenUntil time.Time) ([]Batch,
 }
 
 // loadIssuanceActivity turns the account's issuances into the timeline of events: a
-// booking taking points, and a refund giving them back.
+// booking taking points, an alteration taking or returning more, and a refund giving them
+// back.
 //
 // Both go into one list because they belong to one timeline - points refunded on the 16th
 // are stock again on the 18th. Sequence keeps same-day events in the order they happened,
@@ -143,7 +144,33 @@ func loadIssuanceActivity(db *gorm.DB, accountID string, frozenUntil time.Time) 
 		return nil, fmt.Errorf("inventory.Recompute: loading issuances: %w", err)
 	}
 
-	events := make([]Event, 0, len(rows))
+	adjustments, err := loadAdjustments(db, accountID)
+	if err != nil {
+		return nil, err
+	}
+	adjustedPoints := map[string]int{}
+	for _, adjustment := range adjustments {
+		adjustedPoints[adjustment.IssuanceID] += adjustment.Points
+	}
+
+	events := make([]Event, 0, len(rows)+len(adjustments))
+
+	// Alterations sit between the bookings and the refunds of a day, so an alteration on
+	// the day of its own booking finds the booking's slices to return to, and a same-day
+	// cancellation finds the alteration's to give back.
+	for k, adjustment := range adjustments {
+		occurredOn := DayOf(adjustment.OccurredOn)
+		if adjustment.Points == 0 || !occurredOn.After(frozenUntil) {
+			continue
+		}
+		events = append(events, Event{
+			IssuanceID:   adjustment.IssuanceID,
+			OccurredOn:   occurredOn,
+			Points:       adjustment.Points,
+			Sequence:     len(rows) + k,
+			AdjustmentID: adjustment.ID,
+		})
+	}
 
 	for i, row := range rows {
 		issuedOn := DayOf(row.CreatedAt)
@@ -160,7 +187,7 @@ func loadIssuanceActivity(db *gorm.DB, accountID string, frozenUntil time.Time) 
 			})
 		}
 
-		returned := refundedPoints(row)
+		returned := refundedPoints(row, adjustedPoints[row.ID])
 		if returned <= 0 {
 			continue
 		}
@@ -172,13 +199,16 @@ func loadIssuanceActivity(db *gorm.DB, accountID string, frozenUntil time.Time) 
 			returnedOn = DayOf(*row.CancelledAt)
 		}
 		if returnedOn.After(frozenUntil) {
-			// len(rows) offsets the refund past every booking of the same day, so a
-			// same-day cancel-and-rebook takes the points back before spending them.
+			// The offset puts the refund past every booking and alteration of the same
+			// day, so a same-day cancel-and-rebook takes the points back before spending
+			// them.
 			events = append(events, Event{
 				IssuanceID: row.ID,
 				OccurredOn: returnedOn,
 				Points:     -returned,
-				Sequence:   len(rows) + i,
+				Sequence:   len(rows) + len(adjustments) + i,
+				// Never took points out here, so there is no slice of its own to reverse.
+				WithoutBooking: row.CancellationOnly,
 			})
 		}
 	}
@@ -191,14 +221,33 @@ func loadIssuanceActivity(db *gorm.DB, accountID string, frozenUntil time.Time) 
 // An explicit refunded_points wins, because somebody typed what the airline actually
 // returned. Without one, a cancelled booking is taken to have returned all of it - which
 // is what the spreadsheet did when it zeroed the row and marked it CANCELADA.
-func refundedPoints(issuance data.Issuance) int {
+//
+// adjustedPoints is the net of the issuance's alterations. A full cancellation gives those
+// back too: the ticket being cancelled is the altered one.
+func refundedPoints(issuance data.Issuance, adjustedPoints int) int {
 	if issuance.RefundedPoints != nil {
 		return *issuance.RefundedPoints
 	}
 	if issuance.CancelledAt != nil && !issuance.CancellationOnly {
-		return issuance.Points
+		return issuance.Points + adjustedPoints
 	}
 	return 0
+}
+
+// loadAdjustments reads the alterations of the account's live issuances, in the order they
+// happened. The soft-delete scope drops a removed alteration, and the join drops the ones
+// hanging off a deleted issuance, which the issuance query leaves out the same way.
+func loadAdjustments(db *gorm.DB, accountID string) ([]data.IssuanceAdjustment, error) {
+	var rows []data.IssuanceAdjustment
+	err := db.Joins("JOIN issuances ON issuances.id = issuance_adjustments.issuance_id").
+		Where("issuances.account_id = ? AND issuances.deleted_at IS NULL", accountID).
+		Order("issuance_adjustments.occurred_on ASC").
+		Order("issuance_adjustments.created_at ASC").
+		Find(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("inventory.Recompute: loading adjustments: %w", err)
+	}
+	return rows, nil
 }
 
 // loadFrozenAllocations reads the slices a closed period settled, keyed by issuance, so a
@@ -225,11 +274,12 @@ func loadFrozenAllocations(db *gorm.DB, accountID string, frozenUntil time.Time)
 			batchID = *row.BatchID
 		}
 		byIssuance[row.IssuanceID] = append(byIssuance[row.IssuanceID], Allocation{
-			IssuanceID: row.IssuanceID,
-			BatchID:    batchID,
-			OccurredOn: row.OccurredOn,
-			Points:     row.Points,
-			CostCents:  row.CostCents,
+			IssuanceID:   row.IssuanceID,
+			BatchID:      batchID,
+			OccurredOn:   row.OccurredOn,
+			Points:       row.Points,
+			CostCents:    row.CostCents,
+			AdjustmentID: adjustmentIDOf(row.AdjustmentID),
 		})
 	}
 	return byIssuance, nil
@@ -265,6 +315,10 @@ func persist(db *gorm.DB, accountID string, frozenUntil time.Time, allocations [
 				batchID := allocation.BatchID
 				row.BatchID = &batchID
 			}
+			if allocation.AdjustmentID != "" {
+				adjustmentID := allocation.AdjustmentID
+				row.AdjustmentID = &adjustmentID
+			}
 			rows = append(rows, row)
 		}
 
@@ -283,4 +337,12 @@ func persist(db *gorm.DB, accountID string, frozenUntil time.Time, allocations [
 // routes has to ask the question exactly the way the costing answers it.
 func DayOf(moment time.Time) time.Time {
 	return time.Date(moment.Year(), moment.Month(), moment.Day(), 0, 0, 0, 0, time.UTC)
+}
+
+// adjustmentIDOf reads the nullable column the way Allocation carries it.
+func adjustmentIDOf(column *string) string {
+	if column == nil {
+		return ""
+	}
+	return *column
 }

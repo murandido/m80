@@ -70,4 +70,11 @@ var (
 	// into issuance_flights.departure_at, which is NOT NULL. A leg with no
 	// departure time is not a flight anyone can travel on.
 	ErrFlightMissingDeparture = errors.New("traveos returned a flight with no departure time")
+
+	// The alteration rules (adjustment.go). A cancelled issuance takes none: its refund
+	// was worked out against the ticket as it stood.
+	ErrAdjustmentOnCancelledIssuance = errors.New("a cancelled issuance cannot be altered")
+	ErrAdjustmentEmpty               = errors.New("an alteration needs points or taxes")
+	ErrAdjustmentReasonRequired      = errors.New("an alteration needs a reason")
+	ErrAdjustmentNegativeRate        = errors.New("the value of the thousand cannot be negative")
 )

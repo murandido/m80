@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/murandido/m-80-backend/internal/azul"
+	"github.com/murandido/m-80-backend/carriers/azul"
 	"github.com/murandido/m-80-backend/internal/data"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -309,6 +309,58 @@ func TestSyncAccount_UnchangedSkipsTheStatement(t *testing.T) {
 		}
 		if stateOf(t, tx, account.ID).State != data.AzulSyncOK {
 			t.Error("state should stay ok on an unchanged balance")
+		}
+	})
+}
+
+// An account that does not track its statement gets its balance and nothing else, and leaves the
+// statement's bookmark alone so switching tracking on later pulls the whole month.
+func TestSyncAccount_BalanceOnlyWhenNotTracked(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		account := seedAccount(t, tx, "cust-key-1")
+		account.TracksStatement = false
+		now := day("2026-09-13")
+		reader := &fakeReader{
+			balances: []azul.Balance{{Points: 150000}},
+			txs: []azul.Transaction{
+				{Date: day("2026-09-10"), OccurredAt: at("2026-09-10T15:00:00"), TypeCode: "AN", Points: -20000, DayBalance: 150000},
+			},
+		}
+
+		if err := SyncAccount(context.Background(), tx, reader, account, now); err != nil {
+			t.Fatalf("SyncAccount: %v", err)
+		}
+		if reader.txCalls != 0 {
+			t.Errorf("statement pulled %d times, want 0 (not tracked)", reader.txCalls)
+		}
+		if len(linesOf(t, tx, account.ID)) != 0 {
+			t.Error("a window was stored on an account that does not track its statement")
+		}
+		state := stateOf(t, tx, account.ID)
+		if state.State != data.AzulSyncOK || state.LastSyncedAt == nil {
+			t.Errorf("state = %q synced=%v, want ok with a sync time", state.State, state.LastSyncedAt)
+		}
+		if state.LastBalancePoints != nil {
+			t.Errorf("last balance = %v, want it untouched (nil) so tracking later pulls the month", *state.LastBalancePoints)
+		}
+		var acc data.Account
+		if err := tx.First(&acc, "id = ?", account.ID).Error; err != nil {
+			t.Fatalf("reloading account: %v", err)
+		}
+		if acc.RealBalancePoints == nil || *acc.RealBalancePoints != 150000 {
+			t.Errorf("real balance = %v, want 150000", acc.RealBalancePoints)
+		}
+
+		// Tracking switched on: the next round pulls and stores the month.
+		account.TracksStatement = true
+		if err := SyncAccount(context.Background(), tx, reader, account, now); err != nil {
+			t.Fatalf("SyncAccount after tracking: %v", err)
+		}
+		if reader.txCalls == 0 {
+			t.Error("the statement was not pulled after tracking was switched on")
+		}
+		if len(linesOf(t, tx, account.ID)) != 1 {
+			t.Errorf("stored %d lines after tracking, want 1", len(linesOf(t, tx, account.ID)))
 		}
 	})
 }

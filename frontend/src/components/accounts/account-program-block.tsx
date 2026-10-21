@@ -18,6 +18,7 @@ import { DeleteOverlay } from "./delete-overlay"
 import { EditAccountPanel } from "./edit-account-panel"
 import { AzulAccountControls } from "./azul-account-controls"
 import { SmilesAccountControls } from "./smiles-account-controls"
+import { LatamAccountControls } from "./latam-account-controls"
 
 interface AccountProgramBlockProps {
   account: Account
@@ -164,6 +165,7 @@ export function AccountProgramBlock({
         {/* Each strip renders only for its own programme, so at most one appears. */}
         <AzulAccountControls account={account} />
         <SmilesAccountControls account={account} />
+        <LatamAccountControls account={account} />
 
         <DeleteOverlay
           accountName={deleteLabel}

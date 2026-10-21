@@ -6,10 +6,12 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "typecheck": "next typegen && tsc --noEmit"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
+    "@tanstack/react-virtual": "3.14.13",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
@@ -17,7 +19,7 @@
     "date-fns": "^4.4.0",
     "input-otp": "^1.5.0",
     "lucide-react": "^0.575.0",
-    "next": "16.1.6",
+    "next": "16.4.1",
     "qrcode.react": "^4.2.0",
     "radix-ui": "^1.4.3",
     "react": "19.2.3",
@@ -37,7 +39,7 @@
     "@types/react-dom": "^19",
     "babel-plugin-react-compiler": "1.0.0",
     "eslint": "^9",
-    "eslint-config-next": "16.1.6",
+    "eslint-config-next": "16.4.1",
     "prettier": "^3.8.1",
     "prettier-plugin-tailwindcss": "^0.7.2",
     "shadcn": "^3.8.5",

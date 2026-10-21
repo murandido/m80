@@ -279,11 +279,14 @@ func (l *lookups) loadAccounts(
 func (l *lookups) loadAccountByID(db *gorm.DB, accountID string) (resolvedAccount, error) {
 	var account data.Account
 	err := db.Preload("Holder").Preload("Nicknames").First(&account, "id = ?", accountID).Error
-	if err != nil {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		// A mapping pointing at an account that is gone is treated as no mapping at
 		// all: the row falls back to the lookup and, failing that, is asked about
 		// again. Better than refusing the whole preview over a stale id.
 		return resolvedAccount{}, nil
+	}
+	if err != nil {
+		return resolvedAccount{}, err
 	}
 	return resolvedAccount{id: account.ID, name: accountDisplayName(account)}, nil
 }

@@ -110,6 +110,16 @@ pagar" is the only thing set large. Everything else is deliberately quiet.
     padding: 1px 4px;
   }
 
+  .cpfFeeTag {
+    font-size: 7.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    background: #fef3c7;
+    border-radius: 3px;
+    padding: 1px 4px;
+  }
+
   .totals > span {
     padding-top: 6px;
     font-weight: 700;
@@ -270,7 +280,7 @@ pagar" is the only thing set large. Everything else is deliberately quiet.
 
     {{ range .Lines }}
     <div class="line{{ if .Refund }} refund{{ end }}">
-      <span class="colLocator">{{ .Locator }}{{ if .Refund }} <span class="refundTag">estorno</span>{{ end }}</span>
+      <span class="colLocator">{{ .Locator }}{{ if .Refund }} <span class="refundTag">estorno</span>{{ end }}{{ if .CPFFee }} <span class="cpfFeeTag">taxa CPF</span>{{ end }}</span>
       <span class="colDate">{{ .Date }}</span>
       <span class="colRoute">{{ .Origin }}{{ if .Destination }} → {{ .Destination }}{{ end }}</span>
       <span class="colPoints">{{ .Points }}</span>

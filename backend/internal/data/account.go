@@ -41,12 +41,18 @@ type Account struct {
 	// rewritten on each sync round, and keeping a stale one costs the operator a new code.
 	// Encrypted at rest by the same hooks as Password, and json:"-" because nobody reads it
 	// off the panel. Nil until the account is connected. See migration 63 and internal/smiles.
-	SmilesRefreshToken *string           `gorm:"column:smiles_refresh_token" json:"-"`
-	HolderID           *string           `gorm:"column:holder_id;type:uuid" json:"holder_id"`
-	Holder             *Person           `gorm:"foreignKey:HolderID;references:ID" json:"holder,omitempty"`
-	AdministratorID    *string           `gorm:"column:administrator_id;type:uuid" json:"administrator_id"`
-	Administrator      *Person           `gorm:"foreignKey:AdministratorID;references:ID" json:"administrator,omitempty"`
-	Nicknames          []AccountNickname `gorm:"foreignKey:AccountID;references:ID" json:"nicknames,omitempty"`
+	SmilesRefreshToken *string `gorm:"column:smiles_refresh_token" json:"-"`
+	// LatamRefreshToken is the session of a linked LATAM account, the twin of
+	// SmilesRefreshToken: a live credential that renews the access without a new login, which
+	// Auth0 may rotate on a renewal - so it is rewritten whenever a new one comes back. Encrypted
+	// at rest by the same hooks as Password, and json:"-" because nobody reads it off the panel.
+	// Nil until the account is linked. See migration 81 and internal/latam/account.go.
+	LatamRefreshToken *string           `gorm:"column:latam_refresh_token" json:"-"`
+	HolderID          *string           `gorm:"column:holder_id;type:uuid" json:"holder_id"`
+	Holder            *Person           `gorm:"foreignKey:HolderID;references:ID" json:"holder,omitempty"`
+	AdministratorID   *string           `gorm:"column:administrator_id;type:uuid" json:"administrator_id"`
+	Administrator     *Person           `gorm:"foreignKey:AdministratorID;references:ID" json:"administrator,omitempty"`
+	Nicknames         []AccountNickname `gorm:"foreignKey:AccountID;references:ID" json:"nicknames,omitempty"`
 	// Category decides whether the program's beneficiary cap applies at all.
 	// "injunction" is an account under a court order suspending the cap, and
 	// "unidentified" is one nobody has classified yet - only "standard" is counted.
@@ -67,8 +73,9 @@ type Account struct {
 	// today: the category answers whether the beneficiary cap applies, this one answers
 	// who paid for the points. See migration 48.
 	OwnsPointInventory bool `gorm:"column:owns_point_inventory;not null;default:false" json:"owns_point_inventory"`
-	// TracksStatement says the account's statement is read from the airline: it governs
-	// connecting the account, the periodic sync and the statement screens.
+	// TracksStatement says the account's statement is read from the airline: it governs whether
+	// the periodic sync pulls the statement, and the statement screens. Connecting the account
+	// and reading its balance do NOT depend on it - every connected account has its balance read.
 	//
 	// Deliberately NOT the same question as OwnsPointInventory, even though one rule used to
 	// answer both. That one asks whether these points are ours to price; this one asks whether
@@ -135,6 +142,13 @@ func (a *Account) BeforeSave(tx *gorm.DB) error {
 		}
 		a.SmilesRefreshToken = &encrypted
 	}
+	if a.LatamRefreshToken != nil && !strings.HasPrefix(*a.LatamRefreshToken, "enc:") {
+		encrypted, err := utils.Encrypt(*a.LatamRefreshToken)
+		if err != nil {
+			return err
+		}
+		a.LatamRefreshToken = &encrypted
+	}
 	return nil
 }
 
@@ -159,6 +173,13 @@ func (a *Account) AfterFind(tx *gorm.DB) error {
 			return err
 		}
 		a.SmilesRefreshToken = &decrypted
+	}
+	if a.LatamRefreshToken != nil {
+		decrypted, err := utils.Decrypt(*a.LatamRefreshToken)
+		if err != nil {
+			return err
+		}
+		a.LatamRefreshToken = &decrypted
 	}
 	return nil
 }

@@ -381,3 +381,103 @@ func TestAllocateRewindsOnlyToTheBatchThatWasRefunded(t *testing.T) {
 		t.Fatalf("b = %+v, want its newer slice left alone", b)
 	}
 }
+
+// A refund for a booking the panel never had goes back to the batch the queue is on that
+// day - here the oldest, since nothing was spent yet - and the next booking spends it at
+// that batch's rate instead of running short.
+func TestAllocateReturnsARefundWithoutBookingToTheBatchAtTheHead(t *testing.T) {
+	t.Parallel()
+
+	// R$ 14,21 the thousand, like the opening balance the Marlon refunds landed on.
+	opening := Batch{ID: "opening", AcquiredOn: day("2026-09-02"), Points: 9617, CostCents: 13666}
+	inter := Batch{ID: "inter", AcquiredOn: day("2026-09-04"), Points: 675000, CostCents: 978752}
+
+	events := []Event{
+		{IssuanceID: "refund", OccurredOn: day("2026-09-04"), Points: -53000, Sequence: 1, WithoutBooking: true},
+		{IssuanceID: "booking", OccurredOn: day("2026-09-08"), Points: 62617, Sequence: 2},
+	}
+
+	allocations := Allocate([]Batch{opening, inter}, events, nil)
+
+	refund := allocationsFor(allocations, "refund")
+	if len(refund) != 1 || refund[0].BatchID != "opening" || refund[0].Points != -53000 {
+		t.Fatalf("refund = %+v, want -53000 points back on the opening batch", refund)
+	}
+	if refund[0].CostCents != -75314 {
+		t.Errorf("refund gave back %d cents, want -75314 (53000 at the opening rate)", refund[0].CostCents)
+	}
+
+	booking := allocationsFor(allocations, "booking")
+	if len(booking) != 1 || booking[0].BatchID != "opening" || booking[0].Points != 62617 {
+		t.Fatalf("booking = %+v, want all 62617 points from the opening batch", booking)
+	}
+	// The booking pays for the opening batch and the refunded points alike.
+	if booking[0].CostCents != 13666+75314 {
+		t.Errorf("booking cost %d cents, want %d", booking[0].CostCents, 13666+75314)
+	}
+}
+
+// Mid-month the queue is past its oldest batch, and the refund joins the one in use rather
+// than reviving a batch that was already spent.
+func TestAllocateReturnsARefundWithoutBookingToTheBatchInUse(t *testing.T) {
+	t.Parallel()
+
+	older := Batch{ID: "older", AcquiredOn: day("2026-09-01"), Points: 100000, CostCents: 100000}
+	current := Batch{ID: "current", AcquiredOn: day("2026-09-05"), Points: 100000, CostCents: 200000}
+
+	events := []Event{
+		{IssuanceID: "a", OccurredOn: day("2026-09-10"), Points: 150000, Sequence: 1},
+		{IssuanceID: "refund", OccurredOn: day("2026-09-11"), Points: -20000, Sequence: 2, WithoutBooking: true},
+	}
+
+	refund := allocationsFor(Allocate([]Batch{older, current}, events, nil), "refund")
+	if len(refund) != 1 || refund[0].BatchID != "current" || refund[0].CostCents != -40000 {
+		t.Fatalf("refund = %+v, want -20000 points back on current at -40000 cents", refund)
+	}
+}
+
+// Once every batch is spent the newest one takes the points back, and the shortfall a later
+// booking would have had shrinks by exactly that much.
+func TestAllocateReturnsARefundWithoutBookingToTheNewestBatchWhenAllAreSpent(t *testing.T) {
+	t.Parallel()
+
+	only := Batch{ID: "only", AcquiredOn: day("2026-09-01"), Points: 100000, CostCents: 150000}
+
+	events := []Event{
+		{IssuanceID: "a", OccurredOn: day("2026-09-10"), Points: 100000, Sequence: 1},
+		{IssuanceID: "refund", OccurredOn: day("2026-09-11"), Points: -30000, Sequence: 2, WithoutBooking: true},
+		{IssuanceID: "b", OccurredOn: day("2026-09-12"), Points: 40000, Sequence: 3},
+	}
+
+	allocations := Allocate([]Batch{only}, events, nil)
+
+	b := allocationsFor(allocations, "b")
+	if len(b) != 2 || b[0].BatchID != "only" || b[0].Points != 30000 || !b[1].Pending() || b[1].Points != 10000 {
+		t.Fatalf("b = %+v, want 30000 from the batch and 10000 pending", b)
+	}
+	// The batch is spent again, so its slices net to its own cost exactly.
+	if got := totalCost(allocations); got != 150000 {
+		t.Errorf("batch charged %d cents in total, want its 150000", got)
+	}
+}
+
+// With no batch at all there is nowhere to return to: the refund stays pending and nets
+// against the shortfall.
+func TestAllocateLeavesARefundWithoutBookingPendingWithNoBatches(t *testing.T) {
+	t.Parallel()
+
+	events := []Event{
+		{IssuanceID: "a", OccurredOn: day("2026-09-10"), Points: 50000, Sequence: 1},
+		{IssuanceID: "refund", OccurredOn: day("2026-09-11"), Points: -20000, Sequence: 2, WithoutBooking: true},
+	}
+
+	allocations := Allocate(nil, events, nil)
+
+	refund := allocationsFor(allocations, "refund")
+	if len(refund) != 1 || !refund[0].Pending() || refund[0].Points != -20000 || refund[0].CostCents != 0 {
+		t.Fatalf("refund = %+v, want a -20000 pending slice at no cost", refund)
+	}
+	if got := totalPoints(allocations); got != 30000 {
+		t.Errorf("net pending = %d, want 30000", got)
+	}
+}

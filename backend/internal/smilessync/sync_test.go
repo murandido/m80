@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/murandido/m-80-backend/carriers/smiles"
 	"github.com/murandido/m-80-backend/internal/data"
-	"github.com/murandido/m-80-backend/internal/smiles"
 	"gorm.io/gorm"
 )
 
@@ -98,6 +98,27 @@ func TestSyncAccountStoresTheRotatedSessionBeforeReading(t *testing.T) {
 	})
 }
 
+func TestSyncAccountReloadsTheTokenAfterAcquiringTheGuard(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		account := seedAccount(t, tx, "refresh-1")
+		reader := &fakeReader{balances: []int{150000}}
+		guard := NewSessionGuard()
+
+		// Both callers hold the same pre-rotation account snapshot. The second call must
+		// use the token persisted by the first, or Auth0 revokes the token family.
+		if err := SyncAccount(context.Background(), tx, reader, guard, account, syncNow()); err != nil {
+			t.Fatalf("first round: %v", err)
+		}
+		if err := SyncAccount(context.Background(), tx, reader, guard, account, syncNow()); err != nil {
+			t.Fatalf("second round: %v", err)
+		}
+		if len(reader.refreshTokens) != 2 || reader.refreshTokens[0] != "refresh-1" ||
+			reader.refreshTokens[1] != "refresh-1-rotacionado" {
+			t.Fatalf("refresh inputs = %v, want successive tokens", reader.refreshTokens)
+		}
+	})
+}
+
 func TestSyncAccountSkipsTheStatementWhenTheBalanceHasNotMoved(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		account := seedAccount(t, tx, "refresh-1")
@@ -120,6 +141,59 @@ func TestSyncAccountSkipsTheStatementWhenTheBalanceHasNotMoved(t *testing.T) {
 		}
 		if state := stateOf(t, tx, account.ID); state.State != data.SmilesSyncOK {
 			t.Errorf("state = %q, want ok", state.State)
+		}
+	})
+}
+
+// An account that does not track its statement gets its balance (and its rotated session) and
+// nothing else, and leaves the statement's bookmark alone so switching tracking on later pulls the
+// window instead of skipping it as "unchanged".
+func TestSyncAccountReadsOnlyTheBalanceWhenNotTracked(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		account := seedAccount(t, tx, "refresh-1")
+		account.TracksStatement = false
+		reader := &fakeReader{
+			rotatedTo: "refresh-2",
+			balances:  []int{150000},
+			movements: []smiles.Transaction{
+				movement(recentDay(-3), -27400, smiles.CodeRedemption, "Product", "VOO", "IOTFQF"),
+			},
+		}
+
+		if err := SyncAccount(context.Background(), tx, reader, NewSessionGuard(), account, syncNow()); err != nil {
+			t.Fatalf("SyncAccount: %v", err)
+		}
+		if reader.statementCall != 0 {
+			t.Errorf("statement pulled %d times, want 0 (not tracked)", reader.statementCall)
+		}
+		if stored := storedSession(t, tx, account.ID); stored == nil || *stored != "refresh-2" {
+			t.Errorf("stored session = %v, want the rotated token", stored)
+		}
+		state := stateOf(t, tx, account.ID)
+		if state.State != data.SmilesSyncOK || state.LastSyncedAt == nil {
+			t.Errorf("state = %q synced=%v, want ok with a sync time", state.State, state.LastSyncedAt)
+		}
+		if state.LastBalanceMiles != nil {
+			t.Errorf("last balance = %v, want it untouched (nil)", *state.LastBalanceMiles)
+		}
+		var reloaded data.Account
+		if err := tx.First(&reloaded, "id = ?", account.ID).Error; err != nil {
+			t.Fatalf("reloading account: %v", err)
+		}
+		if reloaded.RealBalancePoints == nil || *reloaded.RealBalancePoints != 150000 {
+			t.Errorf("real balance = %v, want 150000", reloaded.RealBalancePoints)
+		}
+
+		// Tracking switched on with the balance unchanged: the window is still pulled.
+		reloaded.TracksStatement = true
+		if err := SyncAccount(context.Background(), tx, reader, NewSessionGuard(), reloaded, syncNow()); err != nil {
+			t.Fatalf("SyncAccount after tracking: %v", err)
+		}
+		if reader.statementCall == 0 {
+			t.Error("the statement was not pulled after tracking was switched on")
+		}
+		if len(linesOf(t, tx, account.ID)) != 1 {
+			t.Errorf("stored %d lines after tracking, want 1", len(linesOf(t, tx, account.ID)))
 		}
 	})
 }

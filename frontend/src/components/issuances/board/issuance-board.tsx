@@ -208,8 +208,19 @@ const IssuanceCard = memo(function IssuanceCard({
             borderColor: palette.tinted ? "rgb(255 255 255 / 0.7)" : "#e2e8f0",
           }}
         >
-          <span className="flex h-6 min-w-6 items-center justify-center rounded-full bg-white px-1.5 text-xs font-medium text-slate-900 tabular-nums">
-            {number}
+          <span className="flex items-center gap-1.5">
+            <span className="flex h-6 min-w-6 items-center justify-center rounded-full bg-white px-1.5 text-xs font-medium text-slate-900 tabular-nums">
+              {number}
+            </span>
+            {/* The ticket changed after it was issued - the panel lists how. */}
+            {row.adjustments.length > 0 && (
+              <span
+                className="rounded-full bg-white px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-amber-800 uppercase"
+                title="Passagem alterada depois da emissão"
+              >
+                alterada
+              </span>
+            )}
           </span>
           <StatusDot row={row} isBusy={isBusy} label={status} />
         </div>

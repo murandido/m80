@@ -25,6 +25,8 @@ import {
   cancelIssuanceAction,
   createIssuanceAction,
   deleteIssuanceAction,
+  deleteIssuanceAdjustmentAction,
+  saveIssuanceAdjustmentAction,
   syncIssuanceWithTraveosAction,
   uncancelIssuanceAction,
   updateIssuanceAction,
@@ -33,6 +35,8 @@ import { lookupIssuanceBookingAction } from "@/actions/issuance-lookup"
 import {
   CancelIssuanceInput,
   Issuance,
+  IssuanceAdjustment,
+  IssuanceAdjustmentInput,
   getIssuancesSchema,
   updateIssuanceSchema,
 } from "@/schemas/issuance"
@@ -42,10 +46,9 @@ import type { Airline } from "@/schemas/airline"
 import type { LoyaltyProgram } from "@/schemas/loyalty-program"
 
 // The state behind the issuances board: the rows, their autosave, the live refresh and the
-// itinerary lookups. Ported from issuances-grid.tsx rather than extracted out of it, on
-// purpose - this board only lives on the ca-mode branch, and every merge from main touches
-// the grid. Editing the grid here would turn each of those merges into a conflict. What is
-// shared (types, reconcileRows, the actions) is imported, not copied.
+// itinerary lookups. Ported from issuances-grid.tsx rather than extracted out of it: the
+// board was built on the ca-mode branch, where every merge from main touched the grid. What
+// is shared (types, reconcileRows, the actions) is imported, not copied.
 //
 // What the grid has and this does not: the cell selection machine, paste capture and the
 // undo stack. A form has native focus, native paste and per-field undo.
@@ -336,6 +339,7 @@ export function useIssuanceBoard({
   useEffect(() => {
     const stored = readStoredDrafts()
     if (stored.length === 0) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- drafts come from localStorage, which only exists after hydration
     setRows((prev) => {
       const known = new Set(prev.map((row) => row.key))
       const missing = stored.filter((row) => !known.has(row.key))
@@ -495,6 +499,7 @@ export function useIssuanceBoard({
     },
     [updateRow, flashSaveStatus, reconcileCreatedRow],
   )
+  // eslint-disable-next-line react-hooks/refs -- latest-ref read by callbacks memoized without persist in their deps
   persistRef.current = persist
 
   // The single entry point for an edit: optimistic, then persisted. Addressed by key, since
@@ -690,6 +695,64 @@ export function useIssuanceBoard({
     [updateRow],
   )
 
+  // An alteration is written through its own endpoint and folded into the row from the
+  // response, not from a refresh: the open panel's row is protected from the refresh (see
+  // reconcileRows), so waiting for the SSE round trip would leave it showing the old list.
+  const saveAdjustment = useCallback(
+    async (
+      key: string,
+      adjustmentId: string | null,
+      data: IssuanceAdjustmentInput,
+    ): Promise<ActionResult> => {
+      const row = rowsRef.current.find((candidate) => candidate.key === key)
+      if (!row || row.isDraft || !row.id)
+        return { error: "Emissão ainda não foi salva." }
+      const result = await saveIssuanceAdjustmentAction(row.id, adjustmentId, data)
+      if ("error" in result)
+        return { error: result.error ?? "Erro ao salvar a alteração." }
+      const saved = result.adjustment
+      setRows((prev) =>
+        prev.map((candidate) => {
+          if (candidate.key !== key) return candidate
+          const others = candidate.adjustments.filter(
+            (adjustment) => adjustment.id !== saved.id,
+          )
+          return {
+            ...candidate,
+            adjustments: [...others, saved].sort(byOccurrence),
+          }
+        }),
+      )
+      return { success: true }
+    },
+    [],
+  )
+
+  const deleteAdjustment = useCallback(
+    async (key: string, adjustmentId: string): Promise<ActionResult> => {
+      const row = rowsRef.current.find((candidate) => candidate.key === key)
+      if (!row || row.isDraft || !row.id)
+        return { error: "Emissão ainda não foi salva." }
+      const result = await deleteIssuanceAdjustmentAction(row.id, adjustmentId)
+      if ("error" in result)
+        return { error: result.error ?? "Erro ao excluir a alteração." }
+      setRows((prev) =>
+        prev.map((candidate) =>
+          candidate.key === key
+            ? {
+                ...candidate,
+                adjustments: candidate.adjustments.filter(
+                  (adjustment) => adjustment.id !== adjustmentId,
+                ),
+              }
+            : candidate,
+        ),
+      )
+      return { success: true }
+    },
+    [],
+  )
+
   // Pulls and writes the itinerary of a saved issuance - the button, and the sweep below.
   const syncRow = useCallback(
     async (key: string): Promise<ActionResult> => {
@@ -701,12 +764,29 @@ export function useIssuanceBoard({
       }
 
       setSyncingRowKeys((prev) => ({ ...prev, [row.key]: true }))
+      // The taxes as they were when the pull started, to tell whether the operator has typed
+      // over them while it ran.
+      const taxesBefore = row.taxes
       try {
         const result = await syncIssuanceWithTraveosAction(row.id)
         if ("error" in result)
           return { error: result.error ?? "Erro ao puxar os dados da cia." }
         const issuance = result.issuance
+        // On an exempt account (Azul's Diamante Unique) the sync works out the redemption fee
+        // and folds it into the taxes (issuance.RecalculateRedemptionFee). The grid picked that
+        // up from the refresh that followed; the board cannot, because the open panel's row is
+        // protected from refreshes - so the response is applied here. The taxes only when the
+        // operator has not typed over them meanwhile: that edit is the newer one.
+        const current = rowsRef.current.find((candidate) => candidate.key === key)
+        const feeFields: Partial<IssuanceRow> = issuance
+          ? {
+              redemption_fee_saved_cents: issuance.redemption_fee_saved_cents ?? null,
+              redemption_fee_manual: issuance.redemption_fee_manual,
+              ...(current?.taxes === taxesBefore ? { taxes: issuance.taxes } : {}),
+            }
+          : {}
         updateRow(row.key, {
+          ...feeFields,
           status: issuance?.status ?? "complete",
           traveos_synced_at:
             issuance?.traveos_synced_at ?? new Date().toISOString(),
@@ -939,8 +1019,16 @@ export function useIssuanceBoard({
     deleteRow,
     cancelRow,
     uncancelRow,
+    saveAdjustment,
+    deleteAdjustment,
     syncRow,
   }
+}
+
+// The order the server lists alterations in: by day, then by when they were typed.
+function byOccurrence(a: IssuanceAdjustment, b: IssuanceAdjustment): number {
+  if (a.occurred_on !== b.occurred_on) return a.occurred_on < b.occurred_on ? -1 : 1
+  return a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0
 }
 
 export type IssuanceBoardState = ReturnType<typeof useIssuanceBoard>

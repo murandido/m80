@@ -33,8 +33,8 @@ interface SmilesAccountControlsProps {
 }
 
 // The Smiles strip on the account card: connect the account, or show the synced balance with
-// "atualizado há…" and a link to the statement page. Rendered only for Smiles accounts that are
-// set to track their statement - every other account has no sync to offer.
+// "atualizado há…" and, on an account that tracks its statement, a link to the statement page.
+// Rendered for every Smiles account.
 //
 // Unlike the Azul strip there is no "conectando" to wait on: every step of a Smiles connect
 // answers within its own request, and what takes time is the operator reading a code off their
@@ -50,9 +50,9 @@ export function SmilesAccountControls({ account }: SmilesAccountControlsProps) {
   const [awaitingFirstSync, setAwaitingFirstSync] = useState(false)
   const pollingSince = useRef<number | null>(null)
 
-  // Tracking, not ownership - the same question the backend asks. See migration 64.
-  const enabled =
-    account.loyalty_program.code === SMILES_PROGRAM_CODE && account.tracks_statement
+  // Every Smiles account can connect: the balance is read for all of them. "Acompanhar extrato"
+  // only decides whether the statement link shows - see SyncAccount on the backend.
+  const enabled = account.loyalty_program.code === SMILES_PROGRAM_CODE
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -197,7 +197,9 @@ export function SmilesAccountControls({ account }: SmilesAccountControlsProps) {
     )
   }
 
-  const balancePoints = status?.last_balance_points ?? account.real_balance_points
+  // real_balance_points first: every round writes it, while last_balance_points only moves on a
+  // round that read the statement, so on an account that does not track it it is empty or stale.
+  const balancePoints = account.real_balance_points ?? status?.last_balance_points
   const balance =
     balancePoints != null ? `${formatPoints(balancePoints)} milhas` : "Saldo ainda não sincronizado"
   const lastSyncedAt = status?.last_synced_at ?? account.smiles_last_synced_at
@@ -213,23 +215,29 @@ export function SmilesAccountControls({ account }: SmilesAccountControlsProps) {
       <div className="flex flex-col">
         <span className="flex items-center gap-1.5 text-sm font-medium text-slate-800">
           {awaitingFirstSync && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-          {awaitingFirstSync ? "Lendo o extrato…" : balance}
+          {awaitingFirstSync
+            ? account.tracks_statement
+              ? "Lendo o extrato…"
+              : "Lendo o saldo…"
+            : balance}
         </span>
         {!awaitingFirstSync && syncedAt && (
           <span className="text-xs text-slate-500">{syncedAt}</span>
         )}
       </div>
-      <Button
-        asChild
-        variant="outline"
-        size="sm"
-        className="border-slate-800 text-slate-800 hover:border-orange-500 hover:bg-orange-500 hover:text-white"
-      >
-        <Link href={`/dashboard/accounts/${account.id}/statement`}>
-          <FileText className="mr-1 h-3.5 w-3.5" />
-          Ver extrato
-        </Link>
-      </Button>
+      {account.tracks_statement && (
+        <Button
+          asChild
+          variant="outline"
+          size="sm"
+          className="border-slate-800 text-slate-800 hover:border-orange-500 hover:bg-orange-500 hover:text-white"
+        >
+          <Link href={`/dashboard/accounts/${account.id}/statement`}>
+            <FileText className="mr-1 h-3.5 w-3.5" />
+            Ver extrato
+          </Link>
+        </Button>
+      )}
       {dialog}
     </div>
   )

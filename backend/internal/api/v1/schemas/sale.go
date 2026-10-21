@@ -16,6 +16,10 @@ type UpdateSaleRequest struct {
 	// Note follows client_id's rules: absent leaves it alone, and an explicit null - or an
 	// empty string - clears it.
 	Note *string `json:"note" validate:"omitempty,max=1000"`
+	// AmountCents sets what the client pays for the sale, in centavos: the total, not the
+	// difference. The server keeps the difference from the computed price, so sending the
+	// computed price back clears it. Refused on a cancelled sale, whose amount is its fee.
+	AmountCents *int `json:"amount_cents" validate:"omitempty,min=0"`
 }
 
 // CreateSalePaymentRequest is the payload for POST /sales/{id}/payments.
@@ -153,6 +157,24 @@ type SaleResponse struct {
 	LoyaltyProgramName  string `json:"loyalty_program_name"`
 	LoyaltyProgramColor string `json:"loyalty_program_color"`
 
+	// CancellationFeeCents is the airline's cancellation fee on a cancelled sale, which the
+	// client pays: it is what BalanceCents still counts against what was paid. Zero on a
+	// live sale.
+	CancellationFeeCents int `json:"cancellation_fee_cents"`
+	// PriceAdjustmentCents is what the payments control set above (positive) or below
+	// (negative) the computed price; AmountCents already includes it. ComputedAmountCents is
+	// the price without it, so the screen can say what the sale would have been.
+	PriceAdjustmentCents int `json:"price_adjustment_cents"`
+	ComputedAmountCents  int `json:"computed_amount_cents"`
+	// AdjustmentCents is what the ticket's alterations add to the price, zero when it was
+	// never altered. The panel badges an altered sale with it.
+	AdjustmentCents int `json:"adjustment_cents"`
+	// AlterationDay says the sale is listed because its ticket was altered in the period,
+	// not because it was issued there. On such a row, when everything before the alteration
+	// was already paid, AmountCents and PaidCents describe the alteration alone - what there
+	// is to collect that day. When it was not paid, they stay the whole sale.
+	AlterationDay bool `json:"alteration_day"`
+
 	// CancelledAt set means the sale was reopened by the issuance being cancelled: money
 	// already collected has to go back, as opposed to simply never having been charged.
 	// There is no "deleted" counterpart - deleting an issuance deletes its sale.
@@ -182,6 +204,9 @@ type UpdateSupplierIssuancesRequest struct {
 	// Reviewed marks these issuances as already checked while reconciling. Unlike the two
 	// terms above it changes no money - it records who has already looked.
 	Reviewed *bool `json:"reviewed" example:"true"`
+	// CancelledCPFFee is what the supplier charges, in centavos, for the CPFs a cancelled
+	// booking burned. Only accepted on cancelled issuances; null clears it.
+	CancelledCPFFee *int `json:"cancelled_cpf_fee" validate:"omitempty,min=0" example:"12000"`
 }
 
 // UpdateSupplierIssuancesResponse reports how many issuances the write actually touched,
@@ -212,6 +237,11 @@ type SupplierIssuanceResponse struct {
 	AccountLabel string `json:"account_label"`
 	// Kind is "issued" or "refund".
 	Kind string `json:"kind" example:"issued"`
+	// AdjustmentID is set on a line that is an alteration to the ticket rather than the
+	// booking or its cancellation. Such a line is still "issued" (miles charged) or
+	// "refund" (miles given back), so a panel that does not know alterations reads it right.
+	AdjustmentID     *string `json:"adjustment_id,omitempty"`
+	AdjustmentReason *string `json:"adjustment_reason,omitempty"`
 	// Date is the issuance's created_at, or its cancelled_at on a refund line.
 	Date                time.Time `json:"date"`
 	ProgramLocator      string    `json:"program_locator" example:"ABC123"`
@@ -230,11 +260,19 @@ type SupplierIssuanceResponse struct {
 	// the booking, and the figure the total is built from - CostOfTheThousand beside it is
 	// that same amount rounded to a whole centavo per thousand, for display.
 	CostCents *int `json:"cost_cents" example:"504245"`
-	// OwnsPointInventory tells the screen this line's cost is derived and must not be
-	// offered for editing.
+	// CostFromInventory tells the screen this line's cost came from the batches and must
+	// not be offered for editing. An inventory booking the FIFO has not covered yet is
+	// false here, and its rate is typed like any other.
+	CostFromInventory bool `json:"cost_from_inventory" example:"false"`
+	// OwnsPointInventory says the line belongs to an account whose points we bought. Kept
+	// for the panels still running the bundle that locked the field on this alone.
 	OwnsPointInventory bool `json:"owns_point_inventory" example:"false"`
 	// TaxesIncludedInCost says whether Taxes is part of what is paid for this line.
 	TaxesIncludedInCost bool `json:"taxes_included_in_cost" example:"true"`
+	// CancelledCPFFee is the supplier's charge for the CPFs the cancellation burned, in
+	// centavos. Only ever set on the cancellation's refund line, and part of what is paid
+	// for it: the line's amount is the credit plus this fee.
+	CancelledCPFFee *int `json:"cancelled_cpf_fee" example:"12000"`
 	// Reviewed says somebody already checked this line while reconciling. Both lines of an
 	// issuance that was created and cancelled in the same period carry the same value: the
 	// flag is on the issuance, and the two lines are two views of it.

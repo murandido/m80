@@ -139,7 +139,47 @@ func ExpectedBalances(db *gorm.DB, accountIDs []string) (map[string]int, error) 
 			return nil, fmt.Errorf("inventory.ExpectedBalances: summing issuances: %w", err)
 		}
 		balances[accountID] += open.Refunded - open.Issued
+
+		adjusted, err := openAdjustedPoints(db, accountID, cut)
+		if err != nil {
+			return nil, err
+		}
+		balances[accountID] -= adjusted
 	}
 
 	return balances, nil
+}
+
+// openAdjustedPoints is what the account's alterations took out of the open period, net of
+// what they gave back, the same two rules loadIssuanceActivity follows. Each alteration
+// counts on its own day. A booking cancelled without an explicit refund returns its
+// alterations' points too (refundedPoints), on the same created_at boundary the refund
+// above is read by.
+func openAdjustedPoints(db *gorm.DB, accountID string, cut time.Time) (int, error) {
+	var taken struct{ Points int }
+	query := db.Model(&data.IssuanceAdjustment{}).
+		Select("COALESCE(SUM(issuance_adjustments.points), 0) AS points").
+		Joins("JOIN issuances ON issuances.id = issuance_adjustments.issuance_id").
+		Where("issuances.account_id = ? AND issuances.deleted_at IS NULL", accountID)
+	if !cut.IsZero() {
+		query = query.Where("issuance_adjustments.occurred_on > ?", cut)
+	}
+	if err := query.Scan(&taken).Error; err != nil {
+		return 0, fmt.Errorf("inventory.ExpectedBalances: summing adjustments: %w", err)
+	}
+
+	var returned struct{ Points int }
+	query = db.Model(&data.IssuanceAdjustment{}).
+		Select("COALESCE(SUM(issuance_adjustments.points), 0) AS points").
+		Joins("JOIN issuances ON issuances.id = issuance_adjustments.issuance_id").
+		Where("issuances.account_id = ? AND issuances.deleted_at IS NULL", accountID).
+		Where("issuances.cancelled_at IS NOT NULL AND issuances.refunded_points IS NULL AND NOT issuances.cancellation_only")
+	if !cut.IsZero() {
+		query = query.Where("DATE(issuances.created_at AT TIME ZONE 'UTC') > ?", cut)
+	}
+	if err := query.Scan(&returned).Error; err != nil {
+		return 0, fmt.Errorf("inventory.ExpectedBalances: summing cancelled adjustments: %w", err)
+	}
+
+	return taken.Points - returned.Points, nil
 }

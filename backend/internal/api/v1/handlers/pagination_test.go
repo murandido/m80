@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -161,6 +162,47 @@ func TestClients_SearchByNameOrPhone(t *testing.T) {
 		byPhone := callManageClients(t, tx, "q="+phone)
 		if byPhone.Total != 1 || byPhone.Clients[0].ID != client.ID {
 			t.Fatalf("searching by phone returned %d rows, want the seeded client", byPhone.Total)
+		}
+	})
+}
+
+// The operator often has only the booking code, so the client search has to reach the
+// locators of the client's issuances - and only while the issuance is not removed.
+func TestClients_SearchByIssuanceLocator(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		issuance, _ := seedIssuance(t, tx)
+		airlineLocator := "AL" + uuid.New().String()[:6]
+		latam := "LT" + uuid.New().String()[:8]
+		if err := tx.Model(&issuance).Updates(map[string]any{
+			"airline_locator":       airlineLocator,
+			"latam_purchase_number": latam,
+		}).Error; err != nil {
+			t.Fatalf("failed to set the extra locators: %v", err)
+		}
+
+		client := data.Client{Name: "Cliente-" + uuid.New().String()[:8]}
+		create(t, tx, &client)
+		// A second issuance of the same client sharing the airline locator (a split
+		// booking does that) proves the client still comes back once.
+		twin, _ := seedIssuance(t, tx)
+		if err := tx.Model(&twin).Update("airline_locator", airlineLocator).Error; err != nil {
+			t.Fatalf("failed to share the airline locator: %v", err)
+		}
+		create(t, tx, &data.Sale{IssuanceID: issuance.ID, ClientID: &client.ID})
+		create(t, tx, &data.Sale{IssuanceID: twin.ID, ClientID: &client.ID})
+
+		for _, term := range []string{issuance.ProgramLocator, strings.ToLower(airlineLocator), latam} {
+			got := callManageClients(t, tx, "q="+url.QueryEscape(term))
+			if got.Total != 1 || got.Clients[0].ID != client.ID {
+				t.Errorf("searching %q returned %d rows, want only the seeded client once", term, got.Total)
+			}
+		}
+
+		if err := tx.Delete(&issuance).Error; err != nil {
+			t.Fatalf("failed to remove the issuance: %v", err)
+		}
+		if got := callManageClients(t, tx, "q="+url.QueryEscape(latam)); got.Total != 0 {
+			t.Errorf("a removed issuance's locator still found %d clients", got.Total)
 		}
 	})
 }

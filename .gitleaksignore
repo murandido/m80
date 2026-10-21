@@ -1,0 +1,22 @@
+# Findings gitleaks reports on the existing history that are not secrets, by fingerprint
+# (commit:file:rule:line), so the CI scan still fails on anything new.
+#
+# - *_test.go: throwaway JWT/encryption/blind-index keys the test suites run with.
+# - gol/siteconfig.go: GOL's public site-config keys, read from its own public page.
+# - latam/account.go: base64 of the Auth0 SDK name and version the LATAM app sends.
+#
+# A new finding is triaged, not appended here by reflex: a real secret is rotated first.
+367d9f781065e69f6340b16fdaf1047d0ec2ada7:backend/internal/data/main_test.go:generic-api-key:10
+367d9f781065e69f6340b16fdaf1047d0ec2ada7:backend/internal/smilessync/main_test.go:generic-api-key:10
+482f1eec1d3f444a2df878168ea07dd8f85d91e9:backend/internal/azulsync/main_test.go:generic-api-key:10
+60ed65779e1fb090a84d467dc82b94f4c9422381:backend/internal/api/v1/handlers/main_test.go:generic-api-key:11
+60ed65779e1fb090a84d467dc82b94f4c9422381:backend/internal/api/v1/handlers/main_test.go:generic-api-key:12
+80ef55cb556709c7b1749a9f1ea0f4ed2791acd4:backend/internal/gol/siteconfig.go:generic-api-key:18
+80ef55cb556709c7b1749a9f1ea0f4ed2791acd4:backend/internal/gol/siteconfig.go:generic-api-key:20
+9111b4af07c23f443b51964471a70d65f1509f58:backend/internal/auth/jwt_test.go:generic-api-key:114
+9b290a438830913b5cf4c2b7fa9ece781205e04f:backend/internal/auth/jwt_test.go:generic-api-key:114
+c03e6b9a0fd84f190c31087a8cb29166b30e996c:backend/internal/api/v1/handlers/account_beneficiaries_test.go:generic-api-key:25
+c03e6b9a0fd84f190c31087a8cb29166b30e996c:backend/internal/utils/blindindex_test.go:generic-api-key:10
+c03e6b9a0fd84f190c31087a8cb29166b30e996c:backend/internal/utils/blindindex_test.go:generic-api-key:9
+d2f16b03600ceb04caca9a1e8e2e07a1ac630e09:backend/internal/latam/account.go:generic-api-key:56
+d2f16b03600ceb04caca9a1e8e2e07a1ac630e09:backend/internal/latamsync/main_test.go:generic-api-key:10

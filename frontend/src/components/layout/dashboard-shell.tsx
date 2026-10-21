@@ -34,11 +34,14 @@ export function DashboardShell({
           <QueryNavigationProgress />
         </Suspense>
         <AppSidebar role={role} user={user} />
-        {/* SidebarInset already renders the <main>; the inner wrapper is the
-            scroll container and the skip link's target. */}
+        {/* SidebarInset already renders the <main>; the inner wrapper is the skip
+            link's target. It is deliberately not a scroll container: the window is what
+            scrolls, and an overflow here - which never scrolled itself - made every sticky
+            element inside it stick to a box that moves with the page. min-w-0 keeps a wide
+            page from stretching the flex column; past that, the window scrolls sideways. */}
         <SidebarInset>
           <Header systemStatus={systemStatus} canSeeBot={canAccess(role, [])} />
-          <div id="conteudo" tabIndex={-1} className="flex-1 overflow-auto outline-none">
+          <div id="conteudo" tabIndex={-1} className="min-w-0 flex-1 outline-none">
             {children}
           </div>
         </SidebarInset>

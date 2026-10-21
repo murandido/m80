@@ -141,6 +141,11 @@ type Line struct {
 	// template renders it in the negative so a supplier reading the column can see why
 	// the total is lower than the bookings above it.
 	Refund bool
+
+	// CPFFee marks the supplier's charge for the CPFs a cancellation burned. It is printed
+	// as a line of its own under the credit, rather than netted into it, so the supplier
+	// sees what they are being paid for instead of a refund that is oddly short.
+	CPFFee bool
 }
 
 // Render produces the document. The same string could be shown as a page, but today it only

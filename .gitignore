@@ -4,7 +4,6 @@ frontend/node_modules/
 frontend/.next/
 frontend/out/
 frontend/build/
-frontend/.vercel/
 frontend/.pnp.*
 frontend/.yarn/*
 !frontend/.yarn/patches
@@ -56,20 +55,12 @@ Thumbs.db
 .vscode/
 *.swp
 
-# Local knowledge-graph build artifacts (graphify)
-graphify-out/
-
 # Database dumps (db-backup.sh defaults to /var/backups, but BACKUP_DIR is overridable)
 backups/
 *.dump
 
 # Which image tag is live on a given machine - per-host state, not source
 deploy/.deploy-state
-
-# Added by `vercel link`. Its companion ".env*" was removed: the block above
-# already covers .env files, and being last it overrode the !.env.sample
-# exception - silently, since the two tracked samples survive on being tracked.
-.vercel
 
 # Report the CI vulnerability gate writes (.github/scripts/govulncheck-gate.sh).
 # Lives at backend/ on a run, and there is no backend/.gitignore on this branch.

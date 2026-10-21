@@ -101,3 +101,142 @@ func TestLoginRateLimit_IsStricterAndPerIP(t *testing.T) {
 		t.Fatalf("the 11th login attempt got %d, want 429", code)
 	}
 }
+
+// The vault's limit is per user like the panel-wide one, but an order of magnitude tighter:
+// thirty passwords a minute is plenty by hand and nowhere near a bulk copy.
+func TestCredentialRateLimit_IsPerUserAndTight(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-secret-for-rate-limit-tests")
+
+	first, err := auth.GenerateToken("33333333-3333-3333-3333-333333333333", "11999999993", "user")
+	if err != nil {
+		t.Fatalf("failed to generate the first token: %v", err)
+	}
+	second, err := auth.GenerateToken("44444444-4444-4444-4444-444444444444", "11999999994", "user")
+	if err != nil {
+		t.Fatalf("failed to generate the second token: %v", err)
+	}
+
+	limiter := CredentialRateLimit()
+
+	for i := range 30 {
+		if code := callWithToken(t, limiter, first, i); code != http.StatusOK {
+			t.Fatalf("credential read %d was throttled with %d", i+1, code)
+		}
+	}
+	if code := callWithToken(t, limiter, first, 30); code != http.StatusTooManyRequests {
+		t.Fatalf("the 31st credential read in a minute got %d, want 429", code)
+	}
+	if code := callWithToken(t, limiter, second, 31); code != http.StatusOK {
+		t.Fatalf("another user got %d, want 200 - the vault limit must be per user", code)
+	}
+}
+
+// keyByRemoteAddr replaced httprate's KeyByIP when v0.16 deprecated it, and a security control
+// must not redraw its buckets just because a dependency moved. Every expected key below was
+// produced by running httprate v0.15.0's KeyByIP on the same RemoteAddr, so this table is the
+// proof the swap kept the old keys - including where v0.16's own KeyByIP would now disagree.
+func TestKeyByRemoteAddr_MatchesHTTPRateV015(t *testing.T) {
+	cases := []struct {
+		remoteAddr string
+		want       string
+	}{
+		// IPv4: the port is dropped, the address is kept whole. RealIP leaves no port,
+		// a direct connection has one; both land in the same bucket.
+		{"203.0.113.7", "203.0.113.7"},
+		{"203.0.113.7:51234", "203.0.113.7"},
+		{"172.18.0.1:40001", "172.18.0.1"},
+		// IPv6: bucketed by /64, so rotating the interface id does not buy a new bucket.
+		{"2001:db8:abcd:12::1", "2001:db8:abcd:12::"},
+		{"[2001:db8:abcd:12::1]:443", "2001:db8:abcd:12::"},
+		{"2001:db8:abcd:12:ffff:ffff:ffff:ffff", "2001:db8:abcd:12::"},
+		{"2001:db8:abcd:13::1", "2001:db8:abcd:13::"},
+		{"::1", "::"},
+		{"[::1]:8080", "::"},
+		{"::1.2.3.4", "::"},
+		// IPv4-mapped IPv6: v0.15 masked these to "::" like any other IPv6 address;
+		// v0.16's CanonicalizeIP would return the dotted IPv4. Kept at v0.15's answer.
+		{"::ffff:203.0.113.7", "::"},
+		{"[::ffff:203.0.113.7]:443", "::"},
+		{"::ffff:198.51.100.9", "::"},
+		// Not an IP at all: passed through untouched.
+		{"fe80::1%eth0", "fe80::1%eth0"},
+		{"not-an-ip", "not-an-ip"},
+		{"", ""},
+	}
+
+	for _, tc := range cases {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.RemoteAddr = tc.remoteAddr
+
+		got, err := keyByRemoteAddr(req)
+		if err != nil {
+			t.Fatalf("keyByRemoteAddr(%q) returned an error: %v", tc.remoteAddr, err)
+		}
+		if got != tc.want {
+			t.Errorf("keyByRemoteAddr(%q) = %q, want %q (httprate v0.15's KeyByIP)", tc.remoteAddr, got, tc.want)
+		}
+	}
+}
+
+// callFrom sends one anonymous request from remoteAddr through the limiter and returns its status.
+func callFrom(t *testing.T, limiter func(http.Handler) http.Handler, remoteAddr string) int {
+	t.Helper()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", nil)
+	req.RemoteAddr = remoteAddr
+
+	rec := httptest.NewRecorder()
+	limiter(okHandler).ServeHTTP(rec, req)
+	return rec.Code
+}
+
+// The login budget is per client, and "client" means what keyByRemoteAddr says it does: the
+// same IPv4 from any port, or anything inside the same IPv6 /64, spends one shared budget,
+// while a different address starts fresh.
+func TestLoginRateLimit_BucketsByClientIP(t *testing.T) {
+	t.Run("same IPv4 from different ports shares a bucket", func(t *testing.T) {
+		limiter := LoginRateLimit()
+		for i := range 10 {
+			if code := callFrom(t, limiter, fmt.Sprintf("198.51.100.20:%d", 50000+i)); code != http.StatusOK {
+				t.Fatalf("attempt %d was throttled with %d", i+1, code)
+			}
+		}
+		if code := callFrom(t, limiter, "198.51.100.20"); code != http.StatusTooManyRequests {
+			t.Fatalf("the 11th attempt from the same IP (no port, as RealIP leaves it) got %d, want 429", code)
+		}
+		if code := callFrom(t, limiter, "198.51.100.21:50000"); code != http.StatusOK {
+			t.Fatalf("a different IPv4 got %d, want 200 - it must have its own bucket", code)
+		}
+	})
+
+	t.Run("one IPv6 /64 shares a bucket", func(t *testing.T) {
+		limiter := LoginRateLimit()
+		for i := range 10 {
+			if code := callFrom(t, limiter, fmt.Sprintf("[2001:db8:1:2::%x]:443", i+1)); code != http.StatusOK {
+				t.Fatalf("attempt %d was throttled with %d", i+1, code)
+			}
+		}
+		if code := callFrom(t, limiter, "2001:db8:1:2:dead:beef:0:1"); code != http.StatusTooManyRequests {
+			t.Fatalf("a new address inside the same /64 got %d, want 429 - rotating within a /64 must not reset the budget", code)
+		}
+		if code := callFrom(t, limiter, "2001:db8:1:3::1"); code != http.StatusOK {
+			t.Fatalf("an address in the next /64 got %d, want 200 - it must have its own bucket", code)
+		}
+	})
+}
+
+// Without a usable token the panel-wide limiter falls back to the same IP key as login, so the
+// /64 rule holds there too: a token-less client cannot spread across its /64 to dodge it.
+func TestRateLimit_AnonymousFallbackUsesTheSameIPKey(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-secret-for-rate-limit-tests")
+
+	limiter := RateLimit()
+	for i := range 300 {
+		if code := callFrom(t, limiter, fmt.Sprintf("[2001:db8:9:9::%x]:443", i+1)); code != http.StatusOK {
+			t.Fatalf("anonymous request %d was throttled with %d", i+1, code)
+		}
+	}
+	if code := callFrom(t, limiter, "2001:db8:9:9::ffff"); code != http.StatusTooManyRequests {
+		t.Fatalf("anonymous request past the budget from the same /64 got %d, want 429", code)
+	}
+}

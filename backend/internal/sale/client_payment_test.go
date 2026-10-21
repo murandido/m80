@@ -1,8 +1,11 @@
 package sale
 
 import (
+	"maps"
 	"slices"
 	"testing"
+
+	"github.com/murandido/m-80-backend/internal/data"
 )
 
 // The shape the payments screen promises: settled sales, at most one partly paid, the rest
@@ -33,6 +36,72 @@ func TestAllocateFIFO(t *testing.T) {
 			if !slices.Equal(takes, tc.wantTakes) || leftover != tc.wantLeftover {
 				t.Fatalf("AllocateFIFO(%v, %d) = %v, %d; want %v, %d",
 					tc.balances, tc.pool, takes, leftover, tc.wantTakes, tc.wantLeftover)
+			}
+		})
+	}
+}
+
+// A sale's surplus is the client's money: it leaves its sale whole, covers the open sales
+// before any lump sum does, and what nobody takes stays as credit (the sum of a surplus's
+// lines is minus that credit).
+func TestPlanSpread(t *testing.T) {
+	t.Parallel()
+
+	cheaper := surplusSale{ID: "cheaper", Cents: 6990}
+	payment := data.ClientPayment{ID: "payment", AmountCents: 10000}
+
+	cases := []struct {
+		name      string
+		open      []openSale
+		surpluses []surplusSale
+		payments  []data.ClientPayment
+		want      map[spreadKey]int
+	}{
+		{
+			name:      "a surplus settles the sale that went up by as much",
+			open:      []openSale{{ID: "dearer", Balance: 6990}},
+			surpluses: []surplusSale{cheaper},
+			want: map[spreadKey]int{
+				{creditFromSaleID: "cheaper", saleID: "cheaper"}: -6990,
+				{creditFromSaleID: "cheaper", saleID: "dearer"}:  6990,
+			},
+		},
+		{
+			name:      "a surplus with nothing open is all credit",
+			surpluses: []surplusSale{cheaper},
+			want: map[spreadKey]int{
+				{creditFromSaleID: "cheaper", saleID: "cheaper"}: -6990,
+			},
+		},
+		{
+			name:      "a surplus is spent before the lump sums",
+			open:      []openSale{{ID: "first", Balance: 5000}, {ID: "second", Balance: 8000}},
+			surpluses: []surplusSale{cheaper},
+			payments:  []data.ClientPayment{payment},
+			want: map[spreadKey]int{
+				{creditFromSaleID: "cheaper", saleID: "cheaper"}: -6990,
+				{creditFromSaleID: "cheaper", saleID: "first"}:   5000,
+				{creditFromSaleID: "cheaper", saleID: "second"}:  1990,
+				{clientPaymentID: "payment", saleID: "second"}:   6010,
+			},
+		},
+		{
+			name:     "without surpluses the lump sums spread as before",
+			open:     []openSale{{ID: "first", Balance: 5000}, {ID: "second", Balance: 8000}},
+			payments: []data.ClientPayment{payment},
+			want: map[spreadKey]int{
+				{clientPaymentID: "payment", saleID: "first"}:  5000,
+				{clientPaymentID: "payment", saleID: "second"}: 5000,
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := planSpread(tc.open, tc.surpluses, tc.payments)
+			if !maps.Equal(got, tc.want) {
+				t.Fatalf("planSpread() = %v; want %v", got, tc.want)
 			}
 		})
 	}

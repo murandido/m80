@@ -116,6 +116,7 @@ export const StatusCell = memo(function StatusCell({
   useEffect(() => {
     if (isThisCellEditing) {
       const idx = STATUS_OPTIONS.indexOf(row.status)
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- highlights the current status each time the cell enters edit mode
       setActiveIndex(idx === -1 ? 0 : idx)
       savedRef.current = false
       requestAnimationFrame(() => anchorRef.current?.focus())

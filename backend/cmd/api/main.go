@@ -9,17 +9,20 @@ import (
 	"os"
 	"time"
 
+	"github.com/murandido/m-80-backend/carriers/azul"
+	"github.com/murandido/m-80-backend/carriers/bookingproviders"
+	"github.com/murandido/m-80-backend/carriers/latam"
+	"github.com/murandido/m-80-backend/carriers/smiles"
+	"github.com/murandido/m-80-backend/carriers/traveos"
 	"github.com/murandido/m-80-backend/internal/api"
-	"github.com/murandido/m-80-backend/internal/azul"
 	"github.com/murandido/m-80-backend/internal/azulsync"
 	"github.com/murandido/m-80-backend/internal/booking"
-	"github.com/murandido/m-80-backend/internal/bookingproviders"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/events"
 	"github.com/murandido/m-80-backend/internal/health"
-	"github.com/murandido/m-80-backend/internal/smiles"
+	"github.com/murandido/m-80-backend/internal/latamsync"
+	"github.com/murandido/m-80-backend/internal/promotion"
 	"github.com/murandido/m-80-backend/internal/smilessync"
-	"github.com/murandido/m-80-backend/internal/traveos"
 )
 
 // @title           M-80 API
@@ -197,6 +200,17 @@ func main() {
 		go monitor.RunProvider(monitorCtx, provider.Name(), 10*time.Minute, health.BookingProviderProbe(prober))
 	}
 
+	// One Azul connector for the whole process, created here because three things start the same
+	// login: the connect button (via the router), the ticker below when Azul stops recognising a
+	// stored key, and saving a new password on such an account. Sharing it shares the tracker, so
+	// two of them racing on one account never launch two browsers.
+	var azulReader azulsync.Reader
+	if azulClient != nil {
+		// Only when built: a nil *azul.Client in the interface would read as a usable reader.
+		azulReader = azulClient
+	}
+	azulConnector := azulsync.NewConnector(data.DB, azulsync.NewConnectTracker(), promotion.NewClient(), azulReader)
+
 	// The Azul statement sync polls the connected inventory accounts on a ticker and stores
 	// their statements for reconciliation. Off by default and never even constructed unless
 	// AZUL_SYNC_ENABLED is set: the whole feature ships inert, to be turned on per environment
@@ -207,7 +221,7 @@ func main() {
 			slog.Warn("azul statement sync is disabled", "err", azul.ErrMissingConfig)
 		} else {
 			interval := azulSyncInterval()
-			go azulsync.NewLoop(data.DB, azulClient, interval).Run(context.Background())
+			go azulsync.NewLoop(data.DB, azulClient, azulConnector, interval).Run(context.Background())
 			slog.Info("azul statement sync enabled", "interval", interval.String())
 		}
 	}
@@ -232,8 +246,17 @@ func main() {
 		slog.Info("smiles statement sync enabled", "interval", interval.String())
 	}
 
+	// The LATAM balance read: renew each linked account's session and write its LATAM Pass
+	// balance. No switch, unlike the two statement syncs above: with no account linked a pass is
+	// one empty query, and linking one is itself the decision to read it. The client goes direct
+	// rather than through LATAM_PROXY_URL - the account hosts answer the Oracle range, only the
+	// booking ones refuse it (measured 2026-10-06). The guard is shared with the connect handler.
+	latamGuard := latamsync.NewSessionGuard()
+	latamAccounts := latam.NewAccountClient()
+	go latamsync.NewLoop(data.DB, latamAccounts, latamGuard, latamsync.DefaultInterval).Run(context.Background())
+
 	// config router
-	r := api.NewRouter(data.DB, broker, bookings, monitor, smilesGuard)
+	r := api.NewRouter(data.DB, broker, bookings, monitor, smilesGuard, latamGuard, azulConnector)
 
 	port := os.Getenv("PORT")
 	if port == "" {

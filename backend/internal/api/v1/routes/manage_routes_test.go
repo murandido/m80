@@ -29,7 +29,7 @@ func TestManageListingsAreRoutedAheadOfTheIDParam(t *testing.T) {
 		path     string
 		want     string
 	}{
-		{"account holders", RegisterAccountRoutes, "/accounts/holders", "/accounts/holders"},
+		{"account holders", registerAccountRoutes, "/accounts/holders", "/accounts/holders"},
 		{"clients", RegisterClientRoutes, "/clients/manage", "/clients/manage"},
 		{"airports", RegisterAirportRoutes, "/airports/manage", "/airports/manage"},
 		{
@@ -69,7 +69,7 @@ func TestPickerListingsKeepTheBarePath(t *testing.T) {
 		register func(chi.Router, *gorm.DB)
 		path     string
 	}{
-		{"accounts", RegisterAccountRoutes, "/accounts"},
+		{"accounts", registerAccountRoutes, "/accounts"},
 		{"clients", RegisterClientRoutes, "/clients"},
 		{"people", RegisterPeopleRoutes, "/people"},
 		{"airports", RegisterAirportRoutes, "/airports/all"},
@@ -92,4 +92,10 @@ func TestPickerListingsKeepTheBarePath(t *testing.T) {
 			}
 		})
 	}
+}
+
+// registerAccountRoutes adapts the account registration to the tables' signature. It passes no
+// Azul connector: these cases test the gates, and saving a password here must not start a login.
+func registerAccountRoutes(r chi.Router, db *gorm.DB) {
+	RegisterAccountRoutes(r, db, nil)
 }

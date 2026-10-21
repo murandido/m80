@@ -51,6 +51,12 @@ func RegisterIssuanceRoutes(r chi.Router, db *gorm.DB, broker *events.Broker, bo
 			// uncancel issuance (revert cancellation, restore prior sale state + audit)
 			r.Post("/uncancel", issuanceHandler.UncancelIssuance)
 
+			// alterations to the ticket after it was issued: miles or money the airline
+			// charged or gave back, each a dated movement of its own
+			r.Post("/adjustments", issuanceHandler.CreateIssuanceAdjustment)
+			r.Patch("/adjustments/{adjustmentID}", issuanceHandler.UpdateIssuanceAdjustment)
+			r.Delete("/adjustments/{adjustmentID}", issuanceHandler.DeleteIssuanceAdjustment)
+
 			// pull the itinerary from Traveos, issuing the ticket there first if needed
 			r.Post("/traveos-sync", issuanceHandler.SyncIssuanceWithTraveos)
 

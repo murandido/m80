@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
+	"github.com/murandido/m-80-backend/carriers/traveos"
 	"github.com/murandido/m-80-backend/internal/access"
 	"github.com/murandido/m-80-backend/internal/account"
 	"github.com/murandido/m-80-backend/internal/api/middleware"
@@ -23,7 +24,6 @@ import (
 	"github.com/murandido/m-80-backend/internal/events"
 	"github.com/murandido/m-80-backend/internal/export"
 	"github.com/murandido/m-80-backend/internal/sale"
-	"github.com/murandido/m-80-backend/internal/traveos"
 
 	// Aliased because "issuance" is the local variable name for a data.Issuance
 	// throughout this file - importing it unaliased would shadow the package in
@@ -187,6 +187,11 @@ func toIssuanceResponse(issuance data.Issuance) schemas.IssuanceResponse {
 		}
 		resp.Flights = flights
 	}
+	// Always a list, never null, so the panel can map over it without a guard.
+	resp.Adjustments = make([]schemas.IssuanceAdjustmentResponse, 0, len(issuance.Adjustments))
+	for _, adjustment := range issuance.Adjustments {
+		resp.Adjustments = append(resp.Adjustments, toIssuanceAdjustmentResponse(adjustment))
+	}
 	if len(issuance.Passengers) > 0 {
 		passengers := make([]schemas.IssuancePassengerResponse, 0, len(issuance.Passengers))
 		for _, passenger := range issuance.Passengers {
@@ -318,7 +323,11 @@ func preloadIssuanceAssociations(query *gorm.DB) *gorm.DB {
 		Preload("Account.Nicknames", unscoped).
 		Preload("AccountNickname", unscoped).
 		Preload("Issuer").
-		Preload("Agency")
+		Preload("Agency").
+		Preload("Adjustments", func(db *gorm.DB) *gorm.DB {
+			return db.Order("occurred_on ASC").Order("created_at ASC")
+		}).
+		Preload("Adjustments.CreatedBy")
 }
 
 // applyIssuanceListFilters narrows an issuance list query by the optional query
@@ -335,6 +344,14 @@ func preloadIssuanceAssociations(query *gorm.DB) *gorm.DB {
 //	OR
 //	(active = false AND cancelled_by_id = ?                -- cancellation branch
 //	     AND cancelled_at in [from,to))
+//	OR
+//	EXISTS (alteration created_by_id = ?                  -- alteration branch
+//	        AND occurred_on in [from,to))
+//
+// The alteration branch follows the cancellation's reasoning: a ticket changed today
+// belongs to today's flow, in the flow of whoever recorded the change, however old the
+// booking. It is a subquery rather than a join so an issuance altered twice in a day is
+// still one row.
 //
 // Each present dimension feeds both branches (issuer -> issuer_id/cancelled_by_id,
 // dates -> created_at/cancelled_at). When neither issuer nor dates are given the
@@ -424,8 +441,34 @@ func applyIssuanceListFilters(db *gorm.DB, query *gorm.DB, r *http.Request) *gor
 		cancellationArgs = append(cancellationArgs, *to)
 	}
 
-	condition := "(" + strings.Join(creation, " AND ") + ") OR (" + strings.Join(cancellation, " AND ") + ")"
-	return query.Where(condition, append(creationArgs, cancellationArgs...)...)
+	alteration := []string{"issuance_adjustments.issuance_id = issuances.id", "issuance_adjustments.deleted_at IS NULL"}
+	alterationArgs := []any{}
+	if len(issuers) > 0 {
+		alteration = append(alteration, "issuance_adjustments.created_by_id IN ?")
+		alterationArgs = append(alterationArgs, issuers)
+	}
+	alteration, alterationArgs = appendAdjustmentDayBounds(alteration, alterationArgs, from, to)
+
+	condition := "(" + strings.Join(creation, " AND ") + ") OR (" + strings.Join(cancellation, " AND ") + ")" +
+		" OR EXISTS (SELECT 1 FROM issuance_adjustments WHERE " + strings.Join(alteration, " AND ") + ")"
+	args := append(append(creationArgs, cancellationArgs...), alterationArgs...)
+	return query.Where(condition, args...)
+}
+
+// appendAdjustmentDayBounds narrows issuance_adjustments.occurred_on to the requested days.
+// occurred_on is a calendar day, not an instant, so it is compared with the days the bounds
+// stand for. parseDateRange puts each bound at local midnight in UTC, 03:00 the same day,
+// which is why the UTC date of the bound is the operator's day.
+func appendAdjustmentDayBounds(clauses []string, args []any, from, to *time.Time) ([]string, []any) {
+	if from != nil {
+		clauses = append(clauses, "issuance_adjustments.occurred_on >= ?")
+		args = append(args, from.UTC().Format(time.DateOnly))
+	}
+	if to != nil {
+		clauses = append(clauses, "issuance_adjustments.occurred_on < ?")
+		args = append(args, to.UTC().Format(time.DateOnly))
+	}
+	return clauses, args
 }
 
 // issuanceSearchGroup builds the free-text predicate over the fields an operator
@@ -437,6 +480,9 @@ func applyIssuanceListFilters(db *gorm.DB, query *gorm.DB, r *http.Request) *gor
 // query: the caller ANDs other dimensions on top, and an ungrouped Or() would
 // escape those parentheses and widen the whole filter.
 //
+// The columns are qualified because the sales listing applies the same group over a
+// query that joins issuances to accounts, clients and people.
+//
 // The child tables are reached with EXISTS rather than a join - the list only
 // Preloads, and joining would return the same issuance once per passenger and per
 // flight leg.
@@ -446,12 +492,12 @@ func applyIssuanceListFilters(db *gorm.DB, query *gorm.DB, r *http.Request) *gor
 func issuanceSearchGroup(db *gorm.DB, search string) *gorm.DB {
 	like := likePattern(search)
 
-	return db.Where(unaccentedLike("program_locator"), like).
-		Or(unaccentedLike("airline_locator"), like).
-		Or(unaccentedLike("latam_purchase_number"), like).
-		Or(unaccentedLike("main_passenger_name"), like).
-		Or(unaccentedLike("origin_iata_code"), like).
-		Or(unaccentedLike("destination_iata_code"), like).
+	return db.Where(unaccentedLike("issuances.program_locator"), like).
+		Or(unaccentedLike("issuances.airline_locator"), like).
+		Or(unaccentedLike("issuances.latam_purchase_number"), like).
+		Or(unaccentedLike("issuances.main_passenger_name"), like).
+		Or(unaccentedLike("issuances.origin_iata_code"), like).
+		Or(unaccentedLike("issuances.destination_iata_code"), like).
 		Or("EXISTS (SELECT 1 FROM issuance_passengers"+
 			" WHERE issuance_passengers.issuance_id = issuances.id AND "+
 			unaccentedLike("issuance_passengers.first_name || ' ' || issuance_passengers.last_name")+")", like).
@@ -560,8 +606,18 @@ func (h *IssuanceHandler) GetIssuancesExport(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// No period is passed: whether a cancelled issuance enters the sheet as its booking, as
-	// its refund, or as both netting out is decided by its own two dates, not by the filter.
+	// Whether a cancelled issuance enters the sheet as its booking, as its refund, or as both
+	// netting out is decided by its own two dates. The window is for the alterations: an old
+	// booking listed only because it was altered in the period gets the alteration's line and
+	// not its booking again. A search lifts the date filter on the listing, so it lifts the
+	// window too.
+	window := export.ExportWindow{}
+	if strings.TrimSpace(r.URL.Query().Get("q")) == "" {
+		window.From, window.To = parseDateRange(r)
+		if raw := r.URL.Query().Get("issuer_id"); raw != "" && raw != issuerFilterAll {
+			window.Issuers = splitIDs(raw)
+		}
+	}
 	var content []byte
 	var err error
 	filenamePrefix := "emissoes"
@@ -569,7 +625,7 @@ func (h *IssuanceHandler) GetIssuancesExport(w http.ResponseWriter, r *http.Requ
 		content, err = export.BuildLegacyIssuancesXLSX(issuances)
 		filenamePrefix = "emissoes-gerais"
 	} else {
-		content, err = export.BuildIssuancesXLSX(issuances)
+		content, err = export.BuildIssuancesXLSX(issuances, window)
 	}
 	if err != nil {
 		slog.Error("failed to build issuances export", "err", err)
@@ -1069,7 +1125,16 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 		// the itinerary this very PATCH is replacing. Moving the issuance to another
 		// account matters just as much - the account is what decides whether the amount
 		// is owed or saved.
-		return issuancesvc.RecalculateRedemptionFee(tx, issuance.ID)
+		if err := issuancesvc.RecalculateRedemptionFee(tx, issuance.ID); err != nil {
+			return err
+		}
+
+		// The points, the rate and the taxes are what the sale is worth. Editing them used
+		// to leave sales.paid and the client's replay on the old figure, so a ticket paid
+		// and then corrected kept a surplus (or a missing amount) nobody saw until the
+		// next payment of that client. A sale settled by hand follows the new price and
+		// stays settled.
+		return sale.RecalculateRepriced(tx, issuance.ID)
 	})
 
 	if err != nil {

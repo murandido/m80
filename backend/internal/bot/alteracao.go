@@ -9,6 +9,7 @@ import (
 	"github.com/murandido/m-80-backend/internal/bot/humanizer"
 	"github.com/murandido/m-80-backend/internal/data"
 	issuancesvc "github.com/murandido/m-80-backend/internal/issuance"
+	"github.com/murandido/m-80-backend/internal/sale"
 	"go.mau.fi/whatsmeow/types/events"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
@@ -192,6 +193,14 @@ func applyCorrection(tx *gorm.DB, issuance data.Issuance, fields alteracaoFields
 	// whether the redemption fee is owed or merely saved. Same transaction as the write it
 	// derives from, like everywhere else.
 	if err := issuancesvc.RecalculateRedemptionFee(tx, corrected.ID); err != nil {
+		return correctionOutcome{}, err
+	}
+
+	// A correction to the points, the rate or the taxes changes what the sale is worth.
+	// Without this the sale kept the old figure as settled, and a surplus or a missing
+	// amount sat unseen until something else replayed the client. A sale settled by hand
+	// follows the new price and stays settled.
+	if err := sale.RecalculateRepriced(tx, corrected.ID); err != nil {
 		return correctionOutcome{}, err
 	}
 

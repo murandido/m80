@@ -1,0 +1,5 @@
+-- Postgres does not support removing a value from an enum type directly - that would require
+-- recreating azul_sync_state_kind without it and rewriting every dependent row. Forward-only
+-- migration, no-op down, like migration 32. An older API image never produces the value and
+-- simply treats a row left in it as one more state to overwrite on its next round, so a rollback
+-- that leaves 'needs_reconnect' behind is harmless.

@@ -84,9 +84,10 @@ export default async function ClientsPage({
         <CreateClientForm agencies={agencies ?? []} />
 
         {/* A client has only a name and a phone, and "who is this number" is half of
-            why anyone opens this screen - so the search covers both. */}
+            why anyone opens this screen - so the search covers both, plus the locators
+            of the client's issuances for when the booking code is all anyone has. */}
         <ListFilterBar
-          searchPlaceholder="Buscar por nome ou telefone"
+          searchPlaceholder="Buscar por nome, telefone ou localizador"
           order={params.order}
         >
           {viewerIsDev && (

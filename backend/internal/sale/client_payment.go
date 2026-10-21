@@ -14,8 +14,15 @@ import (
 // data.ClientPayment, and how they cover the client's sales is not stored as a decision:
 // RebalanceClient derives it every time, replaying the active payments in the order they
 // came in over the open sales, oldest first. The sale_payments it writes carry the lump
-// sum's id and are the only lines it ever touches - a payment recorded on the sale itself
-// (the Pago switch) is left alone and simply counts as already paid.
+// sum's id. A payment recorded on the sale itself (the Pago switch) is never touched and
+// simply counts as already paid.
+//
+// What a sale's own payments brought in beyond what it is worth - a ticket paid and then
+// made cheaper, or cancelled - is the client's money too: the agency never hands it back,
+// it carries it to the client's other tickets. The replay moves that surplus with lines of
+// its own, marked with the sale it came from (credit_from_sale_id): a negative one on that
+// sale, which brings it to zero, and positive ones on the open sales it covers. They are
+// spent before the lump sums, since that money came in first.
 //
 // Deriving instead of recording is what makes a wrong amount undoable: undoing the
 // payment, or moving a sale to another client, is one more replay, and every sale ends
@@ -85,42 +92,92 @@ type openSale struct {
 	Balance int
 }
 
-// openSalesOf lists the client's sales that still owe money once the spread lines are set
-// aside, oldest issuance first - the order the money is spent in. Cancelled issuances are
-// left out: a cancelled ticket is not a debt (see BalanceCents), so a replay takes back
-// whatever a lump sum had put on it and it goes on to the next sale, or to credit.
-func openSalesOf(tx *gorm.DB, clientID string) ([]openSale, error) {
+// surplusSale is a sale whose own payments add up to more than it is worth. Cents is how
+// much more; PaidOn and CreatedByID come from its latest own payment, and are what the
+// lines moving the surplus carry - the money was in hand from that day, typed by that
+// person, not by whoever's action triggered the replay.
+type surplusSale struct {
+	ID          string
+	Cents       int
+	PaidOn      time.Time
+	CreatedByID string
+}
+
+// ownPaymentLine is the condition for a line typed on the sale itself, as opposed to one
+// the replay derived from a client payment or from another sale's surplus.
+const ownPaymentLine = "client_payment_id IS NULL AND credit_from_sale_id IS NULL"
+
+// clientSalesOf reads the client's sales by what their own payments leave them at, oldest
+// issuance first - the order the money is spent in. Those still owing are open; those paid
+// beyond their worth are surpluses. A cancelled issuance owes only its cancellation fee
+// (see BalanceCents), so whatever its own payments brought in beyond the fee - all of it,
+// when there is no fee - is surplus; what a lump sum had put on it goes back to the pool
+// simply because the replay no longer finds it open.
+func clientSalesOf(tx *gorm.DB, clientID string) ([]openSale, []surplusSale, error) {
 	var rows []struct {
-		ID                 string
-		Points             int
-		ValueOfTheThousand int
-		Taxes              *int
-		PaidCents          int
+		ID                   string
+		Points               int
+		ValueOfTheThousand   int
+		Taxes                *int
+		AdjustmentCents      int
+		CancelledAt          *string
+		CancellationFee      *int
+		PriceAdjustmentCents int
+		PaidCents            int
+		LastPaidOn           *time.Time
+		LastPaidByID         *string
 	}
 	err := tx.Table("sales").
 		Select(`sales.id, issuances.points, issuances.value_of_the_thousand, issuances.taxes,
+			issuances.cancelled_at, issuances.cancellation_fee, sales.price_adjustment_cents,
+			COALESCE(adjustments.cents, 0) AS adjustment_cents,
 			COALESCE((SELECT SUM(amount_cents) FROM sale_payments
-				WHERE sale_id = sales.id AND client_payment_id IS NULL), 0) AS paid_cents`).
+				WHERE sale_id = sales.id AND `+ownPaymentLine+`), 0) AS paid_cents,
+			(SELECT paid_on FROM sale_payments
+				WHERE sale_id = sales.id AND `+ownPaymentLine+`
+				ORDER BY paid_on DESC, created_at DESC LIMIT 1) AS last_paid_on,
+			(SELECT created_by_id FROM sale_payments
+				WHERE sale_id = sales.id AND `+ownPaymentLine+`
+				ORDER BY paid_on DESC, created_at DESC LIMIT 1) AS last_paid_by_id`).
 		Joins("JOIN issuances ON issuances.id = sales.issuance_id").
+		Joins("LEFT JOIN "+AdjustmentCentsJoin+" AS adjustments ON adjustments.issuance_id = issuances.id").
 		Where("sales.client_id = ?", clientID).
-		Where("issuances.deleted_at IS NULL AND issuances.cancelled_at IS NULL").
+		Where("issuances.deleted_at IS NULL").
 		Order("issuances.created_at, sales.id").
 		Scan(&rows).Error
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	open := make([]openSale, 0, len(rows))
+	var surpluses []surplusSale
 	for _, row := range rows {
-		cents := PointsValueCents(row.Points, row.ValueOfTheThousand)
+		cents := PointsValueCents(row.Points, row.ValueOfTheThousand) + row.AdjustmentCents
 		if row.Taxes != nil {
 			cents += *row.Taxes
 		}
-		if balance := BalanceCents(Amount{Cents: cents}, row.PaidCents); balance > 0 {
+		amount := Amount{Cents: cents, Cancelled: row.CancelledAt != nil}
+		if amount.Cancelled && row.CancellationFee != nil {
+			amount.CancellationFeeCents = *row.CancellationFee
+		}
+		if !amount.Cancelled {
+			amount.Cents += row.PriceAdjustmentCents
+		}
+		balance := BalanceCents(amount, row.PaidCents)
+		switch {
+		case balance > 0:
 			open = append(open, openSale{ID: row.ID, Balance: balance})
+		// A negative balance can only come from own payments, so the latest one exists.
+		case balance < 0 && row.LastPaidOn != nil && row.LastPaidByID != nil:
+			surpluses = append(surpluses, surplusSale{
+				ID:          row.ID,
+				Cents:       -balance,
+				PaidOn:      *row.LastPaidOn,
+				CreatedByID: *row.LastPaidByID,
+			})
 		}
 	}
-	return open, nil
+	return open, surpluses, nil
 }
 
 func activePaymentsOf(tx *gorm.DB, clientID string) ([]data.ClientPayment, error) {
@@ -132,18 +189,12 @@ func activePaymentsOf(tx *gorm.DB, clientID string) ([]data.ClientPayment, error
 }
 
 // CreditOf is the client's credit: what their active payments brought in minus what was
-// spread over sales. Right after a RebalanceClient it is exactly what no open sale took.
+// spread over sales, plus the surplus of their sales that no other sale took. The surplus
+// term is the sum of the lines moving it: the negative line on the sale it left adds it,
+// the positive ones on the sales it covered take it back off. Right after a RebalanceClient
+// it is exactly what no open sale took.
 func CreditOf(tx *gorm.DB, clientID string) (int, error) {
-	var credit int
-	err := tx.Raw(`
-		SELECT
-			COALESCE((SELECT SUM(amount_cents) FROM client_payments
-				WHERE client_id = ? AND deleted_at IS NULL), 0)
-			- COALESCE((SELECT SUM(sp.amount_cents) FROM sale_payments sp
-				JOIN client_payments cp ON cp.id = sp.client_payment_id
-				WHERE cp.client_id = ? AND cp.deleted_at IS NULL), 0)`,
-		clientID, clientID).Scan(&credit).Error
-	return credit, err
+	return CreditOfClients(tx, []string{clientID})
 }
 
 // CreditOfClients is CreditOf summed over several clients, in one query - the history of a
@@ -159,19 +210,64 @@ func CreditOfClients(tx *gorm.DB, clientIDs []string) (int, error) {
 				WHERE client_id IN ? AND deleted_at IS NULL), 0)
 			- COALESCE((SELECT SUM(sp.amount_cents) FROM sale_payments sp
 				JOIN client_payments cp ON cp.id = sp.client_payment_id
-				WHERE cp.client_id IN ? AND cp.deleted_at IS NULL), 0)`,
-		clientIDs, clientIDs).Scan(&credit).Error
+				WHERE cp.client_id IN ? AND cp.deleted_at IS NULL), 0)
+			- COALESCE((SELECT SUM(sp.amount_cents) FROM sale_payments sp
+				JOIN sales source ON source.id = sp.credit_from_sale_id
+				WHERE source.client_id IN ?), 0)`,
+		clientIDs, clientIDs, clientIDs).Scan(&credit).Error
 	return credit, err
 }
 
+// spreadKey names a derived line: where its money came from - a client payment, or the
+// surplus of a sale - and the sale it sits on. Exactly one of the two sources is set.
 type spreadKey struct {
-	clientPaymentID string
-	saleID          string
+	clientPaymentID  string
+	creditFromSaleID string
+	saleID           string
 }
 
-// RebalanceClient replays the client's active payments over their open sales and writes
-// only what changed, so an action that moves nothing (linking a sale to a client with no
-// payments) costs a few reads and touches no row. It returns the sales whose lines changed.
+const (
+	noteSurplusToCredit = "Sobra convertida em crédito do cliente"
+	noteCreditFromSale  = "Crédito de outra emissão do cliente" //nolint:gosec // G101: a ledger note, not a credential
+)
+
+// planSpread is what the derived lines should be, without the database: the surpluses are
+// spent first, in the order of their sales, then each payment in the order it came in, each
+// taking from what the open sales still miss after the sources before it. A surplus always
+// leaves its sale whole (the negative line), whether or not an open sale takes it: what
+// none takes is credit, waiting for the client's next ticket, never money to hand back.
+func planSpread(open []openSale, surpluses []surplusSale, payments []data.ClientPayment) map[spreadKey]int {
+	balances := make([]int, len(open))
+	for i, s := range open {
+		balances[i] = s.Balance
+	}
+	want := map[spreadKey]int{}
+	spend := func(source spreadKey, pool int) {
+		takes, _ := AllocateFIFO(balances, pool)
+		for i, take := range takes {
+			if take == 0 {
+				continue
+			}
+			balances[i] -= take
+			key := source
+			key.saleID = open[i].ID
+			want[key] = take
+		}
+	}
+	for _, surplus := range surpluses {
+		want[spreadKey{creditFromSaleID: surplus.ID, saleID: surplus.ID}] = -surplus.Cents
+		spend(spreadKey{creditFromSaleID: surplus.ID}, surplus.Cents)
+	}
+	for _, payment := range payments {
+		spend(spreadKey{clientPaymentID: payment.ID}, payment.AmountCents)
+	}
+	return want
+}
+
+// RebalanceClient replays the client's active payments and the surplus of their sales over
+// their open sales, and writes only what changed, so an action that moves nothing (linking
+// a sale to a client with no payments) costs a few reads and touches no row. It returns
+// the sales whose lines changed.
 //
 // Lines of undone payments are always removed: they are spread lines like any other, only
 // with nothing left to replay them from.
@@ -184,34 +280,22 @@ func RebalanceClient(tx *gorm.DB, clientID string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	open, err := openSalesOf(tx, clientID)
+	open, surpluses, err := clientSalesOf(tx, clientID)
 	if err != nil {
 		return nil, err
 	}
+	want := planSpread(open, surpluses, payments)
 
-	// What the lines should be: each payment, in the order it came in, takes from what the
-	// sales still miss after the payments before it.
-	balances := make([]int, len(open))
-	for i, s := range open {
-		balances[i] = s.Balance
-	}
-	want := map[spreadKey]int{}
-	for _, payment := range payments {
-		takes, _ := AllocateFIFO(balances, payment.AmountCents)
-		for i, take := range takes {
-			if take == 0 {
-				continue
-			}
-			balances[i] -= take
-			want[spreadKey{payment.ID, open[i].ID}] = take
-		}
-	}
-
-	// What the lines are, across every payment of this client (undone ones included) - a
-	// sale that left the client still has its lines here, and loses them below.
+	// What the lines are: those of every payment of this client (undone ones included), and
+	// every surplus line that leaves or reaches a sale of theirs. A sale that left the
+	// client still has its lines here, and loses them below; the replay of its new client
+	// does the same from the other side.
 	var existing []data.SalePayment
-	err = tx.Joins("JOIN client_payments cp ON cp.id = sale_payments.client_payment_id").
-		Where("cp.client_id = ?", clientID).
+	err = tx.Where(`client_payment_id IN (SELECT id FROM client_payments WHERE client_id = ?)
+		OR (credit_from_sale_id IS NOT NULL AND (
+			credit_from_sale_id IN (SELECT id FROM sales WHERE client_id = ?)
+			OR sale_id IN (SELECT id FROM sales WHERE client_id = ?)))`,
+		clientID, clientID, clientID).
 		Find(&existing).Error
 	if err != nil {
 		return nil, err
@@ -219,7 +303,13 @@ func RebalanceClient(tx *gorm.DB, clientID string) ([]string, error) {
 
 	touched := map[string]bool{}
 	for _, line := range existing {
-		key := spreadKey{*line.ClientPaymentID, line.SaleID}
+		key := spreadKey{saleID: line.SaleID}
+		if line.ClientPaymentID != nil {
+			key.clientPaymentID = *line.ClientPaymentID
+		}
+		if line.CreditFromSaleID != nil {
+			key.creditFromSaleID = *line.CreditFromSaleID
+		}
 		if cents, ok := want[key]; ok && cents == line.AmountCents {
 			delete(want, key)
 			continue
@@ -230,23 +320,36 @@ func RebalanceClient(tx *gorm.DB, clientID string) ([]string, error) {
 		touched[line.SaleID] = true
 	}
 
-	byID := make(map[string]data.ClientPayment, len(payments))
+	paymentsByID := make(map[string]data.ClientPayment, len(payments))
 	for _, payment := range payments {
-		byID[payment.ID] = payment
+		paymentsByID[payment.ID] = payment
 	}
-	note := notePaidByClient
+	surplusesByID := make(map[string]surplusSale, len(surpluses))
+	for _, surplus := range surpluses {
+		surplusesByID[surplus.ID] = surplus
+	}
 	for key, cents := range want {
-		payment := byID[key.clientPaymentID]
-		// The line is the client's payment seen from one sale, so it carries that payment's
-		// day and author - not whoever's action happened to trigger this replay.
-		line := data.SalePayment{
-			SaleID:          key.saleID,
-			AmountCents:     cents,
-			PaidOn:          payment.PaidOn,
-			Note:            &note,
-			ClientPaymentID: &payment.ID,
-			CreatedByID:     payment.CreatedByID,
+		// The line is the money seen from one sale, so it carries the day and the author of
+		// where the money came from - not whoever's action happened to trigger this replay.
+		line := data.SalePayment{SaleID: key.saleID, AmountCents: cents}
+		var note string
+		if key.clientPaymentID != "" {
+			payment := paymentsByID[key.clientPaymentID]
+			note = notePaidByClient
+			line.PaidOn = payment.PaidOn
+			line.ClientPaymentID = &payment.ID
+			line.CreatedByID = payment.CreatedByID
+		} else {
+			surplus := surplusesByID[key.creditFromSaleID]
+			note = noteCreditFromSale
+			if key.saleID == surplus.ID {
+				note = noteSurplusToCredit
+			}
+			line.PaidOn = surplus.PaidOn
+			line.CreditFromSaleID = &surplus.ID
+			line.CreatedByID = surplus.CreatedByID
 		}
+		line.Note = &note
 		if err := tx.Create(&line).Error; err != nil {
 			return nil, err
 		}

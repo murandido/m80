@@ -31,6 +31,19 @@ export const saleSchema = z.object({
   account_label: z.string(),
   loyalty_program_name: z.string(),
   loyalty_program_color: z.string(),
+  // The airline's cancellation fee on a cancelled sale, which the client always pays: it is
+  // what the balance of a cancelled sale still counts. Zero on a live sale.
+  cancellation_fee_cents: z.number().default(0),
+  // What the payments control set above (positive) or below (negative) the computed price;
+  // amount_cents already includes it. computed_amount_cents is the price without it - absent
+  // on an older API, where there was no adjustment to tell apart.
+  price_adjustment_cents: z.number().default(0),
+  computed_amount_cents: z.number().nullish(),
+  // What the ticket's alterations add to the price; zero when it was never altered.
+  adjustment_cents: z.number().default(0),
+  // Listed because the ticket was altered in the period, not issued there. When the booking
+  // was already paid, amount_cents and paid_cents describe the alteration alone.
+  alteration_day: z.boolean().default(false),
   // Set means the sale was reopened by the issuance being cancelled. There is no deleted
   // counterpart: deleting an issuance deletes its sale.
   cancelled_at: z.string().nullable(),
@@ -125,6 +138,23 @@ export const getSalesSchema = {
   }),
 }
 
+// One window of the clients view (GET /sales/page): the sales at [offset, offset + limit)
+// of the filtered list, how long the whole list is, and - with one client filtered - what
+// that client owes over all of it.
+export const getSalesPageSchema = {
+  response: z.object({
+    success: z.boolean(),
+    message: z.string(),
+    data: z.object({
+      sales: z.array(saleSchema),
+      total: z.number(),
+      offset: z.number(),
+      limit: z.number(),
+      owed_cents: z.number().default(0),
+    }),
+  }),
+}
+
 export const updateSaleSchema = {
   // client_id is nullable rather than optional-only: an explicit null is what unlinks the
   // client, and the backend tells the two apart by key presence.
@@ -133,6 +163,9 @@ export const updateSaleSchema = {
     paid: z.boolean().optional(),
     // Same rule as client_id: null (or "") clears it, absent leaves it alone.
     note: z.string().nullable().optional(),
+    // The total the client pays. The server keeps its difference from the computed price,
+    // so sending the computed price back clears the adjustment.
+    amount_cents: z.number().int().nonnegative().optional(),
   }),
   response: z.object({
     success: z.boolean(),
@@ -151,6 +184,11 @@ export const supplierIssuanceSchema = z.object({
   account_id: z.string().nullish(),
   account_label: z.string().nullish(),
   kind: z.enum(["issued", "refund"]),
+  // Set when the line is an alteration to the ticket rather than the booking or its
+  // cancellation. It still arrives as "issued" (miles charged) or "refund" (miles given
+  // back), so the sums above need no case of their own.
+  adjustment_id: z.string().nullish(),
+  adjustment_reason: z.string().nullish(),
   date: z.string(),
   program_locator: z.string(),
   airline_locator: z.string().nullable(),
@@ -164,8 +202,14 @@ export const supplierIssuanceSchema = z.object({
   // whole centavo per thousand for display - see supplierLineAmount. Nullish because an
   // ordinary account has no batches, and because the backend may not send it yet.
   cost_cents: z.number().nullish(),
-  // Tells the screen the rate is derived and must not be offered for editing. Absent reads
-  // as false, which is what every account meant before the inventory existed.
+  // Tells the screen the rate came from the batches and must not be offered for editing.
+  // An inventory booking no batch covers yet is false here and is typed like any other.
+  // Absent reads as false, which is what every line meant before the inventory existed.
+  cost_from_inventory: z
+    .boolean()
+    .nullish()
+    .transform((value) => value ?? false),
+  // The account owns its points. No longer what locks the field - see cost_from_inventory.
   owns_point_inventory: z
     .boolean()
     .nullish()
@@ -178,6 +222,14 @@ export const supplierIssuanceSchema = z.object({
     .boolean()
     .nullish()
     .transform((value) => value ?? false),
+  // What the supplier charges, in centavos, for the CPFs a cancelled booking burned. Only
+  // ever on the cancellation's refund line, and part of what is paid for it. Nullish so a
+  // tab opened before the field existed keeps parsing.
+  cancelled_cpf_fee: z
+    .number()
+    .int()
+    .nullish()
+    .transform((value) => value ?? null),
 })
 
 export type SupplierIssuance = z.infer<typeof supplierIssuanceSchema>

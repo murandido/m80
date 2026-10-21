@@ -1,6 +1,11 @@
-.PHONY: dev front back-up back-down back-logs clean db-backup db-backup-list db-restore db-anonymize
+.PHONY: init dev front back-up back-down back-logs clean db-backup db-backup-list db-restore db-anonymize ext-dev ext-build
 
 # LOCAL DEVELOPMENT (DOCKER-FIRST)
+
+# The carrier clients (backend/carriers) and the extension are private submodules.
+# The backend does not compile without them, so run this once after cloning.
+init:
+	git submodule update --init --recursive
 
 # Master Command: Backend setup and run native frontend
 dev: back-up front
@@ -56,6 +61,15 @@ ANON_PROFILE ?= dev
 db-anonymize:
 	@test -n "$(FILE)" || { echo "Uso: ENCRYPTION_KEY=... CPF_INDEX_KEY=... make db-anonymize FILE=<caminho do dump> [OUT=<destino>]"; exit 1; }
 	@PROFILE=$(ANON_PROFILE) backend/scripts/db-anonymize.sh $(if $(OUT),--out $(OUT),) $(FILE)
+
+# BROWSER EXTENSION (WXT)
+# Dev build with hot reload, written to extension/.output/chrome-mv3-dev
+ext-dev:
+	cd extension && pnpm install && pnpm dev
+
+# Production builds for both browsers, in extension/.output/{chrome,firefox}-mv3
+ext-build:
+	cd extension && pnpm install && pnpm test && pnpm build && pnpm build:firefox
 
 # UTILS
 # Clears caches and builds (does not delete Docker volumes to avoid data loss)

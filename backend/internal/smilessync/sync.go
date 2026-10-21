@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/murandido/m-80-backend/carriers/smiles"
 	"github.com/murandido/m-80-backend/internal/data"
-	"github.com/murandido/m-80-backend/internal/smiles"
 	"gorm.io/gorm"
 )
 
@@ -37,7 +37,8 @@ type Reader interface {
 //
 // The shape of a round:
 //  1. renew the session and store the rotated token at once - the one just used is dead
-//  2. read the balance; fill real_balance_points from it
+//  2. read the balance; fill real_balance_points from it. An account that does not track its
+//     statement stops here
 //  3. if the balance has not moved since last time, there is nothing new to pull - done
 //  4. otherwise pull the last month's statement, then read the balance AGAIN: if it changed
 //     mid-pull the statement we hold is already stale, so postpone rather than store a torn
@@ -55,8 +56,13 @@ func SyncAccount(ctx context.Context, db *gorm.DB, reader Reader, guard *Session
 		return fmt.Errorf("smilessync: loading state: %w", err)
 	}
 
-	// account.SmilesRefreshToken comes back decrypted from the AfterFind hook.
-	refreshToken := deref(account.SmilesRefreshToken)
+	// The caller may have loaded this account before waiting for the guard. Another round
+	// can rotate its refresh token while we wait, so read the current value under the lock.
+	var current data.Account
+	if err := db.Select("id", "smiles_refresh_token").First(&current, "id = ?", account.ID).Error; err != nil {
+		return fmt.Errorf("smilessync: reloading session: %w", err)
+	}
+	refreshToken := deref(current.SmilesRefreshToken)
 	if refreshToken == "" {
 		// Not connected: nothing to read. Left pending for the connect flow to fill.
 		return recordPending(db, state)
@@ -91,6 +97,11 @@ func SyncAccount(ctx context.Context, db *gorm.DB, reader Reader, guard *Session
 	// against, and it is trustworthy even on a round where the statement is not pulled.
 	if err := setRealBalance(db, account.ID, balance.Miles, now); err != nil {
 		return fmt.Errorf("smilessync: writing real balance: %w", err)
+	}
+
+	// An account that does not track its statement stops here: its balance is all a round is for.
+	if !account.TracksStatement {
+		return recordBalanceOnly(db, state, now)
 	}
 
 	if state.LastBalanceMiles != nil && *state.LastBalanceMiles == balance.Miles {
@@ -238,6 +249,19 @@ func fillDayBalances(lines []data.SmilesStatementLine, balance int) {
 func recordSynced(db *gorm.DB, state *data.SmilesSyncState, balance int, now time.Time) error {
 	state.State = data.SmilesSyncOK
 	state.LastBalanceMiles = &balance
+	state.LastSyncedAt = &now
+	state.ConsecutiveFailures = 0
+	state.Detail = nil
+	return upsertState(db, state)
+}
+
+// recordBalanceOnly closes a round on an account that does not track its statement: the balance was
+// read and written to real_balance_points, and nothing else was. LastBalanceMiles is deliberately left
+// alone - it is the statement's bookmark, the balance the stored window was last reconciled to.
+// Moving it here would make the first round after "Acompanhar extrato" is switched on see an
+// "unchanged" balance and skip the statement it was switched on to read.
+func recordBalanceOnly(db *gorm.DB, state *data.SmilesSyncState, now time.Time) error {
+	state.State = data.SmilesSyncOK
 	state.LastSyncedAt = &now
 	state.ConsecutiveFailures = 0
 	state.Detail = nil

@@ -43,9 +43,9 @@ interface IssuancesScreenProps {
   currentUserId: string | null
 }
 
-// On the CA's Mode branch the issuances are a board of cards with a side panel instead of
-// the spreadsheet (see components/issuances/board/). The grid's files are left untouched
-// and unused here, so merging main - which keeps changing them - stays conflict-free.
+// The issuances are a board of cards with a side panel (see components/issuances/board/).
+// The spreadsheet's files (issuances-grid.tsx, cells/, the filter bar) are no longer
+// rendered; they stay until the board has settled in production, then go in a cleanup.
 export function IssuancesScreen({
   initialIssuances,
   filterQuery,

@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/murandido/m-80-backend/carriers/smiles"
 	"github.com/murandido/m-80-backend/internal/data"
-	"github.com/murandido/m-80-backend/internal/smiles"
 	"gorm.io/gorm"
 )
 
@@ -133,14 +133,14 @@ func growBackoff(current, interval time.Duration) time.Duration {
 	return next
 }
 
-// eligibleAccounts are the connected accounts that are tracked: they have "Acompanhar extrato"
-// on and a session to renew. Owning the miles is no longer the question - an account
-// administered for someone else still has a statement worth reading. An account without a
-// session stays pending until it is connected, and is not worth a round.
+// eligibleAccounts are the connected accounts: every account with a session to renew, whether or
+// not it tracks its statement - the balance is read for all of them, and SyncAccount decides per
+// account whether the statement is pulled too. An account without a session stays pending until
+// it is connected, and is not worth a round.
 func eligibleAccounts(db *gorm.DB) ([]data.Account, error) {
 	var accounts []data.Account
 	err := db.
-		Where("tracks_statement = ? AND smiles_refresh_token IS NOT NULL", true).
+		Where("smiles_refresh_token IS NOT NULL").
 		Find(&accounts).Error
 	return accounts, err
 }

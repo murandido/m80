@@ -18,7 +18,10 @@ export type SaleStatus =
 // ever has money to hand back, or nothing at all.
 export function saleStatus(sale: Sale): SaleStatus {
   if (sale.cancelled_at !== null) {
-    return sale.balance_cents < 0 ? "refund" : "cancelled"
+    if (sale.balance_cents < 0) return "refund"
+    // The cancellation fee, still to be paid: the client owes it like any other charge.
+    if (sale.balance_cents > 0) return sale.paid_cents > 0 ? "partial" : "unpaid"
+    return "cancelled"
   }
   // An issuance still missing its points or its price is worth nothing by arithmetic, not
   // because it is settled - calling it paid would hide the row that most needs filling in.
@@ -56,20 +59,29 @@ function formatShortDay(day: string): string {
 
 export function SaleStatusButton({ sale, onToggle, disabled }: SaleStatusButtonProps) {
   const status = saleStatus(sale)
-  // Paid entirely by the client's lump sums: the switch has nothing of its own to take
-  // back, and the backend refuses it. The way back is undoing the payment in the history.
+  // Paid entirely by the client's lump sums, or by credit another sale of theirs had left
+  // over: the switch has nothing of its own to take back, and the backend refuses it. The
+  // way back is undoing the payment in the history, or the payment on the other sale.
   const coveredByClientPayment =
     status === "paid" &&
     sale.client_payment_cents > 0 &&
     sale.paid_cents - sale.client_payment_cents <= 0
   const inert = status === "cancelled" || status === "no-value"
   // A partly paid sale is where a client's lump sum ran out: only another client payment
-  // moves it, and the backend refuses the switch on it too.
-  const locked = coveredByClientPayment || status === "partial"
+  // moves it, and the backend refuses the switch on it too. Not when what is missing came
+  // from an alteration made after the booking was paid: that is a new charge, settled by
+  // hand like any other (salePartlyPaid on the backend draws the same line).
+  // A cancelled sale owes only its fee, and the backend never counts it as partly paid.
+  const cancelled = sale.cancelled_at !== null
+  const bookingCovered =
+    cancelled || sale.paid_cents >= sale.amount_cents - sale.adjustment_cents
+  const locked = coveredByClientPayment || (status === "partial" && !bookingCovered)
 
+  // What the bar fills against: the fee on a cancelled sale, the price otherwise.
+  const owedCents = cancelled ? sale.cancellation_fee_cents : sale.amount_cents
   const paidShare =
-    sale.amount_cents > 0
-      ? Math.min(100, Math.max(0, (sale.paid_cents / sale.amount_cents) * 100))
+    owedCents > 0
+      ? Math.min(100, Math.max(0, (sale.paid_cents / owedCents) * 100))
       : 0
 
   const label = {
@@ -83,9 +95,9 @@ export function SaleStatusButton({ sale, onToggle, disabled }: SaleStatusButtonP
 
   const hint = {
     paid: coveredByClientPayment
-      ? `Paga pelo pagamento do cliente de ${formatCurrencyBRL(sale.client_payment_cents)}` +
+      ? `Paga pelo pagamento ou crédito do cliente de ${formatCurrencyBRL(sale.client_payment_cents)}` +
         (sale.client_payment_paid_on ? ` em ${formatShortDay(sale.client_payment_paid_on)}` : "") +
-        " — desfaça no Histórico"
+        " — só muda pelo Histórico ou pela emissão que gerou o crédito"
       : "Clique para voltar a A Pagar",
     partial: `${Math.round(paidShare)}% pago — só um novo pagamento parcial altera`,
     unpaid: "Clique para marcar como pago",

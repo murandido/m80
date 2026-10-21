@@ -1,0 +1,14 @@
+-- What the agency charges a client above (or below) what the issuance works out to:
+-- points at the rate per thousand, plus taxes, plus alterations. Some tickets are sold for
+-- more than the miles' price, sometimes for less, and the payments control had nowhere to
+-- say so.
+--
+-- Stored as the difference, not as a final amount. The operator types the total, and the
+-- server keeps total minus computed. A later correction to the points or the rate then moves
+-- the total with it instead of being silently overridden by a figure typed before it.
+--
+-- Collection only: the inventory closing keeps pricing revenue by the rate per thousand, by
+-- the user's decision.
+--
+-- Additive, with a default that is what every existing sale already means.
+ALTER TABLE sales ADD COLUMN price_adjustment_cents INTEGER NOT NULL DEFAULT 0;

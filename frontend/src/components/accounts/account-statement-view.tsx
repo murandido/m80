@@ -38,6 +38,7 @@ import {
 import { DateRangeFilter } from "@/components/filters/date-range-filter"
 import { cn } from "@/lib/utils"
 import { LoyaltyProgramBadge } from "./loyalty-program-badge"
+import { AzulReconnectNotice } from "./azul-reconnect-notice"
 import { LoyaltyProgramSummary } from "@/schemas/account"
 import {
   type StatementEntries,
@@ -83,6 +84,7 @@ const SYNC_STATE_META: Record<StatementSyncKind, { label: string; className: str
   inconsistent: { label: "Saldo divergente", className: "bg-amber-100 text-amber-800" },
   needs_mfa: { label: "Precisa de código novo", className: "bg-amber-100 text-amber-800" },
   needs_attention: { label: "Precisa de atenção", className: "bg-rose-100 text-rose-700" },
+  needs_reconnect: { label: "Reconexão necessária", className: "bg-rose-100 text-rose-700" },
 }
 
 // The airline's own English type descriptions, in Portuguese. The kind badge already gives the
@@ -384,6 +386,9 @@ export function AccountStatementView({
         </div>
         {syncState.detail && (
           <p className="text-xs text-slate-500">{syncState.detail}</p>
+        )}
+        {syncedProgram === "azul" && (
+          <AzulReconnectNotice accountId={accountId} state={syncState.state} />
         )}
       </div>
 

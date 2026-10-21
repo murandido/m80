@@ -27,42 +27,96 @@ import "time"
 // airline is the one that decides, and a refund that overshoots what we recorded means
 // our figure was wrong. It gives back everything there is and stops there.
 func Reverse(existing []Allocation, points int, on time.Time) []Allocation {
-	return reverseAgainst(existing, points, on)
+	return reverseAgainst(existing, points, on, "")
 }
 
 // reverseAgainst is the body Allocate calls inside its pass, where `existing` is what the
 // issuance is holding at that point in the timeline rather than its final state.
-func reverseAgainst(existing []Allocation, points int, on time.Time) []Allocation {
+//
+// adjustmentID is set when the return is an alteration giving miles back
+// (data.IssuanceAdjustment with negative points), and empty for a cancellation.
+//
+// The two are tagged differently because the closing prices a slice by its tag. A
+// cancellation undoes what was consumed, so each return inherits the tag of the slice it
+// gives back: points an alteration charged return at that alteration's rate, and the
+// booking's at the booking's. That is what keeps a full cancellation netting revenue to
+// zero when the booking and an alteration were sold at different rates, or the alteration
+// was absorbed. An alteration's refund is priced at its own rate, because what the client
+// gets back is part of that alteration. So it carries its own tag, and it draws from the
+// booking's own points first: an airline returning miles on a change is making the booking
+// cheaper.
+func reverseAgainst(existing []Allocation, points int, on time.Time, adjustmentID string) []Allocation {
 	if points <= 0 {
 		return nil
 	}
 
-	// Net each batch out to what it is currently owed, keeping first-consumption order so
-	// "most recently consumed" means what it says. Pending slices (empty BatchID) net
-	// together under their own key and, being last in, come back first.
+	// A refund-adjustment slice only ever gives points back, so a tag with no positive
+	// slice is one of those, and it nets against the booking rather than standing as a
+	// position of its own. A tag the alteration charged under always has its consumption
+	// slices in `existing`, ahead of any return.
+	consumedUnder := map[string]bool{}
+	for _, allocation := range existing {
+		if allocation.Points > 0 {
+			consumedUnder[allocation.AdjustmentID] = true
+		}
+	}
+	nettingTag := func(tag string) string {
+		if tag != "" && !consumedUnder[tag] {
+			return ""
+		}
+		return tag
+	}
+
+	// Net each (batch, tag) out to what it is currently owed, keeping first-consumption
+	// order so "most recently consumed" means what it says. Pending slices (empty BatchID)
+	// net together under their own key and, being last in, come back first.
+	type positionKey struct {
+		batchID string
+		tag     string
+	}
 	type position struct {
-		batchID   string
+		positionKey
 		points    int
 		costCents int
 	}
 	positions := make([]position, 0, len(existing))
-	index := make(map[string]int, len(existing))
+	index := make(map[positionKey]int, len(existing))
 
 	for _, allocation := range existing {
-		at, seen := index[allocation.BatchID]
+		key := positionKey{batchID: allocation.BatchID, tag: nettingTag(allocation.AdjustmentID)}
+		at, seen := index[key]
 		if !seen {
 			at = len(positions)
-			index[allocation.BatchID] = at
-			positions = append(positions, position{batchID: allocation.BatchID})
+			index[key] = at
+			positions = append(positions, position{positionKey: key})
 		}
 		positions[at].points += allocation.Points
 		positions[at].costCents += allocation.CostCents
 	}
 
+	// The order positions are given back in: newest first. An alteration's refund takes
+	// the booking's positions before any other.
+	order := make([]int, 0, len(positions))
+	for at := len(positions) - 1; at >= 0; at-- {
+		if adjustmentID == "" || positions[at].tag == "" {
+			order = append(order, at)
+		}
+	}
+	if adjustmentID != "" {
+		for at := len(positions) - 1; at >= 0; at-- {
+			if positions[at].tag != "" {
+				order = append(order, at)
+			}
+		}
+	}
+
 	reversals := make([]Allocation, 0, len(positions))
 	remaining := points
 
-	for at := len(positions) - 1; at >= 0 && remaining > 0; at-- {
+	for _, at := range order {
+		if remaining <= 0 {
+			break
+		}
 		current := positions[at]
 		if current.points <= 0 {
 			continue
@@ -81,12 +135,17 @@ func reverseAgainst(existing []Allocation, points int, on time.Time) []Allocatio
 			cost = proratedCents(current.costCents, giving, current.points)
 		}
 
+		tag := current.tag
+		if adjustmentID != "" {
+			tag = adjustmentID
+		}
 		reversals = append(reversals, Allocation{
-			IssuanceID: issuanceIDOf(existing),
-			BatchID:    current.batchID,
-			OccurredOn: on,
-			Points:     -giving,
-			CostCents:  -cost,
+			IssuanceID:   issuanceIDOf(existing),
+			BatchID:      current.batchID,
+			OccurredOn:   on,
+			Points:       -giving,
+			CostCents:    -cost,
+			AdjustmentID: tag,
 		})
 		remaining -= giving
 	}

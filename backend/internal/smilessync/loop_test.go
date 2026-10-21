@@ -60,10 +60,9 @@ func TestEligibleAccountsNeedASession(t *testing.T) {
 	})
 }
 
-// The two flags answer different questions, and the ticker asks only one of them. An account
-// administered for someone else has a statement worth reading and no inventory to cost, and
-// before migration 64 it could not be read at all.
-func TestEligibilityFollowsTrackingNotOwnership(t *testing.T) {
+// Neither flag decides eligibility: the balance is read for every connected account, and
+// SyncAccount decides per account whether the statement is pulled too.
+func TestEveryConnectedAccountIsEligible(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		tracked := seedAccount(t, tx, "refresh-1")
 
@@ -73,8 +72,7 @@ func TestEligibilityFollowsTrackingNotOwnership(t *testing.T) {
 			t.Fatalf("updating the account: %v", err)
 		}
 
-		// Ours to cost, but nobody asked for its statement: not read. Turning tracking off is
-		// how an operator stops a sync without disconnecting the account.
+		// Ours to cost, but nobody asked for its statement: still read, for the balance.
 		untracked := seedAccount(t, tx, "refresh-3")
 		if err := tx.Model(&untracked).Update("tracks_statement", false).Error; err != nil {
 			t.Fatalf("updating the account: %v", err)
@@ -95,8 +93,8 @@ func TestEligibilityFollowsTrackingNotOwnership(t *testing.T) {
 		if !eligible[notOurs.ID] {
 			t.Error("a tracked account was left out because its points are not ours to cost")
 		}
-		if eligible[untracked.ID] {
-			t.Error("an untracked account was read anyway")
+		if !eligible[untracked.ID] {
+			t.Error("an untracked account with a session was left out")
 		}
 	})
 }

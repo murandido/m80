@@ -304,6 +304,44 @@ func TestRecomputeSkipsACancellationOnlyRow(t *testing.T) {
 	})
 }
 
+// A cancellation-only row that carries a refund puts the points back into the queue, so a
+// later booking spends them instead of falling short - the costing agreeing with the
+// expected balance, which already counts them.
+func TestRecomputeReturnsTheRefundOfACancellationOnlyRowToTheQueue(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		f := seedFixture(t, tx)
+		seedBatch(t, tx, f, "2026-09-01", 100000, 150000)
+		refund := seedIssuance(t, tx, f, "2026-09-05", 37600)
+		if err := tx.Model(&refund).Updates(map[string]any{
+			"cancellation_only": true,
+			"cancelled_at":      day("2026-09-04"),
+			"refunded_points":   37600,
+		}).Error; err != nil {
+			t.Fatalf("marking the refund: %v", err)
+		}
+		seedIssuance(t, tx, f, "2026-09-10", 137600)
+
+		if err := Recompute(tx, f.account.ID); err != nil {
+			t.Fatalf("Recompute: %v", err)
+		}
+
+		rows := allocationsOf(t, tx, f.account.ID)
+		for _, row := range rows {
+			if row.BatchID == nil {
+				t.Fatalf("got a pending slice of %d points while the refund covered the booking", row.Points)
+			}
+		}
+		// 100000 bought + 37600 refunded - 137600 spent.
+		if points := sumPoints(rows); points != 137600-37600 {
+			t.Errorf("net points = %d, want %d", points, 100000)
+		}
+		// The batch is spent, so the slices net to exactly what it cost.
+		if cost := sumCost(rows); cost != 150000 {
+			t.Errorf("net cost = %d cents, want the batch's 150000", cost)
+		}
+	})
+}
+
 // closePeriod settles a stretch of the account's costing.
 func closePeriod(t *testing.T, tx *gorm.DB, f fixture, startsOn, endsOn string) data.InventoryPeriod {
 	t.Helper()

@@ -6,7 +6,7 @@ import Link from "next/link"
 import { formatDistanceToNow } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { toast } from "sonner"
-import { FileText, Link2, Loader2 } from "lucide-react"
+import { FileText, Link2, Loader2, Plug } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { connectAzulAccountAction } from "@/actions/statement"
 import { statementSyncStateSchema, type StatementSyncState } from "@/schemas/inventory"
@@ -19,7 +19,7 @@ import { Account } from "@/schemas/account"
 const AZUL_PROGRAM_CODE = "AZUL"
 
 // How often the card re-reads the connect status while a login is in flight. The login runs for a
-// couple of minutes (edge retries), so a five-second poll is plenty to catch the finish without
+// couple of minutes (with retries), so a five-second poll is plenty to catch the finish without
 // hammering the API.
 const POLL_INTERVAL_MS = 5000
 
@@ -32,9 +32,8 @@ interface AzulAccountControlsProps {
 }
 
 // The Azul strip on the account card: connect the account (when it has no customerKey yet) or,
-// once connected, show the synced balance with "atualizado há…" and a link to the statement
-// page. Rendered only for Azul accounts that are set to track their statement - every other
-// account has no sync to offer.
+// once connected, show the synced balance with "atualizado há…" and, on an account that tracks
+// its statement, a link to the statement page. Rendered for every Azul account.
 //
 // The "conectando" state is owned by the server (the in-flight connect tracker), not by this
 // component: the card reads it back from GET /api/accounts/{id}/azul-status, so leaving the page,
@@ -52,10 +51,9 @@ export function AzulAccountControls({ account }: AzulAccountControlsProps) {
   // to pull the freshly synced balance into the card.
   const wasConnecting = useRef(false)
 
-  const isAzul = account.loyalty_program.code === AZUL_PROGRAM_CODE
-  // Tracking, not ownership: an account administered for someone else has a statement worth
-  // watching and no inventory to cost. See migration 64.
-  const enabled = isAzul && account.tracks_statement
+  // Every Azul account can connect: the balance is read for all of them. "Acompanhar extrato"
+  // only decides whether the statement link shows - see SyncAccount on the backend.
+  const enabled = account.loyalty_program.code === AZUL_PROGRAM_CODE
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -184,7 +182,9 @@ export function AzulAccountControls({ account }: AzulAccountControlsProps) {
     )
   }
 
-  const balancePoints = status?.last_balance_points ?? account.real_balance_points
+  // real_balance_points first: every round writes it, while last_balance_points only moves on a
+  // round that read the statement, so on an account that does not track it it is empty or stale.
+  const balancePoints = account.real_balance_points ?? status?.last_balance_points
   const balance =
     balancePoints != null ? `${formatPoints(balancePoints)} pts` : "Saldo ainda não sincronizado"
   const lastSyncedAt = status?.last_synced_at ?? account.azul_last_synced_at
@@ -195,23 +195,53 @@ export function AzulAccountControls({ account }: AzulAccountControlsProps) {
       })}`
     : null
 
+  // A connected account whose sync stopped: Azul refused the key (needs_reconnect) or the rounds
+  // keep failing (needs_attention). Either way the fix is a login, so offer it right here.
+  const syncState = status?.state ?? account.azul_sync_state
+  const needsLogin = syncState === "needs_reconnect" || syncState === "needs_attention"
+
   return (
     <div className="flex items-center justify-between gap-2 border-t border-slate-100 bg-slate-50 px-4 py-2">
       <div className="flex flex-col">
         <span className="text-sm font-medium text-slate-800">{balance}</span>
         {syncedAt && <span className="text-xs text-slate-500">{syncedAt}</span>}
+        {needsLogin && (
+          <span className="text-xs text-rose-700">
+            {syncState === "needs_reconnect"
+              ? "A Azul não reconhece mais a conta — atualize a senha"
+              : "Sincronização falhando — confira a senha"}
+          </span>
+        )}
       </div>
-      <Button
-        asChild
-        variant="outline"
-        size="sm"
-        className="border-slate-800 text-slate-800 hover:border-cyan-600 hover:bg-cyan-600 hover:text-white"
-      >
-        <Link href={`/dashboard/accounts/${account.id}/statement`}>
-          <FileText className="mr-1 h-3.5 w-3.5" />
-          Ver extrato
-        </Link>
-      </Button>
+      {needsLogin && (
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleConnect}
+          disabled={isConnecting}
+          className="ml-auto border-sky-700 text-sky-700 hover:border-sky-600 hover:bg-sky-600 hover:text-white"
+        >
+          {isConnecting ? (
+            <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Plug className="mr-1 h-3.5 w-3.5" />
+          )}
+          Reconectar
+        </Button>
+      )}
+      {account.tracks_statement && (
+        <Button
+          asChild
+          variant="outline"
+          size="sm"
+          className="border-slate-800 text-slate-800 hover:border-cyan-600 hover:bg-cyan-600 hover:text-white"
+        >
+          <Link href={`/dashboard/accounts/${account.id}/statement`}>
+            <FileText className="mr-1 h-3.5 w-3.5" />
+            Ver extrato
+          </Link>
+        </Button>
+      )}
     </div>
   )
 }

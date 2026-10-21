@@ -15,6 +15,9 @@ type ResolvedBooking struct {
 	// Manual is true when the mapping came from a saved AzulBookingLink (an operator override),
 	// false when it was matched by locator on the fly.
 	Manual bool
+	// Adjusted is what the booking's alterations charged and returned. RedeemedPoints and
+	// RefundedPoints fold it in.
+	Adjusted AdjustedPoints
 }
 
 // ResolveBookingLinks maps each of the given statement locators to a real issuance on the
@@ -88,6 +91,19 @@ func ResolveBookingLinks(db *gorm.DB, accountID string, locators []string) (map[
 		if issuance, ok := autoByLocator[locator]; ok {
 			resolved[locator] = ResolvedBooking{Issuance: issuance, Manual: false}
 		}
+	}
+
+	issuanceIDs := make([]string, 0, len(resolved))
+	for _, booking := range resolved {
+		issuanceIDs = append(issuanceIDs, booking.Issuance.ID)
+	}
+	adjusted, err := LoadAdjustedPoints(db, issuanceIDs)
+	if err != nil {
+		return nil, fmt.Errorf("statement.ResolveBookingLinks: %w", err)
+	}
+	for locator, booking := range resolved {
+		booking.Adjusted = adjusted[booking.Issuance.ID]
+		resolved[locator] = booking
 	}
 	return resolved, nil
 }

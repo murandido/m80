@@ -24,35 +24,91 @@ func PointsValueCents(points, valueOfTheThousand int) int {
 	return (total + 999) / 1000
 }
 
+// AdjustmentClientCents is what one alteration adds to the sale: its points at the rate the
+// client pays for them, plus its taxes when those were passed on. Negative when the client
+// gets money back.
+//
+// The points are priced by magnitude and the sign put back on afterwards, so a refund
+// rounds up to the client's favour the same way a charge rounds up to the agency's.
+// PointsValueCents alone would truncate a negative product toward zero.
+func AdjustmentClientCents(points, valueOfTheThousand, taxes int, taxesPassedToClient bool) int {
+	cents := PointsValueCents(points, valueOfTheThousand)
+	if points < 0 {
+		cents = -PointsValueCents(-points, valueOfTheThousand)
+	}
+	if taxesPassedToClient {
+		cents += taxes
+	}
+	return cents
+}
+
+// AdjustmentCentsJoin is AdjustmentClientCents for every issuance at once, as a subquery
+// keyed by issuance_id with the total in `cents`. The list queries join it rather than
+// loading the alterations row by row. It has to stay the same arithmetic as the Go
+// function above, and TestAdjustmentCentsJoinMatchesTheGoFunction holds the two together.
+const AdjustmentCentsJoin = `(
+	SELECT issuance_id,
+		SUM(SIGN(points) * CEIL(ABS(points)::numeric * value_of_the_thousand / 1000)
+			+ CASE WHEN taxes_passed_to_client THEN taxes ELSE 0 END)::integer AS cents
+	FROM issuance_adjustments
+	WHERE deleted_at IS NULL
+	GROUP BY issuance_id
+)`
+
 // Amount is what a sale is worth and whether the issuance behind it was cancelled - the two
 // facts BalanceCents needs.
 type Amount struct {
 	Cents     int
 	Cancelled bool
+	// AdjustmentCents is the part of Cents the ticket's alterations added, so a caller can
+	// tell what was owed for the booking alone.
+	AdjustmentCents int
+	// CancellationFeeCents is the airline's cancellation fee, which the client always pays.
+	// It is what a cancelled sale still owes. Zero on a live sale and on a cancellation with
+	// no fee.
+	CancellationFeeCents int
+	// PriceAdjustmentCents is the part of Cents typed in the payments control on top of (or
+	// below) the computed price - sales.price_adjustment_cents. Zero on a cancelled sale,
+	// whose price is no longer owed.
+	PriceAdjustmentCents int
 }
 
-// AmountOf reads a sale's price from the issuance behind it.
+// AmountOf reads a sale's price from the issuance behind it, alterations included.
 func AmountOf(db *gorm.DB, saleID string) (Amount, error) {
 	var row struct {
-		Points             int
-		ValueOfTheThousand int
-		Taxes              *int
-		CancelledAt        *string
+		Points               int
+		ValueOfTheThousand   int
+		Taxes                *int
+		AdjustmentCents      int
+		CancelledAt          *string
+		CancellationFee      *int
+		PriceAdjustmentCents int
 	}
 	err := db.Table("sales").
-		Select("issuances.points, issuances.value_of_the_thousand, issuances.taxes, issuances.cancelled_at").
+		Select(`issuances.points, issuances.value_of_the_thousand, issuances.taxes, issuances.cancelled_at,
+			issuances.cancellation_fee, sales.price_adjustment_cents,
+			COALESCE(adjustments.cents, 0) AS adjustment_cents`).
 		Joins("JOIN issuances ON issuances.id = sales.issuance_id").
+		Joins("LEFT JOIN "+AdjustmentCentsJoin+" AS adjustments ON adjustments.issuance_id = issuances.id").
 		Where("sales.id = ?", saleID).
 		Scan(&row).Error
 	if err != nil {
 		return Amount{}, err
 	}
 
-	cents := PointsValueCents(row.Points, row.ValueOfTheThousand)
+	cents := PointsValueCents(row.Points, row.ValueOfTheThousand) + row.AdjustmentCents
 	if row.Taxes != nil {
 		cents += *row.Taxes
 	}
-	return Amount{Cents: cents, Cancelled: row.CancelledAt != nil}, nil
+	amount := Amount{Cents: cents, Cancelled: row.CancelledAt != nil, AdjustmentCents: row.AdjustmentCents}
+	if amount.Cancelled && row.CancellationFee != nil {
+		amount.CancellationFeeCents = *row.CancellationFee
+	}
+	if !amount.Cancelled {
+		amount.Cents += row.PriceAdjustmentCents
+		amount.PriceAdjustmentCents = row.PriceAdjustmentCents
+	}
+	return amount, nil
 }
 
 // PaidCents is the sum of a sale's payments. Negative entries are refunds, so this can go
@@ -72,14 +128,16 @@ func PaidCents(db *gorm.DB, saleID string) (int, error) {
 // BalanceCents is the money still to move on a sale, signed: positive is owed by the
 // client, negative is owed back to them, zero is nothing left to do.
 //
-// A cancelled sale is owed nothing. The ticket is gone, so its price stopped being a debt
-// the moment it was cancelled - what survives is whatever the client already handed over,
-// which now has to go back. Without this, a cancelled sale nobody ever paid read as owing
-// its full price forever, and one that was paid and then refunded read the same, when in
-// both cases there is nothing left to do.
+// A cancelled sale is owed its cancellation fee and nothing else. The ticket is gone, so its
+// price stopped being a debt the moment it was cancelled - what survives is the fee, which
+// the client always pays, against whatever the client already handed over. Paid more than
+// the fee, the rest goes back; paid less, the client still owes the difference. Without the
+// fee this is "give back everything that came in", which is what it was before the fee was
+// counted: a cancelled sale nobody ever paid read as owing its full price forever, and one
+// that was paid and then refunded read the same.
 func BalanceCents(amount Amount, paidCents int) int {
 	if amount.Cancelled {
-		return -paidCents
+		return amount.CancellationFeeCents - paidCents
 	}
 	return amount.Cents - paidCents
 }
@@ -125,7 +183,8 @@ func Recalculate(tx *gorm.DB, saleID string) error {
 // what a lump sum had put on a ticket that is now cancelled is the client's money again,
 // and goes to their next open sale or to their credit instead of waiting to be handed
 // back; a restored ticket is a debt again and takes its turn in the queue. The ledger
-// lines recorded on the sale itself are still left alone.
+// lines recorded on the sale itself are still left alone, but what they paid beyond the
+// fee is surplus, and the replay carries it to the client's other sales or credit too.
 func RecalculateByIssuance(tx *gorm.DB, issuanceID string) error {
 	var found data.Sale
 	err := tx.Select("id", "client_id").
@@ -143,4 +202,66 @@ func RecalculateByIssuance(tx *gorm.DB, issuanceID string) error {
 	}
 	_, err = RebalanceClient(tx, *found.ClientID)
 	return err
+}
+
+// RecalculateRepriced is RecalculateByIssuance for a change to what the sale is worth: the
+// points, the rate, the taxes, or the amount typed in the payments control. A sale that was
+// settled by hand stays settled. "Pago" there means the client paid for the ticket, so
+// correcting the ticket's price is not a new debt (or a refund) to chase. The switch records
+// the figure of the moment, so before this a corrected price left the sale half paid, and
+// the switch then refused it as a partial payment.
+//
+// It has to run before anything recalculates the sale: sales.paid is still the state from
+// before the change, which is what tells a sale that was settled from one that was not.
+func RecalculateRepriced(tx *gorm.DB, issuanceID string) error {
+	var found data.Sale
+	err := tx.Select("id", "paid").
+		Where("issuance_id = ?", issuanceID).
+		Limit(1).
+		Find(&found).Error
+	if err != nil {
+		return err
+	}
+	if found.ID != "" && found.Paid {
+		if err := resizeOwnSettlement(tx, found.ID); err != nil {
+			return err
+		}
+	}
+	return RecalculateByIssuance(tx, issuanceID)
+}
+
+// resizeOwnSettlement moves the sale's latest own line - the paid switch's, or the backfill
+// of a sale marked paid before the statement existed - by whatever the new price left open
+// or over. A sale settled only by a client's payments has no such line and is left to the
+// replay, which spreads the client's money over the new figures as it always has.
+func resizeOwnSettlement(tx *gorm.DB, saleID string) error {
+	amount, err := AmountOf(tx, saleID)
+	if err != nil || amount.Cancelled {
+		return err
+	}
+	paidCents, err := PaidCents(tx, saleID)
+	if err != nil {
+		return err
+	}
+	balance := BalanceCents(amount, paidCents)
+	if balance == 0 {
+		return nil
+	}
+
+	var line data.SalePayment
+	err = tx.Where("sale_id = ? AND client_payment_id IS NULL AND credit_from_sale_id IS NULL", saleID).
+		Order("created_at desc").
+		Limit(1).
+		Find(&line).Error
+	if err != nil || line.ID == "" {
+		return err
+	}
+
+	// A line cannot hold zero, and below zero the client's own payments already cover the
+	// new price: the line goes, and the replay hands the rest back as their credit.
+	resized := line.AmountCents + balance
+	if resized <= 0 {
+		return tx.Delete(&line).Error
+	}
+	return tx.Model(&line).UpdateColumn("amount_cents", resized).Error
 }

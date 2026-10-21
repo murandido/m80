@@ -1,15 +1,15 @@
 import type { Metadata } from "next"
+import { Suspense } from "react"
 import { cookies } from "next/headers"
 import Link from "next/link"
-import { AlertTriangle, ExternalLink, FileText } from "lucide-react"
+import { ExternalLink, FileText } from "lucide-react"
 import { env } from "@/lib/env"
 import { fetchList } from "@/lib/fetch-list"
 import { canAccess } from "@/lib/navigation"
 import { getSessionUser } from "@/lib/session"
 import { readStickyFilters, stickySearchParams } from "@/lib/sticky-filters"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
-import { getClientPaymentsSchema, getSalesSchema, type Sale } from "@/schemas/sale"
+import { getClientPaymentsSchema } from "@/schemas/sale"
 import { getClientsSchema, type Client } from "@/schemas/client"
 import { getAgenciesSchema, type Agency } from "@/schemas/agency"
 import { SalesViewToggle } from "@/components/sales/sales-view-toggle"
@@ -19,10 +19,11 @@ import { SalesClientsTable } from "@/components/sales/sales-clients-table"
 import { SalesHelpPopover } from "@/components/sales/sales-help-popover"
 import { ClientReportButton } from "@/components/sales/client-report-button"
 import { LiveRefresh } from "@/components/layout/live-refresh"
+import { ListSearchBar } from "@/components/shared/list-search-bar"
 import {
   buildSalesQuery,
   resolveSalesFilters,
-  resolveSalesPeriod,
+  resolveSalesClientsPeriod,
   SALES_URL_KEYS,
   singleClientId,
   type SalesSearchParams,
@@ -52,7 +53,7 @@ export default async function SalesClientsPage({
     readStickyFilters(cookieStore, "/dashboard/sales"),
     SALES_URL_KEYS,
   )
-  const period = resolveSalesPeriod(params)
+  const period = resolveSalesClientsPeriod(params)
   // This view only offers agency, client and payment status. Program, account and issuer
   // are dropped even when the URL or the remembered cookie still carries them (the screen
   // used to have those filters): applied with no control on screen, they would hide sales
@@ -69,13 +70,10 @@ export default async function SalesClientsPage({
   // part of the answer - money already handed over that no sale has taken yet.
   const filteredClientId = singleClientId(filters.client_ids)
 
-  const [user, sales, clients, agencies, clientCreditCents] = await Promise.all([
+  // The sales themselves are not fetched here: the table asks for the window on screen as
+  // it scrolls (GET /sales/page), which is what lets "every issuance" be the default.
+  const [user, clients, agencies, clientCreditCents] = await Promise.all([
     getSessionUser(),
-    fetchList<Sale>(
-      `${api}/sales?${query.toString()}`,
-      getSalesSchema.response,
-      authHeader,
-    ),
     fetchList<Client>(`${api}/clients`, getClientsSchema.response, authHeader),
     fetchList<Agency>(
       `${api}/agencies`,
@@ -135,32 +133,35 @@ export default async function SalesClientsPage({
           people={[]}
           initialFilters={effectiveFilters}
         >
-          <SalesPeriodFilter dateFrom={period.date_from} dateTo={period.date_to} />
-        </SalesFilterBar>
-
-        {sales === null ? (
-          <Alert variant="destructive">
-            <AlertTriangle />
-            <AlertTitle>Não foi possível carregar as vendas</AlertTitle>
-            <AlertDescription>
-              Recarregue a página. Marcar pagamentos com a lista incompleta pode
-              registrar uma cobrança na venda errada.
-            </AlertDescription>
-          </Alert>
-        ) : (
-          <SalesClientsTable
-            sales={sales}
-            // A sale's client belongs to the sale's agency, so the pickers offer only the
-            // clients of the agency this list is showing.
-            clients={(clients ?? []).filter((c) => c.agency_id === effectiveFilters.agency_id)}
-            agencyId={effectiveFilters.agency_id}
-            clientFilter={filters.client_ids}
-            clientCreditCents={clientCreditCents}
+          <SalesPeriodFilter
             dateFrom={period.date_from}
             dateTo={period.date_to}
-            paidFilter={filters.paid}
+            all={period.all}
           />
-        )}
+          <div className="w-full sm:w-72">
+            <Suspense fallback={<div className="h-14" />}>
+              {/* Same box and minimum as the issuances screen: three characters is an IATA
+                  code, and fewer would match most of the history. */}
+              <ListSearchBar
+                placeholder="PNR, passageiro, origem ou destino"
+                minLength={3}
+              />
+            </Suspense>
+          </div>
+        </SalesFilterBar>
+
+        <SalesClientsTable
+          query={query.toString()}
+          // A sale's client belongs to the sale's agency, so the pickers offer only the
+          // clients of the agency this list is showing.
+          clients={(clients ?? []).filter((c) => c.agency_id === effectiveFilters.agency_id)}
+          agencyId={effectiveFilters.agency_id}
+          clientFilter={filters.client_ids}
+          clientCreditCents={clientCreditCents}
+          dateFrom={period.date_from}
+          dateTo={period.date_to}
+          paidFilter={filters.paid}
+        />
       </div>
     </div>
   )

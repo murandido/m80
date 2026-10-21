@@ -55,6 +55,15 @@ type Event struct {
 	// will differ from the old one by a few centavos. That is the costing being more
 	// correct, not less.
 	Sequence int
+	// WithoutBooking marks a refund for a booking the panel never had (a cancellation-only
+	// row). There is no slice to give back to, so the points rejoin the queue at the batch
+	// it is on that day instead - otherwise they would vanish from the costing while the
+	// account, and the expected balance, has them back.
+	WithoutBooking bool
+	// AdjustmentID is set when the event is an alteration to the ticket rather than the
+	// booking or its cancellation (data.IssuanceAdjustment). Its slices carry the id so the
+	// closing can price them at the alteration's own rate.
+	AdjustmentID string
 }
 
 // Allocation is one slice: this many of an issuance's points, paid for by this batch, at
@@ -65,6 +74,9 @@ type Allocation struct {
 	OccurredOn time.Time
 	Points     int
 	CostCents  int
+	// AdjustmentID is the alteration this slice belongs to, empty for the booking itself
+	// and for its cancellation. See Event.AdjustmentID.
+	AdjustmentID string
 }
 
 // Pending reports whether this slice found no batch to charge to.
@@ -82,7 +94,10 @@ func (a Allocation) Pending() bool { return a.BatchID == "" }
 //
 // Bookings and refunds share one pass because they share a timeline. Points returned on the
 // 16th are stock again on the 17th, and the queue rewinds to the batch that got them back
-// so the next booking finds them - at that batch's own rate, ahead of anything newer.
+// so the next booking finds them - at that batch's own rate, ahead of anything newer. A
+// refund whose booking the panel never had goes back to the batch the queue is on that
+// day, at that batch's rate: the nearest thing to "where it came from" when nobody recorded
+// where that was.
 //
 // A booking that outruns the available points still produces an Allocation, with an empty
 // BatchID. The costing never blocks an issuance: the bot writes bookings in real time, and
@@ -132,8 +147,34 @@ func Allocate(batches []Batch, events []Event, prior map[string][]Allocation) []
 	head := 0
 
 	for _, event := range timeline {
+		if event.Points < 0 && event.WithoutBooking {
+			allocation := Allocation{
+				IssuanceID: event.IssuanceID,
+				OccurredOn: event.OccurredOn,
+				Points:     event.Points,
+			}
+			// With no batch at all the return stays pending, and nets against whatever
+			// shortfall the account already has.
+			if len(queue) > 0 {
+				// head only ever sits past the end once every batch is exhausted; the newest
+				// batch then takes the points, and the queue steps back onto it.
+				if head >= len(queue) {
+					head = len(queue) - 1
+				}
+				batch := queue[head]
+				cost := proratedCents(batch.CostCents, -event.Points, batch.Points)
+				consumed[head] += event.Points
+				charged[head] -= cost
+				allocation.BatchID = batch.ID
+				allocation.CostCents = -cost
+			}
+			allocations = append(allocations, allocation)
+			held[event.IssuanceID] = append(held[event.IssuanceID], allocation)
+			continue
+		}
+
 		if event.Points < 0 {
-			returns := reverseAgainst(held[event.IssuanceID], -event.Points, event.OccurredOn)
+			returns := reverseAgainst(held[event.IssuanceID], -event.Points, event.OccurredOn, event.AdjustmentID)
 			for _, ret := range returns {
 				allocations = append(allocations, ret)
 				held[event.IssuanceID] = append(held[event.IssuanceID], ret)
@@ -177,11 +218,12 @@ func Allocate(batches []Batch, events []Event, prior map[string][]Allocation) []
 			remaining -= slice
 
 			allocation := Allocation{
-				IssuanceID: event.IssuanceID,
-				BatchID:    batch.ID,
-				OccurredOn: event.OccurredOn,
-				Points:     slice,
-				CostCents:  cost,
+				IssuanceID:   event.IssuanceID,
+				BatchID:      batch.ID,
+				OccurredOn:   event.OccurredOn,
+				Points:       slice,
+				CostCents:    cost,
+				AdjustmentID: event.AdjustmentID,
 			}
 			allocations = append(allocations, allocation)
 			held[event.IssuanceID] = append(held[event.IssuanceID], allocation)
@@ -191,10 +233,11 @@ func Allocate(batches []Batch, events []Event, prior map[string][]Allocation) []
 		// these points cost - which is different from them having been free.
 		if remaining > 0 {
 			allocation := Allocation{
-				IssuanceID: event.IssuanceID,
-				OccurredOn: event.OccurredOn,
-				Points:     remaining,
-				CostCents:  0,
+				IssuanceID:   event.IssuanceID,
+				OccurredOn:   event.OccurredOn,
+				Points:       remaining,
+				CostCents:    0,
+				AdjustmentID: event.AdjustmentID,
 			}
 			allocations = append(allocations, allocation)
 			held[event.IssuanceID] = append(held[event.IssuanceID], allocation)

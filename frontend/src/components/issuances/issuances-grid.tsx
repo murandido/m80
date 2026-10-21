@@ -286,6 +286,7 @@ export function IssuancesGrid({
 
   useEffect(() => {
     try {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage only exists after hydration
       setShowIssuedOn(window.localStorage.getItem(ISSUED_ON_COLUMN_STORAGE_KEY) === "1")
     } catch {
       // A browser with site data blocked still gets a working grid, just not a
@@ -302,8 +303,10 @@ export function IssuancesGrid({
   // The two callbacks below are memoized with dependency lists that must not include a
   // value changing this often, so they read the current one from a ref instead.
   const columnCountRef = useRef(columnCount)
+  // eslint-disable-next-line react-hooks/refs -- latest-ref read by callbacks memoized without this value in their deps
   columnCountRef.current = columnCount
   const recordingOnRef = useRef(recordingOn)
+  // eslint-disable-next-line react-hooks/refs -- latest-ref, same as columnCountRef above
   recordingOnRef.current = recordingOn
 
   function toggleIssuedOnColumn() {
@@ -645,6 +648,7 @@ export function IssuancesGrid({
     },
     [updateRow, flashSaveStatus, reconcileCreatedRow],
   )
+  // eslint-disable-next-line react-hooks/refs -- latest-ref read by callbacks memoized without persist in their deps
   persistRef.current = persist
 
   // Live updates. Every issuance mutation in the system announces itself on the SSE

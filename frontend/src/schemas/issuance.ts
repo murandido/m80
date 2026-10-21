@@ -27,6 +27,46 @@ export const issuanceFlightSchema = z.object({
 
 export type IssuanceFlight = z.infer<typeof issuanceFlightSchema>
 
+// A change to the ticket after it was issued: miles or money the airline charged to move a
+// segment, or gave back. Points and taxes are signed - negative is the airline returning -
+// and client_amount_cents is what it adds to the sale, worked out by the server so the
+// rounding has one home.
+export const issuanceAdjustmentSchema = z.object({
+  id: z.string(),
+  issuance_id: z.string(),
+  occurred_on: z.string(),
+  points: z.number(),
+  taxes: z.number(),
+  value_of_the_thousand: z.number(),
+  taxes_passed_to_client: z.boolean(),
+  reason: z.string(),
+  client_amount_cents: z.number(),
+  created_by_id: z.string(),
+  created_by_name: z.string().nullish(),
+  created_at: z.string(),
+  updated_at: z.string(),
+})
+
+export type IssuanceAdjustment = z.infer<typeof issuanceAdjustmentSchema>
+
+// POST and PATCH share the body: an alteration is always sent whole.
+export const issuanceAdjustmentRequestSchema = z.object({
+  occurred_on: z.string(),
+  points: z.number().int(),
+  taxes: z.number().int(),
+  value_of_the_thousand: z.number().int().nonnegative(),
+  taxes_passed_to_client: z.boolean(),
+  reason: z.string().min(1),
+})
+
+export type IssuanceAdjustmentInput = z.infer<typeof issuanceAdjustmentRequestSchema>
+
+export const issuanceAdjustmentResponseSchema = z.object({
+  success: z.boolean().optional(),
+  message: z.string(),
+  data: issuanceAdjustmentSchema.nullish(),
+})
+
 export const issuanceSchema = z.object({
   id: z.string(),
   loyalty_program_id: z.string(),
@@ -87,6 +127,11 @@ export const issuanceSchema = z.object({
   imported: z.boolean().default(false),
   status: issuanceStatusSchema,
   flights: z.array(issuanceFlightSchema).nullish(),
+  // Absent from a backend that predates alterations, which reads as none.
+  adjustments: z
+    .array(issuanceAdjustmentSchema)
+    .nullish()
+    .transform((value) => value ?? []),
   observation: z.string().nullable(),
   active: z.boolean(),
   cancelled_at: z.string().nullable(),
