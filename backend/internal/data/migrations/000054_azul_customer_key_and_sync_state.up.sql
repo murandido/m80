@@ -5,8 +5,7 @@
 
 -- The customerKey is the opaque hash the airline's API uses to select an account. It is the
 -- only account selector the read calls take, and it is discovered once, by logging the account
--- in through a real browser (the login carries a behavioural edge challenge a plain HTTP
--- call fails). Stored encrypted at rest by the same BeforeSave/AfterFind hooks as
+-- in through a real browser. Stored encrypted at rest by the same BeforeSave/AfterFind hooks as
 -- accounts.password (AES-256-GCM, internal/utils/crypto.go), so the column holds "enc:..." and
 -- is never returned by the API. NULL means the account has not been connected yet.
 --
