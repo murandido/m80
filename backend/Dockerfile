@@ -50,7 +50,7 @@ RUN mkdir -p tools && if [ "${SERVICE_NAME}" = "api" ]; then \
 #
 # Pinned rather than :latest, so a rebuild of the same commit gets the same base;
 # Dependabot proposes the bumps.
-FROM alpine:3.24.2 AS prod
+FROM alpine:3.24.3 AS prod
 
 # The DSN in internal/data/db.go pins TimeZone=America/Sao_Paulo, and a bare
 # alpine ships no IANA timezone database - so the driver dies with "unknown
