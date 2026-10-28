@@ -1,6 +1,6 @@
 module github.com/murandido/m-80-backend
 
-go 1.26.9
+go 1.26.10
 
 require (
 	github.com/bogdanfinn/fhttp v0.6.9
