@@ -50,7 +50,7 @@ RUN mkdir -p tools && if [ "${SERVICE_NAME}" = "api" ]; then \
 #
 # Pinned rather than :latest, so a rebuild of the same commit gets the same base;
 # Dependabot proposes the bumps.
-FROM alpine:3.24.2 AS prod
+FROM alpine:3.24.3 AS prod
 
 # The DSN in internal/data/db.go pins TimeZone=America/Sao_Paulo, and a bare
 # alpine ships no IANA timezone database - so the driver dies with "unknown
@@ -93,7 +93,7 @@ CMD ["./server"]
 #
 # curl is here for the Compose healthcheck alone: the base image carries neither it nor
 # wget, and probing the port with bash's /dev/tcp instead is unreadable inside YAML.
-FROM chromedp/headless-shell:156.0.8078.17 AS prod-chrome
+FROM chromedp/headless-shell:157.0.8103.6 AS prod-chrome
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         tzdata \
