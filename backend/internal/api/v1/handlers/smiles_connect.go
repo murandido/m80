@@ -92,6 +92,10 @@ func (h *SmilesConnectHandler) ConnectSmilesAccount(w http.ResponseWriter, r *ht
 	}
 
 	if start.Session != nil {
+		if start.Session.RefreshToken == "" {
+			utils.SendError(w, r, http.StatusUnprocessableEntity, restrictedSessionMessage)
+			return
+		}
 		if err := h.storeSession(r.Context(), account.ID, *start.Session); err != nil {
 			utils.SendError(w, r, http.StatusInternalServerError, "Conectei, mas não consegui guardar a sessão: "+err.Error())
 			return
@@ -289,6 +293,10 @@ func (h *SmilesConnectHandler) ConfirmSmilesLogin(w http.ResponseWriter, r *http
 	}
 
 	h.Tracker.End(account.ID)
+	if session.RefreshToken == "" {
+		utils.SendError(w, r, http.StatusUnprocessableEntity, restrictedSessionMessage)
+		return
+	}
 	if err := h.storeSession(r.Context(), account.ID, session); err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Conectei, mas não consegui guardar a sessão: "+err.Error())
 		return
@@ -332,6 +340,13 @@ func (h *SmilesConnectHandler) DisconnectSmilesAccount(w http.ResponseWriter, r 
 // expiredLoginMessage is what an operator sees when the tenant's short-lived token has aged out
 // between steps. It names the recovery, because "409" on its own reads as a bug.
 const expiredLoginMessage = "O login expirou. Clique em conectar de novo para receber um código novo."
+
+// restrictedSessionMessage is what an operator sees when Smiles answers a login with a
+// short-lived token and no refresh token. A blocked account (the tenant marks it
+// read:BlockedAccountMember in the token scope) and a holder with no second factor both come
+// back this way, measured 2026-10-30. Nothing renewable was issued, so nothing is stored and
+// the statement already synced stays exactly where it is.
+const restrictedSessionMessage = "A Smiles liberou apenas um acesso temporário para esta conta (conta bloqueada ou sem verificação em duas etapas), sem sessão renovável. A conta não foi conectada; o extrato já sincronizado continua disponível."
 
 // storeSession persists the session and kicks off the first read. The read runs on a background
 // context: it takes seconds and the operator should get their answer now, but a closed tab must

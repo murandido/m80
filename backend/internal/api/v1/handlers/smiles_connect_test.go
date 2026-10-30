@@ -490,3 +490,68 @@ func TestCompletingTheBrowserChallengeStoresTheCode(t *testing.T) {
 		}
 	})
 }
+
+// A login without a second factor comes back as a session without a refresh token when the
+// account is blocked (the tenant adds read:BlockedAccountMember to the token scope) or when
+// the holder never enrolled a factor - measured 2026-10-30. Reporting "connected" then left the
+// panel offering Connect again and the sync writing "conta sem sessão", so the refusal is
+// explicit and nothing is stored.
+func TestALoginWithoutARefreshTokenIsNotReportedAsConnected(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		account, user := seedSmilesAccount(t, tx)
+		handler := newSmilesHandler(tx, newTenant(t, tenantStub{
+			loginStatus: http.StatusOK,
+			loginBody:   `{"access_token":"` + smilesTestToken(t) + `","expires_in":7200}`,
+		}))
+
+		rec := httptest.NewRecorder()
+		handler.ConnectSmilesAccount(rec, smilesRequest(http.MethodPost, account.ID, user.ID, ""))
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("status = %d, want 422 (body: %s)", rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), "não foi conectada") {
+			t.Errorf("the refusal must say the account was not connected: %s", rec.Body.String())
+		}
+
+		var stored string
+		if err := tx.Raw("SELECT coalesce(smiles_refresh_token, '') FROM accounts WHERE id = ?",
+			account.ID).Scan(&stored).Error; err != nil {
+			t.Fatalf("reading the raw column: %v", err)
+		}
+		if stored != "" {
+			t.Error("a credential that cannot be renewed was stored")
+		}
+	})
+}
+
+// The same refusal on the code path: the digits are accepted, the tenant answers a short-lived
+// session, and the account must stay exactly as it was.
+func TestACodeExchangeWithoutARefreshTokenIsNotReportedAsConnected(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		account, user := seedSmilesAccount(t, tx)
+		handler := newSmilesHandler(tx, mfaRequiredTenant(t, http.StatusOK,
+			`{"access_token":"`+smilesTestToken(t)+`","expires_in":7200}`))
+
+		handler.ConnectSmilesAccount(httptest.NewRecorder(),
+			smilesRequest(http.MethodPost, account.ID, user.ID, ""))
+		challengeThroughTheBrowser(t, handler, account, user, "sms|1")
+
+		rec := httptest.NewRecorder()
+		handler.ConfirmSmilesLogin(rec, smilesRequest(http.MethodPost, account.ID, user.ID, `{"code":"123456"}`))
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("status = %d, want 422 (body: %s)", rec.Code, rec.Body.String())
+		}
+		if _, ok := handler.Tracker.Pending(account.ID); ok {
+			t.Error("the finished login is still in flight")
+		}
+
+		var stored string
+		if err := tx.Raw("SELECT coalesce(smiles_refresh_token, '') FROM accounts WHERE id = ?",
+			account.ID).Scan(&stored).Error; err != nil {
+			t.Fatalf("reading the raw column: %v", err)
+		}
+		if stored != "" {
+			t.Error("a credential that cannot be renewed was stored")
+		}
+	})
+}
