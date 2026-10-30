@@ -178,20 +178,38 @@ export function SmilesAccountControls({ account }: SmilesAccountControlsProps) {
     return (
       <div className="flex items-center justify-between gap-2 border-t border-slate-100 bg-slate-50 px-4 py-2">
         <span className="text-xs text-slate-500">Conta Smiles ainda não conectada</span>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleConnect}
-          disabled={isStarting}
-          className="border-orange-600 text-orange-600 hover:border-orange-500 hover:bg-orange-500 hover:text-white"
-        >
-          {isStarting ? (
-            <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <Link2 className="mr-1 h-3.5 w-3.5" />
+        <div className="flex items-center gap-2">
+          {/* Losing the session does not lose the history: a blocked holder keeps the
+              statement already synced, and the page reads it from the database. The link
+              stays available while there is something to read. */}
+          {account.tracks_statement && account.smiles_last_synced_at && (
+            <Button
+              asChild
+              variant="outline"
+              size="sm"
+              className="border-slate-800 text-slate-800 hover:border-orange-500 hover:bg-orange-500 hover:text-white"
+            >
+              <Link href={`/dashboard/accounts/${account.id}/statement`}>
+                <FileText className="mr-1 h-3.5 w-3.5" />
+                Ver extrato
+              </Link>
+            </Button>
           )}
-          Conectar
-        </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleConnect}
+            disabled={isStarting}
+            className="border-orange-600 text-orange-600 hover:border-orange-500 hover:bg-orange-500 hover:text-white"
+          >
+            {isStarting ? (
+              <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Link2 className="mr-1 h-3.5 w-3.5" />
+            )}
+            Conectar
+          </Button>
+        </div>
         {dialog}
       </div>
     )
