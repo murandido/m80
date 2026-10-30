@@ -15,9 +15,11 @@ import {
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp"
 import { Label } from "@/components/ui/label"
 import {
-  challengeSmilesLoginAction,
+  browserChallengeSmilesLoginAction,
+  completeBrowserChallengeSmilesLoginAction,
   confirmSmilesLoginAction,
 } from "@/actions/statement"
+import { challengeBridgeReady, requestSmilesChallenge } from "@/lib/smiles-challenge-extension"
 import type { SmilesAuthenticator } from "@/schemas/inventory"
 
 // The code Smiles sends is six digits on every channel measured.
@@ -55,10 +57,35 @@ export function SmilesConnectDialog({
   const [error, setError] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
 
+  // The tenant's challenge runs in the operator's own browser - the only client the edge treats
+  // as a person. Without the extension there is no path: every automated client gets 406.
+  async function askSmilesForTheCode(
+    authenticator: SmilesAuthenticator,
+  ): Promise<{ error: string } | { sentTo: string }> {
+    if (!challengeBridgeReady()) {
+      return { error: "Instale a extensão M80 neste navegador para receber o código de conexão." }
+    }
+    const material = await browserChallengeSmilesLoginAction(accountId, authenticator.id)
+    if ("error" in material) return { error: material.error }
+    const answer = await requestSmilesChallenge({
+      clientId: material.clientId,
+      mfaToken: material.mfaToken,
+      authenticatorId: material.authenticatorId,
+    })
+    if ("error" in answer) return { error: answer.error }
+    const completed = await completeBrowserChallengeSmilesLoginAction(
+      accountId,
+      authenticator.id,
+      answer.oobCode,
+    )
+    if ("error" in completed) return { error: completed.error }
+    return { sentTo: completed.sentTo }
+  }
+
   function requestCode(authenticator: SmilesAuthenticator) {
     setError(null)
     startTransition(async () => {
-      const result = await challengeSmilesLoginAction(accountId, authenticator.id)
+      const result = await askSmilesForTheCode(authenticator)
       if ("error" in result) {
         // A lapsed login cannot be recovered from inside the dialog: the operator starts again.
         if (result.error.includes("expirou")) {

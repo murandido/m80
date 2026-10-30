@@ -23,7 +23,6 @@ type tenantStub struct {
 	loginStatus   int
 	loginBody     string
 	authenticator string
-	challengeBody string
 	codeStatus    int
 	codeBody      string
 }
@@ -51,13 +50,10 @@ func newTenant(t *testing.T, stub tenantStub) *smiles.Client {
 		case "/mfa/authenticators/":
 			// The trailing slash is what the edge lets through; the tenant itself does not care.
 			_, _ = w.Write([]byte(stub.authenticator))
-		case "/smiles/challenge":
-			// The code request is pressed by the browser service, not by this client.
-			_, _ = w.Write([]byte(stub.challengeBody))
 		}
 	}))
 	t.Cleanup(server.Close)
-	return smiles.New(smiles.WithAuthBaseURL(server.URL), smiles.WithLoginServiceURL(server.URL))
+	return smiles.New(smiles.WithAuthBaseURL(server.URL))
 }
 
 // mfaRequiredTenant is the ordinary path: the login asks for a code, one SMS channel is offered,
@@ -68,7 +64,6 @@ func mfaRequiredTenant(t *testing.T, codeStatus int, codeBody string) *smiles.Cl
 		loginStatus:   http.StatusForbidden,
 		loginBody:     `{"error":"mfa_required","mfa_token":"mfa-secret"}`,
 		authenticator: `[{"id":"sms|1","authenticator_type":"oob","oob_channel":"sms","name":"+55 62 99999-9977"}]`,
-		challengeBody: `{"oob_code":"oob-1","binding_method":"prompt"}`,
 		codeStatus:    codeStatus,
 		codeBody:      codeBody,
 	})
@@ -131,6 +126,24 @@ func newSmilesHandler(tx *gorm.DB, client *smiles.Client) *SmilesConnectHandler 
 	return handler
 }
 
+// challengeThroughTheBrowser walks what the panel and the extension do together: ask for the
+// material, let the browser obtain the oob_code, hand it back.
+func challengeThroughTheBrowser(t *testing.T, handler *SmilesConnectHandler, account data.Account, user data.User, authenticatorID string) {
+	t.Helper()
+	material := httptest.NewRecorder()
+	handler.BrowserChallengeSmilesLogin(material, smilesRequest(http.MethodPost, account.ID, user.ID,
+		`{"authenticator_id":"`+authenticatorID+`"}`))
+	if material.Code != http.StatusOK {
+		t.Fatalf("browser challenge status = %d, want 200 (body: %s)", material.Code, material.Body.String())
+	}
+	complete := httptest.NewRecorder()
+	handler.CompleteBrowserChallengeSmilesLogin(complete, smilesRequest(http.MethodPost, account.ID, user.ID,
+		`{"authenticator_id":"`+authenticatorID+`","oob_code":"oob-1"}`))
+	if complete.Code != http.StatusAccepted {
+		t.Fatalf("browser challenge complete status = %d, want 202 (body: %s)", complete.Code, complete.Body.String())
+	}
+}
+
 func TestConnectOffersTheChannelsWithMaskedTargets(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		account, user := seedSmilesAccount(t, tx)
@@ -179,7 +192,7 @@ func TestAChannelThatWasNeverOfferedIsRefused(t *testing.T) {
 		// Taking the id on trust would let a caller aim a real SMS at an authenticator the
 		// tenant never listed for this account.
 		rec := httptest.NewRecorder()
-		handler.ChallengeSmilesLogin(rec, smilesRequest(http.MethodPost, account.ID, user.ID,
+		handler.BrowserChallengeSmilesLogin(rec, smilesRequest(http.MethodPost, account.ID, user.ID,
 			`{"authenticator_id":"sms|outro"}`))
 		if rec.Code != http.StatusUnprocessableEntity {
 			t.Fatalf("status = %d, want 422 (body: %s)", rec.Code, rec.Body.String())
@@ -193,7 +206,7 @@ func TestAChallengeWithoutALoginInFlightIsRefused(t *testing.T) {
 		handler := newSmilesHandler(tx, mfaRequiredTenant(t, http.StatusOK, sessionBody(t)))
 
 		rec := httptest.NewRecorder()
-		handler.ChallengeSmilesLogin(rec, smilesRequest(http.MethodPost, account.ID, user.ID,
+		handler.BrowserChallengeSmilesLogin(rec, smilesRequest(http.MethodPost, account.ID, user.ID,
 			`{"authenticator_id":"sms|1"}`))
 		if rec.Code != http.StatusConflict {
 			t.Fatalf("status = %d, want 409 (body: %s)", rec.Code, rec.Body.String())
@@ -208,8 +221,7 @@ func TestAWrongCodeIsRefusedWithoutStoringASession(t *testing.T) {
 			`{"error":"invalid_grant","error_description":"Invalid binding_code."}`))
 
 		handler.ConnectSmilesAccount(httptest.NewRecorder(), smilesRequest(http.MethodPost, account.ID, user.ID, ""))
-		handler.ChallengeSmilesLogin(httptest.NewRecorder(), smilesRequest(http.MethodPost, account.ID, user.ID,
-			`{"authenticator_id":"sms|1"}`))
+		challengeThroughTheBrowser(t, handler, account, user, "sms|1")
 
 		rec := httptest.NewRecorder()
 		handler.ConfirmSmilesLogin(rec, smilesRequest(http.MethodPost, account.ID, user.ID, `{"code":"000000"}`))
@@ -240,8 +252,7 @@ func TestAnExpiredChallengeAsksTheOperatorToStartOver(t *testing.T) {
 			`{"error":"invalid_grant","error_description":"MFA Authorization rejected: expired"}`))
 
 		handler.ConnectSmilesAccount(httptest.NewRecorder(), smilesRequest(http.MethodPost, account.ID, user.ID, ""))
-		handler.ChallengeSmilesLogin(httptest.NewRecorder(), smilesRequest(http.MethodPost, account.ID, user.ID,
-			`{"authenticator_id":"sms|1"}`))
+		challengeThroughTheBrowser(t, handler, account, user, "sms|1")
 
 		rec := httptest.NewRecorder()
 		handler.ConfirmSmilesLogin(rec, smilesRequest(http.MethodPost, account.ID, user.ID, `{"code":"123456"}`))
@@ -317,8 +328,7 @@ func TestTheRightCodeStoresAnEncryptedSessionAndConnectsTheAccount(t *testing.T)
 		handler := newSmilesHandler(tx, mfaRequiredTenant(t, http.StatusOK, sessionBody(t)))
 
 		handler.ConnectSmilesAccount(httptest.NewRecorder(), smilesRequest(http.MethodPost, account.ID, user.ID, ""))
-		handler.ChallengeSmilesLogin(httptest.NewRecorder(), smilesRequest(http.MethodPost, account.ID, user.ID,
-			`{"authenticator_id":"sms|1"}`))
+		challengeThroughTheBrowser(t, handler, account, user, "sms|1")
 
 		rec := httptest.NewRecorder()
 		handler.ConfirmSmilesLogin(rec, smilesRequest(http.MethodPost, account.ID, user.ID, `{"code":"123456"}`))
@@ -361,8 +371,7 @@ func TestDisconnectClearsTheSessionAndTheWindow(t *testing.T) {
 		handler := newSmilesHandler(tx, mfaRequiredTenant(t, http.StatusOK, sessionBody(t)))
 
 		handler.ConnectSmilesAccount(httptest.NewRecorder(), smilesRequest(http.MethodPost, account.ID, user.ID, ""))
-		handler.ChallengeSmilesLogin(httptest.NewRecorder(), smilesRequest(http.MethodPost, account.ID, user.ID,
-			`{"authenticator_id":"sms|1"}`))
+		challengeThroughTheBrowser(t, handler, account, user, "sms|1")
 		handler.ConfirmSmilesLogin(httptest.NewRecorder(), smilesRequest(http.MethodPost, account.ID, user.ID,
 			`{"code":"123456"}`))
 
@@ -378,6 +387,106 @@ func TestDisconnectClearsTheSessionAndTheWindow(t *testing.T) {
 		}
 		if reloaded.SmilesRefreshToken != nil {
 			t.Fatal("the session survived a disconnect")
+		}
+	})
+}
+
+// The browser path: the panel hands the extension the tenant's token, the extension runs the
+// challenge in the operator's own browser, and the oob_code it gets back is what the typed
+// digits will answer. Nothing here needs the internal browser service.
+func TestTheBrowserChallengeHandsTheTokenAndTheMaskedChannel(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		account, user := seedSmilesAccount(t, tx)
+		handler := newSmilesHandler(tx, mfaRequiredTenant(t, http.StatusOK, sessionBody(t)))
+		handler.ConnectSmilesAccount(httptest.NewRecorder(),
+			smilesRequest(http.MethodPost, account.ID, user.ID, ""))
+
+		rec := httptest.NewRecorder()
+		handler.BrowserChallengeSmilesLogin(rec,
+			smilesRequest(http.MethodPost, account.ID, user.ID, `{"authenticator_id":"sms|1"}`))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+		}
+		var body struct {
+			Data struct {
+				MFAToken        string `json:"mfa_token"`
+				ClientID        string `json:"client_id"`
+				AuthenticatorID string `json:"authenticator_id"`
+				Channel         string `json:"channel"`
+				SentTo          string `json:"sent_to"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if body.Data.MFAToken != "mfa-secret" {
+			t.Errorf("mfa_token = %q", body.Data.MFAToken)
+		}
+		if body.Data.ClientID == "" {
+			t.Error("client_id is empty")
+		}
+		if body.Data.AuthenticatorID != "sms|1" || body.Data.Channel != "sms" {
+			t.Errorf("channel = %+v", body.Data)
+		}
+		// The destination reaches the panel masked, same as the connect response.
+		if body.Data.SentTo != "***77" {
+			t.Errorf("sent_to = %q, want masked", body.Data.SentTo)
+		}
+	})
+}
+
+func TestTheBrowserChallengeRefusesAChannelThatWasNotOffered(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		account, user := seedSmilesAccount(t, tx)
+		handler := newSmilesHandler(tx, mfaRequiredTenant(t, http.StatusOK, sessionBody(t)))
+		handler.ConnectSmilesAccount(httptest.NewRecorder(),
+			smilesRequest(http.MethodPost, account.ID, user.ID, ""))
+
+		rec := httptest.NewRecorder()
+		handler.BrowserChallengeSmilesLogin(rec,
+			smilesRequest(http.MethodPost, account.ID, user.ID, `{"authenticator_id":"email|nope"}`))
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("status = %d, want 422 (body: %s)", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+func TestTheBrowserChallengeWithoutALoginInFlightIsRefused(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		account, user := seedSmilesAccount(t, tx)
+		handler := newSmilesHandler(tx, mfaRequiredTenant(t, http.StatusOK, sessionBody(t)))
+
+		rec := httptest.NewRecorder()
+		handler.BrowserChallengeSmilesLogin(rec,
+			smilesRequest(http.MethodPost, account.ID, user.ID, `{"authenticator_id":"sms|1"}`))
+		if rec.Code != http.StatusConflict {
+			t.Fatalf("status = %d, want 409 (body: %s)", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+func TestCompletingTheBrowserChallengeStoresTheCode(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		account, user := seedSmilesAccount(t, tx)
+		handler := newSmilesHandler(tx, mfaRequiredTenant(t, http.StatusOK, sessionBody(t)))
+		handler.ConnectSmilesAccount(httptest.NewRecorder(),
+			smilesRequest(http.MethodPost, account.ID, user.ID, ""))
+		handler.BrowserChallengeSmilesLogin(httptest.NewRecorder(),
+			smilesRequest(http.MethodPost, account.ID, user.ID, `{"authenticator_id":"sms|1"}`))
+
+		complete := httptest.NewRecorder()
+		handler.CompleteBrowserChallengeSmilesLogin(complete, smilesRequest(http.MethodPost,
+			account.ID, user.ID, `{"authenticator_id":"sms|1","oob_code":"oob-1"}`))
+		if complete.Code != http.StatusAccepted {
+			t.Fatalf("complete status = %d, want 202 (body: %s)", complete.Code, complete.Body.String())
+		}
+
+		// The digits that follow answer the challenge the browser created.
+		confirm := httptest.NewRecorder()
+		handler.ConfirmSmilesLogin(confirm,
+			smilesRequest(http.MethodPost, account.ID, user.ID, `{"code":"123456"}`))
+		if confirm.Code != http.StatusOK {
+			t.Fatalf("confirm status = %d, want 200 (body: %s)", confirm.Code, confirm.Body.String())
 		}
 	})
 }

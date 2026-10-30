@@ -2302,14 +2302,14 @@ const docTemplate = `{
                 }
             }
         },
-        "/accounts/{id}/smiles-connect/challenge": {
+        "/accounts/{id}/smiles-connect/challenge/browser": {
             "post": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
                 ],
-                "description": "Pede à Smiles que envie o código no canal escolhido (um dos ids devolvidos por /smiles-connect). Cada chamada dispara um SMS ou e-mail de verdade, e a Smiles limita reenvios por canal — então o painel não reenvia sozinho. Responde com o canal e o destino mascarado, para a tela dizer onde o código chegou.",
+                "description": "Devolve o mfa_token e o client id públicos para a extensão executar o POST que o edge recusa a clientes HTTP. O canal escolhido é validado contra os cadastrados na conta, e o destino volta mascarado. A extensão completa em /smiles-connect/challenge/complete.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2319,7 +2319,7 @@ const docTemplate = `{
                 "tags": [
                     "Estoque de pontos"
                 ],
-                "summary": "Pedir o código de verificação da Smiles",
+                "summary": "Preparar o desafio da Smiles para o navegador do operador",
                 "parameters": [
                     {
                         "type": "string",
@@ -2334,7 +2334,89 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/schemas.SmilesChallengeRequest"
+                            "$ref": "#/definitions/schemas.SmilesBrowserChallengeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.SmilesBrowserChallengeSingleResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Corpo inválido",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Não autenticado",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Requer admin",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Conta não encontrada",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Não há login em andamento, ou ele expirou",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Canal não é da conta",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/accounts/{id}/smiles-connect/challenge/complete": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Guarda o oob_code devolvido pela extensão e confirma que o código foi enviado, com o canal e o destino mascarado. Depois disso o operador digita os dígitos em /smiles-connect/code, como no caminho normal.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Estoque de pontos"
+                ],
+                "summary": "Concluir o desafio que o navegador do operador executou",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Conta",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Resultado do navegador",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/schemas.SmilesBrowserChallengeCompleteRequest"
                         }
                     }
                 ],
@@ -2377,12 +2459,6 @@ const docTemplate = `{
                     },
                     "422": {
                         "description": "Canal não é da conta",
-                        "schema": {
-                            "$ref": "#/definitions/schemas.ErrorResponse"
-                        }
-                    },
-                    "429": {
-                        "description": "A Smiles está limitando os envios",
                         "schema": {
                             "$ref": "#/definitions/schemas.ErrorResponse"
                         }
@@ -17951,7 +18027,22 @@ const docTemplate = `{
                 }
             }
         },
-        "schemas.SmilesChallengeRequest": {
+        "schemas.SmilesBrowserChallengeCompleteRequest": {
+            "type": "object",
+            "required": [
+                "authenticator_id",
+                "oob_code"
+            ],
+            "properties": {
+                "authenticator_id": {
+                    "type": "string"
+                },
+                "oob_code": {
+                    "type": "string"
+                }
+            }
+        },
+        "schemas.SmilesBrowserChallengeRequest": {
             "type": "object",
             "required": [
                 "authenticator_id"
@@ -17959,6 +18050,44 @@ const docTemplate = `{
             "properties": {
                 "authenticator_id": {
                     "type": "string"
+                }
+            }
+        },
+        "schemas.SmilesBrowserChallengeResponse": {
+            "type": "object",
+            "properties": {
+                "authenticator_id": {
+                    "type": "string"
+                },
+                "channel": {
+                    "type": "string",
+                    "example": "sms"
+                },
+                "client_id": {
+                    "type": "string"
+                },
+                "mfa_token": {
+                    "type": "string"
+                },
+                "sent_to": {
+                    "type": "string",
+                    "example": "***77"
+                }
+            }
+        },
+        "schemas.SmilesBrowserChallengeSingleResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/schemas.SmilesBrowserChallengeResponse"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "Peça o código pelo navegador"
+                },
+                "success": {
+                    "type": "boolean",
+                    "example": true
                 }
             }
         },
