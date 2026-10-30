@@ -111,78 +111,6 @@ func (h *SmilesConnectHandler) ConnectSmilesAccount(w http.ResponseWriter, r *ht
 	})
 }
 
-// ChallengeSmilesLogin handles POST /accounts/{id}/smiles-connect/challenge
-//
-// Asks Smiles to send the code on the chosen channel. It is the call that costs a real SMS or
-// e-mail, so it only ever happens because an operator pressed a button - never on a retry.
-// @Summary      Pedir o código de verificação da Smiles
-// @Description  Pede à Smiles que envie o código no canal escolhido (um dos ids devolvidos por /smiles-connect). Cada chamada dispara um SMS ou e-mail de verdade, e a Smiles limita reenvios por canal — então o painel não reenvia sozinho. Responde com o canal e o destino mascarado, para a tela dizer onde o código chegou.
-// @Tags         Estoque de pontos
-// @Accept       json
-// @Produce      json
-// @Security     BearerAuth
-// @Param        id       path  string                          true  "Conta"
-// @Param        request  body  schemas.SmilesChallengeRequest   true  "Canal escolhido"
-// @Success      202  {object}  schemas.SmilesChallengeSingleResponse
-// @Failure      400  {object}  schemas.ErrorResponse "Corpo inválido"
-// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
-// @Failure      403  {object}  schemas.ErrorResponse "Requer admin"
-// @Failure      404  {object}  schemas.ErrorResponse "Conta não encontrada"
-// @Failure      409  {object}  schemas.ErrorResponse "Não há login em andamento, ou ele expirou"
-// @Failure      422  {object}  schemas.ErrorResponse "Canal não é da conta"
-// @Failure      429  {object}  schemas.ErrorResponse "A Smiles está limitando os envios"
-// @Router       /accounts/{id}/smiles-connect/challenge [post]
-func (h *SmilesConnectHandler) ChallengeSmilesLogin(w http.ResponseWriter, r *http.Request) {
-	account, ok := h.account(w, r)
-	if !ok {
-		return
-	}
-
-	var body schemas.SmilesChallengeRequest
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		utils.SendError(w, r, http.StatusBadRequest, "Corpo inválido")
-		return
-	}
-	if err := h.Validator.Struct(body); err != nil {
-		utils.SendError(w, r, http.StatusBadRequest, "Dados inválidos: "+err.Error())
-		return
-	}
-
-	pending, ok := h.Tracker.Pending(account.ID)
-	if !ok {
-		utils.SendError(w, r, http.StatusConflict, expiredLoginMessage)
-		return
-	}
-	// The channel must be one the tenant offered for this account: taking the id on trust would
-	// let a caller aim the challenge at an authenticator we never listed.
-	chosen, found := findAuthenticator(pending.Authenticators, body.AuthenticatorID)
-	if !found {
-		utils.SendError(w, r, http.StatusUnprocessableEntity, "Esse canal não é um dos cadastrados nesta conta")
-		return
-	}
-
-	oobCode, err := h.Client.Challenge(r.Context(), pending.MFAToken, chosen.ID)
-	if err != nil {
-		slog.Warn("smiles connect: challenge refused", "account_id", account.ID, "err", err)
-		if errors.Is(err, smiles.ErrMFAExpired) {
-			h.Tracker.End(account.ID)
-			utils.SendError(w, r, http.StatusConflict, expiredLoginMessage)
-			return
-		}
-		h.sendClientError(w, r, err, "Não consegui pedir o código à Smiles")
-		return
-	}
-	if !h.Tracker.Challenged(account.ID, oobCode) {
-		utils.SendError(w, r, http.StatusConflict, expiredLoginMessage)
-		return
-	}
-
-	utils.SendJSON(w, r, http.StatusAccepted, "Código enviado", schemas.SmilesChallengeResponse{
-		Channel: chosen.Channel,
-		SentTo:  chosen.Target,
-	})
-}
-
 // BrowserChallengeSmilesLogin handles POST /accounts/{id}/smiles-connect/challenge/browser
 //
 // Hands the extension the material it needs to ask Smiles for the code from the operator's own
@@ -471,9 +399,6 @@ func (h *SmilesConnectHandler) sendClientError(w http.ResponseWriter, r *http.Re
 	case errors.Is(err, smiles.ErrUnavailable), errors.Is(err, smiles.ErrHostsUnavailable):
 		utils.SendError(w, r, http.StatusServiceUnavailable,
 			"A Smiles não respondeu agora. Tente de novo em instantes.")
-	case errors.Is(err, smiles.ErrLoginServiceUnavailable):
-		utils.SendError(w, r, http.StatusServiceUnavailable,
-			"O serviço que pede o código à Smiles não está disponível agora. Tente de novo em instantes.")
 	case errors.Is(err, smiles.ErrAccessBlocked):
 		utils.SendError(w, r, http.StatusServiceUnavailable,
 			"A Smiles recusou o acesso HTTP deste servidor. Verifique a saída de rede antes de tentar de novo.")

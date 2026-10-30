@@ -36,11 +36,6 @@ type SmilesConnectSingleResponse struct {
 	Data    SmilesConnectResponse `json:"data"`
 }
 
-// SmilesChallengeRequest asks Smiles to send the code on one of the listed channels.
-type SmilesChallengeRequest struct {
-	AuthenticatorID string `json:"authenticator_id" validate:"required"`
-}
-
 // SmilesChallengeResponse confirms the code was sent, and where to - masked.
 type SmilesChallengeResponse struct {
 	Channel string `json:"channel" example:"sms"`
