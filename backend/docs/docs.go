@@ -2302,94 +2302,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/accounts/{id}/smiles-connect/challenge": {
-            "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Pede à Smiles que envie o código no canal escolhido (um dos ids devolvidos por /smiles-connect). Cada chamada dispara um SMS ou e-mail de verdade, e a Smiles limita reenvios por canal — então o painel não reenvia sozinho. Responde com o canal e o destino mascarado, para a tela dizer onde o código chegou.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Estoque de pontos"
-                ],
-                "summary": "Pedir o código de verificação da Smiles",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Conta",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "description": "Canal escolhido",
-                        "name": "request",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/schemas.SmilesChallengeRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "202": {
-                        "description": "Accepted",
-                        "schema": {
-                            "$ref": "#/definitions/schemas.SmilesChallengeSingleResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Corpo inválido",
-                        "schema": {
-                            "$ref": "#/definitions/schemas.ErrorResponse"
-                        }
-                    },
-                    "401": {
-                        "description": "Não autenticado",
-                        "schema": {
-                            "$ref": "#/definitions/schemas.ErrorResponse"
-                        }
-                    },
-                    "403": {
-                        "description": "Requer admin",
-                        "schema": {
-                            "$ref": "#/definitions/schemas.ErrorResponse"
-                        }
-                    },
-                    "404": {
-                        "description": "Conta não encontrada",
-                        "schema": {
-                            "$ref": "#/definitions/schemas.ErrorResponse"
-                        }
-                    },
-                    "409": {
-                        "description": "Não há login em andamento, ou ele expirou",
-                        "schema": {
-                            "$ref": "#/definitions/schemas.ErrorResponse"
-                        }
-                    },
-                    "422": {
-                        "description": "Canal não é da conta",
-                        "schema": {
-                            "$ref": "#/definitions/schemas.ErrorResponse"
-                        }
-                    },
-                    "429": {
-                        "description": "A Smiles está limitando os envios",
-                        "schema": {
-                            "$ref": "#/definitions/schemas.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
         "/accounts/{id}/smiles-connect/challenge/browser": {
             "post": {
                 "security": [
@@ -18176,17 +18088,6 @@ const docTemplate = `{
                 "success": {
                     "type": "boolean",
                     "example": true
-                }
-            }
-        },
-        "schemas.SmilesChallengeRequest": {
-            "type": "object",
-            "required": [
-                "authenticator_id"
-            ],
-            "properties": {
-                "authenticator_id": {
-                    "type": "string"
                 }
             }
         },
