@@ -183,6 +183,123 @@ func (h *SmilesConnectHandler) ChallengeSmilesLogin(w http.ResponseWriter, r *ht
 	})
 }
 
+// BrowserChallengeSmilesLogin handles POST /accounts/{id}/smiles-connect/challenge/browser
+//
+// Hands the extension the material it needs to ask Smiles for the code from the operator's own
+// browser. The browser then opens the login page, lets the edge's JavaScript run, posts the
+// challenge and answers on /challenge/complete. Only the tenant's short-lived token and the
+// public client id travel: the account's password never leaves this API.
+// @Summary      Preparar o desafio da Smiles para o navegador do operador
+// @Description  Devolve o mfa_token e o client id públicos para a extensão executar o POST que o edge recusa a clientes HTTP. O canal escolhido é validado contra os cadastrados na conta, e o destino volta mascarado. A extensão completa em /smiles-connect/challenge/complete.
+// @Tags         Estoque de pontos
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id       path  string                                true  "Conta"
+// @Param        request  body  schemas.SmilesBrowserChallengeRequest true  "Canal escolhido"
+// @Success      200  {object}  schemas.SmilesBrowserChallengeSingleResponse
+// @Failure      400  {object}  schemas.ErrorResponse "Corpo inválido"
+// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      403  {object}  schemas.ErrorResponse "Requer admin"
+// @Failure      404  {object}  schemas.ErrorResponse "Conta não encontrada"
+// @Failure      409  {object}  schemas.ErrorResponse "Não há login em andamento, ou ele expirou"
+// @Failure      422  {object}  schemas.ErrorResponse "Canal não é da conta"
+// @Router       /accounts/{id}/smiles-connect/challenge/browser [post]
+func (h *SmilesConnectHandler) BrowserChallengeSmilesLogin(w http.ResponseWriter, r *http.Request) {
+	account, ok := h.account(w, r)
+	if !ok {
+		return
+	}
+
+	var body schemas.SmilesBrowserChallengeRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		utils.SendError(w, r, http.StatusBadRequest, "Corpo inválido")
+		return
+	}
+	if err := h.Validator.Struct(body); err != nil {
+		utils.SendError(w, r, http.StatusBadRequest, "Dados inválidos: "+err.Error())
+		return
+	}
+
+	pending, ok := h.Tracker.Pending(account.ID)
+	if !ok {
+		utils.SendError(w, r, http.StatusConflict, expiredLoginMessage)
+		return
+	}
+	chosen, found := findAuthenticator(pending.Authenticators, body.AuthenticatorID)
+	if !found {
+		utils.SendError(w, r, http.StatusUnprocessableEntity, "Esse canal não é um dos cadastrados nesta conta")
+		return
+	}
+
+	utils.SendJSON(w, r, http.StatusOK, "Peça o código pelo navegador",
+		schemas.SmilesBrowserChallengeResponse{
+			MFAToken:        pending.MFAToken,
+			ClientID:        h.Client.PublicClientID(),
+			AuthenticatorID: chosen.ID,
+			Channel:         chosen.Channel,
+			SentTo:          chosen.Target,
+		})
+}
+
+// CompleteBrowserChallengeSmilesLogin handles POST /accounts/{id}/smiles-connect/challenge/complete
+//
+// Records the oob_code the operator's browser obtained, so the digits typed on /code have a
+// challenge to answer. The code is opaque and bound to the tenant's short-lived token; nothing
+// here can be replayed without them.
+// @Summary      Concluir o desafio que o navegador do operador executou
+// @Description  Guarda o oob_code devolvido pela extensão e confirma que o código foi enviado, com o canal e o destino mascarado. Depois disso o operador digita os dígitos em /smiles-connect/code, como no caminho normal.
+// @Tags         Estoque de pontos
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id       path  string                                      true  "Conta"
+// @Param        request  body  schemas.SmilesBrowserChallengeCompleteRequest true  "Resultado do navegador"
+// @Success      202  {object}  schemas.SmilesChallengeSingleResponse
+// @Failure      400  {object}  schemas.ErrorResponse "Corpo inválido"
+// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
+// @Failure      403  {object}  schemas.ErrorResponse "Requer admin"
+// @Failure      404  {object}  schemas.ErrorResponse "Conta não encontrada"
+// @Failure      409  {object}  schemas.ErrorResponse "Não há login em andamento, ou ele expirou"
+// @Failure      422  {object}  schemas.ErrorResponse "Canal não é da conta"
+// @Router       /accounts/{id}/smiles-connect/challenge/complete [post]
+func (h *SmilesConnectHandler) CompleteBrowserChallengeSmilesLogin(w http.ResponseWriter, r *http.Request) {
+	account, ok := h.account(w, r)
+	if !ok {
+		return
+	}
+
+	var body schemas.SmilesBrowserChallengeCompleteRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		utils.SendError(w, r, http.StatusBadRequest, "Corpo inválido")
+		return
+	}
+	if err := h.Validator.Struct(body); err != nil {
+		utils.SendError(w, r, http.StatusBadRequest, "Dados inválidos: "+err.Error())
+		return
+	}
+
+	pending, ok := h.Tracker.Pending(account.ID)
+	if !ok {
+		utils.SendError(w, r, http.StatusConflict, expiredLoginMessage)
+		return
+	}
+	chosen, found := findAuthenticator(pending.Authenticators, body.AuthenticatorID)
+	if !found {
+		utils.SendError(w, r, http.StatusUnprocessableEntity, "Esse canal não é um dos cadastrados nesta conta")
+		return
+	}
+	if !h.Tracker.Challenged(account.ID, body.OOBCode) {
+		utils.SendError(w, r, http.StatusConflict, expiredLoginMessage)
+		return
+	}
+
+	utils.SendJSON(w, r, http.StatusAccepted, "Código enviado", schemas.SmilesChallengeResponse{
+		Channel: chosen.Channel,
+		SentTo:  chosen.Target,
+	})
+}
+
 // ConfirmSmilesLogin handles POST /accounts/{id}/smiles-connect/code
 //
 // Trades the digits the operator typed for a session, stores it and pulls the first window.
