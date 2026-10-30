@@ -611,3 +611,19 @@ export const smilesChallengeResponseSchema = z.object({
     })
     .nullish(),
 })
+
+// The browser path: the panel hands the extension the tenant's short-lived token and the public
+// client id; the extension answers with the oob_code through /challenge/complete.
+export const smilesBrowserChallengeResponseSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
+  data: z
+    .object({
+      mfa_token: z.string(),
+      client_id: z.string(),
+      authenticator_id: z.string(),
+      channel: z.string(),
+      sent_to: z.string(),
+    })
+    .nullish(),
+})

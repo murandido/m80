@@ -8,6 +8,7 @@ import {
   bookingLinkResponseSchema,
   azulConnectResponseSchema,
   statementEntriesResponseSchema,
+  smilesBrowserChallengeResponseSchema,
   smilesChallengeResponseSchema,
   smilesConnectResponseSchema,
   syncedStatementResponseSchema,
@@ -562,6 +563,84 @@ export async function challengeSmilesLoginAction(
     const json = await res.json().catch(() => null)
     if (!res.ok) {
       return { error: json?.message || "Erro ao pedir o código." }
+    }
+    const parsed = smilesChallengeResponseSchema.safeParse(json)
+    if (!parsed.success || !parsed.data.data) {
+      return { error: "Resposta inesperada do servidor." }
+    }
+    return { success: true, sentTo: parsed.data.data.sent_to }
+  } catch {
+    return { error: "Erro de conexão com o servidor." }
+  }
+}
+
+// The browser path. The extension runs the one POST the edge refuses to HTTP clients, in the
+// operator's own browser; these two calls bracket it. Only the tenant's short-lived token
+// travels to the page - never the account's password.
+export interface SmilesBrowserChallengeMaterial {
+  clientId: string
+  mfaToken: string
+  authenticatorId: string
+  sentTo: string
+  channel: string
+}
+
+export async function browserChallengeSmilesLoginAction(
+  accountId: string,
+  authenticatorId: string,
+): Promise<{ error: string } | ({ success: true } & SmilesBrowserChallengeMaterial)> {
+  try {
+    const { base, token } = await accountsAuth()
+    const res = await fetch(
+      `${base}/${encodeURIComponent(accountId)}/smiles-connect/challenge/browser`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ authenticator_id: authenticatorId }),
+        cache: "no-store",
+      },
+    )
+    const json = await res.json().catch(() => null)
+    if (!res.ok) {
+      return { error: json?.message || "Erro ao preparar o código." }
+    }
+    const parsed = smilesBrowserChallengeResponseSchema.safeParse(json)
+    if (!parsed.success || !parsed.data.data) {
+      return { error: "Resposta inesperada do servidor." }
+    }
+    const data = parsed.data.data
+    return {
+      success: true,
+      clientId: data.client_id,
+      mfaToken: data.mfa_token,
+      authenticatorId: data.authenticator_id,
+      sentTo: data.sent_to,
+      channel: data.channel,
+    }
+  } catch {
+    return { error: "Erro de conexão com o servidor." }
+  }
+}
+
+export async function completeBrowserChallengeSmilesLoginAction(
+  accountId: string,
+  authenticatorId: string,
+  oobCode: string,
+): Promise<{ error: string } | { success: true; sentTo: string }> {
+  try {
+    const { base, token } = await accountsAuth()
+    const res = await fetch(
+      `${base}/${encodeURIComponent(accountId)}/smiles-connect/challenge/complete`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ authenticator_id: authenticatorId, oob_code: oobCode }),
+        cache: "no-store",
+      },
+    )
+    const json = await res.json().catch(() => null)
+    if (!res.ok) {
+      return { error: json?.message || "Erro ao confirmar o código." }
     }
     const parsed = smilesChallengeResponseSchema.safeParse(json)
     if (!parsed.success || !parsed.data.data) {
