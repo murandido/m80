@@ -543,37 +543,6 @@ export async function startSmilesLoginAction(accountId: string): Promise<SmilesL
   }
 }
 
-// Step two: ask Smiles to send the code on the chosen channel. Every call costs a real SMS or
-// e-mail and Smiles throttles resends per channel, so this only ever runs from a button.
-export async function challengeSmilesLoginAction(
-  accountId: string,
-  authenticatorId: string,
-): Promise<{ error: string } | { success: true; sentTo: string }> {
-  try {
-    const { base, token } = await accountsAuth()
-    const res = await fetch(
-      `${base}/${encodeURIComponent(accountId)}/smiles-connect/challenge`,
-      {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ authenticator_id: authenticatorId }),
-        cache: "no-store",
-      },
-    )
-    const json = await res.json().catch(() => null)
-    if (!res.ok) {
-      return { error: json?.message || "Erro ao pedir o código." }
-    }
-    const parsed = smilesChallengeResponseSchema.safeParse(json)
-    if (!parsed.success || !parsed.data.data) {
-      return { error: "Resposta inesperada do servidor." }
-    }
-    return { success: true, sentTo: parsed.data.data.sent_to }
-  } catch {
-    return { error: "Erro de conexão com o servidor." }
-  }
-}
-
 // The browser path. The extension runs the one POST the edge refuses to HTTP clients, in the
 // operator's own browser; these two calls bracket it. Only the tenant's short-lived token
 // travels to the page - never the account's password.

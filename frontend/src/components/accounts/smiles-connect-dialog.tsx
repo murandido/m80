@@ -16,7 +16,6 @@ import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp
 import { Label } from "@/components/ui/label"
 import {
   browserChallengeSmilesLoginAction,
-  challengeSmilesLoginAction,
   completeBrowserChallengeSmilesLoginAction,
   confirmSmilesLoginAction,
 } from "@/actions/statement"
@@ -58,14 +57,13 @@ export function SmilesConnectDialog({
   const [error, setError] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
 
-  // Two paths for the same step. With the extension installed, the tenant's challenge runs in
-  // the operator's own browser - the only client the edge treats as a person. Without it, the
-  // API's browser service answers instead.
+  // The tenant's challenge runs in the operator's own browser - the only client the edge treats
+  // as a person. Without the extension there is no path: every automated client gets 406.
   async function askSmilesForTheCode(
     authenticator: SmilesAuthenticator,
   ): Promise<{ error: string } | { sentTo: string }> {
     if (!challengeBridgeReady()) {
-      return challengeSmilesLoginAction(accountId, authenticator.id)
+      return { error: "Instale a extensão M80 neste navegador para receber o código de conexão." }
     }
     const material = await browserChallengeSmilesLoginAction(accountId, authenticator.id)
     if ("error" in material) return { error: material.error }
