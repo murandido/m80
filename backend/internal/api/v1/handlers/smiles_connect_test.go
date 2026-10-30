@@ -17,8 +17,8 @@ import (
 	"gorm.io/gorm"
 )
 
-// tenantStub stands in for the Smiles Auth0 tenant. Each field is one step's answer, so a test
-// says what the tenant does and nothing else.
+// tenantStub stands in for the Smiles Auth0 tenant and for the browser service that asks for
+// the code. Each field is one step's answer, so a test says what the tenant does and nothing else.
 type tenantStub struct {
 	loginStatus   int
 	loginBody     string
@@ -48,14 +48,16 @@ func newTenant(t *testing.T, stub tenantStub) *smiles.Client {
 				w.WriteHeader(stub.loginStatus)
 			}
 			_, _ = w.Write([]byte(stub.loginBody))
-		case "/mfa/authenticators":
+		case "/mfa/authenticators/":
+			// The trailing slash is what the edge lets through; the tenant itself does not care.
 			_, _ = w.Write([]byte(stub.authenticator))
-		case "/mfa/challenge":
+		case "/smiles/challenge":
+			// The code request is pressed by the browser service, not by this client.
 			_, _ = w.Write([]byte(stub.challengeBody))
 		}
 	}))
 	t.Cleanup(server.Close)
-	return smiles.New(smiles.WithAuthBaseURL(server.URL))
+	return smiles.New(smiles.WithAuthBaseURL(server.URL), smiles.WithLoginServiceURL(server.URL))
 }
 
 // mfaRequiredTenant is the ordinary path: the login asks for a code, one SMS channel is offered,
