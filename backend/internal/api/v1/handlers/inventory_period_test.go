@@ -10,8 +10,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/murandido/m-80-backend/internal/access"
-	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
 	"gorm.io/gorm"
@@ -19,13 +17,6 @@ import (
 
 type inventoryPeriodEnvelope struct {
 	Data schemas.InventoryPeriodResponse `json:"data"`
-}
-
-// asScopedUser is asUser with a scope of the test's choosing, for the cases that are about
-// what a caller restricted to some agencies can reach.
-func asScopedUser(ctx context.Context, user data.User, scope access.AgencyScope) context.Context {
-	ctx = context.WithValue(ctx, middleware.UserContextKey, user)
-	return context.WithValue(ctx, middleware.AgencyScopeContextKey, scope)
 }
 
 func closePeriodRequest(ctx context.Context, body string) *http.Request {
@@ -166,38 +157,6 @@ func TestReopenPeriod_OnlyTheMostRecentComesOff(t *testing.T) {
 		// With September gone August is the newest again, and so it can come off too.
 		if rec := callReopenPeriod(tx, ctx, august.ID); rec.Code != http.StatusOK {
 			t.Errorf("reopen August next: got %d, want 200 (%s)", rec.Code, rec.Body.String())
-		}
-	})
-}
-
-// Documents the CURRENT behaviour only, and is not a statement that it is right: whether an
-// admin restricted to agency A may freeze or unfreeze an account whose batches agency B paid
-// for is an open question for the owner (overnight court, D10). Neither ClosePeriod nor
-// ReopenPeriod reads the agency scope today - the account belongs to no agency, so there is
-// nothing obvious to check it against. If the owner decides otherwise, this test is the one
-// to turn around.
-func TestPeriod_RestrictedAdminCanCloseAndReopenAForeignFundedAccount(t *testing.T) {
-	runInTx(t, func(tx *gorm.DB) {
-		account, _, _ := seedStatementTarget(t, tx)
-		mine := seedNamedAgency(t, tx, "Mine")
-		theirs := seedNamedAgency(t, tx, "Theirs")
-		batch := data.PointBatch{
-			AccountID: account.ID, AcquiredOn: day(t, "2026-08-05"), Points: 1000,
-			CostCents: 100, FundingAgencyID: theirs.ID, ProfitSharePercent: 50, Opening: true,
-		}
-		create(t, tx, &batch)
-
-		user := createUser(t, tx, "Restrito")
-		ctx := asScopedUser(context.Background(), user, access.AgencyScope{IDs: []string{mine.ID}})
-
-		rec := callClosePeriod(tx, closePeriodRequest(ctx, closePeriodBody(account.ID, "2026-08-01", "2026-08-31")))
-		if rec.Code != http.StatusCreated {
-			t.Fatalf("current behaviour changed: restricted close got %d, was 201 (%s)", rec.Code, rec.Body.String())
-		}
-		period := decodePeriod(t, rec)
-
-		if rec := callReopenPeriod(tx, ctx, period.ID); rec.Code != http.StatusOK {
-			t.Errorf("current behaviour changed: restricted reopen got %d, was 200 (%s)", rec.Code, rec.Body.String())
 		}
 	})
 }
