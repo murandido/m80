@@ -194,7 +194,7 @@ export async function updateAccountAction(
   }
 }
 
-export async function createAccountNicknameAction(
+async function createAccountNicknameAction(
   accountId: string,
   nickname: string,
   loyaltyProgramId: string,

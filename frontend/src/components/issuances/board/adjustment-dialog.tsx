@@ -26,6 +26,7 @@ import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { DateInput } from "@/components/ui/date-input"
+import { todayISO } from "@/components/issuances/board/use-issuance-board"
 import { cn } from "@/lib/utils"
 import { formatCurrencyBRL, parseCurrencyBRLInput } from "@/lib/currency"
 import {
@@ -71,12 +72,6 @@ const adjustmentFormSchema = z
   )
 
 type AdjustmentFormData = z.infer<typeof adjustmentFormSchema>
-
-// Today in the operator's own calendar day, as the cancel dialog reads it.
-function todayISO(): string {
-  const now = new Date()
-  return new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 10)
-}
 
 function formFor(
   adjustment: IssuanceAdjustment | null,
