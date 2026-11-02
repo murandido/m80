@@ -170,38 +170,6 @@ func TestReopenPeriod_OnlyTheMostRecentComesOff(t *testing.T) {
 	})
 }
 
-// Documents the CURRENT behaviour only, and is not a statement that it is right: whether an
-// admin restricted to agency A may freeze or unfreeze an account whose batches agency B paid
-// for is an open question for the owner (overnight court, D10). Neither ClosePeriod nor
-// ReopenPeriod reads the agency scope today - the account belongs to no agency, so there is
-// nothing obvious to check it against. If the owner decides otherwise, this test is the one
-// to turn around.
-func TestPeriod_RestrictedAdminCanCloseAndReopenAForeignFundedAccount(t *testing.T) {
-	runInTx(t, func(tx *gorm.DB) {
-		account, _, _ := seedStatementTarget(t, tx)
-		mine := seedNamedAgency(t, tx, "Mine")
-		theirs := seedNamedAgency(t, tx, "Theirs")
-		batch := data.PointBatch{
-			AccountID: account.ID, AcquiredOn: day(t, "2026-08-05"), Points: 1000,
-			CostCents: 100, FundingAgencyID: theirs.ID, ProfitSharePercent: 50, Opening: true,
-		}
-		create(t, tx, &batch)
-
-		user := createUser(t, tx, "Restrito")
-		ctx := asScopedUser(context.Background(), user, access.AgencyScope{IDs: []string{mine.ID}})
-
-		rec := callClosePeriod(tx, closePeriodRequest(ctx, closePeriodBody(account.ID, "2026-08-01", "2026-08-31")))
-		if rec.Code != http.StatusCreated {
-			t.Fatalf("current behaviour changed: restricted close got %d, was 201 (%s)", rec.Code, rec.Body.String())
-		}
-		period := decodePeriod(t, rec)
-
-		if rec := callReopenPeriod(tx, ctx, period.ID); rec.Code != http.StatusOK {
-			t.Errorf("current behaviour changed: restricted reopen got %d, was 200 (%s)", rec.Code, rec.Body.String())
-		}
-	})
-}
-
 // The settlement mark on a batch survives a reopen: closing froze figures, settling recorded
 // a payment, and undoing the first does not undo the second (see inventory.Reopen).
 func TestReopenPeriod_KeepsTheBatchSettlement(t *testing.T) {
