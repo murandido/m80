@@ -56,7 +56,6 @@ function toFormValues(account: Account): FormData {
     // a side whenever they disagreed. Empty is dropped by stripEmptyFields.
     administrator_id: "",
     category: account.category,
-    waives_redemption_fee: account.waives_redemption_fee,
     owns_point_inventory: account.owns_point_inventory,
     tracks_statement: account.tracks_statement,
     default_profit_share_percent: account.default_profit_share_percent,
@@ -277,36 +276,6 @@ export function EditAccountPanel({
                   )}
                 />
               </div>
-
-
-              {/* waives_redemption_fee */}
-              <div className="flex flex-col gap-1 text-sm">
-                <Controller
-                  name="waives_redemption_fee"
-                  control={form.control}
-                  render={({ field }) => (
-                    <>
-                      <div className="flex items-center justify-between gap-3">
-                        <FieldLabel htmlFor="edit-account-waives-redemption-fee">
-                          Isenta de taxa de resgate
-                        </FieldLabel>
-                        <Switch
-                          id="edit-account-waives-redemption-fee"
-                          checked={field.value ?? false}
-                          onCheckedChange={field.onChange}
-                          disabled={isPending}
-                        />
-                      </div>
-                      <p className="text-xs text-slate-500">
-                        Contas Azul Diamante Unique não pagam a taxa de resgate. As emissões
-                        feitas aqui passam a registrar quanto foi economizado; nas demais
-                        contas a coluna fica vazia.
-                      </p>
-                    </>
-                  )}
-                />
-              </div>
-
 
               {/* owns_point_inventory */}
               <div className="flex flex-col gap-1 text-sm">

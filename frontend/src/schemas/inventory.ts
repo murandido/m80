@@ -66,19 +66,15 @@ const consumerSchema = z.object({
   cost_cents: z.number(),
   revenue_cents: z.number(),
   profit_cents: z.number(),
-  redemption_fee_saved_cents: z
-    .number()
-    .nullish()
-    .transform((value) => value ?? 0),
 })
 
 export type InventoryConsumer = z.infer<typeof consumerSchema>
 
 // One term of a settlement: the payer owes the payee amount_cents, which is percent% of
-// base_cents (the payer's own cost, profit or saved fee). Percent is null when the term adds
-// up batches that used different percents. The parts of a pair add up to its settlement.
+// base_cents (the payer's own cost or profit). Percent is null when the term adds up
+// batches that used different percents. The parts of a pair add up to its settlement.
 const settlementPartSchema = z.object({
-  kind: z.enum(["cost", "profit_share", "fee_share"]),
+  kind: z.enum(["cost", "profit_share"]),
   payer_agency_id: z.string(),
   payer_agency_name: z.string().nullish(),
   payee_agency_id: z.string(),
@@ -117,38 +113,9 @@ const batchLineSchema = z.object({
   cost_cents: z.number(),
   revenue_cents: z.number(),
   profit_cents: z.number(),
-  redemption_fee_saved_cents: z.number(),
 })
 
 export type InventoryBatchLine = z.infer<typeof batchLineSchema>
-
-// The redemption fee fields arrived after the rest, so every one of them is tolerated as
-// absent: a panel left open across a deploy keeps rendering against the older API. Absent
-// reads as no fee saved, and the total settlement falls back to the points settlement,
-// which is what it was then.
-const feeFields = {
-  redemption_fee_saved_cents: z
-    .number()
-    .nullish()
-    .transform((value) => value ?? 0),
-  fee_settlements: z
-    .array(settlementSchema)
-    .nullish()
-    .transform((value) => value ?? []),
-  total_settlements: z.array(settlementSchema).nullish(),
-}
-
-function withTotal<
-  T extends {
-    settlements: InventorySettlement[]
-    total_settlements?: InventorySettlement[] | null
-  },
->(value: T): T & { total_settlements: InventorySettlement[] } {
-  return {
-    ...value,
-    total_settlements: value.total_settlements ?? value.settlements,
-  }
-}
 
 const batchResultSchema = z
   .object({
@@ -168,14 +135,12 @@ const batchResultSchema = z
     remaining_points: z.number(),
     consumers: z.array(consumerSchema),
     settlements: z.array(settlementSchema),
-    ...feeFields,
     lines: z
       .array(batchLineSchema)
       .nullish()
       .transform((value) => value ?? []),
     ...calculationFields,
   })
-  .transform(withTotal)
 
 export type InventoryBatchResult = z.infer<typeof batchResultSchema>
 
@@ -205,11 +170,9 @@ const accountClosingSchema = z
     revenue_cents: z.number(),
     profit_cents: z.number(),
     settlements: z.array(settlementSchema),
-    ...feeFields,
     ...calculationFields,
     ...agencyFields,
   })
-  .transform(withTotal)
 
 export type InventoryAccountClosing = z.infer<typeof accountClosingSchema>
 
@@ -222,11 +185,9 @@ export const inventoryClosingSchema = z.object({
       profit_cents: z.number(),
       pending_points: z.number(),
       settlements: z.array(settlementSchema),
-      ...feeFields,
-      ...calculationFields,
+        ...calculationFields,
       ...agencyFields,
-    })
-    .transform(withTotal),
+    }),
 })
 
 export type InventoryClosing = z.infer<typeof inventoryClosingSchema>

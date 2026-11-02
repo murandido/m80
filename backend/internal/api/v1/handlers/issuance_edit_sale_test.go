@@ -1,14 +1,37 @@
 package handlers
 
 import (
+	"context"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+
+	"github.com/murandido/m-80-backend/internal/data"
+	"github.com/murandido/m-80-backend/internal/events"
 )
+
+// callPatchIssuance drives UpdateIssuance directly, the same way callCancel does.
+func callPatchIssuance(tx *gorm.DB, id, userID, body string) *httptest.ResponseRecorder {
+	handler := NewIssuanceHandler(tx, events.NewBroker(), nil)
+
+	req := httptest.NewRequest(http.MethodPatch, "/issuances/"+id, strings.NewReader(body))
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", id)
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+	ctx = asUser(ctx, data.User{ID: userID, Role: "admin"})
+	req = req.WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+	handler.UpdateIssuance(rec, req)
+	return rec
+}
 
 // The production case behind this: two tickets paid by the switch, then R$ 69,90 moved from
 // one to the other by editing the issuances in the grid. The edit has to reach the sales and

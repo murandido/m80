@@ -45,11 +45,7 @@ export function clearPatchForColumn(c: number): Partial<IssuanceRow> | null {
       // "" rather than null: the backend's PATCH takes observation as a plain
       // optional string, so an empty one is how the column is cleared.
       return { observation: "" }
-    case 15:
-      // Null is not "empty" here, it is "recompute": the backend reads an explicit null as
-      // dropping the manual correction and hands the row back to the rule.
-      return { redemption_fee_saved_cents: null }
-    // 9 (calculated total), 13 (status) and 16 (the day of the issuance) intentionally
+    // 9 (calculated total), 13 (status) and 15 (the day of the issuance) intentionally
     // fall through to null. An issuance always happened on some day, so there is no empty
     // value to clear it to - the same reason Status has none.
     default:

@@ -6305,7 +6305,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Gera uma planilha .xlsx das emissões filtradas. O layout é escolhido por layout: control (padrão) ou legacy. Layout control: planilha manual de controle numa aba única (a emissão cancelada é atribuída a quem cancelou, que é onde a listagem também a mostra), colunas A:O (Nº, Companhia, Localizador, Data do Voo, Passageiro Principal, Origem, Destino, Pontos, Milheiro, Taxa, Total, Conta, Observação, Taxa Resgate, Emissor), as linhas agrupadas em blocos por companhia, o bloco TOTAL DAS CONTAS ao final e, ao lado da tabela, um quadro por conta e companhia com os localizadores e o total de pontos. A coluna Emissor identifica quem fez cada linha, já que todos os emissores ficam na mesma aba. Dentro de cada bloco a ordem é a da listagem (da mais antiga para a mais recente). Aceita os mesmos filtros da listagem (data, programa de fidelidade, cia aérea, conta, agência e emissor). Emissão cancelada no mesmo dia em que foi criada entra pelo líquido (pontos e taxas menos o reembolso); cancelada em outro dia entra só pelo reembolso, negativo. A linha cancelada é destacada em vermelho claro. Layout legacy: a antiga planilha EMISSÕES GERAIS, uma tabela só (B:P) com os totais do modelo, mais a coluna TAXA RESGATE em Q. Nos dois layouts a Taxa Resgate é a taxa que a conta isenta (Azul Diamante Unique) deixou de pagar, em branco nas contas comuns, com o mesmo sinal dos pontos.",
+                "description": "Gera uma planilha .xlsx das emissões filtradas. O layout é escolhido por layout: control (padrão) ou legacy. Layout control: planilha manual de controle numa aba única (a emissão cancelada é atribuída a quem cancelou, que é onde a listagem também a mostra), colunas A:N (Nº, Companhia, Localizador, Data do Voo, Passageiro Principal, Origem, Destino, Pontos, Milheiro, Taxa, Total, Conta, Observação, Emissor), as linhas agrupadas em blocos por companhia, o bloco TOTAL DAS CONTAS ao final e, ao lado da tabela, um quadro por conta e companhia com os localizadores e o total de pontos. A coluna Emissor identifica quem fez cada linha, já que todos os emissores ficam na mesma aba. Dentro de cada bloco a ordem é a da listagem (da mais antiga para a mais recente). Aceita os mesmos filtros da listagem (data, programa de fidelidade, cia aérea, conta, agência e emissor). Emissão cancelada no mesmo dia em que foi criada entra pelo líquido (pontos e taxas menos o reembolso); cancelada em outro dia entra só pelo reembolso, negativo. A linha cancelada é destacada em vermelho claro. Layout legacy: a antiga planilha EMISSÕES GERAIS, uma tabela só (B:P) com os totais do modelo.",
                 "produces": [
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 ],
@@ -13229,10 +13229,6 @@ const docTemplate = `{
                 },
                 "updated_at": {
                     "type": "string"
-                },
-                "waives_redemption_fee": {
-                    "description": "WaivesRedemptionFee is true on an account exempt from the airline's redemption fee -\nAzul's Diamante Unique. It is what turns a computed fee into \"saved\" instead of\n\"owed\" on the issuances made through this account.",
-                    "type": "boolean"
                 }
             }
         },
@@ -14527,10 +14523,6 @@ const docTemplate = `{
                 "tracks_statement": {
                     "description": "TracksStatement turns on reading this account's statement from the airline: connecting\nit, the periodic sync and the statement screens. A different question from the flag\nabove - an account administered for someone else has a statement worth watching and no\ninventory to cost. Omitted means false.",
                     "type": "boolean"
-                },
-                "waives_redemption_fee": {
-                    "description": "WaivesRedemptionFee marks an account that pays no redemption fee - Azul's Diamante\nUnique. Omitted means false, which is what every account paid before this existed.",
-                    "type": "boolean"
                 }
             }
         },
@@ -14841,22 +14833,6 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
-                },
-                "redemption_fee_advance_days": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "example": 120
-                },
-                "redemption_fee_domestic_cents": {
-                    "description": "The redemption fee charged per passenger and per trecho when the ticket is issued\nfewer than RedemptionFeeAdvanceDays days before the flight. All three nil means the\nprogram charges no such fee, which is not the same as a fee of zero: nothing is\ncomputed at all. See data.LoyaltyProgram and migration 40.",
-                    "type": "integer",
-                    "minimum": 0,
-                    "example": 6990
-                },
-                "redemption_fee_international_cents": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "example": 17490
                 }
             }
         },
@@ -15356,9 +15332,6 @@ const docTemplate = `{
                     "type": "string",
                     "example": "ALCTKJ"
                 },
-                "redemption_fee_saved_cents": {
-                    "type": "integer"
-                },
                 "revenue_cents": {
                     "type": "integer"
                 }
@@ -15388,12 +15361,6 @@ const docTemplate = `{
                 },
                 "cost_cents": {
                     "type": "integer"
-                },
-                "fee_settlements": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/schemas.InventorySettlementResponse"
-                    }
                 },
                 "funding_agency_id": {
                     "type": "string"
@@ -15429,11 +15396,6 @@ const docTemplate = `{
                     "type": "integer",
                     "example": 50
                 },
-                "redemption_fee_saved_cents": {
-                    "description": "RedemptionFeeSavedCents is the redemption fee this batch's bookings did not pay\nbecause the account is exempt (Azul's Diamante Unique). FeeSettlements split it by\nthe batch's percent, and TotalSettlements net that with the points: the three parts\nof the settlement the screen shows.",
-                    "type": "integer",
-                    "example": 27960
-                },
                 "remaining_points": {
                     "type": "integer"
                 },
@@ -15444,13 +15406,6 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "settlements": {
-                    "description": "Settlements are on the points alone - unchanged from before the redemption fee\nentered the closing.",
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/schemas.InventorySettlementResponse"
-                    }
-                },
-                "total_settlements": {
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/schemas.InventorySettlementResponse"
@@ -15503,7 +15458,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "agencies": {
-                    "description": "Agencies is each agency's activity in the period, and Parts the terms of the\nsettlement merged across batches: the calculation behind total_settlements.",
+                    "description": "Agencies is each agency's activity in the period, and Parts the terms of the\nsettlement merged across batches: the calculation behind settlements.",
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/schemas.InventoryConsumerResponse"
@@ -15533,12 +15488,6 @@ const docTemplate = `{
                     "description": "ExpectedBalancePoints is what the costing says the account still has, and\nRealBalancePoints what somebody last read off the airline's own page, on\nRealBalanceCheckedOn. The two side by side are the only way to tell whether the\nbatches and the bookings add up to reality - no statement export carries a position.\nReal is null until somebody looks. See inventory.ExpectedBalances.",
                     "type": "integer"
                 },
-                "fee_settlements": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/schemas.InventorySettlementResponse"
-                    }
-                },
                 "parts": {
                     "type": "array",
                     "items": {
@@ -15559,10 +15508,6 @@ const docTemplate = `{
                 "real_balance_points": {
                     "type": "integer"
                 },
-                "redemption_fee_saved_cents": {
-                    "description": "The period's redemption fee saved, its split, and the split netted with the points.",
-                    "type": "integer"
-                },
                 "revenue_cents": {
                     "type": "integer"
                 },
@@ -15575,12 +15520,6 @@ const docTemplate = `{
                 "starts_on": {
                     "type": "string",
                     "example": "2026-08-01"
-                },
-                "total_settlements": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/schemas.InventorySettlementResponse"
-                    }
                 },
                 "unsupported_split": {
                     "description": "UnsupportedSplit warns that this account has more than two partner agencies, which\nthe single frozen percent cannot express - the settlement figures below are not\nreliable, and the screen says so rather than showing them as fact.",
@@ -15600,12 +15539,6 @@ const docTemplate = `{
                 "cost_cents": {
                     "type": "integer"
                 },
-                "fee_settlements": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/schemas.InventorySettlementResponse"
-                    }
-                },
                 "parts": {
                     "type": "array",
                     "items": {
@@ -15618,19 +15551,10 @@ const docTemplate = `{
                 "profit_cents": {
                     "type": "integer"
                 },
-                "redemption_fee_saved_cents": {
-                    "type": "integer"
-                },
                 "revenue_cents": {
                     "type": "integer"
                 },
                 "settlements": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/schemas.InventorySettlementResponse"
-                    }
-                },
-                "total_settlements": {
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/schemas.InventorySettlementResponse"
@@ -15654,10 +15578,6 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "profit_cents": {
-                    "type": "integer"
-                },
-                "redemption_fee_saved_cents": {
-                    "description": "RedemptionFeeSavedCents is the redemption fee this agency's bookings did not pay.",
                     "type": "integer"
                 },
                 "revenue_cents": {
@@ -16253,14 +16173,6 @@ const docTemplate = `{
                 },
                 "program_locator": {
                     "type": "string"
-                },
-                "redemption_fee_manual": {
-                    "description": "RedemptionFeeManual says an operator typed the amount by hand, which is what stops\nthe next Traveos sync from recomputing over the correction.",
-                    "type": "boolean"
-                },
-                "redemption_fee_saved_cents": {
-                    "description": "RedemptionFeeSavedCents is the airline's redemption fee this issuance did not pay,\nbecause the account it was made on is exempt. Null on every ordinary account and\nwhenever the rule could not be applied (no synced itinerary, or a program with no fee\nconfigured) - which is not the same as zero, and zero is a real answer: the rule ran\nand there was no fee to avoid.\n\nIt does not take part in what the client owes: it is recorded for control and billed\nnowhere. See data.Issuance.",
-                    "type": "integer"
                 },
                 "refunded_points": {
                     "type": "integer"
@@ -16906,16 +16818,6 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
-                },
-                "redemption_fee_advance_days": {
-                    "type": "integer"
-                },
-                "redemption_fee_domestic_cents": {
-                    "description": "Null when the program charges no redemption fee. Same reason as the cap above: the\nairlines move these - Azul's launched at 90 days and a price per tier - so they are\neditable rather than only seeded.",
-                    "type": "integer"
-                },
-                "redemption_fee_international_cents": {
-                    "type": "integer"
                 },
                 "updated_at": {
                     "type": "string"
@@ -18895,10 +18797,6 @@ const docTemplate = `{
                 "tracks_statement": {
                     "description": "TracksStatement turns on reading this account's statement from the airline: connecting\nit, the periodic sync and the statement screens. A different question from the flag\nabove - an account administered for someone else has a statement worth watching and no\ninventory to cost. Omitted means false.",
                     "type": "boolean"
-                },
-                "waives_redemption_fee": {
-                    "description": "WaivesRedemptionFee marks an account that pays no redemption fee - Azul's Diamante\nUnique. Changing it does not rewrite what past issuances already recorded: the saving\nis stored on the issuance and only moves when that issuance is written again. See\ndata.Issuance.RedemptionFeeSavedCents.",
-                    "type": "boolean"
                 }
             }
         },
@@ -19074,12 +18972,6 @@ const docTemplate = `{
                 "program_locator": {
                     "type": "string"
                 },
-                "redemption_fee_saved_cents": {
-                    "description": "The redemption fee this issuance avoided, in centavos, corrected by hand. A value pins\nthe correction against the automatic recalculation; an explicit null releases the\nissuance back to the rule and recomputes it on the spot.\n\nThis field is the reason the handler reads the raw body as well as the struct: for\nevery other field here an absent key and a JSON null both decode to nil and mean\n\"leave alone\", and that is exactly the distinction the override needs.",
-                    "type": "integer",
-                    "minimum": 0,
-                    "example": 6990
-                },
                 "status": {
                     "description": "Status transitions the issuance between incomplete/complete/cancelled. \"deleted\"\nis not a valid value here - it's only reachable via DELETE /issuances/{id}.",
                     "type": "string",
@@ -19155,22 +19047,6 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
-                },
-                "redemption_fee_advance_days": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "example": 120
-                },
-                "redemption_fee_domestic_cents": {
-                    "description": "The redemption fee charged per passenger and per trecho when the ticket is issued\nfewer than RedemptionFeeAdvanceDays days before the flight. All three nil means the\nprogram charges no such fee, which is not the same as a fee of zero: nothing is\ncomputed at all. See data.LoyaltyProgram and migration 40.",
-                    "type": "integer",
-                    "minimum": 0,
-                    "example": 6990
-                },
-                "redemption_fee_international_cents": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "example": 17490
                 }
             }
         },

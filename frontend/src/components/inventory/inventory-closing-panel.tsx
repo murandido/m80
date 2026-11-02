@@ -104,12 +104,10 @@ function partLabel(part: InventorySettlementPart): string {
       return `Custo dos pontos que a ${payer} usou dos lotes da ${payee}`
     case "profit_share":
       return `${share} do lucro da ${payer} (${base})`
-    case "fee_share":
-      return `${share} da taxa de resgate economizada pela ${payer} (${base})`
   }
 }
 
-const partOrder = { cost: 0, profit_share: 1, fee_share: 2 } as const
+const partOrder = { cost: 0, profit_share: 1 } as const
 
 // The settlement as a sum anyone can check: each agency's activity, every term with its sign,
 // and who passes what to whom at the end. The terms are the ones the settlement was added up
@@ -123,10 +121,6 @@ function SettlementCalculation({
   parts: InventorySettlementPart[]
   settlements: InventorySettlement[]
 }) {
-  const showFees = agencies.some(
-    (agency) => agency.redemption_fee_saved_cents !== 0,
-  )
-
   return (
     <div className="flex flex-col gap-4">
       {agencies.length > 0 && (
@@ -137,14 +131,9 @@ function SettlementCalculation({
               <th className="py-1 pr-4 text-right font-medium">
                 Pontos emitidos
               </th>
-              <th className="py-1 pr-4 text-right font-medium">
+              <th className="py-1 text-right font-medium">
                 Lucro nos pontos
               </th>
-              {showFees && (
-                <th className="py-1 text-right font-medium">
-                  Taxa de resgate economizada
-                </th>
-              )}
             </tr>
           </thead>
           <tbody>
@@ -157,17 +146,10 @@ function SettlementCalculation({
                   {formatSignedPaddedPoints(agency.points)}
                 </td>
                 <td
-                  className={`py-1 pr-4 text-right tabular-nums ${moneyTone(agency.profit_cents)}`}
+                  className={`py-1 text-right tabular-nums ${moneyTone(agency.profit_cents)}`}
                 >
                   {formatCurrencyBRL(agency.profit_cents)}
                 </td>
-                {showFees && (
-                  <td
-                    className={`py-1 text-right tabular-nums ${moneyTone(agency.redemption_fee_saved_cents)}`}
-                  >
-                    {formatCurrencyBRL(agency.redemption_fee_saved_cents)}
-                  </td>
-                )}
               </tr>
             ))}
           </tbody>
@@ -245,20 +227,8 @@ function SettlementCalculation({
   )
 }
 
-// What a batch is made of in the period: every booking and refund that drew on it, with the
-// redemption fee each one saved, and the fee subtotal the fee settlement is computed from.
+// What a batch is made of in the period: every booking and refund that drew on it.
 function BatchLines({ batch }: { batch: InventoryBatchResult }) {
-  // Counted per booking, net of its refunds: a booking and its reversal are two lines but one
-  // emission, and a fully refunded one kept no fee at all.
-  const feeByIssuance = new Map<string, number>()
-  for (const line of batch.lines) {
-    feeByIssuance.set(
-      line.issuance_id,
-      (feeByIssuance.get(line.issuance_id) ?? 0) +
-        line.redemption_fee_saved_cents,
-    )
-  }
-  const withFee = [...feeByIssuance.values()].filter((fee) => fee !== 0).length
   return (
     <div className="flex flex-col gap-3 bg-slate-50/70 px-4 py-3 dark:bg-slate-900/30">
       {batch.lines.length === 0 ? (
@@ -275,8 +245,7 @@ function BatchLines({ batch }: { batch: InventoryBatchResult }) {
               <th className="py-1 pr-3 text-right font-medium">Pontos</th>
               <th className="py-1 pr-3 text-right font-medium">Custo</th>
               <th className="py-1 pr-3 text-right font-medium">Venda</th>
-              <th className="py-1 pr-3 text-right font-medium">Lucro</th>
-              <th className="py-1 text-right font-medium">Taxa de resgate</th>
+              <th className="py-1 text-right font-medium">Lucro</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -306,42 +275,19 @@ function BatchLines({ batch }: { batch: InventoryBatchResult }) {
                   {formatCurrencyBRL(line.revenue_cents)}
                 </td>
                 <td
-                  className={`py-1 pr-3 text-right tabular-nums ${moneyTone(line.profit_cents)}`}
+                  className={`py-1 text-right tabular-nums ${moneyTone(line.profit_cents)}`}
                 >
                   {formatCurrencyBRL(line.profit_cents)}
-                </td>
-                <td
-                  className={`py-1 text-right tabular-nums ${moneyTone(line.redemption_fee_saved_cents)}`}
-                >
-                  {line.redemption_fee_saved_cents === 0
-                    ? "—"
-                    : formatCurrencyBRL(line.redemption_fee_saved_cents)}
                 </td>
               </tr>
             ))}
           </tbody>
-          <tfoot>
-            <tr className="border-t font-medium">
-              <td
-                colSpan={7}
-                className="py-1.5 pr-3 text-right text-slate-600 dark:text-slate-300"
-              >
-                Subtotal das taxas de resgate (
-                {withFee === 1 ? "1 emissão" : `${withFee} emissões`})
-              </td>
-              <td
-                className={`py-1.5 text-right tabular-nums ${moneyTone(batch.redemption_fee_saved_cents)}`}
-              >
-                {formatCurrencyBRL(batch.redemption_fee_saved_cents)}
-              </td>
-            </tr>
-          </tfoot>
         </table>
       )}
       <SettlementCalculation
         agencies={batch.consumers}
         parts={batch.parts}
-        settlements={batch.total_settlements}
+        settlements={batch.settlements}
       />
     </div>
   )
@@ -470,11 +416,8 @@ export function InventoryClosingPanel({ closing, startsOn, endsOn }: Props) {
           )}
 
           {/* Custo and Lucro only: the sale figure was one column of noise between two the
-              eye actually stops on. The redemption fee joins them only on an account that
-              saved any - a column of zeros on every other account would be the same noise. */}
-          <div
-            className={`grid divide-x divide-slate-200 border-b bg-slate-50 dark:divide-slate-700 dark:bg-slate-900/40 ${entry.redemption_fee_saved_cents !== 0 ? "grid-cols-3" : "grid-cols-2"}`}
-          >
+              eye actually stops on. */}
+          <div className="grid grid-cols-2 divide-x divide-slate-200 border-b bg-slate-50 dark:divide-slate-700 dark:bg-slate-900/40">
             <div className="px-4 py-3">
               <p className="text-xs font-medium tracking-wide text-slate-500 uppercase">
                 Custo
@@ -493,18 +436,6 @@ export function InventoryClosingPanel({ closing, startsOn, endsOn }: Props) {
                 {formatCurrencyBRL(entry.profit_cents)}
               </p>
             </div>
-            {entry.redemption_fee_saved_cents !== 0 && (
-              <div className="px-4 py-3">
-                <p className="text-xs font-medium tracking-wide text-slate-500 uppercase">
-                  Taxa de resgate economizada
-                </p>
-                <p
-                  className={`text-2xl font-semibold tabular-nums ${moneyTone(entry.redemption_fee_saved_cents)}`}
-                >
-                  {formatCurrencyBRL(entry.redemption_fee_saved_cents)}
-                </p>
-              </div>
-            )}
           </div>
 
           {/* The panel's figure against the airline's, which is the only check there is on
@@ -568,9 +499,6 @@ export function InventoryClosingPanel({ closing, startsOn, endsOn }: Props) {
                   <th className="px-4 py-2 text-left font-medium">Lote</th>
                   <th className="px-4 py-2 text-right font-medium">Custo</th>
                   <th className="px-4 py-2 text-right font-medium">Lucro</th>
-                  <th className="px-4 py-2 text-right font-medium">
-                    Taxa de resgate
-                  </th>
                   <th className="px-4 py-2 text-right font-medium">Saldo</th>
                   <th className="px-4 py-2 text-left font-medium">Acerto</th>
                 </tr>
@@ -579,7 +507,7 @@ export function InventoryClosingPanel({ closing, startsOn, endsOn }: Props) {
                 {entry.batches.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={6}
+                      colSpan={5}
                       className="px-4 py-6 text-center text-slate-500"
                     >
                       Nenhum lote foi consumido neste período.
@@ -623,15 +551,6 @@ export function InventoryClosingPanel({ closing, startsOn, endsOn }: Props) {
                           >
                             {formatCurrencyBRL(batch.profit_cents)}
                           </td>
-                          <td
-                            className={`px-4 py-2 text-right tabular-nums ${moneyTone(batch.redemption_fee_saved_cents)}`}
-                          >
-                            {batch.redemption_fee_saved_cents === 0
-                              ? "—"
-                              : formatCurrencyBRL(
-                                  batch.redemption_fee_saved_cents,
-                                )}
-                          </td>
                           {/* Points, not money: no colour, and the grid's own grammar. */}
                           <td className="px-4 py-2 text-right text-slate-600 tabular-nums dark:text-slate-300">
                             {formatSignedPaddedPoints(batch.remaining_points)}
@@ -639,14 +558,12 @@ export function InventoryClosingPanel({ closing, startsOn, endsOn }: Props) {
                           {/* The row shows what is actually transferred; the parts are in the
                           opened batch below. */}
                           <td className="px-4 py-2">
-                            <SettlementList
-                              settlements={batch.total_settlements}
-                            />
+                            <SettlementList settlements={batch.settlements} />
                           </td>
                         </tr>
                         {open && (
                           <tr>
-                            <td colSpan={6} className="p-0">
+                            <td colSpan={5} className="p-0">
                               <BatchLines batch={batch} />
                             </td>
                           </tr>
@@ -659,8 +576,7 @@ export function InventoryClosingPanel({ closing, startsOn, endsOn }: Props) {
             </table>
           </div>
 
-          {(entry.total_settlements.length > 0 ||
-            entry.fee_settlements.length > 0) && (
+          {entry.settlements.length > 0 && (
             <footer className="flex flex-col gap-1 border-t bg-amber-50/60 px-4 py-3 text-base dark:bg-amber-950/20">
               <p className="text-xs font-medium tracking-wide text-slate-500 uppercase">
                 Acerto do período
@@ -668,7 +584,7 @@ export function InventoryClosingPanel({ closing, startsOn, endsOn }: Props) {
               <SettlementCalculation
                 agencies={entry.agencies}
                 parts={entry.parts}
-                settlements={entry.total_settlements}
+                settlements={entry.settlements}
               />
             </footer>
           )}
@@ -700,13 +616,12 @@ export function InventoryClosingPanel({ closing, startsOn, endsOn }: Props) {
               </p>
             </div>
           </div>
-          {(closing.totals.total_settlements.length > 0 ||
-            closing.totals.fee_settlements.length > 0) && (
+          {closing.totals.settlements.length > 0 && (
             <footer className="flex flex-col gap-1 border-t bg-amber-50/60 px-4 py-3 text-base dark:bg-amber-950/20">
               <SettlementCalculation
                 agencies={closing.totals.agencies}
                 parts={closing.totals.parts}
-                settlements={closing.totals.total_settlements}
+                settlements={closing.totals.settlements}
               />
             </footer>
           )}
