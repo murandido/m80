@@ -63,10 +63,3 @@ export const updateClientSchema = {
     data: clientSchema.nullish(),
   }),
 }
-
-export const deleteClientSchema = {
-  response: z.object({
-    message: z.string(),
-    data: z.null().nullish(),
-  }),
-}

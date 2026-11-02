@@ -24,7 +24,8 @@ import {
 } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { formatCurrencyBRL, parseCurrencyBRLInput } from "@/lib/currency"
-import { applyPaddedThousandsMask, parsePointsFromThousands } from "@/lib/points"
+import { todayYmd } from "@/lib/date-range"
+import { formatSignedPaddedPoints, parsePointsFromThousands } from "@/lib/points"
 import {
   createPointBatchAction,
   deletePointBatchAction,
@@ -53,10 +54,6 @@ function parsePoints(text: string): number | null {
   return points
 }
 
-function formatPoints(points: number): string {
-  return applyPaddedThousandsMask(String(points))
-}
-
 // The rate is fractional on purpose - 1413,2638 centavos per thousand - so it is shown
 // with four decimals rather than rounded to the centavo. Rounding it is exactly the error
 // the batch costing exists to avoid, and a figure that reads 14,13 here while the totals
@@ -75,7 +72,7 @@ function formatDate(value: string): string {
 // A new batch defaults to today, unless today is outside the window on screen - recording
 // one that vanishes the moment it is saved is how somebody records it twice.
 function defaultDate(startsOn: string, endsOn: string): string {
-  const today = new Date().toISOString().slice(0, 10)
+  const today = todayYmd()
   if (startsOn && today < startsOn) return startsOn
   if (endsOn && today > endsOn) return endsOn
   return today
@@ -313,7 +310,7 @@ export function InventoryBatchesPanel({
                       {batch.acquired_on.split("-").reverse().join("/")}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
-                      {formatPoints(batch.points)}
+                      {formatSignedPaddedPoints(batch.points)}
                     </TableCell>
                     <TableCell className="text-right tabular-nums text-amber-800 dark:text-amber-300">
                       {formatCurrencyBRL(batch.cost_cents)}

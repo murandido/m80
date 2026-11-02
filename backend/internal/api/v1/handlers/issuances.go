@@ -118,9 +118,6 @@ func toIssuanceResponse(issuance data.Issuance) schemas.IssuanceResponse {
 		ValueOfTheThousand:  issuance.ValueOfTheThousand,
 		Taxes:               issuance.Taxes,
 
-		RedemptionFeeSavedCents: issuance.RedemptionFeeSavedCents,
-		RedemptionFeeManual:     issuance.RedemptionFeeManual,
-
 		AccountID:          issuance.AccountID,
 		IssuerID:           issuance.IssuerID,
 		AgencyID:           issuance.AgencyID,
@@ -528,14 +525,18 @@ func issuanceSearchGroup(db *gorm.DB, search string) *gorm.DB {
 func (h *IssuanceHandler) GetIssuances(w http.ResponseWriter, r *http.Request) {
 	var issuances []data.Issuance
 
-	query := preloadIssuanceAssociations(h.DB).
+	// Bound to the request so a search the operator abandoned (closed tab, new keystroke)
+	// stops in Postgres instead of holding a pooled connection until the unbounded result
+	// is built. Safe here because this route only reads.
+	db := h.DB.WithContext(r.Context())
+	query := preloadIssuanceAssociations(db).
 		Preload("Flights", func(db *gorm.DB) *gorm.DB {
 			return db.Where("direction = ?", "outbound").Order("leg_order asc")
 		})
 	// Oldest first: the grid is read top to bottom in the order the issuances actually
 	// happened, and its draft row lives at the bottom - so a row created there stays
 	// where it was typed instead of jumping to the top on the next refresh.
-	query = applyIssuanceListFilters(h.DB, query, r).Order("created_at asc")
+	query = applyIssuanceListFilters(db, query, r).Order("created_at asc")
 
 	if err := query.Find(&issuances).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch issuances")
@@ -559,7 +560,7 @@ const (
 
 // GetIssuancesExport handles the GET /issuances/export route.
 // @Summary      Exportar emissões (.xlsx)
-// @Description  Gera uma planilha .xlsx das emissões filtradas. O layout é escolhido por layout: control (padrão) ou legacy. Layout control: planilha manual de controle numa aba única (a emissão cancelada é atribuída a quem cancelou, que é onde a listagem também a mostra), colunas A:O (Nº, Companhia, Localizador, Data do Voo, Passageiro Principal, Origem, Destino, Pontos, Milheiro, Taxa, Total, Conta, Observação, Taxa Resgate, Emissor), as linhas agrupadas em blocos por companhia, o bloco TOTAL DAS CONTAS ao final e, ao lado da tabela, um quadro por conta e companhia com os localizadores e o total de pontos. A coluna Emissor identifica quem fez cada linha, já que todos os emissores ficam na mesma aba. Dentro de cada bloco a ordem é a da listagem (da mais antiga para a mais recente). Aceita os mesmos filtros da listagem (data, programa de fidelidade, cia aérea, conta, agência e emissor). Emissão cancelada no mesmo dia em que foi criada entra pelo líquido (pontos e taxas menos o reembolso); cancelada em outro dia entra só pelo reembolso, negativo. A linha cancelada é destacada em vermelho claro. Layout legacy: a antiga planilha EMISSÕES GERAIS, uma tabela só (B:P) com os totais do modelo, mais a coluna TAXA RESGATE em Q. Nos dois layouts a Taxa Resgate é a taxa que a conta isenta (Azul Diamante Unique) deixou de pagar, em branco nas contas comuns, com o mesmo sinal dos pontos.
+// @Description  Gera uma planilha .xlsx das emissões filtradas. O layout é escolhido por layout: control (padrão) ou legacy. Layout control: planilha manual de controle numa aba única (a emissão cancelada é atribuída a quem cancelou, que é onde a listagem também a mostra), colunas A:N (Nº, Companhia, Localizador, Data do Voo, Passageiro Principal, Origem, Destino, Pontos, Milheiro, Taxa, Total, Conta, Observação, Emissor), as linhas agrupadas em blocos por companhia, o bloco TOTAL DAS CONTAS ao final e, ao lado da tabela, um quadro por conta e companhia com os localizadores e o total de pontos. A coluna Emissor identifica quem fez cada linha, já que todos os emissores ficam na mesma aba. Dentro de cada bloco a ordem é a da listagem (da mais antiga para a mais recente). Aceita os mesmos filtros da listagem (data, programa de fidelidade, cia aérea, conta, agência e emissor). Emissão cancelada no mesmo dia em que foi criada entra pelo líquido (pontos e taxas menos o reembolso); cancelada em outro dia entra só pelo reembolso, negativo. A linha cancelada é destacada em vermelho claro. Layout legacy: a antiga planilha EMISSÕES GERAIS, uma tabela só (B:P) com os totais do modelo.
 // @Tags         Emissões
 // @Produce      application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
 // @Security     BearerAuth
@@ -592,14 +593,18 @@ func (h *IssuanceHandler) GetIssuancesExport(w http.ResponseWriter, r *http.Requ
 	// (aliasless accounts fall back to the holder's name) and the canceller, whose name decides
 	// which tab a cancelled issuance lands on. Neither is preloaded for the listing, which shows
 	// no such column.
-	query := preloadIssuanceAssociations(h.DB).
+	//
+	// Bound to the request, like the listing: an export nobody is waiting for any more
+	// should not keep reading the whole period. The route only reads.
+	db := h.DB.WithContext(r.Context())
+	query := preloadIssuanceAssociations(db).
 		// Unscoped: an archived holder still names the issuances made on their accounts.
 		Preload("Account.Holder", func(db *gorm.DB) *gorm.DB { return db.Unscoped() }).
 		Preload("CancelledBy").
 		Preload("Flights", func(db *gorm.DB) *gorm.DB {
 			return db.Where("direction = ?", "outbound").Order("leg_order asc")
 		})
-	query = applyIssuanceListFilters(h.DB, query, r).Order("created_at asc")
+	query = applyIssuanceListFilters(db, query, r).Order("created_at asc")
 
 	if err := query.Find(&issuances).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch issuances")
@@ -890,16 +895,6 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Decoded a second time, the same way UpdateSupplierIssuances is: the struct carries
-	// the values, the raw map tells an omitted redemption fee (leave the correction alone)
-	// from an explicit null (drop it and let the rule recompute). Every other field here
-	// only needs "absent means unchanged", which a *int already says.
-	var present map[string]json.RawMessage
-	if err := json.Unmarshal(body, &present); err != nil {
-		utils.SendError(w, r, http.StatusBadRequest, "Invalid JSON payload")
-		return
-	}
-
 	if err := h.Validator.Struct(req); err != nil {
 		utils.SendError(w, r, http.StatusBadRequest, "Validation failed: "+err.Error())
 		return
@@ -1014,12 +1009,6 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 		issuance.Taxes = req.Taxes
 	}
 
-	// A value pins the correction; an explicit null releases the issuance and lets the
-	// recalculation at the end of the transaction fill the amount back in.
-	if _, present := present["redemption_fee_saved_cents"]; present {
-		issuance.RedemptionFeeManual = req.RedemptionFeeSavedCents != nil
-		issuance.RedemptionFeeSavedCents = req.RedemptionFeeSavedCents
-	}
 	if req.Observation != nil {
 		issuance.Observation = req.Observation
 	}
@@ -1118,15 +1107,6 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 			if err := issuancesvc.UpsertPrimaryOutboundFlight(tx, issuance.ID, *flightDate); err != nil {
 				return err
 			}
-		}
-
-		// After the flight upsert, never before: the Save above runs while the departure
-		// date is still the old one, so a fee computed any earlier would be derived from
-		// the itinerary this very PATCH is replacing. Moving the issuance to another
-		// account matters just as much - the account is what decides whether the amount
-		// is owed or saved.
-		if err := issuancesvc.RecalculateRedemptionFee(tx, issuance.ID); err != nil {
-			return err
 		}
 
 		// The points, the rate and the taxes are what the sale is worth. Editing them used

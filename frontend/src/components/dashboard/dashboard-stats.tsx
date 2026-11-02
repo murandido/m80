@@ -1,5 +1,6 @@
 import { formatCurrencyBRL } from "@/lib/currency"
-import { formatPoints } from "@/lib/format"
+import { formatCount } from "@/lib/format"
+import { formatSignedPaddedPoints } from "@/lib/points"
 import type { Dashboard } from "@/schemas/dashboard"
 import { StatTile } from "./stat-tile"
 
@@ -23,29 +24,29 @@ export function DashboardStats({ dashboard, canSeeAmounts }: DashboardStatsProps
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       <StatTile
         label="Pontos emitidos"
-        value={formatPoints(totals.points)}
+        value={formatSignedPaddedPoints(totals.points)}
         current={totals.points}
         previous={previous?.points}
-        previousValue={previous ? formatPoints(previous.points) : undefined}
+        previousValue={previous ? formatSignedPaddedPoints(previous.points) : undefined}
       />
 
       <StatTile
         label="Emissões"
-        value={formatPoints(totals.issuance_count)}
+        value={formatCount(totals.issuance_count)}
         current={totals.issuance_count}
         previous={previous?.issuance_count}
-        previousValue={previous ? formatPoints(previous.issuance_count) : undefined}
+        previousValue={previous ? formatCount(previous.issuance_count) : undefined}
       />
 
       <StatTile
         label="Média por emissão"
-        value={formatPoints(averagePoints)}
+        value={formatSignedPaddedPoints(averagePoints)}
         current={averagePoints}
         previous={previousAveragePoints}
         previousValue={
           previousAveragePoints === undefined
             ? undefined
-            : formatPoints(previousAveragePoints)
+            : formatSignedPaddedPoints(previousAveragePoints)
         }
       />
 
@@ -66,11 +67,11 @@ export function DashboardStats({ dashboard, canSeeAmounts }: DashboardStatsProps
       ) : (
         <StatTile
           label="Cancelamentos"
-          value={formatPoints(totals.cancelled_count)}
+          value={formatCount(totals.cancelled_count)}
           current={totals.cancelled_count}
           previous={previous?.cancelled_count}
           previousValue={
-            previous ? formatPoints(previous.cancelled_count) : undefined
+            previous ? formatCount(previous.cancelled_count) : undefined
           }
           upIsGood={false}
         />

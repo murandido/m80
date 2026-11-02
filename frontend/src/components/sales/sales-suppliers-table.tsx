@@ -50,7 +50,7 @@ import {
   setSupplierExportCounterAction,
 } from "@/actions/supplier-export-counter"
 import { formatCurrencyBRL, parseCurrencyBRLInput } from "@/lib/currency"
-import { formatPoints } from "@/lib/format"
+import { formatSignedPaddedPoints } from "@/lib/points"
 import { normalizeSearch } from "@/lib/search"
 import {
   GROUP_BY_ADMINISTRATOR,
@@ -715,7 +715,7 @@ export function SalesSuppliersTable({ balances, query, groupBy }: SalesSuppliers
                     totals.net < 0 && "text-red-700",
                   )}
                 >
-                  {formatPoints(totals.net)}
+                  {formatSignedPaddedPoints(totals.net)}
                 </TableCell>
                 <TableCell className="text-right font-medium tabular-nums text-muted-foreground">
                   {formatCurrencyBRL(totals.taxes)}
@@ -882,10 +882,10 @@ function SupplierAccountRows({
             balance.net_points < 0 && "text-red-700",
           )}
         >
-          {formatPoints(balance.net_points)}
+          {formatSignedPaddedPoints(balance.net_points)}
           {balance.refunded_points > 0 && (
             <span className="block text-xs font-normal text-muted-foreground">
-              {formatPoints(balance.issued_points)} − {formatPoints(balance.refunded_points)}
+              {formatSignedPaddedPoints(balance.issued_points)} − {formatSignedPaddedPoints(balance.refunded_points)}
             </span>
           )}
         </TableCell>
@@ -1004,7 +1004,7 @@ function SupplierIssuanceRow({
         {line.destination_iata_code ? ` → ${line.destination_iata_code}` : ""}
       </TableCell>
       <TableCell className={cn("text-right tabular-nums", isRefund && "text-red-700")}>
-        {formatPoints(line.points)}
+        {formatSignedPaddedPoints(line.points)}
       </TableCell>
 
       {/* The figure and the tick that decides whether it counts sit together: the amount

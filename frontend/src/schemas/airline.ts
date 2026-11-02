@@ -90,10 +90,3 @@ export const updateAirlineSchema = {
     data: airlineSchema.nullish(),
   }),
 }
-
-export const deleteAirlineSchema = {
-  response: z.object({
-    message: z.string(),
-    data: z.null().nullish(),
-  }),
-}
