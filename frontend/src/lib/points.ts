@@ -22,12 +22,16 @@ export function applyPaddedThousandsMask(raw: string): string {
   return padded.replace(/\B(?=(\d{3})+(?!\d))/g, ".")
 }
 
-// A signed point count in the padded grammar above, for the inventory screens (closing and the
-// statement reconciliation) where a net movement can be negative. The mask itself only knows
-// digits, so the sign is put back in front of it.
+// The one way the panel shows a point count, on every screen: the padded grammar above, so 500
+// reads "0.500" and 12345 reads "12.345" - the same number of digits after the last dot that an
+// operator quoting milheiros expects. The mask only knows digits, so the sign is put back in
+// front of it (a net movement or a divergence can be negative), and the value is rounded first
+// because a fractional count would otherwise have its decimal digits glued onto the integer
+// ones by the mask. Callers that need a "+" or "−" glyph pass the absolute value and add it.
 export function formatSignedPaddedPoints(points: number): string {
-  const sign = points < 0 ? "-" : ""
-  return sign + applyPaddedThousandsMask(String(Math.abs(points)))
+  const rounded = Math.round(points)
+  const sign = rounded < 0 ? "-" : ""
+  return sign + applyPaddedThousandsMask(String(Math.abs(rounded)))
 }
 
 // Digits and at most one separator, keeping whichever the operator reached for. No thousands

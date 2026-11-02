@@ -30,8 +30,8 @@ import { todayISO } from "@/components/issuances/board/use-issuance-board"
 import { cn } from "@/lib/utils"
 import { formatCurrencyBRL, parseCurrencyBRLInput } from "@/lib/currency"
 import {
-  applyPaddedThousandsMask,
   formatPointsInThousands,
+  formatSignedPaddedPoints,
   parsePointsFromThousands,
   sanitizeThousandsInput,
 } from "@/lib/points"
@@ -290,7 +290,7 @@ export function AdjustmentDialog({
                     ) : (
                       typedPoints !== null && (
                         <p className="text-xs text-slate-500">
-                          = {applyPaddedThousandsMask(String(typedPoints))} pontos
+                          = {formatSignedPaddedPoints(typedPoints)} pontos
                         </p>
                       )
                     )}
