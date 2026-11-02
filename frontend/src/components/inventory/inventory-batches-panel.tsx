@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { formatCurrencyBRL, parseCurrencyBRLInput } from "@/lib/currency"
+import { todayYmd } from "@/lib/date-range"
 import { applyPaddedThousandsMask, parsePointsFromThousands } from "@/lib/points"
 import {
   createPointBatchAction,
@@ -75,7 +76,7 @@ function formatDate(value: string): string {
 // A new batch defaults to today, unless today is outside the window on screen - recording
 // one that vanishes the moment it is saved is how somebody records it twice.
 function defaultDate(startsOn: string, endsOn: string): string {
-  const today = new Date().toISOString().slice(0, 10)
+  const today = todayYmd()
   if (startsOn && today < startsOn) return startsOn
   if (endsOn && today > endsOn) return endsOn
   return today
