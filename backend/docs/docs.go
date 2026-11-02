@@ -6054,7 +6054,7 @@ const docTemplate = `{
                         }
                     },
                     "404": {
-                        "description": "Conta não encontrada",
+                        "description": "Conta não encontrada ou com lote financiado por agência fora do escopo",
                         "schema": {
                             "$ref": "#/definitions/schemas.ErrorResponse"
                         }
@@ -6118,7 +6118,7 @@ const docTemplate = `{
                         }
                     },
                     "404": {
-                        "description": "Período não encontrado",
+                        "description": "Período não encontrado ou conta com lote financiado por agência fora do escopo",
                         "schema": {
                             "$ref": "#/definitions/schemas.ErrorResponse"
                         }

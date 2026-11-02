@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
+	"github.com/murandido/m-80-backend/internal/access"
 	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
@@ -26,6 +27,39 @@ func NewInventoryPeriodHandler(db *gorm.DB) *InventoryPeriodHandler {
 		DB:        db,
 		Validator: validator.New(),
 	}
+}
+
+// foreignFundedAccountMessage is what a restricted admin reads when the account has points
+// another agency paid for. Not "Conta não encontrada": the account is on the closing screen
+// in front of them, so a message that denies it exists would only read as a bug.
+const foreignFundedAccountMessage = "Esta conta tem lotes de pontos financiados por uma agência que você não acessa. " +
+	"Só quem acessa todas as agências financiadoras pode fechar ou reabrir o período dela."
+
+// accountFundedWithinScope reports whether every live batch on the account was funded by an
+// agency inside the caller's scope. An account belongs to no agency - only its batches do -
+// and closing or reopening freezes or thaws the costing of every batch on it at once, so a
+// single batch paid by somebody else is enough to keep a restricted admin out: otherwise the
+// admin of agency A could freeze (or reopen) the figures agency B is owed in the settlement.
+//
+// An account with no batches has nothing foreign to freeze and passes - but only for a caller
+// with at least one grant: a user with no agencies at all acts on nothing (fail closed, as
+// everywhere else the scope is read). Archived batches are left out by the soft delete, the
+// same way the costing itself ignores them.
+func (h *InventoryPeriodHandler) accountFundedWithinScope(accountID string, scope access.AgencyScope) (bool, error) {
+	if scope.All {
+		return true, nil
+	}
+	if len(scope.IDs) == 0 {
+		return false, nil
+	}
+	var foreignBatches int64
+	err := h.DB.Model(&data.PointBatch{}).
+		Where("account_id = ? AND funding_agency_id NOT IN ?", accountID, scope.IDs).
+		Count(&foreignBatches).Error
+	if err != nil {
+		return false, err
+	}
+	return foreignBatches == 0, nil
 }
 
 func toInventoryPeriodResponse(period data.InventoryPeriod) schemas.InventoryPeriodResponse {
@@ -55,7 +89,7 @@ func toInventoryPeriodResponse(period data.InventoryPeriod) schemas.InventoryPer
 // @Failure      400  {object}  schemas.ErrorResponse "Payload inválido"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      403  {object}  schemas.ErrorResponse "Requer admin"
-// @Failure      404  {object}  schemas.ErrorResponse "Conta não encontrada"
+// @Failure      404  {object}  schemas.ErrorResponse "Conta não encontrada ou com lote financiado por agência fora do escopo"
 // @Failure      422  {object}  schemas.ErrorResponse "Conta sem estoque próprio ou período fora de ordem"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao fechar período"
 // @Router       /inventory-periods [post]
@@ -102,6 +136,19 @@ func (h *InventoryPeriodHandler) ClosePeriod(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// Checked here rather than inside inventory.Close: who may press the button is a question
+	// about the request, and the costing package knows nothing about callers.
+	allowed, err := h.accountFundedWithinScope(account.ID, middleware.AgencyScopeFrom(r.Context()))
+	if err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to check the account's funding agencies: "+err.Error())
+		return
+	}
+	if !allowed {
+		// 404 like every other record outside the scope (see internal/api/CLAUDE.md).
+		utils.SendError(w, r, http.StatusNotFound, foreignFundedAccountMessage)
+		return
+	}
+
 	period, err := inventory.Close(h.DB, req.AccountID, startsOn, endsOn, userCtx.ID)
 	if err != nil {
 		switch {
@@ -132,12 +179,35 @@ func (h *InventoryPeriodHandler) ClosePeriod(w http.ResponseWriter, r *http.Requ
 // @Success      200  {object}  schemas.ErrorResponse "Período reaberto com sucesso"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      403  {object}  schemas.ErrorResponse "Requer admin"
-// @Failure      404  {object}  schemas.ErrorResponse "Período não encontrado"
+// @Failure      404  {object}  schemas.ErrorResponse "Período não encontrado ou conta com lote financiado por agência fora do escopo"
 // @Failure      422  {object}  schemas.ErrorResponse "Existe período fechado mais recente"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao reabrir período"
 // @Router       /inventory-periods/{id} [delete]
 func (h *InventoryPeriodHandler) ReopenPeriod(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+
+	// Reopening thaws the whole account, so it answers to the same rule as closing it. dev
+	// skips the lookup entirely, which leaves its path exactly as it was before the check.
+	if scope := middleware.AgencyScopeFrom(r.Context()); !scope.All {
+		var period data.InventoryPeriod
+		if err := h.DB.Select("account_id").First(&period, "id = ?", id).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				utils.SendError(w, r, http.StatusNotFound, "Período não encontrado")
+				return
+			}
+			utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch period: "+err.Error())
+			return
+		}
+		allowed, err := h.accountFundedWithinScope(period.AccountID, scope)
+		if err != nil {
+			utils.SendError(w, r, http.StatusInternalServerError, "Failed to check the account's funding agencies: "+err.Error())
+			return
+		}
+		if !allowed {
+			utils.SendError(w, r, http.StatusNotFound, foreignFundedAccountMessage)
+			return
+		}
+	}
 
 	if err := inventory.Reopen(h.DB, id); err != nil {
 		switch {

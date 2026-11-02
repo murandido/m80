@@ -26,7 +26,7 @@ import { Switch } from "@/components/ui/switch"
 import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 import { ACCOUNT_CATEGORY_OPTIONS } from "@/lib/account-category"
-import { applyPaddedThousandsMask } from "@/lib/points"
+import { formatSignedPaddedPoints } from "@/lib/points"
 import { Account, updateAccountSchema } from "@/schemas/account"
 import { PersonOption } from "@/schemas/person"
 import { LoyaltyProgram } from "@/schemas/loyalty-program"
@@ -382,7 +382,7 @@ export function EditAccountPanel({
                     </span>
                   ) : (
                     <span className="tabular-nums font-medium">
-                      {applyPaddedThousandsMask(String(expected))} pontos
+                      {formatSignedPaddedPoints(expected)} pontos
                     </span>
                   )}
                 </div>
@@ -394,7 +394,7 @@ export function EditAccountPanel({
                     <span className="text-xs text-slate-400">sincronizado da companhia</span>
                   ) : (
                     <span className="tabular-nums font-medium">
-                      {applyPaddedThousandsMask(String(realBalance))} pontos
+                      {formatSignedPaddedPoints(realBalance)} pontos
                     </span>
                   )}
                 </div>
@@ -411,8 +411,8 @@ export function EditAccountPanel({
                   ) : (
                     <p className="text-xs text-amber-800">
                       {divergence > 0
-                        ? `O painel conta ${applyPaddedThousandsMask(String(divergence))} pontos a mais do que a companhia — falta lançar alguma emissão.`
-                        : `A companhia mostra ${applyPaddedThousandsMask(String(-divergence))} pontos a mais que o painel — falta lançar algum lote.`}
+                        ? `O painel conta ${formatSignedPaddedPoints(divergence)} pontos a mais do que a companhia — falta lançar alguma emissão.`
+                        : `A companhia mostra ${formatSignedPaddedPoints(-divergence)} pontos a mais que o painel — falta lançar algum lote.`}
                     </p>
                   ))}
               </div>

@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button"
 import { startSmilesLoginAction } from "@/actions/statement"
 import { statementSyncStateSchema, type SmilesAuthenticator, type StatementSyncState } from "@/schemas/inventory"
 import { SmilesConnectDialog } from "@/components/accounts/smiles-connect-dialog"
-import { formatPoints } from "@/lib/format"
+import { formatSignedPaddedPoints } from "@/lib/points"
 import { Account } from "@/schemas/account"
 
 // The stable identifier of the Smiles program is its code, not its name or id.
@@ -216,7 +216,7 @@ export function SmilesAccountControls({ account }: SmilesAccountControlsProps) {
   // round that read the statement, so on an account that does not track it it is empty or stale.
   const balancePoints = account.real_balance_points ?? status?.last_balance_points
   const balance =
-    balancePoints != null ? `${formatPoints(balancePoints)} milhas` : "Saldo ainda não sincronizado"
+    balancePoints != null ? `${formatSignedPaddedPoints(balancePoints)} milhas` : "Saldo ainda não sincronizado"
   const lastSyncedAt = status?.last_synced_at ?? account.smiles_last_synced_at
   const syncedAt = lastSyncedAt
     ? `atualizado ${formatDistanceToNow(new Date(lastSyncedAt), {

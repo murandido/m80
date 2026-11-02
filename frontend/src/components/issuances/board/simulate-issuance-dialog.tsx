@@ -15,7 +15,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { copyToClipboard } from "@/lib/clipboard"
 import { formatCurrencyBRL } from "@/lib/currency"
-import { applyPaddedThousandsMask } from "@/lib/points"
+import { formatSignedPaddedPoints } from "@/lib/points"
 import {
   buildCalculo,
   issuanceTotalCents,
@@ -129,7 +129,7 @@ export function SimulateIssuanceDialog({
           </p>
           {parsedPoints !== null && (
             <p className="mt-1 text-xs text-slate-500">
-              {applyPaddedThousandsMask(String(parsedPoints))} pontos
+              {formatSignedPaddedPoints(parsedPoints)} pontos
             </p>
           )}
         </div>

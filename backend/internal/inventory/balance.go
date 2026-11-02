@@ -121,8 +121,12 @@ func ExpectedBalances(db *gorm.DB, accountIDs []string) (map[string]int, error) 
 	// A cancellation-only row never took points out of the account, and a refund puts them
 	// back - the same two rules the timeline follows in loadIssuanceActivity.
 	//
-	// The boundary is the same one the recompute draws, on the UTC day of created_at; an
-	// account without a cut (no row in cuts) counts every issuance.
+	// Each half is cut on its own event's day, the way loadIssuanceActivity dates them: the
+	// booking by created_at, the refund by cancelled_at (created_at when there is none). A
+	// single created_at cut lost the refund of a booking from a closed month cancelled after
+	// the closing - the recompute returns those points in the open period, and the balance
+	// never saw them come back. The boundary is the same one the recompute draws, on the UTC
+	// day; an account without a cut (no row in cuts) counts every issuance.
 	type openTotal struct {
 		AccountID string
 		Issued    int
@@ -131,15 +135,15 @@ func ExpectedBalances(db *gorm.DB, accountIDs []string) (map[string]int, error) 
 	var open []openTotal
 	err = db.Model(&data.Issuance{}).
 		Select(`issuances.account_id,
-		        COALESCE(SUM(CASE WHEN issuances.cancellation_only THEN 0 ELSE issuances.points END), 0) AS issued,
+		        COALESCE(SUM(CASE WHEN issuances.cancellation_only THEN 0 ELSE issuances.points END)
+		            FILTER (WHERE cuts.cut IS NULL OR DATE(issuances.created_at AT TIME ZONE 'UTC') > cuts.cut), 0) AS issued,
 		        COALESCE(SUM(CASE
 		            WHEN issuances.refunded_points IS NOT NULL THEN issuances.refunded_points
 		            WHEN issuances.cancelled_at IS NOT NULL AND NOT issuances.cancellation_only THEN issuances.points
 		            ELSE 0
-		        END), 0) AS refunded`).
+		        END) FILTER (WHERE cuts.cut IS NULL OR DATE(COALESCE(issuances.cancelled_at, issuances.created_at) AT TIME ZONE 'UTC') > cuts.cut), 0) AS refunded`).
 		Joins("LEFT JOIN (?) AS cuts ON cuts.account_id = issuances.account_id", closedCuts()).
 		Where("issuances.account_id IN ?", owning).
-		Where("cuts.cut IS NULL OR DATE(issuances.created_at AT TIME ZONE 'UTC') > cuts.cut").
 		Group("issuances.account_id").
 		Scan(&open).Error
 	if err != nil {
@@ -163,8 +167,8 @@ func ExpectedBalances(db *gorm.DB, accountIDs []string) (map[string]int, error) 
 // openAdjustedPoints is what each account's alterations took out of the open period, net
 // of what they gave back, the same two rules loadIssuanceActivity follows. Each alteration
 // counts on its own day. A booking cancelled without an explicit refund returns its
-// alterations' points too (refundedPoints), on the same created_at boundary the refund
-// above is read by. Accounts with nothing to report are absent from the result.
+// alterations' points too (refundedPoints), on the same cancellation-day boundary the
+// refund above is read by. Accounts with nothing to report are absent from the result.
 func openAdjustedPoints(db *gorm.DB, accountIDs []string, closedCuts func() *gorm.DB) (map[string]int, error) {
 	type accountTotal struct {
 		AccountID string
@@ -191,7 +195,7 @@ func openAdjustedPoints(db *gorm.DB, accountIDs []string, closedCuts func() *gor
 		Joins("LEFT JOIN (?) AS cuts ON cuts.account_id = issuances.account_id", closedCuts()).
 		Where("issuances.account_id IN ? AND issuances.deleted_at IS NULL", accountIDs).
 		Where("issuances.cancelled_at IS NOT NULL AND issuances.refunded_points IS NULL AND NOT issuances.cancellation_only").
-		Where("cuts.cut IS NULL OR DATE(issuances.created_at AT TIME ZONE 'UTC') > cuts.cut").
+		Where("cuts.cut IS NULL OR DATE(issuances.cancelled_at AT TIME ZONE 'UTC') > cuts.cut").
 		Group("issuances.account_id").
 		Scan(&returned).Error
 	if err != nil {
