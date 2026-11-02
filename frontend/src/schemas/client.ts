@@ -40,12 +40,14 @@ export const listClientsSchema = {
 
 export type ClientPage = NonNullable<z.infer<typeof listClientsSchema.response>["data"]>
 
+const clientRequestFields = {
+  name: z.string().min(1, "Nome é obrigatório"),
+  phone: z.string().trim().optional(),
+  agency_id: z.string().min(1, "Agência é obrigatória"),
+}
+
 export const createClientSchema = {
-  request: z.object({
-    name: z.string().min(1, "Nome é obrigatório"),
-    phone: z.string().trim().optional(),
-    agency_id: z.string().min(1, "Agência é obrigatória"),
-  }),
+  request: z.object(clientRequestFields),
   response: z.object({
     success: z.boolean(),
     message: z.string(),
@@ -54,11 +56,7 @@ export const createClientSchema = {
 }
 
 export const updateClientSchema = {
-  request: z.object({
-    name: z.string().min(1, "Nome é obrigatório"),
-    phone: z.string().trim().optional(),
-    agency_id: z.string().min(1, "Agência é obrigatória"),
-  }),
+  request: z.object(clientRequestFields),
   response: z.object({
     success: z.boolean(),
     message: z.string(),
