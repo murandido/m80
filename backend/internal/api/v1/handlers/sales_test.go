@@ -1402,3 +1402,27 @@ func TestUpdateSupplierIssuances_RejectsTheCPFFeeOnALiveIssuance(t *testing.T) {
 		}
 	})
 }
+
+// A failed read of the alterations has to surface: an empty map makes asAlterationDay show
+// the whole sale instead of the alteration, and the listing would answer 200 with a wrong
+// "Total devido". A cancelled context is the simplest way to make the query itself fail.
+func TestAlterationCentsInWindow_ReturnsTheReadError(t *testing.T) {
+	db := setupTestDB(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	day := time.Date(2026, 9, 10, 0, 0, 0, 0, time.UTC)
+	from, to := day, day.Add(24*time.Hour)
+	// Issued before the window, so the sale is listed only because of an alteration and
+	// the function has to read issuance_adjustments.
+	rows := []saleRow{{ID: uuid.NewString(), IssuanceID: uuid.NewString(), IssuedAt: day.AddDate(0, -1, 0)}}
+
+	totals, err := alterationCentsInWindow(db.WithContext(ctx), rows, &from, &to)
+	if err == nil {
+		t.Fatalf("expected the read error, got totals %v", totals)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+}

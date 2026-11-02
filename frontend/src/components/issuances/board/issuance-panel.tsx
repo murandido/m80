@@ -738,6 +738,34 @@ export function IssuancePanel({
           </div>
         </div>
 
+        {/* A save that failed stays visible until it gets through: the value in the field is
+            only on this screen, and an automatic retry may still be on its way. */}
+        {board.unsavedRowKeys[row.key] && (
+          <div
+            role="alert"
+            className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800"
+          >
+            <span className="font-medium">
+              Não salvo. O que foi digitado ainda não chegou ao servidor.
+            </span>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="border-red-300 bg-white text-red-800 hover:bg-red-100"
+              disabled={row.saveStatus === "saving"}
+              onClick={() => board.retrySave(row.key)}
+            >
+              {row.saveStatus === "saving" ? (
+                <Loader2 className="animate-spin" />
+              ) : (
+                <RotateCcw />
+              )}
+              Tentar de novo
+            </Button>
+          </div>
+        )}
+
         <section
           id={identificationId}
           className="flex flex-col gap-4"
