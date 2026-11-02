@@ -10,8 +10,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/murandido/m-80-backend/internal/access"
-	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
 	"gorm.io/gorm"
@@ -19,13 +17,6 @@ import (
 
 type inventoryPeriodEnvelope struct {
 	Data schemas.InventoryPeriodResponse `json:"data"`
-}
-
-// asScopedUser is asUser with a scope of the test's choosing, for the cases that are about
-// what a caller restricted to some agencies can reach.
-func asScopedUser(ctx context.Context, user data.User, scope access.AgencyScope) context.Context {
-	ctx = context.WithValue(ctx, middleware.UserContextKey, user)
-	return context.WithValue(ctx, middleware.AgencyScopeContextKey, scope)
 }
 
 func closePeriodRequest(ctx context.Context, body string) *http.Request {
