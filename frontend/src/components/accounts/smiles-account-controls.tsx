@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button"
 import { startSmilesLoginAction } from "@/actions/statement"
 import { statementSyncStateSchema, type SmilesAuthenticator, type StatementSyncState } from "@/schemas/inventory"
 import { SmilesConnectDialog } from "@/components/accounts/smiles-connect-dialog"
+import { formatPoints } from "@/lib/format"
 import { Account } from "@/schemas/account"
 
 // The stable identifier of the Smiles program is its code, not its name or id.
@@ -23,10 +24,6 @@ const POLL_INTERVAL_MS = 4000
 // How long to keep polling for that first read before giving up on it. It normally lands in
 // seconds; past this the card just shows what it has, and a reload or the ticker will catch up.
 const POLL_TIMEOUT_MS = 60_000
-
-function formatPoints(points: number): string {
-  return points.toLocaleString("pt-BR")
-}
 
 interface SmilesAccountControlsProps {
   account: Account
