@@ -36,11 +36,6 @@ type SmilesConnectSingleResponse struct {
 	Data    SmilesConnectResponse `json:"data"`
 }
 
-// SmilesChallengeRequest asks Smiles to send the code on one of the listed channels.
-type SmilesChallengeRequest struct {
-	AuthenticatorID string `json:"authenticator_id" validate:"required"`
-}
-
 // SmilesChallengeResponse confirms the code was sent, and where to - masked.
 type SmilesChallengeResponse struct {
 	Channel string `json:"channel" example:"sms"`
@@ -52,6 +47,39 @@ type SmilesChallengeSingleResponse struct {
 	Success bool                    `json:"success" example:"true"`
 	Message string                  `json:"message" example:"Código enviado"`
 	Data    SmilesChallengeResponse `json:"data"`
+}
+
+// SmilesBrowserChallengeRequest picks the channel the operator's own browser will use to ask
+// Smiles for the code. That browser is the extension: the edge refuses every client that is not
+// a real browser on that POST, and the operator's own Chrome is the one client it treats as a
+// person. This call hands the material over; the browser answers on /challenge/complete.
+type SmilesBrowserChallengeRequest struct {
+	AuthenticatorID string `json:"authenticator_id" validate:"required"`
+}
+
+// SmilesBrowserChallengeResponse is the material the extension needs: the short-lived token the
+// tenant issued and the public client id. Both are only useful for this one challenge; the
+// account's password never travels with them.
+type SmilesBrowserChallengeResponse struct {
+	MFAToken        string `json:"mfa_token"`
+	ClientID        string `json:"client_id"`
+	AuthenticatorID string `json:"authenticator_id"`
+	Channel         string `json:"channel" example:"sms"`
+	SentTo          string `json:"sent_to" example:"***77"`
+}
+
+// SmilesBrowserChallengeSingleResponse is the browser challenge route's envelope.
+type SmilesBrowserChallengeSingleResponse struct {
+	Success bool                           `json:"success" example:"true"`
+	Message string                         `json:"message" example:"Peça o código pelo navegador"`
+	Data    SmilesBrowserChallengeResponse `json:"data"`
+}
+
+// SmilesBrowserChallengeCompleteRequest hands back the oob_code the operator's browser got from
+// the tenant. It is what ties the digits the operator will type to the challenge that was made.
+type SmilesBrowserChallengeCompleteRequest struct {
+	AuthenticatorID string `json:"authenticator_id" validate:"required"`
+	OOBCode         string `json:"oob_code" validate:"required"`
 }
 
 // SmilesCodeRequest carries the digits the operator typed. Bounded rather than fixed at six:

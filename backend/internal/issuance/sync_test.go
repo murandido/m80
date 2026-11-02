@@ -726,3 +726,78 @@ func (n *namedProvider) Name() string { return n.name }
 func (n *namedProvider) Fetch(ctx context.Context, req booking.Request) (*booking.Booking, error) {
 	return n.inner.Fetch(ctx, req)
 }
+
+func TestSyncKeepsEditsMadeWhileTheProviderAnswers(t *testing.T) {
+	// Sync reads the row before asking the provider, and the provider can take
+	// minutes - exactly when the operator opens the row to fill in its values, or
+	// cancels it. Writing the whole stale snapshot back would silently undo both, so
+	// the sync may only write the columns it owns.
+	runInTx(t, func(tx *gorm.DB) {
+		traveosID := 90
+		f := seedFixture(t, tx, data.Airline{TraveosSupported: true, TraveosAirlineID: &traveosID})
+		created, err := Create(tx, f.input(), f.User.ID)
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+
+		const editedPoints = 123456
+		const typedPurchaseNumber = "LA9988776655"
+		const typedPassengerName = "MARIA PRADO FERREIRA"
+		cancelledAt := time.Now().Truncate(time.Second)
+		provider := &fakeProvider{
+			fetchResults: []*booking.Booking{existingBooking()},
+			// Stands in for a PATCH from the grid and a cancellation landing while
+			// the vendor is still answering. The purchase number and the passenger
+			// name are columns the sync may write, but this answer carries neither,
+			// so the operator's values must survive too.
+			duringCall: func() {
+				if err := tx.Model(&data.Issuance{}).Where("id = ?", created.ID).
+					UpdateColumns(map[string]any{
+						"points":                editedPoints,
+						"active":                false,
+						"cancelled_at":          cancelledAt,
+						"latam_purchase_number": typedPurchaseNumber,
+						"main_passenger_name":   typedPassengerName,
+					}).Error; err != nil {
+					t.Fatalf("editing the issuance mid-sync: %v", err)
+				}
+			},
+		}
+
+		if err := Sync(context.Background(), tx, booking.NewRegistry(provider), created.ID, true); err != nil {
+			t.Fatalf("Sync: %v", err)
+		}
+
+		var issuance data.Issuance
+		if err := tx.First(&issuance, "id = ?", created.ID).Error; err != nil {
+			t.Fatalf("reloading the issuance: %v", err)
+		}
+		if issuance.Points != editedPoints {
+			t.Errorf("points = %d, want the %d written during the sync", issuance.Points, editedPoints)
+		}
+		if issuance.Active || issuance.CancelledAt == nil {
+			t.Errorf("active = %v, cancelled_at = %v: the sync reverted a cancellation made while it ran",
+				issuance.Active, issuance.CancelledAt)
+		}
+
+		if issuance.LatamPurchaseNumber == nil || *issuance.LatamPurchaseNumber != typedPurchaseNumber {
+			t.Errorf("latam_purchase_number = %v, want the %q typed during the sync - the booking had none",
+				issuance.LatamPurchaseNumber, typedPurchaseNumber)
+		}
+		if issuance.MainPassengerName == nil || *issuance.MainPassengerName != typedPassengerName {
+			t.Errorf("main_passenger_name = %v, want the %q typed during the sync - the booking had no passengers",
+				issuance.MainPassengerName, typedPassengerName)
+		}
+
+		// And the itinerary columns, which are the sync's to write, still land.
+		if issuance.TripType == nil || *issuance.TripType != booking.TripOneWay {
+			t.Errorf("trip_type = %v, want %q", issuance.TripType, booking.TripOneWay)
+		}
+		if issuance.TraveosSyncedAt == nil || !issuance.Complete {
+			t.Errorf("traveos_synced_at = %v, complete = %v, want the sync recorded", issuance.TraveosSyncedAt, issuance.Complete)
+		}
+		if issuance.BookingSource == nil || *issuance.BookingSource != "fake" {
+			t.Errorf("booking_source = %v, want the provider that answered", issuance.BookingSource)
+		}
+	})
+}
