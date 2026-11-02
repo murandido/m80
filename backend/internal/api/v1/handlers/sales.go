@@ -966,6 +966,25 @@ func (h *SaleHandler) UpdateSale(w http.ResponseWriter, r *http.Request) {
 	// Sales the replay changed besides this one, so their rows refresh too.
 	var rebalancedSaleIDs []string
 	err = h.DB.Transaction(func(tx *gorm.DB) error {
+		// Serialize every edit of this sale. The paid switch reads what is missing and
+		// records it; two clicks at once (two operators, or two tabs) would otherwise both
+		// read nothing paid and both insert the full amount, and a client's rebalance then
+		// turns the duplicate into credit that pays another sale. The second request waits
+		// here and finds nothing missing.
+		//
+		// NO KEY UPDATE, not UPDATE: it still conflicts with another PATCH of this sale, but
+		// not with the KEY SHARE lock a sale_payments insert takes on its foreign key, so a
+		// client payment spreading money onto this sale is not held back by it.
+		//
+		// Lock order is sale, then client (rebalanceClient), while the client-payment paths
+		// in internal/sale lock the client and then update its sales. That inversion is
+		// older than this lock (Recalculate already updated the sale before the rebalance
+		// here); taking the sale first only widens it. Postgres detects the deadlock and
+		// fails one side, which surfaces as a 500 the operator can retry.
+		if err := tx.Clauses(clause.Locking{Strength: "NO KEY UPDATE"}).Select("id").
+			First(&data.Sale{}, "id = ?", sale.ID).Error; err != nil {
+			return err
+		}
 		if len(updates) > 0 {
 			if err := tx.Model(&sale).Updates(updates).Error; err != nil {
 				return err
@@ -992,7 +1011,7 @@ func (h *SaleHandler) UpdateSale(w http.ResponseWriter, r *http.Request) {
 		if req.Paid == nil {
 			return nil
 		}
-		if err := settleSaleFromLegacyFlag(tx, sale.ID, *req.Paid, userCtx.ID); err != nil {
+		if err := settleSaleFromLegacyFlag(tx, sale.ID, *req.Paid, userCtx.ID, time.Now()); err != nil {
 			return err
 		}
 		// Clearing the sale's own lines leaves room the client's credit can fill, and
