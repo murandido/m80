@@ -236,7 +236,6 @@ func toAccountResponseWithUsage(account data.Account, usage *acct.Usage) schemas
 		LatamConnected:            account.LatamRefreshToken != nil && *account.LatamRefreshToken != "",
 		RealBalancePoints:         account.RealBalancePoints,
 		RealBalanceCheckedOn:      checkedOn,
-		WaivesRedemptionFee:       account.WaivesRedemptionFee,
 		OwnsPointInventory:        account.OwnsPointInventory,
 		TracksStatement:           account.TracksStatement,
 		DefaultProfitSharePercent: account.DefaultProfitSharePercent,
@@ -268,15 +267,14 @@ func toAccountPickerResponse(account data.Account) schemas.AccountPickerResponse
 	}
 
 	return schemas.AccountPickerResponse{
-		ID:                  account.ID,
-		LoyaltyProgramID:    account.LoyaltyProgramID,
-		Login:               account.Login,
-		HolderID:            account.HolderID,
-		Nicknames:           nicknames,
-		WaivesRedemptionFee: account.WaivesRedemptionFee,
-		OwnsPointInventory:  account.OwnsPointInventory,
-		TracksStatement:     account.TracksStatement,
-		DeletedAt:           archivedAt(account.DeletedAt),
+		ID:                 account.ID,
+		LoyaltyProgramID:   account.LoyaltyProgramID,
+		Login:              account.Login,
+		HolderID:           account.HolderID,
+		Nicknames:          nicknames,
+		OwnsPointInventory: account.OwnsPointInventory,
+		TracksStatement:    account.TracksStatement,
+		DeletedAt:          archivedAt(account.DeletedAt),
 	}
 }
 
@@ -320,9 +318,6 @@ func (h *AccountHandler) CreateAccount(w http.ResponseWriter, r *http.Request) {
 		Password:         req.Password,
 		HolderID:         req.HolderID,
 		AdministratorID:  req.AdministratorID,
-	}
-	if req.WaivesRedemptionFee != nil {
-		account.WaivesRedemptionFee = *req.WaivesRedemptionFee
 	}
 	if req.OwnsPointInventory != nil {
 		account.OwnsPointInventory = *req.OwnsPointInventory
@@ -641,9 +636,6 @@ func (h *AccountHandler) UpdateAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.AdministratorID != nil {
 		account.AdministratorID = req.AdministratorID
-	}
-	if req.WaivesRedemptionFee != nil {
-		account.WaivesRedemptionFee = *req.WaivesRedemptionFee
 	}
 	if req.OwnsPointInventory != nil {
 		account.OwnsPointInventory = *req.OwnsPointInventory

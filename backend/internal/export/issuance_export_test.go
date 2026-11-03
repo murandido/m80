@@ -109,7 +109,7 @@ func assertCells(t *testing.T, f *excelize.File, sheet string, cells map[string]
 }
 
 // TestRenderIssuancesXLSXLayout pins the columns of the manual control sheet, plus the Emissor
-// column the single-sheet export adds after Taxa Resgate.
+// column the single-sheet export adds after them.
 func TestRenderIssuancesXLSXLayout(t *testing.T) {
 	f := renderForTest(t, []data.Issuance{
 		sampleIssuance("Smiles", "ABC123", "Conta VIP", "João Emissor"),
@@ -122,8 +122,7 @@ func TestRenderIssuancesXLSXLayout(t *testing.T) {
 		"H2": "Pontos",
 		"K2": "Total",
 		"M2": "Observação",
-		"N2": "Taxa Resgate",
-		"O2": "Emissor",
+		"N2": "Emissor",
 		"A3": "1",
 		// The airline label is upper case, as on the sheet being pasted into.
 		"B3": "SMILES",
@@ -137,10 +136,8 @@ func TestRenderIssuancesXLSXLayout(t *testing.T) {
 		"I3": "R$ 20.00",
 		"J3": "R$ 35.50",
 		"L3": "Conta VIP",
-		// An ordinary account saved no redemption fee, so the cell stays blank.
-		"N3": "",
 		// Emissor names who made the row.
-		"O3": "João Emissor",
+		"N3": "João Emissor",
 	})
 
 	formula, err := f.GetCellFormula(issuanceExportSheetName, "K3")
@@ -236,51 +233,6 @@ func TestRenderIssuancesXLSXLeavesTaxesBlank(t *testing.T) {
 	assertCells(t, f, issuanceExportSheetName, map[string]string{"J3": ""})
 }
 
-// An exempt account shows the fee it did not pay, and the totals band sums it apart from the
-// billing, which it never entered.
-func TestRenderIssuancesXLSXWritesRedemptionFee(t *testing.T) {
-	exempt := sampleIssuance("Azul", "AAA111", "Diamante", "Marcus")
-	exempt.RedemptionFeeSavedCents = intptr(4500)
-
-	f := renderForTest(t, []data.Issuance{
-		exempt,
-		sampleIssuance("Azul", "BBB222", "Comum", "Marcus"),
-	})
-
-	assertCells(t, f, issuanceExportSheetName, map[string]string{
-		"N3": "R$ 45.00",
-		"N4": "",
-	})
-
-	formula, err := f.GetCellFormula(issuanceExportSheetName, "N5")
-	if err != nil {
-		t.Fatalf("get N5 formula: %v", err)
-	}
-	if formula != "SUM(N3:N4)" {
-		t.Errorf("N5 formula = %q, want %q", formula, "SUM(N3:N4)")
-	}
-	billing, err := f.GetCellFormula(issuanceExportSheetName, "K6")
-	if err != nil {
-		t.Fatalf("get K6 formula: %v", err)
-	}
-	if billing != "K5-J5" {
-		t.Errorf("K6 formula = %q, want the billing to leave the redemption fee out", billing)
-	}
-}
-
-// A booking cancelled on a later day gives its saving back, negative like its refund.
-func TestRenderIssuancesXLSXGivesRedemptionFeeBackOnLaterCancellation(t *testing.T) {
-	cancelledAt := time.Date(2026, 7, 25, 18, 0, 0, 0, time.UTC)
-
-	issuance := sampleIssuance("Azul", "AAA111", "Diamante", "Marcus")
-	issuance.RedemptionFeeSavedCents = intptr(4500)
-	issuance.CancelledAt = &cancelledAt
-
-	f := renderForTest(t, []data.Issuance{issuance})
-
-	assertCells(t, f, issuanceExportSheetName, map[string]string{"N3": "-R$ 45.00"})
-}
-
 // Two airlines become two blocks separated by a blank row, the way the manual sheet keeps
 // AZUL apart from SMILES.
 func TestRenderIssuancesXLSXGroupsByProgram(t *testing.T) {
@@ -328,8 +280,8 @@ func TestRenderIssuancesXLSXSingleTabWithIssuerColumn(t *testing.T) {
 		t.Fatalf("sheets = %v, want [%s]", got, issuanceExportSheetName)
 	}
 	assertCells(t, f, issuanceExportSheetName, map[string]string{
-		"C3": "AAA111", "O3": "Marcus",
-		"C4": "BBB222", "O4": "Wilmara",
+		"C3": "AAA111", "N3": "Marcus",
+		"C4": "BBB222", "N4": "Wilmara",
 	})
 }
 
@@ -352,8 +304,8 @@ func TestRenderIssuancesXLSXAttributesCancelledRowToCanceller(t *testing.T) {
 		t.Fatalf("sheets = %v, want [%s]", got, issuanceExportSheetName)
 	}
 	assertCells(t, f, issuanceExportSheetName, map[string]string{
-		"C3": "AAA111", "O3": "Marcus",
-		"C4": "BBB222", "O4": "Wilmara",
+		"C3": "AAA111", "N3": "Marcus",
+		"C4": "BBB222", "N4": "Wilmara",
 	})
 }
 
@@ -366,24 +318,24 @@ func TestRenderIssuancesXLSXSummarisesAccounts(t *testing.T) {
 	})
 
 	assertCells(t, f, issuanceExportSheetName, map[string]string{
-		"Q1": "EMISSÕES JULIANA - SMILES - 22/07/2026",
-		"Q2": "COMPANHIA",
-		"R2": "LOCALIZADOR",
-		"S2": "PONTOS",
-		"T2": "TOTAL",
-		"R3": "AAA111",
-		"R4": "BBB222",
+		"P1": "EMISSÕES JULIANA - SMILES - 22/07/2026",
+		"P2": "COMPANHIA",
+		"Q2": "LOCALIZADOR",
+		"R2": "PONTOS",
+		"S2": "TOTAL",
+		"Q3": "AAA111",
+		"Q4": "BBB222",
 		// One blank row, then the next account's box.
-		"Q6": "EMISSÕES MARCIA - SMILES - 22/07/2026",
-		"R8": "CCC333",
+		"P6": "EMISSÕES MARCIA - SMILES - 22/07/2026",
+		"Q8": "CCC333",
 	})
 
-	formula, err := f.GetCellFormula(issuanceExportSheetName, "T3")
+	formula, err := f.GetCellFormula(issuanceExportSheetName, "S3")
 	if err != nil {
 		t.Fatalf("get T3 formula: %v", err)
 	}
-	if formula != "SUM(S3:S4)" {
-		t.Errorf("T3 formula = %q, want %q", formula, "SUM(S3:S4)")
+	if formula != "SUM(R3:R4)" {
+		t.Errorf("S3 formula = %q, want %q", formula, "SUM(R3:R4)")
 	}
 }
 
@@ -421,16 +373,16 @@ func TestRenderIssuancesXLSXSummaryPalette(t *testing.T) {
 		sampleIssuance("Smiles", "AAA111", "Juliana", "Marcus"),
 	})
 
-	id, err := f.GetCellStyle(issuanceExportSheetName, "Q3")
+	id, err := f.GetCellStyle(issuanceExportSheetName, "P3")
 	if err != nil {
-		t.Fatalf("get style of Q3: %v", err)
+		t.Fatalf("get style of P3: %v", err)
 	}
 	style, err := f.GetStyle(id)
 	if err != nil {
-		t.Fatalf("read style of Q3: %v", err)
+		t.Fatalf("read style of P3: %v", err)
 	}
 	if len(style.Fill.Color) == 0 || !strings.EqualFold(style.Fill.Color[0], "FFC000") {
-		t.Errorf("Q3 fill = %v, want FFC000", style.Fill.Color)
+		t.Errorf("P3 fill = %v, want FFC000", style.Fill.Color)
 	}
 }
 
@@ -443,10 +395,10 @@ func TestRenderIssuancesXLSXSplitsBoxesPerProgram(t *testing.T) {
 	})
 
 	assertCells(t, f, issuanceExportSheetName, map[string]string{
-		"Q1": "EMISSÕES HERALDO - AZUL - 22/07/2026",
-		"R3": "BBB222",
-		"Q5": "EMISSÕES HERALDO - SMILES - 22/07/2026",
-		"R7": "AAA111",
+		"P1": "EMISSÕES HERALDO - AZUL - 22/07/2026",
+		"Q3": "BBB222",
+		"P5": "EMISSÕES HERALDO - SMILES - 22/07/2026",
+		"Q7": "AAA111",
 	})
 }
 
@@ -662,68 +614,5 @@ func TestSignedIssuanceAmountsUsesLocalCalendarDay(t *testing.T) {
 	issuance.CancelledAt = &sameDay
 	if points, _ := signedIssuanceAmounts(issuance, loc); points != 0 {
 		t.Errorf("points = %d, want 0 (spent and refunded on one local day)", points)
-	}
-}
-
-func TestSignedRedemptionFee(t *testing.T) {
-	loc, err := time.LoadLocation(exportTimezone)
-	if err != nil {
-		t.Fatalf("load %s: %v", exportTimezone, err)
-	}
-
-	created := time.Date(2026, 8, 12, 15, 0, 0, 0, time.UTC)
-	sameDay := time.Date(2026, 8, 12, 22, 0, 0, 0, time.UTC)
-	laterDay := time.Date(2026, 8, 14, 15, 0, 0, 0, time.UTC)
-
-	tests := []struct {
-		name  string
-		given data.Issuance
-		want  *int
-	}{
-		{
-			name:  "ordinary account saves nothing",
-			given: data.Issuance{CreatedAt: created},
-			want:  nil,
-		},
-		{
-			name: "exempt account keeps its saving",
-			given: data.Issuance{
-				CreatedAt:               created,
-				RedemptionFeeSavedCents: intptr(4200),
-			},
-			want: intptr(4200),
-		},
-		{
-			name: "cancelled the same day nets out",
-			given: data.Issuance{
-				CreatedAt:               created,
-				CancelledAt:             &sameDay,
-				RedemptionFeeSavedCents: intptr(4200),
-			},
-			want: intptr(0),
-		},
-		{
-			name: "cancelled on a later day gives the saving back",
-			given: data.Issuance{
-				CreatedAt:               created,
-				CancelledAt:             &laterDay,
-				RedemptionFeeSavedCents: intptr(4200),
-			},
-			want: intptr(-4200),
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := signedRedemptionFee(tc.given, loc)
-			switch {
-			case got == nil && tc.want != nil:
-				t.Fatalf("fee = nil, want %d", *tc.want)
-			case got != nil && tc.want == nil:
-				t.Fatalf("fee = %d, want nil", *got)
-			case got != nil && *got != *tc.want:
-				t.Fatalf("fee = %d, want %d", *got, *tc.want)
-			}
-		})
 	}
 }

@@ -18,6 +18,11 @@ Não é mais um projeto pré-lançamento. A stack inteira roda numa máquina Ora
 
 O que **não** muda: continua valendo evitar over-engineering. Cuidado é pensar antes, não construir abstração defensiva.
 
+## Repositório público
+- Desde 21/10/2026 este repositório é **público**. O histórico anterior e os PRs até o #307 estão em `murandido/m80-archive` (privado, arquivado). Números de PR citados em memórias ou documentos antigos referem-se a ele.
+- O histórico daqui foi reescrito na publicação, então clones anteriores a 21/10 não servem: nunca dê push de um deles para cá.
+- Tudo o que conversa com sistema de terceiro vive nos submódulos privados (ver *Infraestrutura e Comandos*). Em commit, PR, comentário ou CLAUDE.md deste repositório, descreva o que mudou, nunca como uma integração funciona.
+
 ## Documentação de Produto (Notion)
 Duas páginas privadas no Notion são a fonte de verdade para **intenção**: o "porquê" das decisões, o schema completo, os formatos de mensagem do bot e o backlog. Este repositório é público, então os links ficam em `backend/carriers/CLAUDE.md` (submódulo privado).
 

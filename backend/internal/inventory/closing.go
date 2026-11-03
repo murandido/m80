@@ -52,15 +52,8 @@ type Closing struct {
 	// Settlements are the per-agency totals across every batch, which is what one agency
 	// actually transfers to the other. Netting them is the point: an agency can owe on
 	// one batch and be owed on the next, and paying each line separately would be two
-	// transfers where one will do. These are on the points alone.
+	// transfers where one will do.
 	Settlements []Settlement
-
-	// RedemptionFeeSavedCents is the redemption fee the period's bookings did not pay, and
-	// FeeSettlements its split; TotalSettlements nets the two with the points - the figure
-	// that is actually transferred. Kept as three so the screen can show each part.
-	RedemptionFeeSavedCents int
-	FeeSettlements          []Settlement
-	TotalSettlements        []Settlement
 
 	// Agencies is each agency's activity across the period's batches, and Parts the terms
 	// of the settlement merged across them: what the screen shows as the calculation.
@@ -100,7 +93,7 @@ func ReadClosing(db *gorm.DB, accountID string, startsOn, endsOn time.Time) (Clo
 
 	// Netted across batches, so the report ends with one figure per pair of agencies
 	// rather than a column of transfers that cancel each other out.
-	var pointSettlements, feeSettlements []Settlement
+	var pointSettlements []Settlement
 
 	for _, row := range batchRows {
 		result := SummariseBatch(
@@ -119,9 +112,7 @@ func ReadClosing(db *gorm.DB, accountID string, startsOn, endsOn time.Time) (Clo
 		closing.Batches = append(closing.Batches, result)
 		closing.CostCents += result.ChargedCents
 		closing.RevenueCents += result.RevenueCents
-		closing.RedemptionFeeSavedCents += result.RedemptionFeeSavedCents
 		pointSettlements = append(pointSettlements, result.Settlements...)
-		feeSettlements = append(feeSettlements, result.FeeSettlements...)
 	}
 
 	closing.ProfitCents = closing.RevenueCents - closing.CostCents
@@ -132,8 +123,6 @@ func ReadClosing(db *gorm.DB, accountID string, startsOn, endsOn time.Time) (Clo
 	}
 	closing.Parts = MergeParts(batchParts...)
 	closing.Settlements = NetSettlements(pointSettlements)
-	closing.FeeSettlements = NetSettlements(feeSettlements)
-	closing.TotalSettlements = NetSettlements(pointSettlements, feeSettlements)
 
 	return closing, nil
 }
@@ -150,15 +139,14 @@ func ReadClosing(db *gorm.DB, accountID string, startsOn, endsOn time.Time) (Clo
 // for miles an alteration gave back, which is how a kept refund shows as profit.
 func loadSlices(db *gorm.DB, accountID string, startsOn, endsOn time.Time) ([]Slice, int, error) {
 	type row struct {
-		BatchID                 *string
-		AgencyID                string
-		Points                  int
-		CostCents               int
-		RevenueCents            int
-		RedemptionFeeSavedCents int
-		IssuanceID              string
-		ProgramLocator          string
-		OccurredOn              time.Time
+		BatchID        *string
+		AgencyID       string
+		Points         int
+		CostCents      int
+		RevenueCents   int
+		IssuanceID     string
+		ProgramLocator string
+		OccurredOn     time.Time
 	}
 	var rows []row
 
@@ -177,13 +165,6 @@ func loadSlices(db *gorm.DB, accountID string, startsOn, endsOn time.Time) ([]Sl
 		        -- stayed hidden while every slice was bounded by the batch it drew on;
 		        -- an account left with no batches makes each booking one whole slice.
 		        CAST(ROUND(point_batch_allocations.points::numeric * COALESCE(issuance_adjustments.value_of_the_thousand, issuances.value_of_the_thousand) / 1000.0) AS INTEGER) AS revenue_cents,
-		        -- The booking's saved redemption fee, prorated by the slice's share of its
-		        -- points - numeric first for the same overflow reason as above. Zero when the
-		        -- account is not exempt or the fee was never worked out, and on an
-		        -- alteration's slices: the fee was saved on the booking, not on the change.
-		        CASE WHEN point_batch_allocations.adjustment_id IS NULL
-		             THEN CAST(COALESCE(ROUND(point_batch_allocations.points::numeric * issuances.redemption_fee_saved_cents / NULLIF(issuances.points, 0)), 0) AS INTEGER)
-		             ELSE 0 END AS redemption_fee_saved_cents,
 		        point_batch_allocations.issuance_id,
 		        issuances.program_locator,
 		        point_batch_allocations.occurred_on`).
@@ -206,15 +187,14 @@ func loadSlices(db *gorm.DB, accountID string, startsOn, endsOn time.Time) ([]Sl
 			continue
 		}
 		slices = append(slices, Slice{
-			BatchID:                 *r.BatchID,
-			AgencyID:                r.AgencyID,
-			Points:                  r.Points,
-			CostCents:               r.CostCents,
-			RevenueCents:            r.RevenueCents,
-			RedemptionFeeSavedCents: r.RedemptionFeeSavedCents,
-			IssuanceID:              r.IssuanceID,
-			ProgramLocator:          r.ProgramLocator,
-			OccurredOn:              r.OccurredOn,
+			BatchID:        *r.BatchID,
+			AgencyID:       r.AgencyID,
+			Points:         r.Points,
+			CostCents:      r.CostCents,
+			RevenueCents:   r.RevenueCents,
+			IssuanceID:     r.IssuanceID,
+			ProgramLocator: r.ProgramLocator,
+			OccurredOn:     r.OccurredOn,
 		})
 	}
 	return slices, pending, nil
