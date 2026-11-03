@@ -4,7 +4,9 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, use
 import { defaultRangeExtractor, useVirtualizer, type Range } from "@tanstack/react-virtual"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { toast } from "sonner"
+import { ListFilter } from "lucide-react"
 import { ClientCombobox } from "@/components/clients/client-combobox"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   ClientPaymentPopover,
   summarizeClientPayment,
@@ -98,6 +100,8 @@ function clientPaymentUndoKey(clientPaymentId: string): string {
 const ESTIMATED_ROW_PX = 53
 // How close to either end of the loaded stretch, in rows, the next page is asked for.
 const EDGE_ROWS = 30
+// Rows drawn before the first page arrives - enough to fill the table's minimum height.
+const INITIAL_LOADING_ROWS = 6
 
 function formatDay(iso: string): string {
   return new Date(iso).toLocaleDateString("pt-BR")
@@ -147,6 +151,29 @@ export function SalesClientsTable({
   const list = useSalesWindow(query)
   const total = list.total ?? 0
   const loaded = list.sales
+
+  // The rows' own pickers also know the clients the loaded sales already carry. The client
+  // register only comes back on a route refresh, and without a client filter this screen no
+  // longer refreshes the route on every event: a client a colleague created and linked would
+  // otherwise make its sale look unlinked here, inviting someone to create that client again.
+  const rowClientOptions = useMemo(() => {
+    const known = new Set(clientOptions.map((c) => c.id))
+    const carried: Client[] = []
+    for (const sale of loaded) {
+      if (!sale.client_id || !sale.client_name || known.has(sale.client_id)) continue
+      known.add(sale.client_id)
+      carried.push({
+        id: sale.client_id,
+        name: sale.client_name,
+        phone: null,
+        agency_id: agencyId,
+        created_at: "",
+        updated_at: "",
+      })
+    }
+    return carried.length === 0 ? clientOptions : [...clientOptions, ...carried]
+  }, [clientOptions, loaded, agencyId])
+
   const scrollRef = useRef<HTMLDivElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
   // The sale whose amount is being typed. Its draft lives in the row, so the row has to stay
@@ -696,7 +723,7 @@ export function SalesClientsTable({
               )}
               <div role="cell" className={WIDE_CELL}>
                 <ClientCombobox
-                  clients={clientOptions}
+                  clients={rowClientOptions}
                   value={sale.client_id ?? ""}
                   onChange={(clientId) => handleClientChange(sale, clientId)}
                   onCreate={(name) => handleClientCreate(sale, name)}
@@ -727,6 +754,15 @@ export function SalesClientsTable({
 
         {/* Newer sales below the stretch, after scrolling back up a long way. */}
         {list.hasNewer && <LoadingRows />}
+
+        {/* The first page on its way, after a navigation or a filter change. The same rows
+            as the route's skeleton (SalesClientsTableSkeleton), so the screen goes straight
+            from it to the sales instead of flashing an empty table in between. Below the
+            list rather than above it: the virtualizer reads the list's offsetTop during
+            render, and rows above it would be counted in the render where the sales land. */}
+        {list.total === null && !list.error && (
+          <LoadingRows count={INITIAL_LOADING_ROWS} />
+        )}
 
         {filteredClientId && total > 0 && (
           <div
@@ -910,10 +946,10 @@ function SkeletonRow() {
 }
 
 // A few skeleton rows at an edge of the stretch, while the next page is on its way.
-function LoadingRows() {
+function LoadingRows({ count = 3 }: { count?: number }) {
   return (
-    <div aria-label="Carregando mais vendas" role="status">
-      {[0, 1, 2].map((key) => (
+    <div aria-label="Carregando vendas" role="status">
+      {Array.from({ length: count }, (_, key) => (
         <div
           key={key}
           style={{ height: ESTIMATED_ROW_PX }}
@@ -922,6 +958,47 @@ function LoadingRows() {
           <SkeletonRow />
         </div>
       ))}
+    </div>
+  )
+}
+
+// The table as it stands before its first page: the narrow layout's filter buttons, the
+// header row and the loading rows, in the table's own grid. The route's loading.tsx renders
+// it, and the table draws the same rows until the sales arrive, so nothing moves in between.
+export function SalesClientsTableSkeleton() {
+  return (
+    <div className="@container flex flex-col gap-3">
+      <div className="flex gap-2 @4xl:hidden">
+        <Skeleton className="h-8 w-24" />
+        <Skeleton className="h-8 w-24" />
+      </div>
+      <div className="max-h-[calc(100vh-17rem)] min-h-64 overflow-hidden rounded-lg border bg-white">
+        <div
+          className={cn(
+            ROW_GRID,
+            "hidden border-b bg-slate-100 text-sm font-medium text-slate-900 @4xl:grid",
+          )}
+        >
+          <span>Data</span>
+          <span>Emissão</span>
+          <span className="text-center">Valor</span>
+          {/* The column filters' icons hold the header at the height it has once loaded. */}
+          <span className="flex items-center justify-center gap-1.5">
+            Cliente
+            <span className="inline-flex h-5 w-5 items-center justify-center text-slate-300">
+              <ListFilter className="h-3.5 w-3.5" />
+            </span>
+          </span>
+          <span className="flex items-center justify-center gap-1.5">
+            Situação
+            <span className="inline-flex h-5 w-5 items-center justify-center text-slate-300">
+              <ListFilter className="h-3.5 w-3.5" />
+            </span>
+          </span>
+          <span className="text-center">Observação</span>
+        </div>
+        <LoadingRows count={INITIAL_LOADING_ROWS} />
+      </div>
     </div>
   )
 }

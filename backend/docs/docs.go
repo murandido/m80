@@ -2302,14 +2302,14 @@ const docTemplate = `{
                 }
             }
         },
-        "/accounts/{id}/smiles-connect/challenge": {
+        "/accounts/{id}/smiles-connect/challenge/browser": {
             "post": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
                 ],
-                "description": "Pede à Smiles que envie o código no canal escolhido (um dos ids devolvidos por /smiles-connect). Cada chamada dispara um SMS ou e-mail de verdade, e a Smiles limita reenvios por canal — então o painel não reenvia sozinho. Responde com o canal e o destino mascarado, para a tela dizer onde o código chegou.",
+                "description": "Devolve o mfa_token e o client id públicos para a extensão executar o POST que o edge recusa a clientes HTTP. O canal escolhido é validado contra os cadastrados na conta, e o destino volta mascarado. A extensão completa em /smiles-connect/challenge/complete.",
                 "consumes": [
                     "application/json"
                 ],
@@ -2319,7 +2319,7 @@ const docTemplate = `{
                 "tags": [
                     "Estoque de pontos"
                 ],
-                "summary": "Pedir o código de verificação da Smiles",
+                "summary": "Preparar o desafio da Smiles para o navegador do operador",
                 "parameters": [
                     {
                         "type": "string",
@@ -2334,7 +2334,89 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/schemas.SmilesChallengeRequest"
+                            "$ref": "#/definitions/schemas.SmilesBrowserChallengeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.SmilesBrowserChallengeSingleResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Corpo inválido",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Não autenticado",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Requer admin",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Conta não encontrada",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Não há login em andamento, ou ele expirou",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Canal não é da conta",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/accounts/{id}/smiles-connect/challenge/complete": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Guarda o oob_code devolvido pela extensão e confirma que o código foi enviado, com o canal e o destino mascarado. Depois disso o operador digita os dígitos em /smiles-connect/code, como no caminho normal.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Estoque de pontos"
+                ],
+                "summary": "Concluir o desafio que o navegador do operador executou",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Conta",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Resultado do navegador",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/schemas.SmilesBrowserChallengeCompleteRequest"
                         }
                     }
                 ],
@@ -2377,12 +2459,6 @@ const docTemplate = `{
                     },
                     "422": {
                         "description": "Canal não é da conta",
-                        "schema": {
-                            "$ref": "#/definitions/schemas.ErrorResponse"
-                        }
-                    },
-                    "429": {
-                        "description": "A Smiles está limitando os envios",
                         "schema": {
                             "$ref": "#/definitions/schemas.ErrorResponse"
                         }
@@ -5978,7 +6054,7 @@ const docTemplate = `{
                         }
                     },
                     "404": {
-                        "description": "Conta não encontrada",
+                        "description": "Conta não encontrada ou com lote financiado por agência fora do escopo",
                         "schema": {
                             "$ref": "#/definitions/schemas.ErrorResponse"
                         }
@@ -6042,7 +6118,7 @@ const docTemplate = `{
                         }
                     },
                     "404": {
-                        "description": "Período não encontrado",
+                        "description": "Período não encontrado ou conta com lote financiado por agência fora do escopo",
                         "schema": {
                             "$ref": "#/definitions/schemas.ErrorResponse"
                         }
@@ -6229,7 +6305,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Gera uma planilha .xlsx das emissões filtradas. O layout é escolhido por layout: control (padrão) ou legacy. Layout control: planilha manual de controle numa aba única (a emissão cancelada é atribuída a quem cancelou, que é onde a listagem também a mostra), colunas A:O (Nº, Companhia, Localizador, Data do Voo, Passageiro Principal, Origem, Destino, Pontos, Milheiro, Taxa, Total, Conta, Observação, Taxa Resgate, Emissor), as linhas agrupadas em blocos por companhia, o bloco TOTAL DAS CONTAS ao final e, ao lado da tabela, um quadro por conta e companhia com os localizadores e o total de pontos. A coluna Emissor identifica quem fez cada linha, já que todos os emissores ficam na mesma aba. Dentro de cada bloco a ordem é a da listagem (da mais antiga para a mais recente). Aceita os mesmos filtros da listagem (data, programa de fidelidade, cia aérea, conta, agência e emissor). Emissão cancelada no mesmo dia em que foi criada entra pelo líquido (pontos e taxas menos o reembolso); cancelada em outro dia entra só pelo reembolso, negativo. A linha cancelada é destacada em vermelho claro. Layout legacy: a antiga planilha EMISSÕES GERAIS, uma tabela só (B:P) com os totais do modelo, mais a coluna TAXA RESGATE em Q. Nos dois layouts a Taxa Resgate é a taxa que a conta isenta (Azul Diamante Unique) deixou de pagar, em branco nas contas comuns, com o mesmo sinal dos pontos.",
+                "description": "Gera uma planilha .xlsx das emissões filtradas. O layout é escolhido por layout: control (padrão) ou legacy. Layout control: planilha manual de controle numa aba única (a emissão cancelada é atribuída a quem cancelou, que é onde a listagem também a mostra), colunas A:N (Nº, Companhia, Localizador, Data do Voo, Passageiro Principal, Origem, Destino, Pontos, Milheiro, Taxa, Total, Conta, Observação, Emissor), as linhas agrupadas em blocos por companhia, o bloco TOTAL DAS CONTAS ao final e, ao lado da tabela, um quadro por conta e companhia com os localizadores e o total de pontos. A coluna Emissor identifica quem fez cada linha, já que todos os emissores ficam na mesma aba. Dentro de cada bloco a ordem é a da listagem (da mais antiga para a mais recente). Aceita os mesmos filtros da listagem (data, programa de fidelidade, cia aérea, conta, agência e emissor). Emissão cancelada no mesmo dia em que foi criada entra pelo líquido (pontos e taxas menos o reembolso); cancelada em outro dia entra só pelo reembolso, negativo. A linha cancelada é destacada em vermelho claro. Layout legacy: a antiga planilha EMISSÕES GERAIS, uma tabela só (B:P) com os totais do modelo.",
                 "produces": [
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 ],
@@ -13153,10 +13229,6 @@ const docTemplate = `{
                 },
                 "updated_at": {
                     "type": "string"
-                },
-                "waives_redemption_fee": {
-                    "description": "WaivesRedemptionFee is true on an account exempt from the airline's redemption fee -\nAzul's Diamante Unique. It is what turns a computed fee into \"saved\" instead of\n\"owed\" on the issuances made through this account.",
-                    "type": "boolean"
                 }
             }
         },
@@ -14451,10 +14523,6 @@ const docTemplate = `{
                 "tracks_statement": {
                     "description": "TracksStatement turns on reading this account's statement from the airline: connecting\nit, the periodic sync and the statement screens. A different question from the flag\nabove - an account administered for someone else has a statement worth watching and no\ninventory to cost. Omitted means false.",
                     "type": "boolean"
-                },
-                "waives_redemption_fee": {
-                    "description": "WaivesRedemptionFee marks an account that pays no redemption fee - Azul's Diamante\nUnique. Omitted means false, which is what every account paid before this existed.",
-                    "type": "boolean"
                 }
             }
         },
@@ -14765,22 +14833,6 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
-                },
-                "redemption_fee_advance_days": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "example": 120
-                },
-                "redemption_fee_domestic_cents": {
-                    "description": "The redemption fee charged per passenger and per trecho when the ticket is issued\nfewer than RedemptionFeeAdvanceDays days before the flight. All three nil means the\nprogram charges no such fee, which is not the same as a fee of zero: nothing is\ncomputed at all. See data.LoyaltyProgram and migration 40.",
-                    "type": "integer",
-                    "minimum": 0,
-                    "example": 6990
-                },
-                "redemption_fee_international_cents": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "example": 17490
                 }
             }
         },
@@ -15280,9 +15332,6 @@ const docTemplate = `{
                     "type": "string",
                     "example": "ALCTKJ"
                 },
-                "redemption_fee_saved_cents": {
-                    "type": "integer"
-                },
                 "revenue_cents": {
                     "type": "integer"
                 }
@@ -15312,12 +15361,6 @@ const docTemplate = `{
                 },
                 "cost_cents": {
                     "type": "integer"
-                },
-                "fee_settlements": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/schemas.InventorySettlementResponse"
-                    }
                 },
                 "funding_agency_id": {
                     "type": "string"
@@ -15353,11 +15396,6 @@ const docTemplate = `{
                     "type": "integer",
                     "example": 50
                 },
-                "redemption_fee_saved_cents": {
-                    "description": "RedemptionFeeSavedCents is the redemption fee this batch's bookings did not pay\nbecause the account is exempt (Azul's Diamante Unique). FeeSettlements split it by\nthe batch's percent, and TotalSettlements net that with the points: the three parts\nof the settlement the screen shows.",
-                    "type": "integer",
-                    "example": 27960
-                },
                 "remaining_points": {
                     "type": "integer"
                 },
@@ -15368,13 +15406,6 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "settlements": {
-                    "description": "Settlements are on the points alone - unchanged from before the redemption fee\nentered the closing.",
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/schemas.InventorySettlementResponse"
-                    }
-                },
-                "total_settlements": {
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/schemas.InventorySettlementResponse"
@@ -15427,7 +15458,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "agencies": {
-                    "description": "Agencies is each agency's activity in the period, and Parts the terms of the\nsettlement merged across batches: the calculation behind total_settlements.",
+                    "description": "Agencies is each agency's activity in the period, and Parts the terms of the\nsettlement merged across batches: the calculation behind settlements.",
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/schemas.InventoryConsumerResponse"
@@ -15457,12 +15488,6 @@ const docTemplate = `{
                     "description": "ExpectedBalancePoints is what the costing says the account still has, and\nRealBalancePoints what somebody last read off the airline's own page, on\nRealBalanceCheckedOn. The two side by side are the only way to tell whether the\nbatches and the bookings add up to reality - no statement export carries a position.\nReal is null until somebody looks. See inventory.ExpectedBalances.",
                     "type": "integer"
                 },
-                "fee_settlements": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/schemas.InventorySettlementResponse"
-                    }
-                },
                 "parts": {
                     "type": "array",
                     "items": {
@@ -15483,10 +15508,6 @@ const docTemplate = `{
                 "real_balance_points": {
                     "type": "integer"
                 },
-                "redemption_fee_saved_cents": {
-                    "description": "The period's redemption fee saved, its split, and the split netted with the points.",
-                    "type": "integer"
-                },
                 "revenue_cents": {
                     "type": "integer"
                 },
@@ -15499,12 +15520,6 @@ const docTemplate = `{
                 "starts_on": {
                     "type": "string",
                     "example": "2026-08-01"
-                },
-                "total_settlements": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/schemas.InventorySettlementResponse"
-                    }
                 },
                 "unsupported_split": {
                     "description": "UnsupportedSplit warns that this account has more than two partner agencies, which\nthe single frozen percent cannot express - the settlement figures below are not\nreliable, and the screen says so rather than showing them as fact.",
@@ -15524,12 +15539,6 @@ const docTemplate = `{
                 "cost_cents": {
                     "type": "integer"
                 },
-                "fee_settlements": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/schemas.InventorySettlementResponse"
-                    }
-                },
                 "parts": {
                     "type": "array",
                     "items": {
@@ -15542,19 +15551,10 @@ const docTemplate = `{
                 "profit_cents": {
                     "type": "integer"
                 },
-                "redemption_fee_saved_cents": {
-                    "type": "integer"
-                },
                 "revenue_cents": {
                     "type": "integer"
                 },
                 "settlements": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/schemas.InventorySettlementResponse"
-                    }
-                },
-                "total_settlements": {
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/schemas.InventorySettlementResponse"
@@ -15578,10 +15578,6 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "profit_cents": {
-                    "type": "integer"
-                },
-                "redemption_fee_saved_cents": {
-                    "description": "RedemptionFeeSavedCents is the redemption fee this agency's bookings did not pay.",
                     "type": "integer"
                 },
                 "revenue_cents": {
@@ -16177,14 +16173,6 @@ const docTemplate = `{
                 },
                 "program_locator": {
                     "type": "string"
-                },
-                "redemption_fee_manual": {
-                    "description": "RedemptionFeeManual says an operator typed the amount by hand, which is what stops\nthe next Traveos sync from recomputing over the correction.",
-                    "type": "boolean"
-                },
-                "redemption_fee_saved_cents": {
-                    "description": "RedemptionFeeSavedCents is the airline's redemption fee this issuance did not pay,\nbecause the account it was made on is exempt. Null on every ordinary account and\nwhenever the rule could not be applied (no synced itinerary, or a program with no fee\nconfigured) - which is not the same as zero, and zero is a real answer: the rule ran\nand there was no fee to avoid.\n\nIt does not take part in what the client owes: it is recorded for control and billed\nnowhere. See data.Issuance.",
-                    "type": "integer"
                 },
                 "refunded_points": {
                     "type": "integer"
@@ -16830,16 +16818,6 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
-                },
-                "redemption_fee_advance_days": {
-                    "type": "integer"
-                },
-                "redemption_fee_domestic_cents": {
-                    "description": "Null when the program charges no redemption fee. Same reason as the cap above: the\nairlines move these - Azul's launched at 90 days and a price per tier - so they are\neditable rather than only seeded.",
-                    "type": "integer"
-                },
-                "redemption_fee_international_cents": {
-                    "type": "integer"
                 },
                 "updated_at": {
                     "type": "string"
@@ -17951,7 +17929,22 @@ const docTemplate = `{
                 }
             }
         },
-        "schemas.SmilesChallengeRequest": {
+        "schemas.SmilesBrowserChallengeCompleteRequest": {
+            "type": "object",
+            "required": [
+                "authenticator_id",
+                "oob_code"
+            ],
+            "properties": {
+                "authenticator_id": {
+                    "type": "string"
+                },
+                "oob_code": {
+                    "type": "string"
+                }
+            }
+        },
+        "schemas.SmilesBrowserChallengeRequest": {
             "type": "object",
             "required": [
                 "authenticator_id"
@@ -17959,6 +17952,44 @@ const docTemplate = `{
             "properties": {
                 "authenticator_id": {
                     "type": "string"
+                }
+            }
+        },
+        "schemas.SmilesBrowserChallengeResponse": {
+            "type": "object",
+            "properties": {
+                "authenticator_id": {
+                    "type": "string"
+                },
+                "channel": {
+                    "type": "string",
+                    "example": "sms"
+                },
+                "client_id": {
+                    "type": "string"
+                },
+                "mfa_token": {
+                    "type": "string"
+                },
+                "sent_to": {
+                    "type": "string",
+                    "example": "***77"
+                }
+            }
+        },
+        "schemas.SmilesBrowserChallengeSingleResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/schemas.SmilesBrowserChallengeResponse"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "Peça o código pelo navegador"
+                },
+                "success": {
+                    "type": "boolean",
+                    "example": true
                 }
             }
         },
@@ -18766,10 +18797,6 @@ const docTemplate = `{
                 "tracks_statement": {
                     "description": "TracksStatement turns on reading this account's statement from the airline: connecting\nit, the periodic sync and the statement screens. A different question from the flag\nabove - an account administered for someone else has a statement worth watching and no\ninventory to cost. Omitted means false.",
                     "type": "boolean"
-                },
-                "waives_redemption_fee": {
-                    "description": "WaivesRedemptionFee marks an account that pays no redemption fee - Azul's Diamante\nUnique. Changing it does not rewrite what past issuances already recorded: the saving\nis stored on the issuance and only moves when that issuance is written again. See\ndata.Issuance.RedemptionFeeSavedCents.",
-                    "type": "boolean"
                 }
             }
         },
@@ -18945,12 +18972,6 @@ const docTemplate = `{
                 "program_locator": {
                     "type": "string"
                 },
-                "redemption_fee_saved_cents": {
-                    "description": "The redemption fee this issuance avoided, in centavos, corrected by hand. A value pins\nthe correction against the automatic recalculation; an explicit null releases the\nissuance back to the rule and recomputes it on the spot.\n\nThis field is the reason the handler reads the raw body as well as the struct: for\nevery other field here an absent key and a JSON null both decode to nil and mean\n\"leave alone\", and that is exactly the distinction the override needs.",
-                    "type": "integer",
-                    "minimum": 0,
-                    "example": 6990
-                },
                 "status": {
                     "description": "Status transitions the issuance between incomplete/complete/cancelled. \"deleted\"\nis not a valid value here - it's only reachable via DELETE /issuances/{id}.",
                     "type": "string",
@@ -19026,22 +19047,6 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
-                },
-                "redemption_fee_advance_days": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "example": 120
-                },
-                "redemption_fee_domestic_cents": {
-                    "description": "The redemption fee charged per passenger and per trecho when the ticket is issued\nfewer than RedemptionFeeAdvanceDays days before the flight. All three nil means the\nprogram charges no such fee, which is not the same as a fee of zero: nothing is\ncomputed at all. See data.LoyaltyProgram and migration 40.",
-                    "type": "integer",
-                    "minimum": 0,
-                    "example": 6990
-                },
-                "redemption_fee_international_cents": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "example": 17490
                 }
             }
         },

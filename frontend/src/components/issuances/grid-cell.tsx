@@ -18,24 +18,6 @@ import { ComboboxCell, ComboOption } from "@/components/issuances/cells/combobox
 import { AirportAutocompleteCell } from "@/components/issuances/cells/airport-autocomplete-cell"
 import { CiaAereaCell } from "@/components/issuances/cells/cia-aerea-cell"
 import { StatusCell } from "@/components/issuances/cells/status-cell"
-import { acceptsRedemptionFee } from "@/components/issuances/redemption-fee"
-import { formatCurrencyBRL } from "@/lib/currency"
-
-// A currency cell that selects and copies but never edits. Mirrors NumberCell's
-// non-editing branch so a locked column lines up with the editable ones beside it.
-function ReadOnlyCurrencyCell({ r, c, value }: { r: number; c: number; value: number | null }) {
-  const { onCellClick } = useGridContext()
-
-  return (
-    <button
-      type="button"
-      onClick={() => onCellClick(r, c)}
-      className="block w-full truncate px-2 py-1.5 text-right"
-    >
-      {value !== null ? formatCurrencyBRL(value) : <span className="text-muted-foreground">—</span>}
-    </button>
-  )
-}
 
 // One option per alias, so the operator picks a specific alias rather than an account
 // labelled with all of its aliases at once. Aliases belong to a loyalty program, so the
@@ -277,24 +259,6 @@ export const GridCell = memo(function GridCell({
         />
       )
     case 15:
-      // Read-only on an ordinary account: the column measures an exemption this row does
-      // not have, so there is nothing to type. Still a button, so the cell selects and
-      // copies like any other - it is not editable, not inert.
-      if (!acceptsRedemptionFee(row, accounts)) {
-        return <ReadOnlyCurrencyCell r={r} c={c} value={row.redemption_fee_saved_cents} />
-      }
-      return (
-        <NumberCell
-          r={r}
-          c={c}
-          row={row}
-          isEditing={isEditing}
-          pendingChar={pendingChar}
-          field="redemption_fee_saved_cents"
-          mode="currency"
-        />
-      )
-    case 16:
       return (
         <DateMaskCell
           r={r}

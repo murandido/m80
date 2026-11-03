@@ -58,11 +58,6 @@ type Account struct {
 	// "unidentified" is one nobody has classified yet - only "standard" is counted.
 	// See AccountCategory* below and migration 37.
 	Category string `gorm:"type:account_category;not null;default:'unidentified'" json:"category"`
-	// WaivesRedemptionFee says this account pays no redemption fee at all - on Azul that
-	// is the Diamante Unique tier. Phrased as the effect rather than the tier because the
-	// effect is what the calculation needs, and because the fee itself is not tier-specific:
-	// every Azul level below Unique pays the same domestic amount today. See migration 40.
-	WaivesRedemptionFee bool `gorm:"column:waives_redemption_fee;not null;default:false" json:"waives_redemption_fee"`
 	// OwnsPointInventory says the points on this account were bought by us, so their cost
 	// is an acquisition cost tracked in batches rather than a transfer price paid to an
 	// administrator. It is what decides which of the two meanings of "cost" applies:

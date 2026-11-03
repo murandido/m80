@@ -99,7 +99,6 @@ export function CreateAccountForm({ people, loyaltyPrograms, holderId }: CreateA
         password: "",
         administrator_id: "",
         category: "unidentified" as const,
-        waives_redemption_fee: false,
       },
     },
   })
@@ -335,32 +334,6 @@ export function CreateAccountForm({ people, loyaltyPrograms, holderId }: CreateA
                         {fieldState.invalid && (
                           <FieldError errors={[fieldState.error]} />
                         )}
-                      </>
-                    )}
-                  />
-                </div>
-
-                {/* waives_redemption_fee */}
-                <div className="flex flex-col gap-1 text-sm">
-                  <Controller
-                    name="account.waives_redemption_fee"
-                    control={form.control}
-                    render={({ field }) => (
-                      <>
-                        <div className="flex items-center justify-between gap-3">
-                          <FieldLabel htmlFor={`${idPrefix}waives-redemption-fee`}>
-                            Isenta de taxa de resgate
-                          </FieldLabel>
-                          <Switch
-                            id={`${idPrefix}waives-redemption-fee`}
-                            checked={field.value ?? false}
-                            onCheckedChange={field.onChange}
-                            disabled={isPending}
-                          />
-                        </div>
-                        <p className="text-xs text-slate-500">
-                          É o caso das contas Azul Diamante Unique.
-                        </p>
                       </>
                     )}
                   />
