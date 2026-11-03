@@ -43,6 +43,19 @@ const (
 	auditActionRestored  = "restored"
 )
 
+// issuanceCancellationColumns are the columns a cancellation writes and a revert clears.
+// Only POST /cancel and POST /uncancel may change them, each as one whole operation; the
+// edit route leaves them out of its write - see UpdateIssuance.
+var issuanceCancellationColumns = []string{
+	"active", "cancelled_at", "cancelled_by_id",
+	"refunded_points", "refunded_taxes", "cancellation_fee", "cancellation_only",
+}
+
+// errIssuanceNotCancelled is UncancelIssuance's conditional write finding the row live
+// already - another revert got there first. It answers with the same 422 as the check
+// made before the transaction.
+var errIssuanceNotCancelled = errors.New("issuance is not cancelled")
+
 // SSE event types published by this handler. The payload is always just the
 // affected issuance id: every connected panel refetches the list with its own
 // filters anyway, and the filter rules (the creation/cancellation OR branch,
@@ -1016,17 +1029,25 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 		issuance.AdditionalServices = req.AdditionalServices
 	}
 
+	// Cancelling and reverting are whole operations - active, the refunds, the canceller
+	// and the audit line move together - and each has its own route. This switch used to
+	// touch cancelled_at alone, which left the row half-cancelled or half-restored (a sale
+	// charging the full price for a cancelled ticket, a FIFO refund on a live one). So
+	// status only toggles complete/incomplete on a live issuance. "cancelled" stays in the
+	// schema's oneof so it gets this message instead of a generic 400.
 	if req.Status != nil {
+		if !issuance.Active {
+			utils.SendError(w, r, http.StatusUnprocessableEntity, "Emissão cancelada: use Reverter cancelamento.")
+			return
+		}
 		switch *req.Status {
 		case "incomplete":
 			issuance.Complete = false
-			issuance.CancelledAt = nil
 		case "complete":
 			issuance.Complete = true
-			issuance.CancelledAt = nil
 		case "cancelled":
-			now := time.Now()
-			issuance.CancelledAt = &now
+			utils.SendError(w, r, http.StatusUnprocessableEntity, "Use Cancelar emissão.")
+			return
 		}
 	}
 
@@ -1083,7 +1104,12 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 			return err
 		}
 
-		if err := tx.Save(&issuance).Error; err != nil {
+		// The cancellation columns are never this route's to write: cancel and revert own
+		// them, and the status switch above refuses to touch them. Leaving them out of the
+		// Save matters because the row was read before this transaction, without a lock -
+		// a cancellation committed in between would otherwise be written back over with
+		// the stale "active, nothing refunded" this request started from.
+		if err := tx.Omit(issuanceCancellationColumns...).Save(&issuance).Error; err != nil {
 			return err
 		}
 
@@ -1128,18 +1154,23 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Read into a fresh struct: the cancellation columns were left out of the write, so a
+	// cancel or revert committed meanwhile is what the row holds now, and scanning a NULL
+	// over the struct read before the transaction does not reset its pointers - the board
+	// would be told "cancelled" about a row that is live again.
+	var updatedIssuance data.Issuance
 	if err := preloadIssuanceAssociations(h.DB).
 		Preload("Flights", func(db *gorm.DB) *gorm.DB {
 			return db.Where("direction = ?", "outbound").Order("leg_order asc")
 		}).
-		First(&issuance, "id = ?", issuance.ID).Error; err != nil {
+		First(&updatedIssuance, "id = ?", issuance.ID).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch updated issuance")
 		return
 	}
 
-	h.broadcastIssuance(eventIssuanceUpdated, issuance.ID)
+	h.broadcastIssuance(eventIssuanceUpdated, updatedIssuance.ID)
 
-	utils.SendJSON(w, r, http.StatusOK, "Issuance updated successfully", toIssuanceResponse(issuance))
+	utils.SendJSON(w, r, http.StatusOK, "Issuance updated successfully", toIssuanceResponse(updatedIssuance))
 }
 
 // syncIssuanceBeneficiary keeps the account's CPF consumption in step with a patched
@@ -1385,17 +1416,19 @@ func (h *IssuanceHandler) UncancelIssuance(w http.ResponseWriter, r *http.Reques
 	now := time.Now()
 	// Clearing cancelled_at makes deriveIssuanceStatus fall back to complete/incomplete;
 	// cancel never touched Complete, so the pre-cancel status is recovered for free.
-	issuance.Active = true
-	issuance.CancelledAt = nil
-	issuance.CancelledByID = nil
-	issuance.RefundedPoints = nil
-	issuance.RefundedTaxes = nil
-	issuance.CancellationFee = nil
-	// Reverting a cancellation asserts the booking is live, which is the opposite of what
-	// cancellation_only claims. Left set, the row would count neither as issued (the flag
-	// suppresses it) nor as refunded (cancelled_at is nil now), and it would vanish from
-	// the supplier balance on both sides.
-	issuance.CancellationOnly = false
+	restored := map[string]any{
+		"active":           true,
+		"cancelled_at":     nil,
+		"cancelled_by_id":  nil,
+		"refunded_points":  nil,
+		"refunded_taxes":   nil,
+		"cancellation_fee": nil,
+		// Reverting a cancellation asserts the booking is live, which is the opposite of
+		// what cancellation_only claims. Left set, the row would count neither as issued
+		// (the flag suppresses it) nor as refunded (cancelled_at is nil now), and it would
+		// vanish from the supplier balance on both sides.
+		"cancellation_only": false,
+	}
 
 	details, err := json.Marshal(map[string]any{
 		"restored_at": now,
@@ -1406,10 +1439,17 @@ func (h *IssuanceHandler) UncancelIssuance(w http.ResponseWriter, r *http.Reques
 	}
 
 	err = h.DB.Transaction(func(tx *gorm.DB) error {
-		// Save (not Updates) so the nil pointers above persist as NULL - Updates would skip
-		// them as zero values, leaving the stale cancellation data behind.
-		if err := tx.Save(&issuance).Error; err != nil {
-			return err
+		// A map, so the nils persist as NULL, and only these columns: the row was read
+		// above without a lock, and a Save of the whole struct would write back whatever
+		// it held then. "active = FALSE" is the guard that holds under a race - two
+		// reverts both pass the check above, and the one that waited on the row matches
+		// nothing once the first has committed.
+		result := tx.Model(&data.Issuance{}).Where("id = ? AND active = FALSE", issuance.ID).Updates(restored)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return errIssuanceNotCancelled
 		}
 
 		if err := sale.RecalculateByIssuance(tx, issuance.ID); err != nil {
@@ -1424,25 +1464,32 @@ func (h *IssuanceHandler) UncancelIssuance(w http.ResponseWriter, r *http.Reques
 		}).Error
 	})
 
+	if errors.Is(err, errIssuanceNotCancelled) {
+		utils.SendError(w, r, http.StatusUnprocessableEntity, "issuance is not cancelled")
+		return
+	}
 	if err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to revert issuance cancellation: "+err.Error())
 		return
 	}
 
+	// Read into a fresh struct: the one above still holds the cancellation, and scanning
+	// the now-NULL columns over it does not reset its pointers.
+	var restoredIssuance data.Issuance
 	if err := preloadIssuanceAssociations(h.DB).
 		Preload("Flights", func(db *gorm.DB) *gorm.DB {
 			return db.Where("direction = ?", "outbound").Order("leg_order asc")
 		}).
-		First(&issuance, "id = ?", issuance.ID).Error; err != nil {
+		First(&restoredIssuance, "id = ?", issuance.ID).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch restored issuance")
 		return
 	}
 
 	// An uncancel is an update from the panel's point of view: the row stays where
 	// it is and only its status and cancellation metadata change.
-	h.broadcastIssuance(eventIssuanceUpdated, issuance.ID)
+	h.broadcastIssuance(eventIssuanceUpdated, restoredIssuance.ID)
 
-	utils.SendJSON(w, r, http.StatusOK, "Issuance cancellation reverted successfully", toIssuanceResponse(issuance))
+	utils.SendJSON(w, r, http.StatusOK, "Issuance cancellation reverted successfully", toIssuanceResponse(restoredIssuance))
 }
 
 // traveosSyncTimeout bounds the whole sync, not one HTTP call. Issuing a ticket
