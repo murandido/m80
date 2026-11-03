@@ -9,6 +9,7 @@ import {
   InputGroupInput,
 } from "@/components/ui/input-group"
 import { Label } from "@/components/ui/label"
+import { Spinner } from "@/components/ui/spinner"
 import { clearStickyFilters, writeStickyFilters } from "@/lib/sticky-filters"
 import { useUrlQuery } from "@/hooks/use-url-query"
 
@@ -31,7 +32,7 @@ export function ListSearchBar({
   // The query the screen is heading to, not the one that last landed: another control
   // may have written a filter the server has not answered yet, and building on the
   // landed URL would erase it.
-  const { params: urlParams, update } = useUrlQuery()
+  const { params: urlParams, isPending, update } = useUrlQuery()
   const inputId = useId()
   const urlQuery = urlParams.get("q") ?? ""
   const [value, setValue] = useState(urlQuery)
@@ -115,6 +116,13 @@ export function ListSearchBar({
           placeholder={placeholder}
         />
         <InputGroupAddon align="inline-end">
+          {/* A search can take a moment to come back, and without this the list just sits
+              there looking like it ignored the keystroke. It takes the magnifier's place,
+              and sits next to the clear button rather than replacing it, so a running
+              search can still be cleared. */}
+          {isPending && (
+            <Spinner aria-label="Buscando" className="h-4 w-4 text-muted-foreground" />
+          )}
           {value ? (
             <button
               type="button"
@@ -125,7 +133,7 @@ export function ListSearchBar({
               <X className="h-4 w-4" />
             </button>
           ) : (
-            <Search aria-hidden className="h-4 w-4 text-muted-foreground" />
+            !isPending && <Search aria-hidden className="h-4 w-4 text-muted-foreground" />
           )}
         </InputGroupAddon>
       </InputGroup>
