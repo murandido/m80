@@ -55,7 +55,7 @@ func TestExpectedBalanceGivesBackWhatWasRefunded(t *testing.T) {
 		seedBatch(t, tx, f, "2026-09-01", 100000, 150000)
 
 		cancelled := seedIssuance(t, tx, f, "2026-09-02", 40000)
-		cancelledAt := day("2026-09-03")
+		cancelledAt := instantOn("2026-09-03")
 		if err := tx.Model(&cancelled).Updates(map[string]any{
 			"cancelled_at":    cancelledAt,
 			"refunded_points": 40000,
@@ -217,7 +217,7 @@ func TestExpectedBalanceCountsALateRefundOfAClosedBooking(t *testing.T) {
 					t.Fatalf("closing August: %v", err)
 				}
 
-				updates := map[string]any{"active": false, "cancelled_at": day("2026-09-05")}
+				updates := map[string]any{"active": false, "cancelled_at": instantOn("2026-09-05")}
 				if c.refunded != nil {
 					updates["refunded_points"] = *c.refunded
 				}
@@ -266,7 +266,7 @@ func TestExpectedBalancesAgreeAcrossSeveralAccountsInOneCall(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		cancelIssuance := func(issuance data.Issuance, on string, fields map[string]any) {
 			t.Helper()
-			fields["cancelled_at"] = day(on)
+			fields["cancelled_at"] = instantOn(on)
 			if err := tx.Model(&issuance).Updates(fields).Error; err != nil {
 				t.Fatalf("cancelling: %v", err)
 			}

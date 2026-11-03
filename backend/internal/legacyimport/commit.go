@@ -7,6 +7,7 @@ import (
 	"time"
 
 	acct "github.com/murandido/m-80-backend/internal/account"
+	"github.com/murandido/m-80-backend/internal/businessday"
 	"github.com/murandido/m-80-backend/internal/data"
 	issuancesvc "github.com/murandido/m-80-backend/internal/issuance"
 	"gorm.io/gorm"
@@ -400,7 +401,7 @@ func registerMappedAliases(tx *gorm.DB, mappings Mappings) (int, error) {
 // listTimezone is the zone the listings resolve date_from/date_to in (see the handlers'
 // parseDateRange). It has to be the same one here, or an imported issuance lands in the
 // wrong bucket.
-const listTimezone = "America/Sao_Paulo"
+const listTimezone = businessday.Timezone
 
 // middayOf turns a calendar day into an instant that reads as that day everywhere. The
 // sheet's date arrives as midnight UTC, which in São Paulo is 21:00 of the *previous*
