@@ -79,7 +79,7 @@ func CredentialRateLimit() func(http.Handler) http.Handler {
 // Each one costs money and reads personal documents; twenty covers someone working through a
 // large booking and stops a loop from running up the bill.
 func PassengerExtractRateLimit() func(http.Handler) http.Handler {
-	return httprate.Limit(20, 1*time.Minute, httprate.WithKeyFuncs(keyByTokenSubject))
+	return httprate.LimitBy(20, 1*time.Minute, keyByTokenSubject)
 }
 
 // LoginRateLimit guards the one route where the IP really is the right identity:
