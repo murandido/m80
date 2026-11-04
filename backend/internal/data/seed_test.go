@@ -73,6 +73,13 @@ func runOnEmptyCatalog(t *testing.T, fn func(tx *gorm.DB)) {
 	}
 	defer tx.Rollback()
 
+	// Packages test in parallel against one database, and the concurrency tests need
+	// committed accounts: those rows would trip the foreign key on the DELETE below. The
+	// checks stay off only inside this transaction, which never commits.
+	if err := tx.Exec("SET LOCAL session_replication_role = replica").Error; err != nil {
+		t.Fatalf("relaxing foreign keys: %v", err)
+	}
+
 	for _, table := range []string{"loyalty_programs", "airlines"} {
 		if err := tx.Exec("DELETE FROM " + table).Error; err != nil {
 			t.Fatalf("clearing %s: %v", table, err)

@@ -50,11 +50,12 @@ func localDayOf(moment time.Time) string {
 // (internal/inventory/recompute.go), so flattening every backdated row to one instant
 // would leave their FIFO order to whatever the database happened to return.
 //
-// The exception is the late evening. The costing reads the *UTC* day of created_at
-// (inventory.DayOf), so a row kept at 22:30 in São Paulo would land on the following day
-// there - the operator picks the 3rd and the batch of the 4th gets charged. When the clock
-// would cross that boundary, midday is used instead: it is the same calendar day in both
-// zones, which is the whole point of the correction.
+// The exception is the late evening: when the kept clock falls on the next UTC day, midday
+// is used instead. It dates from when the costing read the UTC day of created_at; the
+// costing now reads the São Paulo day (inventory.DayOf), so the rule is no longer what
+// keeps the day right. It is left in place because it is harmless - midday is the same
+// calendar day in both zones - and dropping it would change the clock stored on corrected
+// rows, which nothing here needs.
 func rebaseToDay(moment, day time.Time) time.Time {
 	// Read in the target zone, not as it comes out of the database. created_at arrives in
 	// UTC, and taking its hour as if it were local moved the clock by the offset on every
@@ -111,8 +112,9 @@ func refuseClosedPeriod(db *gorm.DB, accountID string, days ...time.Time) (time.
 		if day.IsZero() {
 			continue
 		}
-		// The same comparison the recompute makes, on the same UTC day, so the guard and
-		// the costing can never disagree about which side of the boundary a date is on.
+		// The same comparison the recompute makes, on the same São Paulo day, so the guard
+		// and the costing can never disagree about which side of the boundary a date is on.
+		// Every value here is an instant; a DATE column is passed through businessday.Start.
 		if !inventory.DayOf(day).After(frozenUntil) {
 			return frozenUntil, nil
 		}

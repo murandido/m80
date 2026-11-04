@@ -3,12 +3,15 @@ package handlers
 import (
 	"net/http"
 	"time"
+
+	"github.com/murandido/m-80-backend/internal/businessday"
 )
 
 // listTimezone is the timezone used to interpret the date_from/date_to filters of every
 // listing endpoint. Timestamps are stored in UTC, but operators think in local (Brazil)
-// calendar days, so "today" must be resolved against this zone, not UTC.
-const listTimezone = "America/Sao_Paulo"
+// calendar days, so "today" must be resolved against this zone, not UTC. It is the business
+// zone itself, so the listings and the costing can never be configured apart.
+const listTimezone = businessday.Timezone
 
 // exportFilenameDate resolves "today" for a download name in the operator's calendar day.
 // time.Now() alone is UTC inside the container, so a file exported at 22h in São Paulo came
