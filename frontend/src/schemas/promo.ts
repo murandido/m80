@@ -101,13 +101,6 @@ export const updatePromoRecipeSchema = {
   response: recipeSingleResponse,
 }
 
-export const deletePromoRecipeSchema = {
-  response: z.object({
-    message: z.string(),
-    data: z.null().nullish(),
-  }),
-}
-
 // The dry run. Resolved is null when the page offered nothing that looks like an
 // enrolment form; the screenshot comes back either way, and is the point of the whole
 // exercise - the author sees what the bot would see.
@@ -168,14 +161,6 @@ const documentFields = {
   active: z.boolean(),
 }
 
-export const getLoyaltyDocumentsSchema = {
-  response: z.object({
-    success: z.boolean(),
-    message: z.string(),
-    data: z.array(loyaltyDocumentSchema).nullish(),
-  }),
-}
-
 // GET /loyalty-documents/manage, for the screen. The plain route stays an array.
 export const listLoyaltyDocumentsSchema = {
   response: z.object({
@@ -210,13 +195,6 @@ export const createLoyaltyDocumentSchema = {
 export const updateLoyaltyDocumentSchema = {
   request: z.object(documentFields),
   response: documentSingleResponse,
-}
-
-export const deleteLoyaltyDocumentSchema = {
-  response: z.object({
-    message: z.string(),
-    data: z.null().nullish(),
-  }),
 }
 
 export const promoEnrollmentSchema = z.object({

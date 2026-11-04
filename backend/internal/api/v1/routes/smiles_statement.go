@@ -59,7 +59,9 @@ func RegisterSmilesStatementRoutes(r chi.Router, db *gorm.DB, guard *smilessync.
 		r.Use(middleware.RequireAdmin())
 
 		r.Post("/", connect.ConnectSmilesAccount)
-		r.Post("/challenge", connect.ChallengeSmilesLogin)
+		// The browser path: the extension runs the one POST the edge refuses to HTTP clients.
+		r.Post("/challenge/browser", connect.BrowserChallengeSmilesLogin)
+		r.Post("/challenge/complete", connect.CompleteBrowserChallengeSmilesLogin)
 		r.Post("/code", connect.ConfirmSmilesLogin)
 		r.Delete("/", connect.DisconnectSmilesAccount)
 	})

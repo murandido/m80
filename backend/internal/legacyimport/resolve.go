@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/murandido/m-80-backend/internal/businessday"
 	"github.com/murandido/m-80-backend/internal/data"
 	"gorm.io/gorm"
 )
@@ -496,7 +497,9 @@ func resolveCancellation(
 			// A locator is reused: a booking cancelled in one month and another issued
 			// under the same code later. The active one is the one being pointed at,
 			// and if it was created after this day it is probably not the one meant.
-			if existing.createdAt.After(day.Date.AddDate(0, 0, 1)) {
+			// The sheet's day is a São Paulo calendar day (a midnight-UTC date), so it
+			// ends at São Paulo midnight, not three hours earlier at UTC midnight.
+			if existing.createdAt.After(businessday.Start(day.Date).AddDate(0, 0, 1)) {
 				out.Notes = append(out.Notes, "A emissão com esse localizador é "+
 					"posterior a este dia — confira se é mesmo ela")
 			}

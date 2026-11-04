@@ -706,3 +706,38 @@ func TestUncancelIssuance_ClearsCancellationOnly(t *testing.T) {
 		}
 	})
 }
+
+// The panel refuses negative amounts, but the Go side used to take them: a fee of -15000
+// made the sale "owe back" R$ 150 more than came in, which with a client became credit
+// on the next sale. Zero stays valid - it is how "no fee" is typed.
+func TestCancelIssuance_RejectsNegativeAmounts(t *testing.T) {
+	for _, field := range []string{"cancellation_fee", "refunded_points", "refunded_taxes"} {
+		t.Run(field, func(t *testing.T) {
+			runInTx(t, func(tx *gorm.DB) {
+				issuance, user := seedIssuance(t, tx)
+
+				rec := callCancel(tx, issuance.ID, user.ID, `{"`+field+`": -1}`)
+				if rec.Code != http.StatusBadRequest {
+					t.Fatalf("status: got %d, want %d (body: %s)", rec.Code, http.StatusBadRequest, rec.Body.String())
+				}
+
+				var persisted data.Issuance
+				if err := tx.First(&persisted, "id = ?", issuance.ID).Error; err != nil {
+					t.Fatalf("failed to re-read issuance: %v", err)
+				}
+				if !persisted.Active {
+					t.Error("the issuance was cancelled with a negative amount")
+				}
+			})
+		})
+	}
+
+	t.Run("zero is valid", func(t *testing.T) {
+		runInTx(t, func(tx *gorm.DB) {
+			issuance, user := seedIssuance(t, tx)
+			if rec := callCancel(tx, issuance.ID, user.ID, `{"cancellation_fee": 0}`); rec.Code != http.StatusOK {
+				t.Fatalf("zero fee: got %d (body: %s)", rec.Code, rec.Body.String())
+			}
+		})
+	})
+}

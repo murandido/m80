@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/murandido/m-80-backend/internal/businessday"
 	"github.com/murandido/m-80-backend/internal/data"
 	"gorm.io/gorm"
 )
@@ -115,8 +116,11 @@ func capped(account data.Account, program data.LoyaltyProgram) bool {
 }
 
 // windowStart returns the instant the current window opened, and when it closes if it ever
-// does. Local time on purpose: the programs reset on the operator's calendar, not on UTC's.
+// does. São Paulo time on purpose: the programs reset on the operator's calendar, not on
+// UTC's - and not on the process zone either, which is UTC in the production container and
+// would open the year at 21:00 on 31 December.
 func windowStart(window string, now time.Time) (since time.Time, resetsAt *time.Time) {
+	now = now.In(businessday.Location)
 	if window == data.CPFLimitWindowRolling12Months {
 		return now.AddDate(0, -12, 0), nil
 	}

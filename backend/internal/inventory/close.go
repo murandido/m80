@@ -44,28 +44,43 @@ func Close(db *gorm.DB, accountID string, startsOn, endsOn time.Time, closedByID
 		return period, ErrPeriodInverted
 	}
 
-	frozenUntil, err := ClosedThrough(db, accountID)
+	// One transaction under the account's costing lock, from the order check to the period
+	// row. Split, a recompute landing between the rebuild and the insert could have its
+	// figures frozen instead of these, and two closings of the same stretch would both pass
+	// the order check before either had written its period.
+	err := db.Transaction(func(tx *gorm.DB) error {
+		if err := lockAccountCosting(tx, accountID); err != nil {
+			return err
+		}
+
+		frozenUntil, err := ClosedThrough(tx, accountID)
+		if err != nil {
+			return err
+		}
+		if !frozenUntil.IsZero() && !endsOn.After(frozenUntil) {
+			return ErrPeriodOutOfOrder
+		}
+
+		// Takes the same lock again, which the session already holds.
+		if err := Recompute(tx, accountID); err != nil {
+			return err
+		}
+
+		closedAt := time.Now()
+		period = data.InventoryPeriod{
+			AccountID:  accountID,
+			StartsOn:   startsOn,
+			EndsOn:     endsOn,
+			ClosedAt:   &closedAt,
+			ClosedByID: &closedByID,
+		}
+		if err := tx.Create(&period).Error; err != nil {
+			return fmt.Errorf("inventory.Close: creating the period: %w", err)
+		}
+		return nil
+	})
 	if err != nil {
-		return period, err
-	}
-	if !frozenUntil.IsZero() && !endsOn.After(frozenUntil) {
-		return period, ErrPeriodOutOfOrder
-	}
-
-	if err := Recompute(db, accountID); err != nil {
-		return period, err
-	}
-
-	closedAt := time.Now()
-	period = data.InventoryPeriod{
-		AccountID:  accountID,
-		StartsOn:   startsOn,
-		EndsOn:     endsOn,
-		ClosedAt:   &closedAt,
-		ClosedByID: &closedByID,
-	}
-	if err := db.Create(&period).Error; err != nil {
-		return period, fmt.Errorf("inventory.Close: creating the period: %w", err)
+		return data.InventoryPeriod{}, err
 	}
 
 	return period, nil
@@ -91,22 +106,32 @@ func Reopen(db *gorm.DB, periodID string) error {
 		return fmt.Errorf("inventory.Reopen: loading the period: %w", err)
 	}
 
-	var newer int64
-	err := db.Model(&data.InventoryPeriod{}).
-		Where("account_id = ? AND closed_at IS NOT NULL AND ends_on > ?", period.AccountID, period.EndsOn).
-		Count(&newer).Error
-	if err != nil {
-		return fmt.Errorf("inventory.Reopen: checking for later periods: %w", err)
-	}
-	if newer > 0 {
-		return ErrPeriodNotLast
-	}
+	// Under the account's costing lock, like Close. Outside it, the check for a later
+	// period would miss a closing still in flight: this period would be deleted, the
+	// closing would then freeze everything on top of it with the old figures, and the
+	// reopen would have answered success while changing nothing.
+	return db.Transaction(func(tx *gorm.DB) error {
+		if err := lockAccountCosting(tx, period.AccountID); err != nil {
+			return err
+		}
 
-	if err := db.Delete(&period).Error; err != nil {
-		return fmt.Errorf("inventory.Reopen: deleting the period: %w", err)
-	}
+		var newer int64
+		err := tx.Model(&data.InventoryPeriod{}).
+			Where("account_id = ? AND closed_at IS NOT NULL AND ends_on > ?", period.AccountID, period.EndsOn).
+			Count(&newer).Error
+		if err != nil {
+			return fmt.Errorf("inventory.Reopen: checking for later periods: %w", err)
+		}
+		if newer > 0 {
+			return ErrPeriodNotLast
+		}
 
-	// The slices it had frozen are derived data like any other, and the next recompute
-	// rebuilds them - now that nothing stops it from reaching them.
-	return Recompute(db, period.AccountID)
+		if err := tx.Delete(&period).Error; err != nil {
+			return fmt.Errorf("inventory.Reopen: deleting the period: %w", err)
+		}
+
+		// The slices it had frozen are derived data like any other, and the next recompute
+		// rebuilds them - now that nothing stops it from reaching them.
+		return Recompute(tx, period.AccountID)
+	})
 }

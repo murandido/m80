@@ -64,10 +64,8 @@ func TestCancel_AlreadyCancelledIsRefused(t *testing.T) {
 			t.Fatalf("first Cancel failed: %v", err)
 		}
 
-		// Cancel trusts the Active flag on the struct it's handed - it never
-		// re-queries - so the guard only bites when the caller passes back the
-		// freshly re-read (now inactive) row, exactly as findIssuanceToCancel and
-		// the panel's own handler both do right before calling it.
+		// The freshly re-read (now inactive) row, exactly as findIssuanceToCancel and
+		// the panel's own handler both pass it. The stale-struct case is the next test.
 		var fresh data.Issuance
 		if err := tx.First(&fresh, "id = ?", issuance.ID).Error; err != nil {
 			t.Fatalf("failed to re-read: %v", err)
@@ -76,6 +74,39 @@ func TestCancel_AlreadyCancelledIsRefused(t *testing.T) {
 		if !errors.Is(err, ErrIssuanceAlreadyCancelled) {
 			t.Fatalf("err = %v, want ErrIssuanceAlreadyCancelled", err)
 		}
+	})
+}
+
+// The bot's CANCELAMENTO and the panel both look the issuance up before cancelling, and a
+// cancel that commits in between leaves them holding a struct that still says active.
+// Cancel used to trust that flag and Save the whole row: a second "cancelled" audit line,
+// and the second caller's refunds replacing the first's. The conditional write refuses it.
+func TestCancel_AStaleLookupIsRefused(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		f := seedFixture(t, tx, data.Airline{})
+		stale, err := Create(tx, f.input(), f.User.ID)
+		if err != nil {
+			t.Fatalf("Create failed: %v", err)
+		}
+		fee := 15000
+		if _, err := Cancel(tx, stale, CancelInput{CancellationFee: &fee}, f.User.ID); err != nil {
+			t.Fatalf("first Cancel failed: %v", err)
+		}
+
+		points := stale.Points
+		_, err = Cancel(tx, stale, CancelInput{RefundedPoints: &points}, f.User.ID)
+		if !errors.Is(err, ErrIssuanceAlreadyCancelled) {
+			t.Fatalf("err = %v, want ErrIssuanceAlreadyCancelled", err)
+		}
+
+		var persisted data.Issuance
+		if err := tx.First(&persisted, "id = ?", stale.ID).Error; err != nil {
+			t.Fatalf("failed to re-read: %v", err)
+		}
+		if persisted.CancellationFee == nil || *persisted.CancellationFee != fee || persisted.RefundedPoints != nil {
+			t.Errorf("the second cancel rewrote the refunds: fee=%v points=%v", persisted.CancellationFee, persisted.RefundedPoints)
+		}
+		assertCount(t, tx, "audit_logs", "issuance_id = ? AND action = 'cancelled'", stale.ID, 1)
 	})
 }
 

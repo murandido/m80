@@ -32,17 +32,6 @@ const (
 	legacyIssuanceFirstDataRow = 3
 	// R2 feeds the A1 title formula ="EMISSÕES GERAIS "&TEXT(R2,"dd/mm/yyyy").
 	legacyIssuanceTitleDateCell = "R2"
-	// Q is the first free column after the MODELO's own table (B:P) and stops short of the
-	// summary block (T:AH), so the redemption fee can be added without moving a single
-	// formula. It does not exist in the MODELO, which is why the header is written on every
-	// render rather than lifted from the template.
-	legacyIssuanceRedemptionFeeColumn = "Q"
-	legacyIssuanceRedemptionFeeHeader = "TAXA RESGATE"
-	// The header row and the taxes column, whose styling the new column borrows so it
-	// looks like it was always part of the sheet.
-	legacyIssuanceHeaderRow     = 2
-	legacyIssuanceTaxesColumn   = "K"
-	legacyIssuanceLastStyledRow = 152
 )
 
 // BuildLegacyIssuancesXLSX renders the given issuances into a copy of the MODELO template,
@@ -63,10 +52,6 @@ func renderLegacyIssuancesXLSX(template []byte, issuances []data.Issuance, now t
 	loc, err := time.LoadLocation(exportTimezone)
 	if err != nil {
 		loc = time.UTC
-	}
-
-	if err := writeLegacyRedemptionFeeHeader(f); err != nil {
-		return nil, err
 	}
 
 	// The title date is the moment the export is produced.
@@ -95,47 +80,7 @@ func renderLegacyIssuancesXLSX(template []byte, issuances []data.Issuance, now t
 	return buffer.Bytes(), nil
 }
 
-// writeLegacyRedemptionFeeHeader adds the TAXA RESGATE column the MODELO does not have,
-// styled like the headers beside it so the sheet still reads as one table.
-func writeLegacyRedemptionFeeHeader(f *excelize.File) error {
-	cell := fmt.Sprintf("%s%d", legacyIssuanceRedemptionFeeColumn, legacyIssuanceHeaderRow)
-	if err := f.SetCellValue(legacyIssuanceSheet, cell, legacyIssuanceRedemptionFeeHeader); err != nil {
-		return fmt.Errorf("writeLegacyRedemptionFeeHeader: set %s: %w", cell, err)
-	}
-
-	// Borrowed from TAXAS: the same header styling, and below it the same currency format,
-	// so the amounts line up with the money column they sit next to.
-	source := fmt.Sprintf("%s%d", legacyIssuanceTaxesColumn, legacyIssuanceHeaderRow)
-	style, err := f.GetCellStyle(legacyIssuanceSheet, source)
-	if err != nil {
-		return fmt.Errorf("writeLegacyRedemptionFeeHeader: read style of %s: %w", source, err)
-	}
-	if err := f.SetCellStyle(legacyIssuanceSheet, cell, cell, style); err != nil {
-		return fmt.Errorf("writeLegacyRedemptionFeeHeader: style %s: %w", cell, err)
-	}
-
-	// The data rows are styled in one go rather than per issuance, so a sheet with three
-	// issuances still shows the column running the same length as the ones beside it.
-	first := fmt.Sprintf("%s%d", legacyIssuanceTaxesColumn, legacyIssuanceFirstDataRow)
-	dataStyle, err := f.GetCellStyle(legacyIssuanceSheet, first)
-	if err != nil {
-		return fmt.Errorf("writeLegacyRedemptionFeeHeader: read style of %s: %w", first, err)
-	}
-	from := fmt.Sprintf("%s%d", legacyIssuanceRedemptionFeeColumn, legacyIssuanceFirstDataRow)
-	to := fmt.Sprintf("%s%d", legacyIssuanceRedemptionFeeColumn, legacyIssuanceLastStyledRow)
-	if err := f.SetCellStyle(legacyIssuanceSheet, from, to, dataStyle); err != nil {
-		return fmt.Errorf("writeLegacyRedemptionFeeHeader: style %s:%s: %w", from, to, err)
-	}
-
-	// Wide enough for the header, which is longer than any amount it holds.
-	if err := f.SetColWidth(legacyIssuanceSheet, legacyIssuanceRedemptionFeeColumn, legacyIssuanceRedemptionFeeColumn, 16); err != nil {
-		return fmt.Errorf("writeLegacyRedemptionFeeHeader: set column width: %w", err)
-	}
-
-	return nil
-}
-
-// writeLegacyIssuanceRow fills a single data row (columns B:Q) for one issuance.
+// writeLegacyIssuanceRow fills a single data row (columns B:P) for one issuance.
 //
 // The sign of each amount follows the same rule as the control sheet (signedIssuanceAmounts),
 // not the period rule this sheet used before: the two layouts are exports of the same list,
@@ -224,13 +169,6 @@ func writeLegacyIssuanceRow(f *excelize.File, row int, issuance data.Issuance, l
 	// P AGÊNCIA
 	if issuance.Agency != nil {
 		if err := set("P", issuance.Agency.Name); err != nil {
-			return err
-		}
-	}
-	// Q TAXA RESGATE - the airline fee the exempt account (Azul Diamante Unique) did not
-	// pay. Blank on every ordinary account, where nothing was saved.
-	if fee := signedRedemptionFee(issuance, loc); fee != nil {
-		if err := set(legacyIssuanceRedemptionFeeColumn, centsToReais(*fee)); err != nil {
 			return err
 		}
 	}

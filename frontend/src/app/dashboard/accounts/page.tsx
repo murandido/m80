@@ -57,11 +57,6 @@ export default async function AccountsPage({
   const category = raw.category ?? ""
   const complete = raw.complete ?? ""
 
-  // Merging moves issuance history and then deletes records for good, so the panel only
-  // offers it to admins - the backend refuses it for anyone else regardless.
-  const sessionUser = await getSessionUser()
-  const canMerge = canAccess(sessionUser?.role, ["admin"])
-
   const accountsQuery = new URLSearchParams(
     listQueryString(params, {
       loyalty_program_id: loyaltyProgramId,
@@ -72,9 +67,11 @@ export default async function AccountsPage({
   accountsQuery.set("page", String(params.page))
   accountsQuery.set("limit", String(PAGE_LIMIT))
 
-  // One wave instead of three sequential round trips: none of these lists depends
-  // on another, and the page cannot paint until the slowest of them is in.
-  const [rowsPage, peopleResult, loyaltyProgramsResult] = await Promise.all([
+  // One wave instead of sequential round trips: none of these depends on another, and
+  // the page cannot paint until the slowest of them is in. The session used to be awaited
+  // on its own first, which put a whole round trip in front of every search.
+  const [sessionUser, rowsPage, peopleResult, loyaltyProgramsResult] = await Promise.all([
+    getSessionUser(),
     // /accounts/holders pages over holders, not accounts: a holder with three programs
     // is one row, so the page size is what the operator actually sees.
     fetchPage<AccountHolderRowData, AccountHolderPage>(
@@ -96,6 +93,10 @@ export default async function AccountsPage({
       authHeader,
     ),
   ])
+
+  // Merging moves issuance history and then deletes records for good, so the panel only
+  // offers it to admins - the backend refuses it for anyone else regardless.
+  const canMerge = canAccess(sessionUser?.role, ["admin"])
 
   // A failed list renders as an empty one: every consumer below is a row list or a
   // combobox, and both read the same either way.
