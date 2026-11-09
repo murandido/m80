@@ -35,8 +35,11 @@ var (
 	testDB     *gorm.DB
 	testDBErr  error
 
-	// phoneCounter feeds unique, valid Brazilian phone numbers to seeded users.
-	phoneCounter int64
+	// phoneCounter feeds unique, valid Brazilian phone numbers to seeded users. It starts
+	// halfway up the range because some tests here commit their users (the race and paid-switch
+	// tests), and the other packages count the same 1199 numbers from zero against the same
+	// database in parallel: a committed duplicate fails their insert on idx_users_phone.
+	phoneCounter int64 = 5_000_000
 )
 
 // setupTestDB connects once per test binary. It first probes connectivity with a silent
