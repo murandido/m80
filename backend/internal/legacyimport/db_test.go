@@ -156,7 +156,10 @@ func mustCreate(t *testing.T, tx *gorm.DB, value any) {
 	}
 }
 
-var phoneCounter int64
+// Each test package draws seeded phones from its own million (handlers 5M, bot 1M,
+// inventory 2M, legacyimport 3M, statement 4M): the packages run in parallel against
+// one Postgres, and a user one of them commits collides on idx_users_phone otherwise.
+var phoneCounter int64 = 3_000_000
 
 // nextPhone hands out distinct, valid Brazilian mobile numbers - users.phone is unique.
 //
