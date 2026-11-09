@@ -20,10 +20,13 @@ import (
 // `go test ./...` stays green on a bare machine. (The `day` helper lives in reconcile_test.go.)
 
 var (
-	testDBOnce   sync.Once
-	testDB       *gorm.DB
-	testDBErr    error
-	phoneCounter int64
+	testDBOnce sync.Once
+	testDB     *gorm.DB
+	testDBErr  error
+	// Each test package draws seeded phones from its own million (handlers 5M, bot 1M,
+	// inventory 2M, legacyimport 3M, statement 4M): the packages run in parallel against
+	// one Postgres, and a user one of them commits collides on idx_users_phone otherwise.
+	phoneCounter int64 = 4_000_000
 )
 
 func setupTestDB(t *testing.T) *gorm.DB {
