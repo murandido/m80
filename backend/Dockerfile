@@ -81,21 +81,25 @@ CMD ["./server"]
 # Same builder as api and bot - only the runtime differs, because this one drives a
 # browser.
 #
-# The base is chromedp's own headless-shell image rather than alpine + chromium. That
-# was the first attempt and it is a trap: alpine's chromium pulls 186 packages,
-# including gtk+3, the full ICU data and llvm-libs (SwiftShader links against system
-# LLVM), and the build sat on llvm-libs for twenty minutes without finishing. This
-# image ships the headless shell chromedp is written against and nothing else.
+# Full Chromium from Debian rather than chromedp's headless-shell image: the headless
+# shell is a different build of the browser, and the campaign pages stopped working
+# with it on 09/11/2026 (the reason is recorded in backend/carriers). Debian is also
+# what makes this possible on the arm64 host - Google ships no Linux arm64 Chrome.
+#
+# Alpine was the first attempt and it is a trap: its chromium pulls 186 packages,
+# including gtk+3, the full ICU data and llvm-libs, and the build sat on llvm-libs for
+# twenty minutes without finishing.
 #
 # Fonts are not optional. The screenshots that go back to the group are the operator's
 # proof that a CPF was enrolled, and without these every accented character renders as
 # a blank box.
 #
-# curl is here for the Compose healthcheck alone: the base image carries neither it nor
-# wget, and probing the port with bash's /dev/tcp instead is unreadable inside YAML.
-FROM chromedp/headless-shell:157.0.8103.6 AS prod-chrome
+# curl is here for the Compose healthcheck alone, so probing the port does not need
+# bash's /dev/tcp inside YAML.
+FROM debian:trixie-slim AS prod-chrome
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+        chromium \
         tzdata \
         curl \
         ca-certificates \
@@ -103,13 +107,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
-# The base image sets an ENTRYPOINT that launches the browser; this service launches it
-# itself, on its own terms, so that has to be cleared or the Go binary never runs.
-ENTRYPOINT []
-
 # chromedp would search the PATH on its own, but being explicit means a missing or
 # renamed binary fails at startup with a clear message instead of on the first campaign.
-ENV CHROME_PATH=/headless-shell/headless-shell
+ENV CHROME_PATH=/usr/bin/chromium
 
 # Unprivileged, but with a home: Chrome writes its crash and config files under
 # $HOME, and its per-run profile under /tmp. It already runs with --no-sandbox
