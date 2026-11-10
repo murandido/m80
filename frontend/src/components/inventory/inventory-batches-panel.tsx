@@ -305,6 +305,11 @@ export function InventoryBatchesPanel({
                       {batch.origin?.name ?? (
                         <Badge variant="secondary">Saldo de partida</Badge>
                       )}
+                      {/* The note is where a batch says what is still owed on it - "CUSTO
+                          PENDENTE" - so it has to be visible where the batch is. */}
+                      {batch.note && (
+                        <p className="mt-0.5 max-w-56 text-xs text-slate-500">{batch.note}</p>
+                      )}
                     </TableCell>
                     <TableCell className="tabular-nums">
                       {batch.acquired_on.split("-").reverse().join("/")}
