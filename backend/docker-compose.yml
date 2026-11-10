@@ -192,9 +192,10 @@ services:
       - AZUL_LOGIN_PROXY_USER=$AZUL_LOGIN_PROXY_USER_DEV
       - AZUL_LOGIN_PROXY_PASS=$AZUL_LOGIN_PROXY_PASS_DEV
     # It drives a real browser on a third-party page, the same reason the promo service is
-    # capped. Keep it bounded so a runaway browser cannot take the box down.
-    mem_limit: 1500m
-    memswap_limit: 1500m
+    # capped. Keep it bounded so a runaway browser cannot take the box down. Sized like prod:
+    # see azul-login-service-prod for the measurement.
+    mem_limit: 2500m
+    memswap_limit: 2500m
     shm_size: 256mb
     profiles: ["dev"]
     restart: unless-stopped
@@ -547,9 +548,12 @@ services:
       - AZUL_LOGIN_PROXY_PASS=$AZUL_LOGIN_PROXY_PASS_PROD
     # No ports: only the API reaches it, over the Compose network. A real browser, same appetite
     # as the promo service - keep it bounded so a runaway one cannot take the box to the host OOM
-    # killer.
-    mem_limit: 1500m
-    memswap_limit: 1500m
+    # killer. Camoufox on the Azul portal peaks at ~1.77 GB of anonymous memory (measured
+    # 10/11/2026); the old 1500m cap OOM-killed browser processes on every login, which surfaced
+    # as "portal timed out during home", TargetClosedError or a login with no customerKey.
+    # 2500m leaves ~40% headroom; the host keeps several GB free.
+    mem_limit: 2500m
+    memswap_limit: 2500m
     shm_size: 256mb
     healthcheck:
       test: [ "CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8083/health').read()==b'ok' else 1)" ]
