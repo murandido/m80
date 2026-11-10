@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react"
 import { toast } from "sonner"
-import { Layers, Trash2 } from "lucide-react"
+import { Layers, Pencil, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { DateInput } from "@/components/ui/date-input"
 import { Input } from "@/components/ui/input"
@@ -31,6 +31,7 @@ import {
   deletePointBatchAction,
   settlePointBatchAction,
 } from "@/actions/inventory"
+import { EditPointBatchDialog } from "@/components/inventory/edit-point-batch-dialog"
 import type { Agency } from "@/schemas/agency"
 import type { PointBatch, PointBatchOrigin } from "@/schemas/inventory"
 
@@ -93,6 +94,7 @@ export function InventoryBatchesPanel({
   const [cost, setCost] = useState("")
   const [fundingAgencyId, setFundingAgencyId] = useState("")
   const [opening, setOpening] = useState(false)
+  const [editing, setEditing] = useState<PointBatch | null>(null)
 
   // What the cost field currently resolves to, in centavos. Null while it is blank or
   // half-typed, which is also when there is nothing worth confirming.
@@ -305,6 +307,11 @@ export function InventoryBatchesPanel({
                       {batch.origin?.name ?? (
                         <Badge variant="secondary">Saldo de partida</Badge>
                       )}
+                      {/* The note is where a batch says what is still owed on it - "CUSTO
+                          PENDENTE" - so it has to be visible where the batch is. */}
+                      {batch.note && (
+                        <p className="mt-0.5 max-w-56 text-xs text-slate-500">{batch.note}</p>
+                      )}
                     </TableCell>
                     <TableCell className="tabular-nums">
                       {batch.acquired_on.split("-").reverse().join("/")}
@@ -337,7 +344,16 @@ export function InventoryBatchesPanel({
                         {batch.settled_at ? "Acertado" : "Em aberto"}
                       </button>
                     </TableCell>
-                    <TableCell className="text-right">
+                    <TableCell className="text-right whitespace-nowrap">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        disabled={pending}
+                        onClick={() => setEditing(batch)}
+                        aria-label="Editar lote"
+                      >
+                        <Pencil className="size-4" />
+                      </Button>
                       <Button
                         variant="ghost"
                         size="icon"
@@ -355,6 +371,12 @@ export function InventoryBatchesPanel({
           </Table>
         </div>
       </div>
+      <EditPointBatchDialog
+        batch={editing}
+        onClose={() => setEditing(null)}
+        origins={origins}
+        agencies={agencies}
+      />
     </section>
   )
 }
