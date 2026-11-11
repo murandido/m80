@@ -141,7 +141,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26.10'
+          go-version: '1.26.11'
 
       # Runs govulncheck ourselves rather than golang/govulncheck-action, because the action is
       # all-or-nothing and govulncheck has no per-id ignore. The gate still fails on any
@@ -292,7 +292,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26.10'
+          go-version: '1.26.11'
           cache: false
 
       # Built from source at a pinned tag rather than through gitleaks-action, which
