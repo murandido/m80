@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { User } from "@/schemas/user"
 import type { Agency } from "@/schemas/agency"
+import type { StatementAccountChoice } from "./user-accounts-field"
 import { DeleteOverlay } from "./delete-overlay"
 import { EditUserPanel } from "./edit-user-panel"
 
@@ -15,6 +16,7 @@ interface UserCardProps {
   isCurrentUser?: boolean
   viewerIsDev?: boolean
   agencies?: Agency[]
+  statementAccounts?: StatementAccountChoice[]
 }
 
 export function UserCard({
@@ -22,12 +24,20 @@ export function UserCard({
   isCurrentUser = false,
   viewerIsDev = false,
   agencies = [],
+  statementAccounts = [],
 }: UserCardProps) {
   // A dev account is a dev's to edit or remove: the API refuses both to an admin, so the
   // buttons say so up front instead of failing on save.
   const canManage = viewerIsDev || user.role !== "dev"
-  const agencySummary =
-    user.role === "dev"
+  const grantSummary =
+    user.role === "statement_client"
+      ? user.account_ids.length === 0
+        ? "Nenhuma conta"
+        : user.account_ids
+            .map((id) => statementAccounts.find((account) => account.id === id)?.label)
+            .filter(Boolean)
+            .join(", ")
+      : user.role === "dev"
       ? "Todas as agências"
       : user.agency_ids.length === 0
         ? "Nenhuma agência"
@@ -57,8 +67,9 @@ export function UserCard({
         <div className="flex items-center justify-between px-4 py-3">
           <div className="flex min-w-0 flex-col">
             <span className="text-sm font-medium text-slate-800">{user.name}</span>
-            {viewerIsDev && (
-              <span className="truncate text-xs text-slate-500">{agencySummary}</span>
+            {/* Agencies are a dev's business; a client's accounts are any admin's, who grants them. */}
+            {(viewerIsDev || user.role === "statement_client") && (
+              <span className="truncate text-xs text-slate-500">{grantSummary}</span>
             )}
           </div>
           <div className="flex gap-2">
@@ -108,6 +119,7 @@ export function UserCard({
         onSaved={() => setIsEditOpen(false)}
         viewerIsDev={viewerIsDev}
         agencies={agencies}
+        statementAccounts={statementAccounts}
       />
     </div>
   )

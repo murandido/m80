@@ -28,6 +28,9 @@ export async function updateUserAction(
   if (data.agency_ids) {
     body.agency_ids = data.agency_ids
   }
+  if (data.account_ids) {
+    body.account_ids = data.account_ids
+  }
 
   try {
     const res = await fetch(`${env.BACKEND_URL}/api/v1/users/${userId}`, {

@@ -27,6 +27,10 @@ import { cn } from "@/lib/utils"
 import { User, updateUserSchema } from "@/schemas/user"
 import { RoleSelector } from "@/components/users/role-selector"
 import { UserAgenciesField } from "@/components/users/user-agencies-field"
+import {
+  type StatementAccountChoice,
+  UserAccountsField,
+} from "@/components/users/user-accounts-field"
 import { updateUserAction } from "@/actions/user"
 import type { Agency } from "@/schemas/agency"
 
@@ -39,9 +43,17 @@ interface EditUserPanelProps {
   // See CreateUserForm: agencies and the dev role are a dev's alone.
   viewerIsDev: boolean
   agencies: Agency[]
+  statementAccounts: StatementAccountChoice[]
 }
 
-export function EditUserPanel({ user, isOpen, onSaved, viewerIsDev, agencies }: EditUserPanelProps) {
+export function EditUserPanel({
+  user,
+  isOpen,
+  onSaved,
+  viewerIsDev,
+  agencies,
+  statementAccounts,
+}: EditUserPanelProps) {
   const router = useRouter()
   const [showPassword, setShowPassword] = useState(false)
   const [isPending, startTransition] = useTransition()
@@ -55,6 +67,7 @@ export function EditUserPanel({ user, isOpen, onSaved, viewerIsDev, agencies }: 
       password: "",
       role: user.role,
       agency_ids: viewerIsDev ? user.agency_ids : undefined,
+      account_ids: user.account_ids,
     },
   })
   const role = useWatch({ control: form.control, name: "role" })
@@ -71,6 +84,7 @@ export function EditUserPanel({ user, isOpen, onSaved, viewerIsDev, agencies }: 
         password: "",
         role: user.role,
         agency_ids: viewerIsDev ? user.agency_ids : undefined,
+        account_ids: user.account_ids,
       })
       // eslint-disable-next-line react-hooks/set-state-in-effect -- resets the panel each time it opens for a user
       setShowPassword(false)
@@ -79,7 +93,13 @@ export function EditUserPanel({ user, isOpen, onSaved, viewerIsDev, agencies }: 
 
   function onSubmit(data: FormData) {
     startTransition(async () => {
-      const result = await updateUserAction(user.id, data)
+      // Same split as CreateUserForm: accounts only for a statement client, who has no agencies.
+      const isClient = data.role === "statement_client"
+      const result = await updateUserAction(user.id, {
+        ...data,
+        agency_ids: isClient ? undefined : data.agency_ids,
+        account_ids: isClient ? (data.account_ids ?? []) : undefined,
+      })
       if (result.error) {
         form.setError("root", { message: result.error })
         return
@@ -243,8 +263,26 @@ export function EditUserPanel({ user, isOpen, onSaved, viewerIsDev, agencies }: 
                 />
               </div>
 
-              {/* agencies - dev only, and meaningless for a dev account */}
-              {viewerIsDev && role !== "dev" && (
+              {/* accounts - what a statement client may read */}
+              {role === "statement_client" && (
+                <div className="flex flex-col gap-1 text-sm">
+                  <Controller
+                    name="account_ids"
+                    control={form.control}
+                    render={({ field }) => (
+                      <UserAccountsField
+                        accounts={statementAccounts}
+                        value={field.value ?? []}
+                        onChange={field.onChange}
+                        disabled={isPending}
+                      />
+                    )}
+                  />
+                </div>
+              )}
+
+              {/* agencies - dev only, and meaningless for a dev or a statement client */}
+              {viewerIsDev && role !== "dev" && role !== "statement_client" && (
                 <div className="flex flex-col gap-1 text-sm">
                   <Controller
                     name="agency_ids"
