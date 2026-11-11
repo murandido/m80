@@ -61,16 +61,32 @@ func replaceUserAgencies(tx *gorm.DB, userID string, agencyIDs []string) error {
 	return err
 }
 
-func toUserResponse(user data.User, agencyIDs []string) schemas.UserResponse {
+func toUserResponse(user data.User, agencyIDs, accountIDs []string) schemas.UserResponse {
 	if agencyIDs == nil {
 		agencyIDs = []string{}
 	}
-	return schemas.UserResponse{
-		ID:        user.ID,
-		Name:      user.Name,
-		Phone:     user.Phone,
-		Role:      user.Role,
-		AgencyIDs: agencyIDs,
-		CreatedAt: user.CreatedAt,
+	if accountIDs == nil {
+		accountIDs = []string{}
 	}
+	return schemas.UserResponse{
+		ID:         user.ID,
+		Name:       user.Name,
+		Phone:      user.Phone,
+		Role:       user.Role,
+		AgencyIDs:  agencyIDs,
+		AccountIDs: accountIDs,
+		CreatedAt:  user.CreatedAt,
+	}
+}
+
+// loadUserGrants reads both grant tables for the given users in one place, so every user
+// response carries the same shape.
+func loadUserGrants(db *gorm.DB, userIDs []string) (agencies, accounts map[string][]string, err error) {
+	if agencies, err = loadUserAgencyIDs(db, userIDs); err != nil {
+		return nil, nil, err
+	}
+	if accounts, err = loadUserAccountIDs(db, userIDs); err != nil {
+		return nil, nil, err
+	}
+	return agencies, accounts, nil
 }
