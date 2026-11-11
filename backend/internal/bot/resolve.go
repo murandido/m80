@@ -15,11 +15,16 @@ import (
 // internal users row, matching on phone number. Returns (nil, nil) when the
 // sender isn't a known user - not an error, just a fact the caller reacts to
 // (e.g. by replying with a "not registered" reaction rather than crashing).
+//
+// Only staff count as known: a statement_client is an outside customer with a
+// panel login for their own statement, and every bot command (EMISSAO,
+// !registrar-chat, promo) acts on the agency's data. Treating their phone as
+// unknown keeps them out of all of it at once.
 func (b *Bot) resolveSenderUser(evt *events.Message) (*data.User, error) {
 	phone := senderPhone(evt.Info)
 
 	var user data.User
-	err := b.DB.First(&user, "phone = ?", phone).Error
+	err := b.DB.First(&user, "phone = ? AND role <> ?", phone, data.RoleStatementClient).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}

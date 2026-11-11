@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/murandido/m-80-backend/internal/access"
 	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
@@ -193,41 +194,52 @@ func (h *StatementHandler) SmilesStatementEntries(w http.ResponseWriter, r *http
 	if !ok {
 		return
 	}
+	resp, message, err := h.buildSmilesStatementEntries(account, middleware.AgencyScopeFrom(r.Context()), true)
+	if err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, message+err.Error())
+		return
+	}
+	utils.SendJSON(w, r, http.StatusOK, "Extrato carregado", resp)
+}
 
+// buildSmilesStatementEntries is the Smiles twin of buildAzulStatementEntries, with the same
+// includeLinks meaning: false leaves out the issuance and batch links a statement client must
+// never see.
+func (h *StatementHandler) buildSmilesStatementEntries(
+	account data.Account, scope access.AgencyScope, includeLinks bool,
+) (schemas.SmilesStatementEntriesResponse, string, error) {
 	rows, err := h.smilesRows(account.ID)
 	if err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Não consegui ler o extrato: "+err.Error())
-		return
+		return schemas.SmilesStatementEntriesResponse{}, "Não consegui ler o extrato: ", err
 	}
 
 	// Each line's link key, and - for the miles-in lines - the reference a batch is matched on.
 	// The same key is what the panel sends back to link or unlink.
-	keys := make([]string, 0, len(rows))
-	batchRefs := make([]statement.BatchLineRef, 0, len(rows))
-	for _, row := range rows {
-		key := row.LineKey()
-		keys = append(keys, key)
-		if kind := smilesRowKind(row); kind == data.SmilesLineAccrual || kind == data.SmilesLinePurchase {
-			batchRefs = append(batchRefs, statement.BatchLineRef{
-				Key: key, OccurredOn: row.OccurredOn, Points: row.Points,
-			})
+	resolved := map[string]statement.ResolvedBooking{}
+	resolvedBatches := map[string]statement.ResolvedBatch{}
+	if includeLinks {
+		keys := make([]string, 0, len(rows))
+		batchRefs := make([]statement.BatchLineRef, 0, len(rows))
+		for _, row := range rows {
+			key := row.LineKey()
+			keys = append(keys, key)
+			if kind := smilesRowKind(row); kind == data.SmilesLineAccrual || kind == data.SmilesLinePurchase {
+				batchRefs = append(batchRefs, statement.BatchLineRef{
+					Key: key, OccurredOn: row.OccurredOn, Points: row.Points,
+				})
+			}
 		}
-	}
-	resolved, err := statement.ResolveBookingLinks(h.DB, account.ID, keys)
-	if err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Não consegui resolver os vínculos: "+err.Error())
-		return
-	}
-	resolvedBatches, err := statement.ResolveBatchLinks(h.DB, account.ID, batchRefs)
-	if err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Não consegui resolver os lotes: "+err.Error())
-		return
+		if resolved, err = statement.ResolveBookingLinks(h.DB, account.ID, keys); err != nil {
+			return schemas.SmilesStatementEntriesResponse{}, "Não consegui resolver os vínculos: ", err
+		}
+		if resolvedBatches, err = statement.ResolveBatchLinks(h.DB, account.ID, batchRefs); err != nil {
+			return schemas.SmilesStatementEntriesResponse{}, "Não consegui resolver os lotes: ", err
+		}
 	}
 
 	state, err := smilessync.LoadState(h.DB, account.ID)
 	if err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Não consegui ler o estado da sincronização: "+err.Error())
-		return
+		return schemas.SmilesStatementEntriesResponse{}, "Não consegui ler o estado da sincronização: ", err
 	}
 
 	entries := make([]schemas.SmilesStatementEntry, 0, len(rows))
@@ -260,20 +272,20 @@ func (h *StatementHandler) SmilesStatementEntries(w http.ResponseWriter, r *http
 			DayBalance:      row.DayBalance,
 		}
 		if booking, found := resolved[key]; found {
-			entry.LinkedIssuance = toLinkedIssuance(booking, middleware.AgencyScopeFrom(r.Context()))
+			entry.LinkedIssuance = toLinkedIssuance(booking, scope)
 		}
 		if batch, found := resolvedBatches[key]; found {
-			entry.LinkedBatch = toLinkedBatch(batch, middleware.AgencyScopeFrom(r.Context()))
+			entry.LinkedBatch = toLinkedBatch(batch, scope)
 		}
 		entries = append(entries, entry)
 	}
 
-	utils.SendJSON(w, r, http.StatusOK, "Extrato carregado", schemas.SmilesStatementEntriesResponse{
+	return schemas.SmilesStatementEntriesResponse{
 		SyncState: toSmilesSyncStateResponse(account, state),
 		From:      from,
 		To:        to,
 		Lines:     entries,
-	})
+	}, "", nil
 }
 
 // ExportSmilesStatement handles GET /accounts/{id}/smiles-statement/export

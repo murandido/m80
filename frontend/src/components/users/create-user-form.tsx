@@ -20,6 +20,10 @@ import { cn } from "@/lib/utils"
 import { createUserSchema } from "@/schemas/user"
 import { RoleSelector } from "@/components/users/role-selector"
 import { UserAgenciesField } from "@/components/users/user-agencies-field"
+import {
+  type StatementAccountChoice,
+  UserAccountsField,
+} from "@/components/users/user-accounts-field"
 import { createUserAction } from "@/actions/user"
 import type { Agency } from "@/schemas/agency"
 
@@ -30,9 +34,11 @@ interface CreateUserFormProps {
   // offered, since the API refuses both from anyone else.
   viewerIsDev: boolean
   agencies: Agency[]
+  // The Azul/Smiles accounts a statement client can be granted.
+  statementAccounts: StatementAccountChoice[]
 }
 
-export function CreateUserForm({ viewerIsDev, agencies }: CreateUserFormProps) {
+export function CreateUserForm({ viewerIsDev, agencies, statementAccounts }: CreateUserFormProps) {
   const router = useRouter()
   const [isOpen, setIsOpen] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
@@ -47,6 +53,7 @@ export function CreateUserForm({ viewerIsDev, agencies }: CreateUserFormProps) {
       password: "",
       role: "user",
       agency_ids: viewerIsDev ? [] : undefined,
+      account_ids: [],
     },
   })
   const role = useWatch({ control: form.control, name: "role" })
@@ -61,8 +68,14 @@ export function CreateUserForm({ viewerIsDev, agencies }: CreateUserFormProps) {
 
   function onSubmit(data: FormData) {
     startTransition(async () => {
-      // A dev's role covers every agency; grants on one would only go stale.
-      const payload = data.role === "dev" ? { ...data, agency_ids: undefined } : data
+      // Each role keeps only the grants it uses: a dev's role covers every agency, a statement
+      // client has accounts instead of agencies, and the API refuses accounts on anyone else.
+      const isClient = data.role === "statement_client"
+      const payload = {
+        ...data,
+        agency_ids: data.role === "dev" || isClient ? undefined : data.agency_ids,
+        account_ids: isClient ? (data.account_ids ?? []) : undefined,
+      }
       const result = await createUserAction(payload)
 
       if (result.error) {
@@ -223,8 +236,26 @@ export function CreateUserForm({ viewerIsDev, agencies }: CreateUserFormProps) {
                   />
                 </div>
 
-                {/* agencies - dev only, and meaningless for a dev account */}
-                {viewerIsDev && role !== "dev" && (
+                {/* accounts - what a statement client may read */}
+                {role === "statement_client" && (
+                  <div className="flex flex-col gap-1 text-sm">
+                    <Controller
+                      name="account_ids"
+                      control={form.control}
+                      render={({ field }) => (
+                        <UserAccountsField
+                          accounts={statementAccounts}
+                          value={field.value ?? []}
+                          onChange={field.onChange}
+                          disabled={isPending}
+                        />
+                      )}
+                    />
+                  </div>
+                )}
+
+                {/* agencies - dev only, and meaningless for a dev or a statement client */}
+                {viewerIsDev && role !== "dev" && role !== "statement_client" && (
                   <div className="flex flex-col gap-1 text-sm">
                     <Controller
                       name="agency_ids"

@@ -217,14 +217,14 @@ func (h *AuthHandler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Built by toUserResponse like every other user response, so agency_ids is the user's
-	// real grants and never null.
-	grants, err := loadUserAgencyIDs(h.DB, []string{user.ID})
+	// Built by toUserResponse like every other user response, so agency_ids and account_ids are
+	// the user's real grants and never null.
+	agencies, accounts, err := loadUserGrants(h.DB, []string{user.ID})
 	if err != nil {
-		slog.Error("auth: failed to load own agencies", "user_id", user.ID, "err", err)
+		slog.Error("auth: failed to load own grants", "user_id", user.ID, "err", err)
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch the user's agencies")
 		return
 	}
 
-	utils.SendJSON(w, r, http.StatusOK, "User updated successfully", toUserResponse(user, grants[user.ID]))
+	utils.SendJSON(w, r, http.StatusOK, "User updated successfully", toUserResponse(user, agencies[user.ID], accounts[user.ID]))
 }

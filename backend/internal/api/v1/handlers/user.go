@@ -39,7 +39,7 @@ func NewUserHandler(db *gorm.DB) *UserHandler {
 // @Failure      400  {object}  schemas.ErrorResponse "Payload inválido"
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a administradores; agências e perfil de desenvolvedor só por desenvolvedores"
-// @Failure      422  {object}  schemas.ErrorResponse "Agência inexistente"
+// @Failure      422  {object}  schemas.ErrorResponse "Agência ou conta inexistente"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao criar usuário"
 // @Router       /users [post]
 func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
@@ -67,20 +67,13 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		Role:     req.Role,
 	}
 
-	// A dev's role already covers every agency; grants on one would only go stale.
-	var agencyIDs []string
-	if req.AgencyIDs != nil && req.Role != data.RoleDev {
-		agencyIDs = *req.AgencyIDs
-	}
-
 	err := h.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&user).Error; err != nil {
 			return err
 		}
-		return replaceUserAgencies(tx, user.ID, agencyIDs)
+		return applyRoleGrants(tx, user, req.AgencyIDs, req.AccountIDs)
 	})
-	if errors.Is(err, errUnknownAgency) {
-		utils.SendError(w, r, http.StatusUnprocessableEntity, "Agência inexistente")
+	if sendGrantError(w, r, err) {
 		return
 	}
 	if err != nil {
@@ -88,7 +81,29 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	utils.SendJSON(w, r, http.StatusCreated, "User created successfully", toUserResponse(user, agencyIDs))
+	agencies, accounts, err := loadUserGrants(h.DB, []string{user.ID})
+	if err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch user")
+		return
+	}
+
+	utils.SendJSON(w, r, http.StatusCreated, "User created successfully", toUserResponse(user, agencies[user.ID], accounts[user.ID]))
+}
+
+// sendGrantError answers the grant validation errors with their own status and reports
+// whether it did. Anything else is left for the caller's generic 500.
+func sendGrantError(w http.ResponseWriter, r *http.Request, err error) bool {
+	switch {
+	case errors.Is(err, errUnknownAgency):
+		utils.SendError(w, r, http.StatusUnprocessableEntity, "Agência inexistente")
+	case errors.Is(err, errUnknownStatementAccount):
+		utils.SendError(w, r, http.StatusUnprocessableEntity, "Conta inexistente ou fora da Azul/Smiles")
+	case errors.Is(err, errAccountsNeedStatementClient):
+		utils.SendError(w, r, http.StatusBadRequest, "Contas só valem para o perfil Cliente (extrato)")
+	default:
+		return false
+	}
+	return true
 }
 
 // userOrder is the whitelist of sort keys; the client's string only ever indexes it.
@@ -102,7 +117,7 @@ var userOrder = map[string]string{
 // userListQuery applies the optional search and the ordering. The ordering is not
 // optional: without it Postgres was free to return rows in heap order, so the list
 // reshuffled itself after any update.
-func userListQuery(db *gorm.DB, params listQuery, role string) *gorm.DB {
+func userListQuery(db *gorm.DB, params listQuery, role string, includeClients bool) *gorm.DB {
 	query := db.Model(&data.User{})
 
 	if params.Q != "" {
@@ -116,6 +131,11 @@ func userListQuery(db *gorm.DB, params listQuery, role string) *gorm.DB {
 	// rather than returning nothing for a typo in the URL.
 	if slices.Contains(data.UserRoles, role) {
 		query = query.Where("users.role = ?", role)
+	} else if !includeClients {
+		// GET /users also feeds the issuer pickers on the issuances grid, the dashboard and
+		// the importer; an outside customer must not show up there as someone who emits.
+		// The users page asks for them explicitly.
+		query = query.Where("users.role <> ?", data.RoleStatementClient)
 	}
 
 	return query.Order(orderClause(params.Order, userOrder, userOrder["name_asc"]))
@@ -129,7 +149,8 @@ func userListQuery(db *gorm.DB, params listQuery, role string) *gorm.DB {
 // @Security     BearerAuth
 // @Param        q      query  string  false  "Busca por nome ou telefone"
 // @Param        order  query  string  false  "Ordenação"  Enums(name_asc, name_desc, created_desc, created_asc)
-// @Param        role   query  string  false  "Perfil"  Enums(admin, user, dev)
+// @Param        role   query  string  false  "Perfil"  Enums(admin, user, dev, statement_client)
+// @Param        include_clients  query  bool  false  "Inclui os clientes de extrato quando não há filtro de perfil"
 // @Success      200  {object}  schemas.UserListResponse
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao buscar usuários"
@@ -137,7 +158,7 @@ func userListQuery(db *gorm.DB, params listQuery, role string) *gorm.DB {
 func (h *UserHandler) GetUsers(w http.ResponseWriter, r *http.Request) {
 	var users []data.User
 
-	if err := userListQuery(h.DB, parseListQuery(r), r.URL.Query().Get("role")).Find(&users).Error; err != nil {
+	if err := userListQuery(h.DB, parseListQuery(r), r.URL.Query().Get("role"), r.URL.Query().Get("include_clients") == "true").Find(&users).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch users")
 		return
 	}
@@ -146,7 +167,7 @@ func (h *UserHandler) GetUsers(w http.ResponseWriter, r *http.Request) {
 	for _, user := range users {
 		userIDs = append(userIDs, user.ID)
 	}
-	grants, err := loadUserAgencyIDs(h.DB, userIDs)
+	agencies, accounts, err := loadUserGrants(h.DB, userIDs)
 	if err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch users")
 		return
@@ -154,7 +175,7 @@ func (h *UserHandler) GetUsers(w http.ResponseWriter, r *http.Request) {
 
 	var resp []schemas.UserResponse
 	for _, user := range users {
-		resp = append(resp, toUserResponse(user, grants[user.ID]))
+		resp = append(resp, toUserResponse(user, agencies[user.ID], accounts[user.ID]))
 	}
 
 	utils.SendJSON(w, r, http.StatusOK, "Users fetched successfully", resp)
@@ -181,13 +202,13 @@ func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	grants, err := loadUserAgencyIDs(h.DB, []string{user.ID})
+	agencies, accounts, err := loadUserGrants(h.DB, []string{user.ID})
 	if err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch user")
 		return
 	}
 
-	utils.SendJSON(w, r, http.StatusOK, "User fetched successfully", toUserResponse(user, grants[user.ID]))
+	utils.SendJSON(w, r, http.StatusOK, "User fetched successfully", toUserResponse(user, agencies[user.ID], accounts[user.ID]))
 }
 
 // UpdateUser handles the PUT /users/{id} route
@@ -204,7 +225,7 @@ func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      403  {object}  schemas.ErrorResponse "Acesso restrito a administradores; agências, perfil e contas de desenvolvedor só por desenvolvedores"
 // @Failure      404  {object}  schemas.ErrorResponse "Usuário não encontrado"
-// @Failure      422  {object}  schemas.ErrorResponse "Agência inexistente"
+// @Failure      422  {object}  schemas.ErrorResponse "Agência ou conta inexistente"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao atualizar usuário"
 // @Router       /users/{id} [put]
 func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
@@ -261,18 +282,11 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		if err := tx.Save(&user).Error; err != nil {
 			return err
 		}
-		switch {
-		case user.Role == data.RoleDev:
-			// Promoted to dev: the role covers every agency, and grants left behind would
-			// silently come back into force on a later demotion.
-			return replaceUserAgencies(tx, user.ID, nil)
-		case req.AgencyIDs != nil:
-			return replaceUserAgencies(tx, user.ID, *req.AgencyIDs)
-		}
-		return nil
+		// A role change clears the grants the new role does not use, so they cannot
+		// silently come back into force on a later change - see applyRoleGrants.
+		return applyRoleGrants(tx, user, req.AgencyIDs, req.AccountIDs)
 	})
-	if errors.Is(err, errUnknownAgency) {
-		utils.SendError(w, r, http.StatusUnprocessableEntity, "Agência inexistente")
+	if sendGrantError(w, r, err) {
 		return
 	}
 	if err != nil {
@@ -280,13 +294,13 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	grants, err := loadUserAgencyIDs(h.DB, []string{user.ID})
+	agencies, accounts, err := loadUserGrants(h.DB, []string{user.ID})
 	if err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch user")
 		return
 	}
 
-	utils.SendJSON(w, r, http.StatusOK, "User updated successfully", toUserResponse(user, grants[user.ID]))
+	utils.SendJSON(w, r, http.StatusOK, "User updated successfully", toUserResponse(user, agencies[user.ID], accounts[user.ID]))
 }
 
 // DeleteUser handles the DELETE /users/{id} route.

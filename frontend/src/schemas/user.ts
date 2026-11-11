@@ -3,7 +3,7 @@ import { z } from "zod"
 // The user_role Postgres enum, in one place. Every schema below reuses it: if any single
 // one of them did not know a role the backend can return, safeParse fails and the whole
 // screen (or the session) breaks, not just that field.
-export const userRoleSchema = z.enum(["user", "admin", "dev"])
+export const userRoleSchema = z.enum(["user", "admin", "dev", "statement_client"])
 
 // What each role is called on screen. Kept here rather than in a component so server
 // and client code can both read it - a "use client" module hands a server component
@@ -12,6 +12,7 @@ export const userRoleLabels: Record<z.infer<typeof userRoleSchema>, string> = {
   admin: "Administrador",
   user: "Usuário",
   dev: "Desenvolvedor",
+  statement_client: "Cliente (extrato)",
 }
 
 export const userSchema = z.object({
@@ -24,6 +25,12 @@ export const userSchema = z.object({
   // too, not just absent: a Go nil slice serializes as null, and one embedded user sending
   // it failed the whole issuance list.
   agency_ids: z
+    .array(z.string())
+    .nullish()
+    .transform((value) => value ?? []),
+  // The Azul/Smiles accounts a statement client may read. Always empty for staff. Same
+  // nullish default as agency_ids, for an API that predates the field.
+  account_ids: z
     .array(z.string())
     .nullish()
     .transform((value) => value ?? []),
@@ -67,6 +74,8 @@ export const updateUserSchema = {
     // Only a dev may send it - the API refuses it from anyone else - so it stays undefined,
     // and out of the request, when an admin edits.
     agency_ids: z.array(z.string()).optional(),
+    // Only for a statement client; the form drops it for any other role.
+    account_ids: z.array(z.string()).optional(),
   }),
   response: z.object({
     success: z.boolean(),
@@ -98,6 +107,7 @@ export const createUserSchema = {
     role: userRoleSchema,
     // See updateUserSchema: only a dev sends it.
     agency_ids: z.array(z.string()).optional(),
+    account_ids: z.array(z.string()).optional(),
   }),
   response: z.object({
     success: z.boolean(),

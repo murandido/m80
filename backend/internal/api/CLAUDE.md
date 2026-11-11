@@ -11,7 +11,7 @@
 - Schemas de Request/Response (DTOs) residem em `v1/schemas/` e usam tags do `go-playground/validator/v10`.
 - Novas rotas devem ser registradas em `v1/routes/` — **nunca** diretamente no `router.go`. Cada arquivo exporta uma função `RegisterXRoutes(r chi.Router, db *gorm.DB)` que cria seu próprio handler e monta `r.Route("/recurso", func(r chi.Router) {...})` com os 5 verbos CRUD (ver `v1/routes/users.go` e `v1/routes/people.go`). `router.go` só compõe os grupos de middleware e chama essas funções.
   - Exceção atual: as rotas de `/auth` ainda estão inline em `internal/api/v1/router.go` (não migradas para `v1/routes/`) — não confundir com `internal/api/router.go`, que só compõe os grupos de middleware.
-  - Para restringir uma rota a admins, aninhe um `r.Group` com `middleware.RequireAdmin()` **dentro** do grupo já protegido por `middleware.RequireAuth(db)`. Rotas que qualquer usuário autenticado pode acessar (não só admin) ficam fora desse sub-grupo, como `/people` hoje.
+  - Para restringir uma rota a admins, aninhe um `r.Group` com `middleware.RequireAdmin()` **dentro** do grupo já protegido por `middleware.RequireAuth(db)`. Rotas que qualquer usuário da equipe pode acessar (não só admin) ficam fora desse sub-grupo, como `/people` hoje.
 
 ## Middleware Stack
 A ordem de execução dos middlewares é (definida em `internal/api/router.go`, com `Auth` aplicado depois dentro de `internal/api/v1/router.go`):
@@ -38,6 +38,14 @@ Contas `user` e `admin` só enxergam e agem nas agências atribuídas a elas em 
 - **O bot respeita o mesmo escopo** (`authorizeSender` devolve o escopo do remetente): sem isso o WhatsApp seria o caminho em volta de qualquer atribuição. Remetente restrito não cria agência por apelido desconhecido.
 - **SSE não é filtrado, de propósito**: os eventos carregam só um id (ou nada) e cada tela refaz a busca com os próprios filtros, que já passam pelo escopo.
 - Vazamento aceito: o conflito de localizador (`ErrProgramLocatorTaken`) continua global e revela que o localizador existe em outra agência.
+
+## Cliente de Extrato (`statement_client`)
+Perfil para cliente de fora que só lê o extrato Azul/Smiles das contas concedidas a ele em `user_accounts` (migrations 000088/000089). Qualquer admin cadastra e concede contas em `/dashboard/users`.
+- **O grupo privado do `v1/router.go` é só da equipe:** além do `RequireAuth`, ele usa `middleware.RequireStaff()` (`user`, `admin` e, como sempre, `dev`). Rota nova nesse grupo já nasce fechada para o cliente. **Não** monte rota de equipe fora desse grupo, e não troque o `RequireStaff` por uma lista que esqueça de barrar um perfil novo.
+- O cliente só alcança `/auth/me` e o grupo `/portal` (`v1/routes/portal.go`). Toda rota `/portal/accounts/{id}/...` passa pelo `middleware.RequireLinkedAccount`, que responde **404** (nunca 403) para conta não concedida, arquivada ou id malformado.
+- **O extrato do portal sai sem vínculos:** os builders `buildAzulStatementEntries`/`buildSmilesStatementEntries` recebem `includeLinks=false`, então passageiro, emissão, lote e custo dos pontos nunca chegam ao cliente. O CSV já não traz nada disso.
+- A senha da cia no portal é só de escrita (`PUT /portal/accounts/{id}/password`). Não existe conexão Smiles no portal: o código de verificação só sai do navegador com a extensão M80, que é da equipe. O cliente salva a senha e a equipe faz o passo do código.
+- `GET /users` esconde esse perfil por padrão, porque a mesma lista alimenta os seletores de emissor; a tela de usuários pede `include_clients=true`. O bot ignora o telefone desse perfil (`bot/resolve.go`).
 
 ## Respostas HTTP (Regra de Ouro)
 - **NUNCA** use `http.Error` ou `json.NewEncoder` diretamente nos handlers.

@@ -1,0 +1,3 @@
+-- Postgres cannot drop a value from an enum without recreating the type and rewriting every
+-- dependent row. Forward-only, no-op down, same as 000032: an older API image never produces
+-- 'statement_client', so leaving it behind on a rollback is harmless.

@@ -113,6 +113,13 @@ func RequireRole(allowed ...string) func(handler http.Handler) http.Handler {
 	}
 }
 
+// RequireStaff allows the people who work in the panel: user, admin and dev. It exists so
+// that a role meant for outsiders (statement_client) is kept out of the staff routes by
+// default, instead of by remembering to gate every route one by one.
+func RequireStaff() func(handler http.Handler) http.Handler {
+	return RequireRole(data.RoleUser, data.RoleAdmin)
+}
+
 // RequireAdmin allows admin - and dev, through RequireRole.
 func RequireAdmin() func(handler http.Handler) http.Handler {
 	return RequireRole(data.RoleAdmin)

@@ -10,18 +10,22 @@ import (
 )
 
 // The values of the user_role Postgres enum, created in migration 000001 and extended by
-// 000032. They are plain strings because User.Role has to stay a string for gorm and for
+// 000032 and 000088. They are plain strings because User.Role has to stay a string for gorm and for
 // the JSON contract; a named type would ripple into both for no gain.
 const (
 	RoleUser  = "user"
 	RoleAdmin = "admin"
 	RoleDev   = "dev"
+	// RoleStatementClient is an outside customer who only reads the Azul/Smiles statement of
+	// the accounts granted to them in user_accounts. It is kept out of every staff route
+	// (see the role gate in v1.NewRouter) and only reaches the /portal routes.
+	RoleStatementClient = "statement_client"
 )
 
 // UserRoles is the whitelist the API validates and filters against. Keep it in sync with
 // the enum: a value that exists here but not in Postgres fails at INSERT time, not at
 // validation time, which surfaces as a 500 instead of a 400.
-var UserRoles = []string{RoleUser, RoleAdmin, RoleDev}
+var UserRoles = []string{RoleUser, RoleAdmin, RoleDev, RoleStatementClient}
 
 type User struct {
 	ID        string         `gorm:"primaryKey;type:uuid" json:"id"`

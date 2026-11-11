@@ -8917,6 +8917,78 @@
                 }
             }
         },
+        "/passengers/extract": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Lê com IA os passageiros de uma mensagem colada ou de fotos de documentos, para a extensão preencher o formulário da cia. Nada é guardado.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Passageiros"
+                ],
+                "summary": "Extrair passageiros de texto ou foto de documento",
+                "parameters": [
+                    {
+                        "description": "Texto e imagens colados, misturados",
+                        "name": "payload",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/schemas.PassengerExtractRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/passengerextract.Passenger"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.StandardResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/utils.StandardResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/utils.StandardResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "$ref": "#/definitions/utils.StandardResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/utils.StandardResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/people": {
             "get": {
                 "security": [
@@ -10446,6 +10518,256 @@
                     },
                     "500": {
                         "description": "Erro ao registrar acerto",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/portal/accounts": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Lista as contas Azul/Smiles concedidas ao usuário logado (perfil statement_client), com o estado da sincronização e o último saldo lido. Nunca devolve a senha.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Portal"
+                ],
+                "summary": "Contas do cliente de extrato",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.PortalAccountListResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Não autenticado",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Só para clientes de extrato",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Erro ao carregar as contas",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/portal/accounts/{id}/entries": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "O mesmo extrato sincronizado da tela da equipe, sem os vínculos com emissões e lotes (passageiro, custo dos pontos). Azul devolve o formato de AzulStatementEntriesResponse; Smiles, o de SmilesStatementEntriesResponse.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Portal"
+                ],
+                "summary": "Extrato da conta, visão do cliente",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Conta",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.AzulStatementEntriesSingleResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Não autenticado",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Só para clientes de extrato",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Conta não encontrada ou não concedida",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Conta não acompanha extrato",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/portal/accounts/{id}/export": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "O mesmo CSV da equipe (Conta, Data, Operação, Localizador, Valor, Origem, Destino, Descrição), que não traz vínculos nem custos.",
+                "produces": [
+                    "text/csv"
+                ],
+                "tags": [
+                    "Portal"
+                ],
+                "summary": "Exportar o extrato da conta em CSV, visão do cliente",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Conta",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Primeiro dia (YYYY-MM-DD, dia de Brasília)",
+                        "name": "date_from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Último dia, inclusive (YYYY-MM-DD, dia de Brasília)",
+                        "name": "date_to",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "CSV do extrato",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "404": {
+                        "description": "Conta não encontrada ou não concedida",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/portal/accounts/{id}/password": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Grava a nova senha (criptografada) para o próximo \"Conectar\". Não conecta sozinho e nunca devolve a senha.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Portal"
+                ],
+                "summary": "Trocar a senha da conta na companhia",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Conta",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Nova senha",
+                        "name": "payload",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/schemas.PortalPasswordRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Senha salva",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Payload inválido",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Conta não encontrada ou não concedida",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/portal/accounts/{id}/status": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Portal"
+                ],
+                "summary": "Estado da sincronização da conta, visão do cliente",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Conta",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.AzulSyncStateSingleResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Conta não encontrada ou não concedida",
                         "schema": {
                             "$ref": "#/definitions/schemas.ErrorResponse"
                         }
@@ -12283,11 +12605,18 @@
                         "enum": [
                             "admin",
                             "user",
-                            "dev"
+                            "dev",
+                            "statement_client"
                         ],
                         "type": "string",
                         "description": "Perfil",
                         "name": "role",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Inclui os clientes de extrato quando não há filtro de perfil",
+                        "name": "include_clients",
                         "in": "query"
                     }
                 ],
@@ -12366,7 +12695,7 @@
                         }
                     },
                     "422": {
-                        "description": "Agência inexistente",
+                        "description": "Agência ou conta inexistente",
                         "schema": {
                             "$ref": "#/definitions/schemas.ErrorResponse"
                         }
@@ -12498,7 +12827,7 @@
                         }
                     },
                     "422": {
-                        "description": "Agência inexistente",
+                        "description": "Agência ou conta inexistente",
                         "schema": {
                             "$ref": "#/definitions/schemas.ErrorResponse"
                         }
@@ -12874,6 +13203,85 @@
                 "VerdictInvalid",
                 "VerdictCancellation"
             ]
+        },
+        "passengerextract.Passenger": {
+            "type": "object",
+            "properties": {
+                "birth_date": {
+                    "type": "string"
+                },
+                "cpf": {
+                    "type": "string"
+                },
+                "document_expiry": {
+                    "type": "string"
+                },
+                "document_issuing_country": {
+                    "type": "string"
+                },
+                "document_number": {
+                    "type": "string"
+                },
+                "document_type": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "escalated": {
+                    "description": "Whether a stronger model had to re-read one of this passenger's images.",
+                    "type": "boolean"
+                },
+                "first_name": {
+                    "type": "string"
+                },
+                "gender": {
+                    "type": "string"
+                },
+                "gender_source": {
+                    "type": "string"
+                },
+                "illegible_fields": {
+                    "description": "Fields a document showed but could not be read with certainty; left for a human.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "last_name": {
+                    "type": "string"
+                },
+                "nationality": {
+                    "type": "string"
+                },
+                "notes": {
+                    "type": "string"
+                },
+                "phone": {
+                    "type": "string"
+                },
+                "shared_fields": {
+                    "description": "Fields filled from another passenger of the same paste (e-mail, phone).",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "source_images": {
+                    "description": "1-based numbers of the pasted images this passenger was read from; empty when they came\nfrom the text alone.",
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "warnings": {
+                    "description": "Problems the checks found, for the extension to flag.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
         },
         "schemas.AccountBeneficiaryListResponse": {
             "type": "object",
@@ -14133,7 +14541,8 @@
             "type": "object",
             "properties": {
                 "cancellation_fee": {
-                    "type": "integer"
+                    "type": "integer",
+                    "minimum": 0
                 },
                 "cancellation_only": {
                     "description": "CancellationOnly marks the issuance as a row that exists only to carry this\nestorno: the booking was made outside the panel, so its points were never miles\nissued here and the supplier balance must count the refund alone. Registering the\nbooking and then cancelling it with twice the points is what this replaces.",
@@ -14145,10 +14554,13 @@
                     "example": "2026-09-05"
                 },
                 "refunded_points": {
-                    "type": "integer"
+                    "description": "Never negative, mirroring the panel's own form: a negative fee would make the sale\nowe the client back more than came in, and a negative refund would skew the\naccount's expected balance.",
+                    "type": "integer",
+                    "minimum": 0
                 },
                 "refunded_taxes": {
-                    "type": "integer"
+                    "type": "integer",
+                    "minimum": 0
                 }
             }
         },
@@ -15041,6 +15453,13 @@
                 "phone"
             ],
             "properties": {
+                "account_ids": {
+                    "description": "AccountIDs are the Azul/Smiles accounts whose statement a statement_client may read.\nOnly valid with that role; any admin may send it.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "agency_ids": {
                     "description": "AgencyIDs are the agencies the new user may see. Only a dev may send it; absent means\nnone, and it is ignored for a dev, whose role already covers every agency.",
                     "type": "array",
@@ -15064,7 +15483,8 @@
                     "enum": [
                         "user",
                         "admin",
-                        "dev"
+                        "dev",
+                        "statement_client"
                     ]
                 }
             }
@@ -17034,6 +17454,22 @@
                 }
             }
         },
+        "schemas.PassengerExtractRequest": {
+            "type": "object",
+            "properties": {
+                "images": {
+                    "type": "array",
+                    "maxItems": 20,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "text": {
+                    "type": "string",
+                    "maxLength": 20000
+                }
+            }
+        },
         "schemas.PersonListResponse": {
             "type": "object",
             "properties": {
@@ -17358,6 +17794,88 @@
                 "success": {
                     "type": "boolean",
                     "example": true
+                }
+            }
+        },
+        "schemas.PortalAccount": {
+            "type": "object",
+            "properties": {
+                "connected": {
+                    "description": "Connected/State/LastSyncedAt/LastBalancePoints mirror the program's sync-state response.",
+                    "type": "boolean"
+                },
+                "has_password": {
+                    "type": "boolean"
+                },
+                "holder_name": {
+                    "type": "string",
+                    "example": "MARIA SILVA"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "last_balance_points": {
+                    "type": "integer"
+                },
+                "last_synced_at": {
+                    "type": "string"
+                },
+                "login": {
+                    "description": "Login is the account's own number/CPF at the airline; it belongs to the client.",
+                    "type": "string"
+                },
+                "program_code": {
+                    "type": "string",
+                    "example": "AZUL"
+                },
+                "program_color": {
+                    "type": "string",
+                    "example": "#1D4ED8"
+                },
+                "program_id": {
+                    "type": "string"
+                },
+                "program_name": {
+                    "type": "string",
+                    "example": "Azul Fidelidade"
+                },
+                "state": {
+                    "type": "string",
+                    "example": "ok"
+                },
+                "tracks_statement": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "schemas.PortalAccountListResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/schemas.PortalAccount"
+                    }
+                },
+                "message": {
+                    "type": "string",
+                    "example": "Contas carregadas"
+                },
+                "success": {
+                    "type": "boolean",
+                    "example": true
+                }
+            }
+        },
+        "schemas.PortalPasswordRequest": {
+            "type": "object",
+            "required": [
+                "password"
+            ],
+            "properties": {
+                "password": {
+                    "type": "string",
+                    "maxLength": 200
                 }
             }
         },
@@ -19297,6 +19815,13 @@
         "schemas.UpdateUserRequest": {
             "type": "object",
             "properties": {
+                "account_ids": {
+                    "description": "AccountIDs replaces a statement_client's accounts when present, with the same null vs\nempty semantics as AgencyIDs. Rejected for any other role.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "agency_ids": {
                     "description": "AgencyIDs replaces the user's agencies when present - an empty list removes them all.\nAbsent (null) leaves them alone, which is what a panel tab opened before this field\nexisted keeps sending. Only a dev may send it.",
                     "type": "array",
@@ -19320,7 +19845,8 @@
                     "enum": [
                         "user",
                         "admin",
-                        "dev"
+                        "dev",
+                        "statement_client"
                     ]
                 }
             }
@@ -19347,6 +19873,13 @@
         "schemas.UserResponse": {
             "type": "object",
             "properties": {
+                "account_ids": {
+                    "description": "AccountIDs are the accounts granted to a statement_client. Always empty for staff.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "agency_ids": {
                     "description": "AgencyIDs are the agencies granted to the user. Always empty for a dev: the role\nitself means every agency.",
                     "type": "array",

@@ -6,6 +6,10 @@ import { getSessionUser, requireAdmin } from "@/lib/session"
 import { getUsersSchema, User } from "@/schemas/user"
 import { Agency, getAgenciesSchema } from "@/schemas/agency"
 import { fetchList } from "@/lib/fetch-list"
+import { AccountOption, getAccountOptionsSchema } from "@/schemas/account"
+import { getPeopleOptionsSchema, PersonOption } from "@/schemas/person"
+import { getLoyaltyProgramsSchema, LoyaltyProgram } from "@/schemas/loyalty-program"
+import type { StatementAccountChoice } from "@/components/users/user-accounts-field"
 import { UserCard } from "@/components/users/user-card"
 import { CreateUserForm } from "@/components/users/create-user-form"
 import { ListFilterBar } from "@/components/shared/list-filter-bar"
@@ -47,7 +51,9 @@ export default async function UsersPage({
   // second /auth/me of its own - which also means a hiccup on that call can no longer
   // empty the user list, as it did when both shared one try block.
   const [usersResult, sessionUser] = await Promise.all([
-    fetch(`${env.BACKEND_URL}/api/v1/users?${listQueryString(params, { role })}`, {
+    // include_clients: the API leaves statement clients out by default, because the same list
+    // feeds the issuer pickers; this page is where they are managed.
+    fetch(`${env.BACKEND_URL}/api/v1/users?${listQueryString(params, { role, include_clients: "true" })}`, {
       headers: authHeader,
       cache: "no-store",
     })
@@ -73,13 +79,19 @@ export default async function UsersPage({
       )) ?? [])
     : []
 
+  const statementAccounts = await loadStatementAccountChoices(authHeader)
+
   return (
     <div className="p-6 sm:p-8">
       <div className="flex flex-col gap-2 sm:gap-6">
         <h1 className="text-lg font-semibold text-slate-800">
           Usuários do M80
         </h1>
-        <CreateUserForm viewerIsDev={viewerIsDev} agencies={agencies} />
+        <CreateUserForm
+          viewerIsDev={viewerIsDev}
+          agencies={agencies}
+          statementAccounts={statementAccounts}
+        />
         <ListFilterBar
           searchPlaceholder="Buscar por nome ou telefone"
           order={params.order}
@@ -93,6 +105,7 @@ export default async function UsersPage({
               { value: "admin", label: "Administrador" },
               { value: "user", label: "Usuário" },
               { value: "dev", label: "Desenvolvedor" },
+              { value: "statement_client", label: "Cliente (extrato)" },
             ]}
           />
         </ListFilterBar>
@@ -112,6 +125,7 @@ export default async function UsersPage({
                 isCurrentUser={user.id === currentUserId}
                 viewerIsDev={viewerIsDev}
                 agencies={agencies}
+                statementAccounts={statementAccounts}
               />
             ))
           )}
@@ -119,4 +133,38 @@ export default async function UsersPage({
       </div>
     </div>
   )
+}
+
+// The accounts a statement client can be granted: Azul and Smiles only, the two programs whose
+// statement is synced. Joined here from the three picker feeds so the browser gets words, not
+// ids to look up. A failed feed leaves the picker empty rather than breaking the page.
+async function loadStatementAccountChoices(
+  authHeader: Record<string, string>,
+): Promise<StatementAccountChoice[]> {
+  const api = `${env.BACKEND_URL}/api/v1`
+  const [accounts, people, programs] = await Promise.all([
+    fetchList<AccountOption>(`${api}/accounts?view=picker`, getAccountOptionsSchema.response, authHeader),
+    fetchList<PersonOption>(`${api}/people?view=picker`, getPeopleOptionsSchema.response, authHeader),
+    fetchList<LoyaltyProgram>(`${api}/loyalty-programs`, getLoyaltyProgramsSchema.response, authHeader),
+  ])
+
+  const statementPrograms = new Map(
+    (programs ?? [])
+      .filter((program) => program.code === "AZUL" || program.code === "SMILES")
+      .map((program) => [program.id, program.name]),
+  )
+  const holderNames = new Map((people ?? []).map((person) => [person.id, person.name]))
+
+  return (accounts ?? [])
+    .filter((account) => !account.deleted_at && statementPrograms.has(account.loyalty_program_id))
+    .map((account) => {
+      const holder = account.holder_id ? holderNames.get(account.holder_id) : undefined
+      const program = statementPrograms.get(account.loyalty_program_id) ?? ""
+      return {
+        id: account.id,
+        label: `${holder ?? "Sem titular"} · ${program}`,
+        detail: account.login ?? "Sem login",
+      }
+    })
+    .sort((a, b) => a.label.localeCompare(b.label, "pt-BR"))
 }

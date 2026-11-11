@@ -6,7 +6,8 @@ export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
 
   const isLoginPage = pathname === "/"
-  const isDashboardRoute = pathname.startsWith("/dashboard")
+  // /portal is the statement client's area; it needs a session exactly like the dashboard.
+  const isDashboardRoute = pathname.startsWith("/dashboard") || pathname.startsWith("/portal")
 
   // logged and is login page
   if (token && isLoginPage) {
