@@ -1,6 +1,6 @@
 module github.com/murandido/m-80-backend
 
-go 1.26.10
+go 1.26.11
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.81.0
