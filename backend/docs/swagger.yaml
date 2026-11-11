@@ -248,6 +248,65 @@ definitions:
     - VerdictDuplicateInFile
     - VerdictInvalid
     - VerdictCancellation
+  passengerextract.Passenger:
+    properties:
+      birth_date:
+        type: string
+      cpf:
+        type: string
+      document_expiry:
+        type: string
+      document_issuing_country:
+        type: string
+      document_number:
+        type: string
+      document_type:
+        type: string
+      email:
+        type: string
+      escalated:
+        description: Whether a stronger model had to re-read one of this passenger's
+          images.
+        type: boolean
+      first_name:
+        type: string
+      gender:
+        type: string
+      gender_source:
+        type: string
+      illegible_fields:
+        description: Fields a document showed but could not be read with certainty;
+          left for a human.
+        items:
+          type: string
+        type: array
+      last_name:
+        type: string
+      nationality:
+        type: string
+      notes:
+        type: string
+      phone:
+        type: string
+      shared_fields:
+        description: Fields filled from another passenger of the same paste (e-mail,
+          phone).
+        items:
+          type: string
+        type: array
+      source_images:
+        description: |-
+          1-based numbers of the pasted images this passenger was read from; empty when they came
+          from the text alone.
+        items:
+          type: integer
+        type: array
+      warnings:
+        description: Problems the checks found, for the extension to flag.
+        items:
+          type: string
+        type: array
+    type: object
   schemas.AccountBeneficiaryListResponse:
     properties:
       data:
@@ -1193,6 +1252,7 @@ definitions:
   schemas.CancelIssuanceRequest:
     properties:
       cancellation_fee:
+        minimum: 0
         type: integer
       cancellation_only:
         description: |-
@@ -1209,8 +1269,14 @@ definitions:
         example: "2026-09-05"
         type: string
       refunded_points:
+        description: |-
+          Never negative, mirroring the panel's own form: a negative fee would make the sale
+          owe the client back more than came in, and a negative refund would skew the
+          account's expected balance.
+        minimum: 0
         type: integer
       refunded_taxes:
+        minimum: 0
         type: integer
     type: object
   schemas.ClientListResponse:
@@ -1889,6 +1955,13 @@ definitions:
     type: object
   schemas.CreateUserRequest:
     properties:
+      account_ids:
+        description: |-
+          AccountIDs are the Azul/Smiles accounts whose statement a statement_client may read.
+          Only valid with that role; any admin may send it.
+        items:
+          type: string
+        type: array
       agency_ids:
         description: |-
           AgencyIDs are the agencies the new user may see. Only a dev may send it; absent means
@@ -1909,6 +1982,7 @@ definitions:
         - user
         - admin
         - dev
+        - statement_client
         type: string
     required:
     - name
@@ -3342,6 +3416,17 @@ definitions:
         example: true
         type: boolean
     type: object
+  schemas.PassengerExtractRequest:
+    properties:
+      images:
+        items:
+          type: string
+        maxItems: 20
+        type: array
+      text:
+        maxLength: 20000
+        type: string
+    type: object
   schemas.PersonListResponse:
     properties:
       data:
@@ -3566,6 +3651,65 @@ definitions:
       success:
         example: true
         type: boolean
+    type: object
+  schemas.PortalAccount:
+    properties:
+      connected:
+        description: Connected/State/LastSyncedAt/LastBalancePoints mirror the program's
+          sync-state response.
+        type: boolean
+      has_password:
+        type: boolean
+      holder_name:
+        example: MARIA SILVA
+        type: string
+      id:
+        type: string
+      last_balance_points:
+        type: integer
+      last_synced_at:
+        type: string
+      login:
+        description: Login is the account's own number/CPF at the airline; it belongs
+          to the client.
+        type: string
+      program_code:
+        example: AZUL
+        type: string
+      program_color:
+        example: '#1D4ED8'
+        type: string
+      program_id:
+        type: string
+      program_name:
+        example: Azul Fidelidade
+        type: string
+      state:
+        example: ok
+        type: string
+      tracks_statement:
+        type: boolean
+    type: object
+  schemas.PortalAccountListResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/schemas.PortalAccount'
+        type: array
+      message:
+        example: Contas carregadas
+        type: string
+      success:
+        example: true
+        type: boolean
+    type: object
+  schemas.PortalPasswordRequest:
+    properties:
+      password:
+        maxLength: 200
+        type: string
+    required:
+    - password
     type: object
   schemas.PromoEnrollmentListResponse:
     properties:
@@ -5075,6 +5219,13 @@ definitions:
     type: object
   schemas.UpdateUserRequest:
     properties:
+      account_ids:
+        description: |-
+          AccountIDs replaces a statement_client's accounts when present, with the same null vs
+          empty semantics as AgencyIDs. Rejected for any other role.
+        items:
+          type: string
+        type: array
       agency_ids:
         description: |-
           AgencyIDs replaces the user's agencies when present - an empty list removes them all.
@@ -5096,6 +5247,7 @@ definitions:
         - user
         - admin
         - dev
+        - statement_client
         type: string
     type: object
   schemas.UserListResponse:
@@ -5113,6 +5265,12 @@ definitions:
     type: object
   schemas.UserResponse:
     properties:
+      account_ids:
+        description: AccountIDs are the accounts granted to a statement_client. Always
+          empty for staff.
+        items:
+          type: string
+        type: array
       agency_ids:
         description: |-
           AgencyIDs are the agencies granted to the user. Always empty for a dev: the role
@@ -11204,6 +11362,53 @@ paths:
       summary: Atualizar observação
       tags:
       - Observações
+  /passengers/extract:
+    post:
+      consumes:
+      - application/json
+      description: Lê com IA os passageiros de uma mensagem colada ou de fotos de
+        documentos, para a extensão preencher o formulário da cia. Nada é guardado.
+      parameters:
+      - description: Texto e imagens colados, misturados
+        in: body
+        name: payload
+        required: true
+        schema:
+          $ref: '#/definitions/schemas.PassengerExtractRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/passengerextract.Passenger'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/utils.StandardResponse'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/utils.StandardResponse'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/utils.StandardResponse'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/utils.StandardResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/utils.StandardResponse'
+      security:
+      - BearerAuth: []
+      summary: Extrair passageiros de texto ou foto de documento
+      tags:
+      - Passageiros
   /people:
     get:
       description: Retorna todas as pessoas cadastradas no sistema. Sem paginação
@@ -12218,6 +12423,170 @@ paths:
       summary: Marcar lote como acertado
       tags:
       - Estoque de pontos
+  /portal/accounts:
+    get:
+      description: Lista as contas Azul/Smiles concedidas ao usuário logado (perfil
+        statement_client), com o estado da sincronização e o último saldo lido. Nunca
+        devolve a senha.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/schemas.PortalAccountListResponse'
+        "401":
+          description: Não autenticado
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+        "403":
+          description: Só para clientes de extrato
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+        "500":
+          description: Erro ao carregar as contas
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Contas do cliente de extrato
+      tags:
+      - Portal
+  /portal/accounts/{id}/entries:
+    get:
+      description: O mesmo extrato sincronizado da tela da equipe, sem os vínculos
+        com emissões e lotes (passageiro, custo dos pontos). Azul devolve o formato
+        de AzulStatementEntriesResponse; Smiles, o de SmilesStatementEntriesResponse.
+      parameters:
+      - description: Conta
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/schemas.AzulStatementEntriesSingleResponse'
+        "401":
+          description: Não autenticado
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+        "403":
+          description: Só para clientes de extrato
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+        "404":
+          description: Conta não encontrada ou não concedida
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+        "422":
+          description: Conta não acompanha extrato
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Extrato da conta, visão do cliente
+      tags:
+      - Portal
+  /portal/accounts/{id}/export:
+    get:
+      description: O mesmo CSV da equipe (Conta, Data, Operação, Localizador, Valor,
+        Origem, Destino, Descrição), que não traz vínculos nem custos.
+      parameters:
+      - description: Conta
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Primeiro dia (YYYY-MM-DD, dia de Brasília)
+        in: query
+        name: date_from
+        type: string
+      - description: Último dia, inclusive (YYYY-MM-DD, dia de Brasília)
+        in: query
+        name: date_to
+        type: string
+      produces:
+      - text/csv
+      responses:
+        "200":
+          description: CSV do extrato
+          schema:
+            type: string
+        "404":
+          description: Conta não encontrada ou não concedida
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Exportar o extrato da conta em CSV, visão do cliente
+      tags:
+      - Portal
+  /portal/accounts/{id}/password:
+    put:
+      consumes:
+      - application/json
+      description: Grava a nova senha (criptografada) para o próximo "Conectar". Não
+        conecta sozinho e nunca devolve a senha.
+      parameters:
+      - description: Conta
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Nova senha
+        in: body
+        name: payload
+        required: true
+        schema:
+          $ref: '#/definitions/schemas.PortalPasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Senha salva
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+        "400":
+          description: Payload inválido
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+        "404":
+          description: Conta não encontrada ou não concedida
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Trocar a senha da conta na companhia
+      tags:
+      - Portal
+  /portal/accounts/{id}/status:
+    get:
+      parameters:
+      - description: Conta
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/schemas.AzulSyncStateSingleResponse'
+        "404":
+          description: Conta não encontrada ou não concedida
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Estado da sincronização da conta, visão do cliente
+      tags:
+      - Portal
   /promo-enrollments:
     get:
       description: Histórico paginado do que foi tentado, para quem e como terminou.
@@ -13461,9 +13830,14 @@ paths:
         - admin
         - user
         - dev
+        - statement_client
         in: query
         name: role
         type: string
+      - description: Inclui os clientes de extrato quando não há filtro de perfil
+        in: query
+        name: include_clients
+        type: boolean
       produces:
       - application/json
       responses:
@@ -13516,7 +13890,7 @@ paths:
           schema:
             $ref: '#/definitions/schemas.ErrorResponse'
         "422":
-          description: Agência inexistente
+          description: Agência ou conta inexistente
           schema:
             $ref: '#/definitions/schemas.ErrorResponse'
         "500":
@@ -13637,7 +14011,7 @@ paths:
           schema:
             $ref: '#/definitions/schemas.ErrorResponse'
         "422":
-          description: Agência inexistente
+          description: Agência ou conta inexistente
           schema:
             $ref: '#/definitions/schemas.ErrorResponse'
         "500":
