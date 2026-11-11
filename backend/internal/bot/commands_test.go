@@ -391,6 +391,31 @@ func TestCmdRegistrarChat_UnknownUser_SilentlyIgnored(t *testing.T) {
 	})
 }
 
+// A statement client has a users row with a phone, but is an outsider: the bot must treat
+// them exactly like an unknown sender, or their WhatsApp would act on the agency's data.
+func TestCmdRegistrarChat_StatementClient_SilentlyIgnored(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		phone := fmt.Sprintf("119%08d", atomic.AddInt64(&phoneCounter, 1)%100000000)
+		user := createUser(t, tx, phone)
+		if err := tx.Model(&user).Update("role", data.RoleStatementClient).Error; err != nil {
+			t.Fatalf("failed to set role: %v", err)
+		}
+		client := &fakeClientBase{}
+		b := newRegistrarChatBot(tx, client)
+
+		evt := newRegistrarChatEvent("3333333333", "55"+phone)
+
+		b.cmdRegistrarChat(context.Background(), evt, time.Now())
+
+		if count := countListenedChats(t, tx, evt.Info.Chat.String()); count != 0 {
+			t.Fatalf("listened_chats rows: got %d, want 0", count)
+		}
+		if got := client.reactions(); len(got) != 0 {
+			t.Fatalf("reactions: got %v, want none - a statement client is not staff", got)
+		}
+	})
+}
+
 func TestCmdRegistrarChat_AlreadyRequested_NoDuplicateSilentlyIgnored(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		phone := fmt.Sprintf("119%08d", atomic.AddInt64(&phoneCounter, 1)%100000000)
