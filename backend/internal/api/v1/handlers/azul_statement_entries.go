@@ -45,52 +45,64 @@ func (h *StatementHandler) AzulStatementEntries(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
+	resp, message, err := h.buildAzulStatementEntries(account, middleware.AgencyScopeFrom(r.Context()), true)
+	if err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, message+err.Error())
+		return
+	}
+	utils.SendJSON(w, r, http.StatusOK, "Extrato carregado", resp)
+}
 
+// buildAzulStatementEntries assembles the statement page for one account. includeLinks false
+// leaves out the issuance and batch each line resolves to - who flew, what the points cost -
+// which is the agency's own bookkeeping and is never shown to a statement client. On error the
+// message is the Portuguese prefix to show before it.
+func (h *StatementHandler) buildAzulStatementEntries(
+	account data.Account, scope access.AgencyScope, includeLinks bool,
+) (schemas.AzulStatementEntriesResponse, string, error) {
 	var rows []data.AzulStatementLine
 	if err := h.DB.Where("account_id = ?", account.ID).
 		Order(data.AzulStatementLineOrder).
 		Find(&rows).Error; err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Não consegui ler o extrato: "+err.Error())
-		return
+		return schemas.AzulStatementEntriesResponse{}, "Não consegui ler o extrato: ", err
 	}
 
 	// Each line's link key: its locator when it has one (redemptions, refunds, flight accruals),
 	// otherwise a stable signature so a locator-less line (a promotion) can still be linked by
 	// hand. The same key is what the frontend sends back to link or unlink. Point-entry lines
 	// (purchases, accruals) resolve to a batch instead of an issuance, matched by day and points.
-	keys := make([]string, 0, len(rows))
-	batchRefs := make([]statement.BatchLineRef, 0, len(rows))
-	for _, row := range rows {
-		key := statementLineKey(row)
-		keys = append(keys, key)
-		if kind := statementKind(row); kind == data.AzulLineAccrual || kind == data.AzulLinePurchase {
-			batchRefs = append(batchRefs, statement.BatchLineRef{
-				Key: key, OccurredOn: row.OccurredOn, Points: row.Points,
-			})
+	resolved := map[string]statement.ResolvedBooking{}
+	resolvedBatches := map[string]statement.ResolvedBatch{}
+	if includeLinks {
+		keys := make([]string, 0, len(rows))
+		batchRefs := make([]statement.BatchLineRef, 0, len(rows))
+		for _, row := range rows {
+			key := statementLineKey(row)
+			keys = append(keys, key)
+			if kind := statementKind(row); kind == data.AzulLineAccrual || kind == data.AzulLinePurchase {
+				batchRefs = append(batchRefs, statement.BatchLineRef{
+					Key: key, OccurredOn: row.OccurredOn, Points: row.Points,
+				})
+			}
 		}
-	}
-	resolved, err := statement.ResolveBookingLinks(h.DB, account.ID, keys)
-	if err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Não consegui resolver os vínculos: "+err.Error())
-		return
-	}
-	resolvedBatches, err := statement.ResolveBatchLinks(h.DB, account.ID, batchRefs)
-	if err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Não consegui resolver os lotes: "+err.Error())
-		return
+		var err error
+		if resolved, err = statement.ResolveBookingLinks(h.DB, account.ID, keys); err != nil {
+			return schemas.AzulStatementEntriesResponse{}, "Não consegui resolver os vínculos: ", err
+		}
+		if resolvedBatches, err = statement.ResolveBatchLinks(h.DB, account.ID, batchRefs); err != nil {
+			return schemas.AzulStatementEntriesResponse{}, "Não consegui resolver os lotes: ", err
+		}
 	}
 
 	state, err := azulsync.LoadState(h.DB, account.ID)
 	if err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Não consegui ler o estado da sincronização: "+err.Error())
-		return
+		return schemas.AzulStatementEntriesResponse{}, "Não consegui ler o estado da sincronização: ", err
 	}
 
 	// The city-to-IATA lookup, read once for the whole page; an unassigned city shows its raw name.
 	cityCodes, err := data.LoadAzulCityCodes(h.DB)
 	if err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Não consegui ler os códigos de cidade: "+err.Error())
-		return
+		return schemas.AzulStatementEntriesResponse{}, "Não consegui ler os códigos de cidade: ", err
 	}
 
 	// The airline's per-day balance is only consistent within one response, so the page shows
@@ -132,21 +144,21 @@ func (h *StatementHandler) AzulStatementEntries(w http.ResponseWriter, r *http.R
 			entry.DayBalance = &closing
 		}
 		if booking, found := resolved[key]; found {
-			entry.LinkedIssuance = toLinkedIssuance(booking, middleware.AgencyScopeFrom(r.Context()))
+			entry.LinkedIssuance = toLinkedIssuance(booking, scope)
 		}
 		if batch, found := resolvedBatches[key]; found {
-			entry.LinkedBatch = toLinkedBatch(batch, middleware.AgencyScopeFrom(r.Context()))
+			entry.LinkedBatch = toLinkedBatch(batch, scope)
 		}
 		entries = append(entries, entry)
 	}
 
-	utils.SendJSON(w, r, http.StatusOK, "Extrato carregado", schemas.AzulStatementEntriesResponse{
+	return schemas.AzulStatementEntriesResponse{
 		SyncState: h.toAzulSyncStateResponse(account, state),
 		From:      from,
 		To:        to,
 		Lines:     entries,
 		Groups:    groupStatementEntries(rows, entries, resolved),
-	})
+	}, "", nil
 }
 
 // ExportAzulStatement handles GET /accounts/{id}/azul-statement/export
