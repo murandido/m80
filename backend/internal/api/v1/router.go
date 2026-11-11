@@ -91,5 +91,12 @@ func NewRouter(db *gorm.DB, broker *events.Broker, bookings *booking.Registry, m
 		routes.RegisterLegacyImportRoutes(r, db, broker)
 	})
 
+	// The statement client's own area, outside the staff group above: the only routes that role
+	// reaches besides /auth/me. Gated inside RegisterPortalRoutes.
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.RequireAuth(db))
+		routes.RegisterPortalRoutes(r, db, azulConnector)
+	})
+
 	return r
 }
