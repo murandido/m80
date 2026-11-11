@@ -34,11 +34,14 @@ func NewRouter(db *gorm.DB, broker *events.Broker, bookings *booking.Registry, m
 		})
 	})
 
-	// private routes
+	// private routes - staff only. RequireStaff is the default deny for any role that is
+	// not part of the team (statement_client today): a route added to this group later is
+	// closed to outsiders without anyone having to remember it.
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.RequireAuth(db))
+		r.Use(middleware.RequireStaff())
 
-		// any authenticated user
+		// any staff user
 		routes.RegisterPeopleRoutes(r, db)
 		routes.RegisterAccountRoutes(r, db, azulConnector)
 		routes.RegisterAirlineRoutes(r, db)
