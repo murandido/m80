@@ -67,10 +67,17 @@ func setupTestDB(t *testing.T) *gorm.DB {
 	return testDB
 }
 
+// TestMain supplies, once for the whole binary (t.Setenv is not allowed in parallel tests),
+// what these tests need and CI does not set: a JWT secret to sign tokens and an encryption key,
+// because the portal tests save accounts with a password. Defaults, never overrides - the same
+// rule as the handlers package's TestMain.
 func TestMain(m *testing.M) {
-	// Set once for the whole binary: t.Setenv is not allowed in parallel tests.
 	if os.Getenv("JWT_SECRET") == "" {
 		_ = os.Setenv("JWT_SECRET", "test-secret-for-router-tests")
+	}
+	if os.Getenv("ENCRYPTION_KEY") == "" {
+		// 64 hex characters (32 bytes), the shape utils.Encrypt demands.
+		_ = os.Setenv("ENCRYPTION_KEY", "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
 	}
 	os.Exit(m.Run())
 }
