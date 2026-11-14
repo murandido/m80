@@ -1,5 +1,6 @@
 import { formatCurrencyBRL } from "@/lib/currency"
-import { formatPoints, formatPointsCompact } from "@/lib/format"
+import { formatPointsCompact } from "@/lib/format"
+import { formatSignedPaddedPoints } from "@/lib/points"
 import type { DashboardMetric } from "@/app/dashboard/dashboard-params"
 
 // The eight categorical slots defined in globals.css. The ORDER is the colourblind-safety
@@ -35,7 +36,7 @@ export function metricValue(
 }
 
 export function formatMetric(value: number, metric: DashboardMetric): string {
-  return metric === "amount" ? formatCurrencyBRL(value) : formatPoints(value)
+  return metric === "amount" ? formatCurrencyBRL(value) : formatSignedPaddedPoints(value)
 }
 
 // Axis ticks and stat-tile values get the compact form; the exact digits stay reachable in

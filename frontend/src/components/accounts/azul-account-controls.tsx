@@ -1,16 +1,18 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState, useTransition } from "react"
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { formatDistanceToNow } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { toast } from "sonner"
-import { FileText, Link2, Loader2, Plug } from "lucide-react"
+import { FileText, Globe, Link2, Loader2, Plug } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { connectAzulAccountAction } from "@/actions/statement"
+import { connectAzulAccountAction, storeAzulBrowserKeyAction } from "@/actions/statement"
+import { azulConnectBridgeReady, requestAzulBrowserConnect } from "@/lib/azul-connect-extension"
 import { statementSyncStateSchema, type StatementSyncState } from "@/schemas/inventory"
 import { formatConnectingElapsed } from "@/lib/elapsed"
+import { formatSignedPaddedPoints } from "@/lib/points"
 import { Account } from "@/schemas/account"
 
 // The stable identifier of the Azul program is its code, not its name or id (see the loyalty
@@ -23,9 +25,9 @@ const AZUL_PROGRAM_CODE = "AZUL"
 // hammering the API.
 const POLL_INTERVAL_MS = 5000
 
-function formatPoints(points: number): string {
-  return points.toLocaleString("pt-BR")
-}
+// The extension marks the document before the panel's scripts run and never unmarks it, so there
+// is nothing to subscribe to; the server render has no extension.
+const subscribeToNothing = () => () => {}
 
 interface AzulAccountControlsProps {
   account: Account
@@ -50,6 +52,14 @@ export function AzulAccountControls({ account }: AzulAccountControlsProps) {
   // Remembers we were mid-connect, so the moment the poll reports it finished we refresh the page
   // to pull the freshly synced balance into the card.
   const wasConnecting = useRef(false)
+  // When this tab last asked for a connect. A state detail written after it is the outcome of that
+  // attempt, which is worth showing even on a state whose detail is usually a read error.
+  const [connectRequestedAt, setConnectRequestedAt] = useState<number | null>(null)
+  // The fallback: the operator logs in on the Azul site in a tab the extension opens. Offered only
+  // when the extension is there to answer, and tracked here because it lives in this tab - a
+  // person is typing in the other one.
+  const bridgeReady = useSyncExternalStore(subscribeToNothing, azulConnectBridgeReady, () => false)
+  const [browserConnecting, setBrowserConnecting] = useState(false)
 
   // Every Azul account can connect: the balance is read for all of them. "Acompanhar extrato"
   // only decides whether the statement link shows - see SyncAccount on the backend.
@@ -69,13 +79,16 @@ export function AzulAccountControls({ account }: AzulAccountControlsProps) {
     }
   }, [account.id])
 
-  // On mount, learn whether a connect is already in flight - but only for a not-yet-connected
-  // account, which is the one state where a login can be running or needed. A connected account
-  // shows its balance straight from the server render, no request per card on every page load.
+  // On mount, learn whether a connect is already in flight, and why the last one failed - but only
+  // for an account that is not connected or is waiting for a login, the states where a login can
+  // be running or needed. A healthy connected account shows its balance straight from the server
+  // render, no request per card on every page load.
   // The fetch is inlined (rather than calling fetchStatus) so the setState lands inside the
   // promise callback, not the effect body, and a late response for an unmounted card is dropped.
+  const waitingForLogin =
+    account.azul_sync_state === "needs_reconnect" || account.azul_sync_state === "needs_attention"
   useEffect(() => {
-    if (!enabled || account.azul_connected) return
+    if (!enabled || (account.azul_connected && !waitingForLogin)) return
     let active = true
     fetch(`/api/accounts/${account.id}/azul-status`, { cache: "no-store" })
       .then((response) => (response.ok ? response.json() : null))
@@ -88,7 +101,7 @@ export function AzulAccountControls({ account }: AzulAccountControlsProps) {
     return () => {
       active = false
     }
-  }, [enabled, account.azul_connected, account.id])
+  }, [enabled, account.azul_connected, waitingForLogin, account.id])
 
   const connecting = status?.connecting ?? false
 
@@ -123,6 +136,7 @@ export function AzulAccountControls({ account }: AzulAccountControlsProps) {
         return
       }
       toast.success("Login iniciado. O saldo aparece assim que a conta conectar.")
+      setConnectRequestedAt(Date.now())
       // Show "conectando" at once, then let the poll take over with the server's own timestamp.
       setStatus((prev) => ({
         connected: prev?.connected ?? account.azul_connected,
@@ -139,6 +153,58 @@ export function AzulAccountControls({ account }: AzulAccountControlsProps) {
     })
   }
 
+  async function handleBrowserConnect() {
+    setBrowserConnecting(true)
+    try {
+      const answer = await requestAzulBrowserConnect(account.id, account.login ?? "")
+      if ("error" in answer) {
+        toast.error(answer.error)
+        return
+      }
+      const stored = await storeAzulBrowserKeyAction(account.id, answer.customerKey, answer.document)
+      if ("error" in stored) {
+        toast.error(stored.error)
+        return
+      }
+      toast.success("Conta conectada pelo navegador. O saldo aparece em instantes.")
+      await fetchStatus()
+      router.refresh()
+    } finally {
+      setBrowserConnecting(false)
+    }
+  }
+
+  const browserButton = bridgeReady ? (
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={() => void handleBrowserConnect()}
+      disabled={isConnecting}
+      title="Abre a Azul numa aba para você fazer o login; use quando o Conectar automático não funcionar"
+      className="border-slate-400 text-slate-700 hover:border-slate-600 hover:bg-slate-600 hover:text-white"
+    >
+      <Globe className="mr-1 h-3.5 w-3.5" />
+      Pelo navegador
+    </Button>
+  ) : null
+
+  if (browserConnecting) {
+    return (
+      <div className="flex items-center justify-between gap-2 border-t border-slate-100 bg-slate-50 px-4 py-2">
+        <div className="flex flex-col">
+          <span className="flex items-center gap-1.5 text-sm font-medium text-sky-700">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            Aguardando o login na aba da Azul…
+          </span>
+          <span className="text-xs text-slate-500">
+            Na aba que abriu, clique em Entrar no topo: o login e a senha entram sozinhos. Depois
+            confirme. Para cancelar, feche a aba.
+          </span>
+        </div>
+      </div>
+    )
+  }
+
   // A login in flight - whether this tab started it or it was already running when the card
   // mounted. Shown with a running timer so it reads as working, not stuck.
   if (connecting) {
@@ -151,7 +217,8 @@ export function AzulAccountControls({ account }: AzulAccountControlsProps) {
             Conectando… {since ? formatConnectingElapsed(since, now) : ""}
           </span>
           <span className="text-xs text-slate-500">
-            O login pode levar alguns minutos. Pode sair da página — ele continua.
+            O login pode levar alguns minutos, ou mais se houver outras contas na fila. Pode sair
+            da página — ele continua.
           </span>
         </div>
       </div>
@@ -159,25 +226,52 @@ export function AzulAccountControls({ account }: AzulAccountControlsProps) {
   }
 
   const connected = status?.connected ?? account.azul_connected
+  const syncState = status?.state ?? account.azul_sync_state
+
+  // Why the last connect did not finish, as the backend wrote it for the operator (Portuguese,
+  // with what to do). Shown where it can only be a connect outcome: a never-connected account or
+  // one parked for a login - plus any state right after a connect from this tab, so a click that
+  // failed always says why instead of the card silently going back to where it was.
+  const answeredThisAttempt =
+    connectRequestedAt != null &&
+    status?.updated_at != null &&
+    Date.parse(status.updated_at) >= connectRequestedAt
+  const connectDetail =
+    status?.detail && (!connected || syncState === "needs_reconnect" || answeredThisAttempt)
+      ? status.detail
+      : null
+  // An account outcome (password, lock) is the operator's to fix; anything else is a wait.
+  const accountProblem =
+    syncState === "error" || syncState === "needs_attention" || syncState === "needs_reconnect"
 
   if (!connected) {
     return (
       <div className="flex items-center justify-between gap-2 border-t border-slate-100 bg-slate-50 px-4 py-2">
-        <span className="text-xs text-slate-500">Conta Azul ainda não conectada</span>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleConnect}
-          disabled={isConnecting}
-          className="border-sky-700 text-sky-700 hover:border-sky-600 hover:bg-sky-600 hover:text-white"
-        >
-          {isConnecting ? (
-            <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <Link2 className="mr-1 h-3.5 w-3.5" />
+        <div className="flex flex-col">
+          <span className="text-xs text-slate-500">Conta Azul ainda não conectada</span>
+          {connectDetail && (
+            <span className={`text-xs ${accountProblem ? "text-rose-700" : "text-amber-700"}`}>
+              {connectDetail}
+            </span>
           )}
-          Conectar
-        </Button>
+        </div>
+        <div className="flex items-center gap-2">
+          {browserButton}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleConnect}
+            disabled={isConnecting}
+            className="border-sky-700 text-sky-700 hover:border-sky-600 hover:bg-sky-600 hover:text-white"
+          >
+            {isConnecting ? (
+              <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Link2 className="mr-1 h-3.5 w-3.5" />
+            )}
+            Conectar
+          </Button>
+        </div>
       </div>
     )
   }
@@ -186,7 +280,7 @@ export function AzulAccountControls({ account }: AzulAccountControlsProps) {
   // round that read the statement, so on an account that does not track it it is empty or stale.
   const balancePoints = account.real_balance_points ?? status?.last_balance_points
   const balance =
-    balancePoints != null ? `${formatPoints(balancePoints)} pts` : "Saldo ainda não sincronizado"
+    balancePoints != null ? `${formatSignedPaddedPoints(balancePoints)} pts` : "Saldo ainda não sincronizado"
   const lastSyncedAt = status?.last_synced_at ?? account.azul_last_synced_at
   const syncedAt = lastSyncedAt
     ? `atualizado ${formatDistanceToNow(new Date(lastSyncedAt), {
@@ -197,7 +291,6 @@ export function AzulAccountControls({ account }: AzulAccountControlsProps) {
 
   // A connected account whose sync stopped: Azul refused the key (needs_reconnect) or the rounds
   // keep failing (needs_attention). Either way the fix is a login, so offer it right here.
-  const syncState = status?.state ?? account.azul_sync_state
   const needsLogin = syncState === "needs_reconnect" || syncState === "needs_attention"
 
   return (
@@ -205,29 +298,37 @@ export function AzulAccountControls({ account }: AzulAccountControlsProps) {
       <div className="flex flex-col">
         <span className="text-sm font-medium text-slate-800">{balance}</span>
         {syncedAt && <span className="text-xs text-slate-500">{syncedAt}</span>}
-        {needsLogin && (
+        {needsLogin && !connectDetail && (
           <span className="text-xs text-rose-700">
             {syncState === "needs_reconnect"
               ? "A Azul não reconhece mais a conta — atualize a senha"
               : "Sincronização falhando — confira a senha"}
           </span>
         )}
+        {connectDetail && (
+          <span className={`text-xs ${accountProblem ? "text-rose-700" : "text-amber-700"}`}>
+            {connectDetail}
+          </span>
+        )}
       </div>
       {needsLogin && (
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleConnect}
-          disabled={isConnecting}
-          className="ml-auto border-sky-700 text-sky-700 hover:border-sky-600 hover:bg-sky-600 hover:text-white"
-        >
-          {isConnecting ? (
-            <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <Plug className="mr-1 h-3.5 w-3.5" />
-          )}
-          Reconectar
-        </Button>
+        <div className="ml-auto flex items-center gap-2">
+          {browserButton}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleConnect}
+            disabled={isConnecting}
+            className="border-sky-700 text-sky-700 hover:border-sky-600 hover:bg-sky-600 hover:text-white"
+          >
+            {isConnecting ? (
+              <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Plug className="mr-1 h-3.5 w-3.5" />
+            )}
+            Reconectar
+          </Button>
+        </div>
       )}
       {account.tracks_statement && (
         <Button

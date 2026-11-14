@@ -43,6 +43,19 @@ const (
 	auditActionRestored  = "restored"
 )
 
+// issuanceCancellationColumns are the columns a cancellation writes and a revert clears.
+// Only POST /cancel and POST /uncancel may change them, each as one whole operation; the
+// edit route leaves them out of its write - see UpdateIssuance.
+var issuanceCancellationColumns = []string{
+	"active", "cancelled_at", "cancelled_by_id",
+	"refunded_points", "refunded_taxes", "cancellation_fee", "cancellation_only",
+}
+
+// errIssuanceNotCancelled is UncancelIssuance's conditional write finding the row live
+// already - another revert got there first. It answers with the same 422 as the check
+// made before the transaction.
+var errIssuanceNotCancelled = errors.New("issuance is not cancelled")
+
 // SSE event types published by this handler. The payload is always just the
 // affected issuance id: every connected panel refetches the list with its own
 // filters anyway, and the filter rules (the creation/cancellation OR branch,
@@ -117,9 +130,6 @@ func toIssuanceResponse(issuance data.Issuance) schemas.IssuanceResponse {
 		Points:              issuance.Points,
 		ValueOfTheThousand:  issuance.ValueOfTheThousand,
 		Taxes:               issuance.Taxes,
-
-		RedemptionFeeSavedCents: issuance.RedemptionFeeSavedCents,
-		RedemptionFeeManual:     issuance.RedemptionFeeManual,
 
 		AccountID:          issuance.AccountID,
 		IssuerID:           issuance.IssuerID,
@@ -302,6 +312,30 @@ func issuanceErrorResponse(err error) (int, string) {
 	default:
 		return 0, ""
 	}
+}
+
+// loadIssuanceForResponse reloads one issuance the way the single-issuance
+// responses show it: the standard associations plus only the outbound legs, in
+// order. Every mutation re-reads the row after committing, so the response carries
+// what was persisted, with its associations, rather than the request it was given.
+func loadIssuanceForResponse(db *gorm.DB, issuance *data.Issuance, id string) error {
+	return preloadIssuanceAssociations(db).
+		Preload("Flights", func(db *gorm.DB) *gorm.DB {
+			return db.Where("direction = ?", "outbound").Order("leg_order asc")
+		}).
+		First(issuance, "id = ?", id).Error
+}
+
+// respondCommittedButNotReloaded answers a mutation whose transaction already
+// committed but whose reload for the response failed. The status stays 500 (the
+// response has no issuance to carry), but the message says the change was saved:
+// a generic "failed" here made operators submit again, and a second create trips
+// over the program locator or, worse, duplicates the issuance. The cause is logged
+// because SendError does not log it.
+func respondCommittedButNotReloaded(w http.ResponseWriter, r *http.Request, issuanceID string, err error, message string) {
+	slog.Error("failed to reload the issuance after committing",
+		"issuance_id", issuanceID, "path", r.URL.Path, "err", err)
+	utils.SendError(w, r, http.StatusInternalServerError, message)
 }
 
 // preloadIssuanceAssociations applies the standard set of preloads used by the
@@ -528,14 +562,18 @@ func issuanceSearchGroup(db *gorm.DB, search string) *gorm.DB {
 func (h *IssuanceHandler) GetIssuances(w http.ResponseWriter, r *http.Request) {
 	var issuances []data.Issuance
 
-	query := preloadIssuanceAssociations(h.DB).
+	// Bound to the request so a search the operator abandoned (closed tab, new keystroke)
+	// stops in Postgres instead of holding a pooled connection until the unbounded result
+	// is built. Safe here because this route only reads.
+	db := h.DB.WithContext(r.Context())
+	query := preloadIssuanceAssociations(db).
 		Preload("Flights", func(db *gorm.DB) *gorm.DB {
 			return db.Where("direction = ?", "outbound").Order("leg_order asc")
 		})
 	// Oldest first: the grid is read top to bottom in the order the issuances actually
 	// happened, and its draft row lives at the bottom - so a row created there stays
 	// where it was typed instead of jumping to the top on the next refresh.
-	query = applyIssuanceListFilters(h.DB, query, r).Order("created_at asc")
+	query = applyIssuanceListFilters(db, query, r).Order("created_at asc")
 
 	if err := query.Find(&issuances).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch issuances")
@@ -559,7 +597,7 @@ const (
 
 // GetIssuancesExport handles the GET /issuances/export route.
 // @Summary      Exportar emissões (.xlsx)
-// @Description  Gera uma planilha .xlsx das emissões filtradas. O layout é escolhido por layout: control (padrão) ou legacy. Layout control: planilha manual de controle numa aba única (a emissão cancelada é atribuída a quem cancelou, que é onde a listagem também a mostra), colunas A:O (Nº, Companhia, Localizador, Data do Voo, Passageiro Principal, Origem, Destino, Pontos, Milheiro, Taxa, Total, Conta, Observação, Taxa Resgate, Emissor), as linhas agrupadas em blocos por companhia, o bloco TOTAL DAS CONTAS ao final e, ao lado da tabela, um quadro por conta e companhia com os localizadores e o total de pontos. A coluna Emissor identifica quem fez cada linha, já que todos os emissores ficam na mesma aba. Dentro de cada bloco a ordem é a da listagem (da mais antiga para a mais recente). Aceita os mesmos filtros da listagem (data, programa de fidelidade, cia aérea, conta, agência e emissor). Emissão cancelada no mesmo dia em que foi criada entra pelo líquido (pontos e taxas menos o reembolso); cancelada em outro dia entra só pelo reembolso, negativo. A linha cancelada é destacada em vermelho claro. Layout legacy: a antiga planilha EMISSÕES GERAIS, uma tabela só (B:P) com os totais do modelo, mais a coluna TAXA RESGATE em Q. Nos dois layouts a Taxa Resgate é a taxa que a conta isenta (Azul Diamante Unique) deixou de pagar, em branco nas contas comuns, com o mesmo sinal dos pontos.
+// @Description  Gera uma planilha .xlsx das emissões filtradas. O layout é escolhido por layout: control (padrão) ou legacy. Layout control: planilha manual de controle numa aba única (a emissão cancelada é atribuída a quem cancelou, que é onde a listagem também a mostra), colunas A:N (Nº, Companhia, Localizador, Data do Voo, Passageiro Principal, Origem, Destino, Pontos, Milheiro, Taxa, Total, Conta, Observação, Emissor), as linhas agrupadas em blocos por companhia, o bloco TOTAL DAS CONTAS ao final e, ao lado da tabela, um quadro por conta e companhia com os localizadores e o total de pontos. A coluna Emissor identifica quem fez cada linha, já que todos os emissores ficam na mesma aba. Dentro de cada bloco a ordem é a da listagem (da mais antiga para a mais recente). Aceita os mesmos filtros da listagem (data, programa de fidelidade, cia aérea, conta, agência e emissor). Emissão cancelada no mesmo dia em que foi criada entra pelo líquido (pontos e taxas menos o reembolso); cancelada em outro dia entra só pelo reembolso, negativo. A linha cancelada é destacada em vermelho claro. Layout legacy: a antiga planilha EMISSÕES GERAIS, uma tabela só (B:P) com os totais do modelo.
 // @Tags         Emissões
 // @Produce      application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
 // @Security     BearerAuth
@@ -592,14 +630,18 @@ func (h *IssuanceHandler) GetIssuancesExport(w http.ResponseWriter, r *http.Requ
 	// (aliasless accounts fall back to the holder's name) and the canceller, whose name decides
 	// which tab a cancelled issuance lands on. Neither is preloaded for the listing, which shows
 	// no such column.
-	query := preloadIssuanceAssociations(h.DB).
+	//
+	// Bound to the request, like the listing: an export nobody is waiting for any more
+	// should not keep reading the whole period. The route only reads.
+	db := h.DB.WithContext(r.Context())
+	query := preloadIssuanceAssociations(db).
 		// Unscoped: an archived holder still names the issuances made on their accounts.
 		Preload("Account.Holder", func(db *gorm.DB) *gorm.DB { return db.Unscoped() }).
 		Preload("CancelledBy").
 		Preload("Flights", func(db *gorm.DB) *gorm.DB {
 			return db.Where("direction = ?", "outbound").Order("leg_order asc")
 		})
-	query = applyIssuanceListFilters(h.DB, query, r).Order("created_at asc")
+	query = applyIssuanceListFilters(db, query, r).Order("created_at asc")
 
 	if err := query.Find(&issuances).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch issuances")
@@ -833,16 +875,14 @@ func (h *IssuanceHandler) CreateIssuance(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if err := preloadIssuanceAssociations(h.DB).
-		Preload("Flights", func(db *gorm.DB) *gorm.DB {
-			return db.Where("direction = ?", "outbound").Order("leg_order asc")
-		}).
-		First(&created, "id = ?", created.ID).Error; err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch created issuance")
+	// Broadcast before the reload: the row is committed and the event carries only
+	// its id, so a failed reload must not keep the other tabs from seeing it.
+	h.broadcastIssuance(eventIssuanceCreated, created.ID)
+
+	if err := loadIssuanceForResponse(h.DB, &created, created.ID); err != nil {
+		respondCommittedButNotReloaded(w, r, created.ID, err, "A emissão foi criada, mas não foi possível carregá-la de volta. Atualize a página antes de tentar de novo.")
 		return
 	}
-
-	h.broadcastIssuance(eventIssuanceCreated, created.ID)
 
 	utils.SendJSON(w, r, http.StatusCreated, "Issuance created successfully", toIssuanceResponse(created))
 }
@@ -886,16 +926,6 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 
 	var req schemas.UpdateIssuanceRequest
 	if err := json.Unmarshal(body, &req); err != nil {
-		utils.SendError(w, r, http.StatusBadRequest, "Invalid JSON payload")
-		return
-	}
-
-	// Decoded a second time, the same way UpdateSupplierIssuances is: the struct carries
-	// the values, the raw map tells an omitted redemption fee (leave the correction alone)
-	// from an explicit null (drop it and let the rule recompute). Every other field here
-	// only needs "absent means unchanged", which a *int already says.
-	var present map[string]json.RawMessage
-	if err := json.Unmarshal(body, &present); err != nil {
 		utils.SendError(w, r, http.StatusBadRequest, "Invalid JSON payload")
 		return
 	}
@@ -1014,12 +1044,6 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 		issuance.Taxes = req.Taxes
 	}
 
-	// A value pins the correction; an explicit null releases the issuance and lets the
-	// recalculation at the end of the transaction fill the amount back in.
-	if _, present := present["redemption_fee_saved_cents"]; present {
-		issuance.RedemptionFeeManual = req.RedemptionFeeSavedCents != nil
-		issuance.RedemptionFeeSavedCents = req.RedemptionFeeSavedCents
-	}
 	if req.Observation != nil {
 		issuance.Observation = req.Observation
 	}
@@ -1027,17 +1051,25 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 		issuance.AdditionalServices = req.AdditionalServices
 	}
 
+	// Cancelling and reverting are whole operations - active, the refunds, the canceller
+	// and the audit line move together - and each has its own route. This switch used to
+	// touch cancelled_at alone, which left the row half-cancelled or half-restored (a sale
+	// charging the full price for a cancelled ticket, a FIFO refund on a live one). So
+	// status only toggles complete/incomplete on a live issuance. "cancelled" stays in the
+	// schema's oneof so it gets this message instead of a generic 400.
 	if req.Status != nil {
+		if !issuance.Active {
+			utils.SendError(w, r, http.StatusUnprocessableEntity, "Emissão cancelada: use Reverter cancelamento.")
+			return
+		}
 		switch *req.Status {
 		case "incomplete":
 			issuance.Complete = false
-			issuance.CancelledAt = nil
 		case "complete":
 			issuance.Complete = true
-			issuance.CancelledAt = nil
 		case "cancelled":
-			now := time.Now()
-			issuance.CancelledAt = &now
+			utils.SendError(w, r, http.StatusUnprocessableEntity, "Use Cancelar emissão.")
+			return
 		}
 	}
 
@@ -1094,7 +1126,12 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 			return err
 		}
 
-		if err := tx.Save(&issuance).Error; err != nil {
+		// The cancellation columns are never this route's to write: cancel and revert own
+		// them, and the status switch above refuses to touch them. Leaving them out of the
+		// Save matters because the row was read before this transaction, without a lock -
+		// a cancellation committed in between would otherwise be written back over with
+		// the stale "active, nothing refunded" this request started from.
+		if err := tx.Omit(issuanceCancellationColumns...).Save(&issuance).Error; err != nil {
 			return err
 		}
 
@@ -1120,15 +1157,6 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 			}
 		}
 
-		// After the flight upsert, never before: the Save above runs while the departure
-		// date is still the old one, so a fee computed any earlier would be derived from
-		// the itinerary this very PATCH is replacing. Moving the issuance to another
-		// account matters just as much - the account is what decides whether the amount
-		// is owed or saved.
-		if err := issuancesvc.RecalculateRedemptionFee(tx, issuance.ID); err != nil {
-			return err
-		}
-
 		// The points, the rate and the taxes are what the sale is worth. Editing them used
 		// to leave sales.paid and the client's replay on the old figure, so a ticket paid
 		// and then corrected kept a surplus (or a missing amount) nobody saw until the
@@ -1148,18 +1176,19 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if err := preloadIssuanceAssociations(h.DB).
-		Preload("Flights", func(db *gorm.DB) *gorm.DB {
-			return db.Where("direction = ?", "outbound").Order("leg_order asc")
-		}).
-		First(&issuance, "id = ?", issuance.ID).Error; err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch updated issuance")
+	h.broadcastIssuance(eventIssuanceUpdated, issuance.ID)
+
+	// Read into a fresh struct: the cancellation columns were left out of the write, so a
+	// cancel or revert committed meanwhile is what the row holds now, and scanning a NULL
+	// over the struct read before the transaction does not reset its pointers - the board
+	// would be told "cancelled" about a row that is live again.
+	var updatedIssuance data.Issuance
+	if err := loadIssuanceForResponse(h.DB, &updatedIssuance, issuance.ID); err != nil {
+		respondCommittedButNotReloaded(w, r, issuance.ID, err, "As alterações foram salvas, mas não foi possível carregar a emissão de volta. Atualize a página antes de tentar de novo.")
 		return
 	}
 
-	h.broadcastIssuance(eventIssuanceUpdated, issuance.ID)
-
-	utils.SendJSON(w, r, http.StatusOK, "Issuance updated successfully", toIssuanceResponse(issuance))
+	utils.SendJSON(w, r, http.StatusOK, "Issuance updated successfully", toIssuanceResponse(updatedIssuance))
 }
 
 // syncIssuanceBeneficiary keeps the account's CPF consumption in step with a patched
@@ -1338,16 +1367,12 @@ func (h *IssuanceHandler) CancelIssuance(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if err := preloadIssuanceAssociations(h.DB).
-		Preload("Flights", func(db *gorm.DB) *gorm.DB {
-			return db.Where("direction = ?", "outbound").Order("leg_order asc")
-		}).
-		First(&issuance, "id = ?", issuance.ID).Error; err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch cancelled issuance")
+	h.broadcastIssuance(eventIssuanceCancelled, issuance.ID)
+
+	if err := loadIssuanceForResponse(h.DB, &issuance, issuance.ID); err != nil {
+		respondCommittedButNotReloaded(w, r, issuance.ID, err, "A emissão foi cancelada, mas não foi possível carregá-la de volta. Atualize a página antes de tentar de novo.")
 		return
 	}
-
-	h.broadcastIssuance(eventIssuanceCancelled, issuance.ID)
 
 	utils.SendJSON(w, r, http.StatusOK, "Issuance cancelled successfully", toIssuanceResponse(issuance))
 }
@@ -1405,17 +1430,19 @@ func (h *IssuanceHandler) UncancelIssuance(w http.ResponseWriter, r *http.Reques
 	now := time.Now()
 	// Clearing cancelled_at makes deriveIssuanceStatus fall back to complete/incomplete;
 	// cancel never touched Complete, so the pre-cancel status is recovered for free.
-	issuance.Active = true
-	issuance.CancelledAt = nil
-	issuance.CancelledByID = nil
-	issuance.RefundedPoints = nil
-	issuance.RefundedTaxes = nil
-	issuance.CancellationFee = nil
-	// Reverting a cancellation asserts the booking is live, which is the opposite of what
-	// cancellation_only claims. Left set, the row would count neither as issued (the flag
-	// suppresses it) nor as refunded (cancelled_at is nil now), and it would vanish from
-	// the supplier balance on both sides.
-	issuance.CancellationOnly = false
+	restored := map[string]any{
+		"active":           true,
+		"cancelled_at":     nil,
+		"cancelled_by_id":  nil,
+		"refunded_points":  nil,
+		"refunded_taxes":   nil,
+		"cancellation_fee": nil,
+		// Reverting a cancellation asserts the booking is live, which is the opposite of
+		// what cancellation_only claims. Left set, the row would count neither as issued
+		// (the flag suppresses it) nor as refunded (cancelled_at is nil now), and it would
+		// vanish from the supplier balance on both sides.
+		"cancellation_only": false,
+	}
 
 	details, err := json.Marshal(map[string]any{
 		"restored_at": now,
@@ -1426,10 +1453,17 @@ func (h *IssuanceHandler) UncancelIssuance(w http.ResponseWriter, r *http.Reques
 	}
 
 	err = h.DB.Transaction(func(tx *gorm.DB) error {
-		// Save (not Updates) so the nil pointers above persist as NULL - Updates would skip
-		// them as zero values, leaving the stale cancellation data behind.
-		if err := tx.Save(&issuance).Error; err != nil {
-			return err
+		// A map, so the nils persist as NULL, and only these columns: the row was read
+		// above without a lock, and a Save of the whole struct would write back whatever
+		// it held then. "active = FALSE" is the guard that holds under a race - two
+		// reverts both pass the check above, and the one that waited on the row matches
+		// nothing once the first has committed.
+		result := tx.Model(&data.Issuance{}).Where("id = ? AND active = FALSE", issuance.ID).Updates(restored)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return errIssuanceNotCancelled
 		}
 
 		if err := sale.RecalculateByIssuance(tx, issuance.ID); err != nil {
@@ -1444,17 +1478,12 @@ func (h *IssuanceHandler) UncancelIssuance(w http.ResponseWriter, r *http.Reques
 		}).Error
 	})
 
-	if err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Failed to revert issuance cancellation: "+err.Error())
+	if errors.Is(err, errIssuanceNotCancelled) {
+		utils.SendError(w, r, http.StatusUnprocessableEntity, "issuance is not cancelled")
 		return
 	}
-
-	if err := preloadIssuanceAssociations(h.DB).
-		Preload("Flights", func(db *gorm.DB) *gorm.DB {
-			return db.Where("direction = ?", "outbound").Order("leg_order asc")
-		}).
-		First(&issuance, "id = ?", issuance.ID).Error; err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch restored issuance")
+	if err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to revert issuance cancellation: "+err.Error())
 		return
 	}
 
@@ -1462,7 +1491,15 @@ func (h *IssuanceHandler) UncancelIssuance(w http.ResponseWriter, r *http.Reques
 	// it is and only its status and cancellation metadata change.
 	h.broadcastIssuance(eventIssuanceUpdated, issuance.ID)
 
-	utils.SendJSON(w, r, http.StatusOK, "Issuance cancellation reverted successfully", toIssuanceResponse(issuance))
+	// Read into a fresh struct: the one above still holds the cancellation, and scanning
+	// the now-NULL columns over it does not reset its pointers.
+	var restoredIssuance data.Issuance
+	if err := loadIssuanceForResponse(h.DB, &restoredIssuance, issuance.ID); err != nil {
+		respondCommittedButNotReloaded(w, r, issuance.ID, err, "O cancelamento foi revertido, mas não foi possível carregar a emissão de volta. Atualize a página antes de tentar de novo.")
+		return
+	}
+
+	utils.SendJSON(w, r, http.StatusOK, "Issuance cancellation reverted successfully", toIssuanceResponse(restoredIssuance))
 }
 
 // traveosSyncTimeout bounds the whole sync, not one HTTP call. Issuing a ticket
@@ -1530,17 +1567,13 @@ func (h *IssuanceHandler) SyncIssuanceWithTraveos(w http.ResponseWriter, r *http
 		return
 	}
 
+	h.broadcastIssuance(eventIssuanceUpdated, id)
+
 	var issuance data.Issuance
-	if err := preloadIssuanceAssociations(h.DB).
-		Preload("Flights", func(db *gorm.DB) *gorm.DB {
-			return db.Where("direction = ?", "outbound").Order("leg_order asc")
-		}).
-		First(&issuance, "id = ?", id).Error; err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch synced issuance")
+	if err := loadIssuanceForResponse(h.DB, &issuance, id); err != nil {
+		respondCommittedButNotReloaded(w, r, id, err, "Os dados da cia foram salvos, mas não foi possível carregar a emissão de volta. Atualize a página antes de tentar de novo.")
 		return
 	}
-
-	h.broadcastIssuance(eventIssuanceUpdated, issuance.ID)
 
 	utils.SendJSON(w, r, http.StatusOK, "Issuance synced with Traveos successfully", toIssuanceResponse(issuance))
 }

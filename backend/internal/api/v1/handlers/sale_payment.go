@@ -540,7 +540,7 @@ func (h *SaleHandler) DeleteSalePayment(w http.ResponseWriter, r *http.Request) 
 // whatever is missing; false clears the statement. It started as a compatibility step for
 // the panel that predated the statement, and the payments screen's Pago / A Pagar button is
 // built on it again - partial amounts go through CreateClientPayment instead.
-func settleSaleFromLegacyFlag(tx *gorm.DB, saleID string, paid bool, actorID string) error {
+func settleSaleFromLegacyFlag(tx *gorm.DB, saleID string, paid bool, actorID string, now time.Time) error {
 	if !paid {
 		// Only the sale's own lines: those spread from a client payment, or moving a sale's
 		// surplus, are rebuilt by the replay (UpdateSale refuses a sale that has nothing
@@ -564,11 +564,20 @@ func settleSaleFromLegacyFlag(tx *gorm.DB, saleID string, paid bool, actorID str
 	// refund. That is the only reading of "mark as paid" that leaves the sale with nothing
 	// pending, which is what the switch meant.
 	if missing := sale.BalanceCents(amount, paidCents); missing != 0 {
+		// paid_on is a DATE, and the driver takes the day from the value's own zone. The
+		// container runs in UTC, so a click at 21h-24h in São Paulo was dated tomorrow -
+		// and on the last day of a month, into the next month's closing. The day has to be
+		// the operator's, resolved here, at midnight UTC so nothing shifts it again.
+		loc, err := time.LoadLocation(listTimezone)
+		if err != nil {
+			loc = time.UTC
+		}
+		local := now.In(loc)
 		note := "Baixa pelo interruptor de pago"
 		payment := data.SalePayment{
 			SaleID:      saleID,
 			AmountCents: missing,
-			PaidOn:      time.Now(),
+			PaidOn:      time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, time.UTC),
 			Note:        &note,
 			CreatedByID: actorID,
 		}

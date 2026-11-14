@@ -1,9 +1,11 @@
 package inventory
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/murandido/m-80-backend/internal/businessday"
 	"github.com/murandido/m-80-backend/internal/data"
 	"gorm.io/gorm"
 )
@@ -142,7 +144,7 @@ func TestRecomputeReturnsThePointsOfACancelledBooking(t *testing.T) {
 		seedBatch(t, tx, f, "2026-08-01", 500000, 700000)
 		issuance := seedIssuance(t, tx, f, "2026-08-15", 200000)
 
-		cancelledAt := day("2026-08-20")
+		cancelledAt := instantOn("2026-08-20")
 		if err := tx.Model(&issuance).Updates(map[string]any{
 			"active":       false,
 			"cancelled_at": cancelledAt,
@@ -173,7 +175,7 @@ func TestRecomputeHonoursAPartialRefund(t *testing.T) {
 		issuance := seedIssuance(t, tx, f, "2026-08-15", 200000)
 
 		refunded := 37600
-		cancelledAt := day("2026-08-20")
+		cancelledAt := instantOn("2026-08-20")
 		if err := tx.Model(&issuance).Updates(map[string]any{
 			"cancelled_at":    cancelledAt,
 			"refunded_points": refunded,
@@ -243,7 +245,7 @@ func TestRecomputeReversesIntoTheOpenPeriodAfterClosing(t *testing.T) {
 		}
 		closePeriod(t, tx, f, "2026-08-01", "2026-08-31")
 
-		cancelledAt := day("2026-09-04")
+		cancelledAt := instantOn("2026-09-04")
 		if err := tx.Model(&issuance).Updates(map[string]any{
 			"active":       false,
 			"cancelled_at": cancelledAt,
@@ -261,9 +263,9 @@ func TestRecomputeReversesIntoTheOpenPeriodAfterClosing(t *testing.T) {
 		}
 
 		reversal := rows[1]
-		if !reversal.OccurredOn.Equal(cancelledAt) {
-			t.Errorf("reversal dated %s, want the cancellation's %s",
-				reversal.OccurredOn.Format(time.DateOnly), cancelledAt.Format(time.DateOnly))
+		if !reversal.OccurredOn.Equal(day("2026-09-04")) {
+			t.Errorf("reversal dated %s, want the cancellation's 2026-09-04",
+				reversal.OccurredOn.Format(time.DateOnly))
 		}
 		if reversal.Points != -200000 {
 			t.Errorf("reversal returned %d points, want -200000", reversal.Points)
@@ -314,7 +316,7 @@ func TestRecomputeReturnsTheRefundOfACancellationOnlyRowToTheQueue(t *testing.T)
 		refund := seedIssuance(t, tx, f, "2026-09-05", 37600)
 		if err := tx.Model(&refund).Updates(map[string]any{
 			"cancellation_only": true,
-			"cancelled_at":      day("2026-09-04"),
+			"cancelled_at":      instantOn("2026-09-04"),
 			"refunded_points":   37600,
 		}).Error; err != nil {
 			t.Fatalf("marking the refund: %v", err)
@@ -356,4 +358,72 @@ func closePeriod(t *testing.T, tx *gorm.DB, f fixture, startsOn, endsOn string) 
 	}
 	mustCreate(t, tx, &period)
 	return period
+}
+
+// The business runs on São Paulo's calendar, whatever zone the process is in. A booking
+// made at 23:30 on the last day of the month is 02:30 UTC of the next one, and when the
+// costing read the UTC day it went into the next month's closing - in a different month
+// than the supplier report and the sales screen put it in. The same goes for a
+// cancellation made that late. This test runs in TZ=UTC (production) and in
+// TZ=America/Sao_Paulo (a developer's machine), and must pass in both.
+func TestRecomputeCostsALateEveningBookingOnItsSaoPauloDay(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		f := seedFixture(t, tx)
+		seedBatch(t, tx, f, "2026-10-01", 500000, 700000)
+
+		lastEvening := time.Date(2026, 10, 31, 23, 30, 0, 0, businessday.Location)
+		late := seedIssuance(t, tx, f, "2026-10-31", 200000)
+		if err := tx.Model(&late).UpdateColumn("created_at", lastEvening).Error; err != nil {
+			t.Fatalf("stamping the late booking: %v", err)
+		}
+		// Half an hour after São Paulo midnight, the first day of the next month.
+		nextMonth := seedIssuance(t, tx, f, "2026-11-01", 100000)
+		if err := tx.Model(&nextMonth).UpdateColumn("created_at",
+			time.Date(2026, 11, 1, 0, 30, 0, 0, businessday.Location)).Error; err != nil {
+			t.Fatalf("stamping the next month's booking: %v", err)
+		}
+		// Booked mid-month and cancelled at 23:40 on the 31st: the refund is October's too.
+		cancelled := seedIssuance(t, tx, f, "2026-10-10", 50000)
+		if err := tx.Model(&cancelled).Updates(map[string]any{
+			"active":       false,
+			"cancelled_at": time.Date(2026, 10, 31, 23, 40, 0, 0, businessday.Location),
+		}).Error; err != nil {
+			t.Fatalf("cancelling: %v", err)
+		}
+
+		if err := Recompute(tx, f.account.ID); err != nil {
+			t.Fatalf("Recompute: %v", err)
+		}
+
+		wantDays := map[string][]string{
+			late.ID:      {"2026-10-31"},
+			nextMonth.ID: {"2026-11-01"},
+			// The booking, then its reversal on the evening it was cancelled.
+			cancelled.ID: {"2026-10-10", "2026-10-31"},
+		}
+		gotDays := map[string][]string{}
+		for _, row := range allocationsOf(t, tx, f.account.ID) {
+			gotDays[row.IssuanceID] = append(gotDays[row.IssuanceID], row.OccurredOn.Format(time.DateOnly))
+		}
+		for issuanceID, want := range wantDays {
+			if fmt.Sprint(gotDays[issuanceID]) != fmt.Sprint(want) {
+				t.Errorf("issuance %s costed on %v, want %v", issuanceID, gotDays[issuanceID], want)
+			}
+		}
+
+		// Closing October freezes the late booking and the late refund inside it, and the
+		// expected balance - which reads the open half straight from created_at - draws
+		// the boundary on the same day: nothing is counted twice or lost at the cut.
+		closePeriod(t, tx, f, "2026-10-01", "2026-10-31")
+		if err := Recompute(tx, f.account.ID); err != nil {
+			t.Fatalf("Recompute after closing: %v", err)
+		}
+		balances, err := ExpectedBalances(tx, []string{f.account.ID})
+		if err != nil {
+			t.Fatalf("ExpectedBalances: %v", err)
+		}
+		if got, want := balances[f.account.ID], 500000-200000-100000; got != want {
+			t.Errorf("expected balance after closing October: got %d, want %d", got, want)
+		}
+	})
 }

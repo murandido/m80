@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/murandido/m-80-backend/internal/businessday"
 	"github.com/murandido/m-80-backend/internal/data"
 	"gorm.io/gorm"
 )
@@ -22,7 +23,47 @@ import (
 // even by accident.
 //
 // Safe to call as often as anything wants: the result is a function of the current rows.
+// That includes concurrently - it runs on GETs, so two people opening the suppliers screen
+// at once recompute the same accounts side by side. The whole read-compute-write cycle runs
+// in one transaction behind a per-account lock (see lockAccountCosting), because two
+// unserialised rebuilds both survive: the second DELETE never sees the slices the first one
+// inserted, and every booking ends up costed twice.
+//
+// Accepts a transaction already open, which is how Close freezes the result atomically.
 func Recompute(db *gorm.DB, accountID string) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		if err := lockAccountCosting(tx, accountID); err != nil {
+			return err
+		}
+		return recomputeLocked(tx, accountID)
+	})
+}
+
+// lockAccountCosting serialises everything that rebuilds or freezes one account's slices,
+// until the surrounding transaction ends.
+//
+// Transaction-scoped on purpose: it can never be left held by a request that died, and it
+// is re-entrant within the session, so Close can take it and then call Recompute, which
+// takes it again inside a savepoint. Keyed by account alone, so recomputes of different
+// accounts never wait on each other and no lock ordering exists to deadlock on.
+//
+// That last guarantee holds only while a transaction locks one account. Never call this -
+// or Recompute, Close or Reopen - in a loop over several accounts inside one outer
+// transaction: the locks would pile up until it commits, and two such loops visiting the
+// accounts in different orders deadlock. Loop outside the transaction, as
+// supplierInventoryCosts does, so each account commits on its own.
+func lockAccountCosting(tx *gorm.DB, accountID string) error {
+	err := tx.Exec("SELECT pg_advisory_xact_lock(hashtextextended('inventory:' || ?::text, 0))", accountID).Error
+	if err != nil {
+		return fmt.Errorf("inventory: locking the account's costing: %w", err)
+	}
+	return nil
+}
+
+// recomputeLocked is Recompute's body. The reads happen after the lock, not before it: a
+// rebuild computed from rows read ahead of a concurrent Close would carry the old frozen
+// boundary into persist and rewrite slices the closing had just settled.
+func recomputeLocked(db *gorm.DB, accountID string) error {
 	frozenUntil, err := ClosedThrough(db, accountID)
 	if err != nil {
 		return err
@@ -159,7 +200,9 @@ func loadIssuanceActivity(db *gorm.DB, accountID string, frozenUntil time.Time) 
 	// the day of its own booking finds the booking's slices to return to, and a same-day
 	// cancellation finds the alteration's to give back.
 	for k, adjustment := range adjustments {
-		occurredOn := DayOf(adjustment.OccurredOn)
+		// Already a calendar day (a DATE column), so it is taken as is: DayOf would read
+		// its midnight UTC in São Paulo and file it under the day before.
+		occurredOn := dateOf(adjustment.OccurredOn)
 		if adjustment.Points == 0 || !occurredOn.After(frozenUntil) {
 			continue
 		}
@@ -286,7 +329,8 @@ func loadFrozenAllocations(db *gorm.DB, accountID string, frozenUntil time.Time)
 }
 
 // persist swaps the open period's slices for the ones just computed, in one transaction so
-// no reader ever sees the account half-costed.
+// no reader ever sees the account half-costed. Called inside Recompute's locked transaction,
+// where this one becomes a savepoint.
 func persist(db *gorm.DB, accountID string, frozenUntil time.Time, allocations []Allocation) error {
 	return db.Transaction(func(tx *gorm.DB) error {
 		deletion := tx.Where(
@@ -329,14 +373,25 @@ func persist(db *gorm.DB, accountID string, frozenUntil time.Time, allocations [
 	})
 }
 
-// DayOf drops the clock from a timestamp. The queue is ordered by day - a booking's
-// created_at is UTC in the database, and letting the time of day into the comparison would
-// make the same booking fall on either side of a period boundary depending on the reader.
+// DayOf is the business day of an instant - its São Paulo calendar day. The queue is
+// ordered by day, and letting the time of day into the comparison would make the same
+// booking fall on either side of a period boundary depending on the reader.
+//
+// São Paulo, not the year/month/day the time.Time happens to carry: that is the process
+// zone for a value read from the database, UTC in the production container, so a booking
+// made at 22:30 on the 31st used to be costed on the 1st - in the next month's closing,
+// and in a different month than the supplier report and the sales screen put it in.
 //
 // Exported alongside ClosedThrough, and for the same reason: the guard on the issuance
 // routes has to ask the question exactly the way the costing answers it.
 func DayOf(moment time.Time) time.Time {
-	return time.Date(moment.Year(), moment.Month(), moment.Day(), 0, 0, 0, 0, time.UTC)
+	return businessday.Of(moment)
+}
+
+// dateOf normalises a value that already is a calendar day (a DATE column) to the
+// midnight-UTC shape DayOf returns, without moving it across a zone.
+func dateOf(date time.Time) time.Time {
+	return time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, time.UTC)
 }
 
 // adjustmentIDOf reads the nullable column the way Allocation carries it.

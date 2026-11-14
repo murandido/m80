@@ -1,6 +1,7 @@
 "use server"
 
 import { cookies } from "next/headers"
+import { readActionError, readBackendJson } from "@/lib/backend-response"
 import { env } from "@/lib/env"
 import {
   createClientPaymentSchema,
@@ -29,13 +30,11 @@ export async function updateSaleAction(
       body: JSON.stringify(data),
     })
 
-    const json = await res.json()
-    const parsed = updateSaleSchema.response.safeParse(json)
-
     if (!res.ok) {
-      return { error: parsed.data?.message || "Erro ao atualizar venda." }
+      return { error: await readActionError(res, "Erro ao atualizar venda.") }
     }
 
+    const parsed = updateSaleSchema.response.safeParse(await readBackendJson(res))
     const sale = parsed.data?.data
     if (!sale) {
       return { error: "Erro ao atualizar venda." }
@@ -63,11 +62,11 @@ export async function createClientPaymentAction(
       body: JSON.stringify(data),
     })
 
-    const parsed = createClientPaymentSchema.response.safeParse(await res.json())
     if (!res.ok) {
-      return { error: parsed.data?.message || "Erro ao registrar o pagamento." }
+      return { error: await readActionError(res, "Erro ao registrar o pagamento.") }
     }
 
+    const parsed = createClientPaymentSchema.response.safeParse(await readBackendJson(res))
     const result = parsed.data?.data
     if (!result) {
       return { error: "Erro ao registrar o pagamento." }
@@ -107,11 +106,11 @@ export async function getClientPaymentsAction(query: ClientPaymentsQuery) {
       { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" },
     )
 
-    const parsed = getClientPaymentsSchema.response.safeParse(await res.json())
     if (!res.ok) {
-      return { error: parsed.data?.message || "Erro ao buscar os pagamentos do cliente." }
+      return { error: await readActionError(res, "Erro ao buscar os pagamentos do cliente.") }
     }
 
+    const parsed = getClientPaymentsSchema.response.safeParse(await readBackendJson(res))
     const history = parsed.data?.data
     if (!history) {
       return { error: "Erro ao buscar os pagamentos do cliente." }
@@ -133,11 +132,11 @@ export async function undoClientPaymentAction(clientPaymentId: string) {
       { method: "DELETE", headers: { Authorization: `Bearer ${token}` } },
     )
 
-    const parsed = undoClientPaymentSchema.response.safeParse(await res.json())
     if (!res.ok) {
-      return { error: parsed.data?.message || "Erro ao desfazer o pagamento." }
+      return { error: await readActionError(res, "Erro ao desfazer o pagamento.") }
     }
 
+    const parsed = undoClientPaymentSchema.response.safeParse(await readBackendJson(res))
     const result = parsed.data?.data
     if (!result) {
       return { error: "Erro ao desfazer o pagamento." }

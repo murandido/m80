@@ -52,12 +52,13 @@ export default async function ClientsPage({
   // else's list - so only a dev's page asks how many are left.
   const pendingQuery = new URLSearchParams({ pending_agency: "true", page: "1", limit: "1" })
 
-  const sessionUser = await getSessionUser()
-  const viewerIsDev = sessionUser?.role === "dev"
+  // The session goes out with the list rather than before it: only the pending count
+  // depends on who is looking, so only that call waits for the user.
+  const sessionUserPromise = getSessionUser()
 
   // /clients/manage rather than /clients: the plain route stays unpaginated because
   // the sales screen's client picker reads it whole.
-  const [page, agencies, pending] = await Promise.all([
+  const [page, agencies, sessionUser, pending] = await Promise.all([
     fetchPage<Client, ClientPage>(
       `${env.BACKEND_URL}/api/v1/clients/manage?${query.toString()}`,
       listClientsSchema.response,
@@ -65,15 +66,19 @@ export default async function ClientsPage({
       authHeader,
     ),
     fetchList<Agency>(`${env.BACKEND_URL}/api/v1/agencies`, getAgenciesSchema.response, authHeader),
-    viewerIsDev
-      ? fetchPage<Client, ClientPage>(
-          `${env.BACKEND_URL}/api/v1/clients/manage?${pendingQuery.toString()}`,
-          listClientsSchema.response,
-          (data) => data.clients,
-          authHeader,
-        )
-      : null,
+    sessionUserPromise,
+    sessionUserPromise.then((user) =>
+      user?.role === "dev"
+        ? fetchPage<Client, ClientPage>(
+            `${env.BACKEND_URL}/api/v1/clients/manage?${pendingQuery.toString()}`,
+            listClientsSchema.response,
+            (data) => data.clients,
+            authHeader,
+          )
+        : null,
+    ),
   ])
+  const viewerIsDev = sessionUser?.role === "dev"
   const pendingTotal = pending?.total ?? 0
 
   return (

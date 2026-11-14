@@ -1,11 +1,11 @@
 "use server"
 
 import { cookies } from "next/headers"
+import { readActionError, readBackendJson } from "@/lib/backend-response"
 import { env } from "@/lib/env"
 import {
   cancelIssuanceSchema,
   createIssuanceSchema,
-  deleteIssuanceSchema,
   issuanceAdjustmentRequestSchema,
   issuanceAdjustmentResponseSchema,
   syncIssuanceWithTraveosSchema,
@@ -30,13 +30,11 @@ export async function createIssuanceAction(
       body: JSON.stringify(data),
     })
 
-    const json = await res.json()
-    const parsed = createIssuanceSchema.response.safeParse(json)
-
     if (!res.ok) {
-      return { error: parsed.data?.message || "Erro ao criar emissão." }
+      return { error: await readActionError(res, "Erro ao criar emissão.") }
     }
 
+    const parsed = createIssuanceSchema.response.safeParse(await readBackendJson(res))
     const issuance = parsed.data?.data
     if (!issuance) {
       return { error: "Erro ao criar emissão." }
@@ -65,13 +63,11 @@ export async function updateIssuanceAction(
       body: JSON.stringify(data),
     })
 
-    const json = await res.json()
-    const parsed = updateIssuanceSchema.response.safeParse(json)
-
     if (!res.ok) {
-      return { error: parsed.data?.message || "Erro ao salvar emissão." }
+      return { error: await readActionError(res, "Erro ao salvar emissão.") }
     }
 
+    const parsed = updateIssuanceSchema.response.safeParse(await readBackendJson(res))
     return { success: true as const, issuance: parsed.data?.data }
   } catch {
     return { error: "Erro de conexão com o servidor." }
@@ -95,13 +91,11 @@ export async function cancelIssuanceAction(
       body: JSON.stringify(data),
     })
 
-    const json = await res.json()
-    const parsed = cancelIssuanceSchema.response.safeParse(json)
-
     if (!res.ok) {
-      return { error: parsed.data?.message || "Erro ao cancelar emissão." }
+      return { error: await readActionError(res, "Erro ao cancelar emissão.") }
     }
 
+    const parsed = cancelIssuanceSchema.response.safeParse(await readBackendJson(res))
     return { success: true as const, issuance: parsed.data?.data }
   } catch {
     return { error: "Erro de conexão com o servidor." }
@@ -121,13 +115,11 @@ export async function uncancelIssuanceAction(issuanceId: string) {
       },
     })
 
-    const json = await res.json()
-    const parsed = uncancelIssuanceSchema.response.safeParse(json)
-
     if (!res.ok) {
-      return { error: parsed.data?.message || "Erro ao reverter cancelamento." }
+      return { error: await readActionError(res, "Erro ao reverter cancelamento.") }
     }
 
+    const parsed = uncancelIssuanceSchema.response.safeParse(await readBackendJson(res))
     return { success: true as const, issuance: parsed.data?.data }
   } catch {
     return { error: "Erro de conexão com o servidor." }
@@ -155,16 +147,18 @@ export async function syncIssuanceWithTraveosAction(issuanceId: string) {
       },
     )
 
-    const json = await res.json()
-    const parsed = syncIssuanceWithTraveosSchema.response.safeParse(json)
-
     if (!res.ok) {
       // The backend's message is deliberately vague for the common failure, because
       // Traveos answers almost every one of them identically. Pass it through rather
-      // than dressing it up.
-      return { error: parsed.data?.message || "Erro ao puxar dados da Traveos." }
+      // than dressing it up - including on its 502/503, which are worded for the operator.
+      return {
+        error: await readActionError(res, "Erro ao puxar dados da Traveos.", {
+          keepServerErrorMessage: true,
+        }),
+      }
     }
 
+    const parsed = syncIssuanceWithTraveosSchema.response.safeParse(await readBackendJson(res))
     return { success: true as const, issuance: parsed.data?.data }
   } catch {
     return { error: "Erro de conexão com o servidor." }
@@ -181,11 +175,8 @@ export async function deleteIssuanceAction(issuanceId: string) {
       headers: { Authorization: `Bearer ${token}` },
     })
 
-    const json = await res.json()
-    const parsed = deleteIssuanceSchema.response.safeParse(json)
-
     if (!res.ok) {
-      return { error: parsed.data?.message || "Erro ao deletar emissão." }
+      return { error: await readActionError(res, "Erro ao deletar emissão.") }
     }
 
     return { success: true }
@@ -217,13 +208,11 @@ export async function saveIssuanceAdjustmentAction(
       body: JSON.stringify(data),
     })
 
-    const json = await res.json()
-    const parsed = issuanceAdjustmentResponseSchema.safeParse(json)
-
     if (!res.ok) {
-      return { error: parsed.data?.message || "Erro ao salvar a alteração." }
+      return { error: await readActionError(res, "Erro ao salvar a alteração.") }
     }
 
+    const parsed = issuanceAdjustmentResponseSchema.safeParse(await readBackendJson(res))
     const adjustment = parsed.data?.data
     if (!adjustment) {
       return { error: "Erro ao salvar a alteração." }
@@ -247,12 +236,10 @@ export async function deleteIssuanceAdjustmentAction(issuanceId: string, adjustm
       },
     )
 
-    const json = await res.json()
-    const parsed = deleteIssuanceSchema.response.safeParse(json)
-
     if (!res.ok) {
-      return { error: parsed.data?.message || "Erro ao excluir a alteração." }
+      return { error: await readActionError(res, "Erro ao excluir a alteração.") }
     }
+
     return { success: true as const }
   } catch {
     return { error: "Erro de conexão com o servidor." }

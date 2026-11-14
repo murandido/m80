@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
+	"github.com/murandido/m-80-backend/internal/businessday"
 	"github.com/murandido/m-80-backend/internal/data"
 	issuancesvc "github.com/murandido/m-80-backend/internal/issuance"
 	"github.com/murandido/m-80-backend/internal/sale"
@@ -216,7 +217,10 @@ func (h *IssuanceHandler) UpdateIssuanceAdjustment(w http.ResponseWriter, r *htt
 		return
 	}
 	in, day, ok := h.decodeAdjustment(w, r)
-	if !ok || !h.guardAdjustmentDays(w, r, issuance, day, adjustment.OccurredOn) {
+	// occurred_on is a DATE; Start turns it back into an instant on that São Paulo day,
+	// which is what the guard (inventory.DayOf) expects - read raw, its midnight UTC is the
+	// evening before in São Paulo.
+	if !ok || !h.guardAdjustmentDays(w, r, issuance, day, businessday.Start(adjustment.OccurredOn)) {
 		return
 	}
 
@@ -254,7 +258,7 @@ func (h *IssuanceHandler) DeleteIssuanceAdjustment(w http.ResponseWriter, r *htt
 		return
 	}
 	issuance, adjustment, ok := h.loadAdjustmentTarget(w, r, true)
-	if !ok || !h.guardAdjustmentDays(w, r, issuance, adjustment.OccurredOn) {
+	if !ok || !h.guardAdjustmentDays(w, r, issuance, businessday.Start(adjustment.OccurredOn)) {
 		return
 	}
 

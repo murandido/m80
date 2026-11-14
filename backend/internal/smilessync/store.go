@@ -18,6 +18,7 @@ package smilessync
 
 import (
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/murandido/m-80-backend/internal/data"
@@ -106,6 +107,13 @@ func MarkDisconnected(db *gorm.DB, accountID string) error {
 // The write is what makes rotation safe. The tenant refuses the token it just replaced, so a
 // round that renews and fails to store has locked the account out of the next one.
 func storeSession(db *gorm.DB, accountID, refreshToken string) error {
+	// A session with no refresh token cannot renew itself. Storing it would claim a connection
+	// that the next round has to take back with "conta sem sessão" - Smiles answers this way
+	// for a blocked account and for a holder with no second factor (measured 2026-10-30), so
+	// the connect flow reports it instead of saving a credential that never existed.
+	if strings.TrimSpace(refreshToken) == "" {
+		return errors.New("smilessync: refusing to store an empty refresh token")
+	}
 	// Encrypt explicitly: a column update does not run the model's BeforeSave hook, so the
 	// hook that keeps accounts.password out of the clear would not fire for this path.
 	encrypted, err := utils.Encrypt(refreshToken)

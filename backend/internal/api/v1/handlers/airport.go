@@ -63,7 +63,7 @@ func (h *AirportHandler) GetAirports(w http.ResponseWriter, r *http.Request) {
 
 	airports := make([]data.Airport, 0)
 	if q != "" {
-		like := "%" + q + "%"
+		like := likePattern(q)
 		if err := h.DB.
 			Where(unaccentedLike("iata_code")+" OR "+unaccentedLike("name")+" OR "+unaccentedLike("city"),
 				like, like, like).
@@ -154,7 +154,7 @@ func (h *AirportHandler) ListAirports(w http.ResponseWriter, r *http.Request) {
 	// same search filter.
 	query := h.DB.Model(&data.Airport{})
 	if q != "" {
-		like := "%" + q + "%"
+		like := likePattern(q)
 		query = query.Where(
 			unaccentedLike("iata_code")+" OR "+unaccentedLike("name")+" OR "+unaccentedLike("city")+
 				" OR "+unaccentedLike("state")+" OR "+unaccentedLike("country"),
@@ -185,7 +185,7 @@ func (h *AirportHandler) ListAirports(w http.ResponseWriter, r *http.Request) {
 	case explicitOrder:
 		dbQuery = dbQuery.Order(airportOrder[order])
 	case q != "":
-		like := "%" + q + "%"
+		like := likePattern(q)
 		dbQuery = dbQuery.Clauses(clause.OrderBy{
 			// The ranking folds accents exactly like the filter above: a row that only
 			// matched because of unaccent() would otherwise fall into the ELSE bucket

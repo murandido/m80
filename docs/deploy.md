@@ -543,9 +543,19 @@ fora — mas é motivo para não fazer deploy no meio de uma campanha aberta.
 
 ## O teto de memória do promo
 
-O `promo-service-prod` é o **único** container com limite (`mem_limit: 1500m`, `memswap_limit` igual
+O `promo-service-prod` tem limite (`mem_limit: 1500m`, `memswap_limit` igual
 — sem swap — e `shm_size: 256mb` saindo *de dentro* desse teto). O raciocínio está no
 `backend/CLAUDE.md`; aqui fica só o que se faz quando ele aparece.
+
+O `azul-login-service-prod` também tem teto, de `2500m`. Lá o OOM **não** derruba o container: o
+kernel mata só processos do Camoufox, o Python segue `healthy` e o login falha com sintomas que
+parecem do portal ("portal timed out during home", `TargetClosedError`, login sem customerKey).
+Foi assim de ~30/10 a 10/11/2026 com o teto antigo de 1500m (pico medido: ~1,77 GB anônimos).
+Para conferir:
+
+```bash
+docker exec azul-login-service-prod grep oom_kill /sys/fs/cgroup/memory.events
+```
 
 Como se percebe:
 

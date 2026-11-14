@@ -73,7 +73,16 @@ export default async function InventoryPage({ searchParams }: PageProps) {
   const authHeader = { Authorization: `Bearer ${token}` }
   const api = `${env.BACKEND_URL}/api/v1`
 
-  const [accounts, agencies, origins, loyaltyPrograms, people] = await Promise.all([
+  // No account chosen yet means nothing to compute: the report is per account, and asking
+  // for every account at once would recompute the whole panel to show a picker.
+  const accountIds = single(params.account_ids)
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean)
+
+  // The batches and the closing depend only on the URL, not on the pickers, so they go out
+  // in the same wave: the screen then waits for the slowest call rather than for the sum.
+  const [accounts, agencies, origins, loyaltyPrograms, people, batches, closing] = await Promise.all([
     fetchList<AccountOption>(`${api}/accounts?view=picker`, getAccountOptionsSchema.response, authHeader),
     fetchList<Agency>(`${api}/agencies`, getAgenciesSchema.response, authHeader),
     fetchList<PointBatchOrigin>(
@@ -89,14 +98,24 @@ export default async function InventoryPage({ searchParams }: PageProps) {
       authHeader,
     ),
     fetchList<PersonOption>(`${api}/people?view=picker`, getPeopleOptionsSchema.response, authHeader),
+    accountIds.length
+      ? // The same window as the closing above it: a screen showing August's closing over
+        // September's batches would be two answers to different questions side by side.
+        fetchList<PointBatch>(
+          `${api}/point-batches?account_id=${encodeURIComponent(accountIds[0])}` +
+            `&from=${period.date_from}&to=${period.date_to}`,
+          getPointBatchesSchema.response,
+          authHeader,
+        )
+      : null,
+    accountIds.length
+      ? fetchClosing(
+          `${api}/inventory-closing?account_ids=${encodeURIComponent(accountIds.join(","))}` +
+            `&from=${period.date_from}&to=${period.date_to}`,
+          authHeader,
+        )
+      : null,
   ])
-
-  // No account chosen yet means nothing to compute: the report is per account, and asking
-  // for every account at once would recompute the whole panel to show a picker.
-  const accountIds = single(params.account_ids)
-    .split(",")
-    .map((id) => id.trim())
-    .filter(Boolean)
 
   // Which reconciliation the selected account gets is decided by its programme: Azul is synced,
   // Smiles uploads, everything else has no statement path. The code is the stable identifier -
@@ -111,24 +130,6 @@ export default async function InventoryPage({ searchParams }: PageProps) {
       : selectedProgram?.code === "SMILES"
         ? "smiles"
         : "other"
-
-  const [batches, closing] = accountIds.length
-    ? await Promise.all([
-        // The same window as the closing above it: a screen showing August's closing over
-        // September's batches would be two answers to different questions side by side.
-        fetchList<PointBatch>(
-          `${api}/point-batches?account_id=${encodeURIComponent(accountIds[0])}` +
-            `&from=${period.date_from}&to=${period.date_to}`,
-          getPointBatchesSchema.response,
-          authHeader,
-        ),
-        fetchClosing(
-          `${api}/inventory-closing?account_ids=${encodeURIComponent(accountIds.join(","))}` +
-            `&from=${period.date_from}&to=${period.date_to}`,
-          authHeader,
-        ),
-      ])
-    : [null, null]
 
   return (
     <div className="flex flex-col gap-6 p-4 md:p-6">
