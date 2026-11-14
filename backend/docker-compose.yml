@@ -170,33 +170,44 @@ services:
     # No dns: override on purpose. A hardcoded resolver breaks whenever the dev laptop changes
     # networks - a stale LAN resolver is unreachable, and a public one (1.1.1.1/8.8.8.8) is blocked
     # on networks that filter port 53. Inheriting the host's resolver (Docker's default) tracks the
-    # current network, so the login navigation always resolves.
+    # current network, so the login request always resolves.
     # If a network's resolver is ever unreachable from containers, fix it at the host, not here.
     container_name: azul-login-service-dev
+    # The build context is the backend (not this directory): the Go sensor lives
+    # in carriers/third_party/bmp and the module file is backend/go.mod.
     build:
-      context: ./carriers/azul-login-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: carriers/azul-login-service/Dockerfile
     ports:
       - "8083:8083"
     environment:
       - AZUL_LOGIN_PORT=8083
-      - AZUL_LOGIN_CURSOR_MAX_SECONDS=${AZUL_LOGIN_CURSOR_MAX_SECONDS_DEV:-}
-      - AZUL_LOGIN_FLIGHT_WARMUP_MODE=${AZUL_LOGIN_FLIGHT_WARMUP_MODE_DEV:-full}
-      # A failed attempt is retried in a fresh browser, spaced by a growing backoff, and each
-      # attempt is bounded by a watchdog.
-      - AZUL_LOGIN_MAX_ATTEMPTS=${AZUL_LOGIN_MAX_ATTEMPTS_DEV:-3}
-      - AZUL_LOGIN_RETRY_BACKOFF_SECONDS=${AZUL_LOGIN_RETRY_BACKOFF_SECONDS_DEV:-15}
-      - AZUL_LOGIN_ATTEMPT_TIMEOUT_SECONDS=${AZUL_LOGIN_ATTEMPT_TIMEOUT_SECONDS_DEV:-150}
-      # Leave empty unless backend/carriers says otherwise.
-      - AZUL_LOGIN_PROXY=$AZUL_LOGIN_PROXY_DEV
-      - AZUL_LOGIN_PROXY_USER=$AZUL_LOGIN_PROXY_USER_DEV
-      - AZUL_LOGIN_PROXY_PASS=$AZUL_LOGIN_PROXY_PASS_DEV
-    # It drives a real browser on a third-party page, the same reason the promo service is
-    # capped. Keep it bounded so a runaway browser cannot take the box down. Sized like prod:
-    # see azul-login-service-prod for the measurement.
-    mem_limit: 2500m
-    memswap_limit: 2500m
-    shm_size: 256mb
+      - AZUL_LOGIN_DEVICE_STATE=${AZUL_LOGIN_DEVICE_STATE_DEV:-/app/device-state.json}
+      - AZUL_LOGIN_FAST_PATH_TIMEOUT=${AZUL_LOGIN_FAST_PATH_TIMEOUT_DEV:-30}
+      - AZUL_LOGIN_SENSOR_EVENTS=${AZUL_LOGIN_SENSOR_EVENTS_DEV:-256}
+      - AZUL_LOGIN_APP_VERSION=${AZUL_LOGIN_APP_VERSION_DEV:-7.6.0}
+      - AZUL_LOGIN_APP_CODE=${AZUL_LOGIN_APP_CODE_DEV:-4154}
+      - AZUL_LOGIN_MIN_INTERVAL_SECONDS=${AZUL_LOGIN_MIN_INTERVAL_SECONDS_DEV:-60}
+      # At most 3 attempts per 10 minutes on the shared device; a 403/429 pauses every
+      # login for the cooldown. See backend/carriers/azul-login-service/CLAUDE.md.
+      - AZUL_LOGIN_WINDOW_SECONDS=${AZUL_LOGIN_WINDOW_SECONDS_DEV:-600}
+      - AZUL_LOGIN_WINDOW_MAX=${AZUL_LOGIN_WINDOW_MAX_DEV:-3}
+      - AZUL_LOGIN_BLOCK_COOLDOWN_SECONDS=${AZUL_LOGIN_BLOCK_COOLDOWN_SECONDS_DEV:-900}
+      - AZUL_LOGIN_QUEUE_TIMEOUT_SECONDS=${AZUL_LOGIN_QUEUE_TIMEOUT_SECONDS_DEV:-1500}
+      # Off by default here: every environment ships the same seasoned device, and a
+      # login from a home IP spends (and can mark) the device production depends on.
+      # Set AZUL_LOGIN_DISABLED_DEV=0 only to test the login itself, a few times at most.
+      - AZUL_LOGIN_DISABLED=${AZUL_LOGIN_DISABLED_DEV:-1}
+      # Leave empty unless backend/carriers/azul-login-service/CLAUDE.md says otherwise.
+      - AZUL_LOGIN_PROXY=${AZUL_LOGIN_PROXY_DEV:-}
+      - AZUL_FIREBASE_API_KEY=${AZUL_FIREBASE_API_KEY_DEV}
+      - AZUL_FIREBASE_APP_ID=${AZUL_FIREBASE_APP_ID_DEV}
+      - AZUL_FIREBASE_PROJECT_ID=${AZUL_FIREBASE_PROJECT_ID_DEV}
+      - AZUL_FIREBASE_PROJECT_NUMBER=${AZUL_FIREBASE_PROJECT_NUMBER_DEV}
+    # No browser: the login is an HTTP request, a Node VM and a Go sensor. 512 MB
+    # is comfortably above that; the old 2500m cap sized the Camoufox process.
+    mem_limit: 512m
+    memswap_limit: 512m
     profiles: ["dev"]
     restart: unless-stopped
 
@@ -531,30 +542,35 @@ services:
   azul-login-service-prod:
     container_name: azul-login-service-prod
     # Pulled, not built, like every prod image (arm64 from GHCR). Publishing this image needs a
-    # matching target in the CI build matrix (.github/workflows) - add it when wiring deploy.
+    # matching entry in the CI build matrix (.github/workflows/deploy-vps.yml).
     image: ghcr.io/murandido/m80-azul-login-service:${IMAGE_TAG:-latest}
     environment:
       - AZUL_LOGIN_PORT=8083
-      - AZUL_LOGIN_CURSOR_MAX_SECONDS=${AZUL_LOGIN_CURSOR_MAX_SECONDS_PROD:-}
-      - AZUL_LOGIN_FLIGHT_WARMUP_MODE=${AZUL_LOGIN_FLIGHT_WARMUP_MODE_PROD:-full}
-      # A failed attempt is retried in a fresh browser, spaced by a growing backoff, and each
-      # attempt is bounded by a watchdog.
-      - AZUL_LOGIN_MAX_ATTEMPTS=${AZUL_LOGIN_MAX_ATTEMPTS_PROD:-3}
-      - AZUL_LOGIN_RETRY_BACKOFF_SECONDS=${AZUL_LOGIN_RETRY_BACKOFF_SECONDS_PROD:-15}
-      - AZUL_LOGIN_ATTEMPT_TIMEOUT_SECONDS=${AZUL_LOGIN_ATTEMPT_TIMEOUT_SECONDS_PROD:-150}
+      - AZUL_LOGIN_DEVICE_STATE=${AZUL_LOGIN_DEVICE_STATE_PROD:-/app/device-state.json}
+      - AZUL_LOGIN_FAST_PATH_TIMEOUT=${AZUL_LOGIN_FAST_PATH_TIMEOUT_PROD:-30}
+      - AZUL_LOGIN_SENSOR_EVENTS=${AZUL_LOGIN_SENSOR_EVENTS_PROD:-256}
+      - AZUL_LOGIN_APP_VERSION=${AZUL_LOGIN_APP_VERSION_PROD:-7.6.0}
+      - AZUL_LOGIN_APP_CODE=${AZUL_LOGIN_APP_CODE_PROD:-4154}
+      - AZUL_LOGIN_MIN_INTERVAL_SECONDS=${AZUL_LOGIN_MIN_INTERVAL_SECONDS_PROD:-60}
+      # At most 3 attempts per 10 minutes on the shared device; a 403/429 pauses every
+      # login for the cooldown. See backend/carriers/azul-login-service/CLAUDE.md.
+      - AZUL_LOGIN_WINDOW_SECONDS=${AZUL_LOGIN_WINDOW_SECONDS_PROD:-600}
+      - AZUL_LOGIN_WINDOW_MAX=${AZUL_LOGIN_WINDOW_MAX_PROD:-3}
+      - AZUL_LOGIN_BLOCK_COOLDOWN_SECONDS=${AZUL_LOGIN_BLOCK_COOLDOWN_SECONDS_PROD:-900}
+      - AZUL_LOGIN_QUEUE_TIMEOUT_SECONDS=${AZUL_LOGIN_QUEUE_TIMEOUT_SECONDS_PROD:-1500}
+      # The ca-mode VPS reuses this profile: its .env sets AZUL_LOGIN_DISABLED_PROD=1 so
+      # anonymised passwords do not spend the device production depends on.
+      - AZUL_LOGIN_DISABLED=${AZUL_LOGIN_DISABLED_PROD:-}
       # Leave empty unless backend/carriers/azul-login-service/CLAUDE.md says otherwise.
-      - AZUL_LOGIN_PROXY=$AZUL_LOGIN_PROXY_PROD
-      - AZUL_LOGIN_PROXY_USER=$AZUL_LOGIN_PROXY_USER_PROD
-      - AZUL_LOGIN_PROXY_PASS=$AZUL_LOGIN_PROXY_PASS_PROD
-    # No ports: only the API reaches it, over the Compose network. A real browser, same appetite
-    # as the promo service - keep it bounded so a runaway one cannot take the box to the host OOM
-    # killer. Camoufox on the Azul portal peaks at ~1.77 GB of anonymous memory (measured
-    # 10/11/2026); the old 1500m cap OOM-killed browser processes on every login, which surfaced
-    # as "portal timed out during home", TargetClosedError or a login with no customerKey.
-    # 2500m leaves ~40% headroom; the host keeps several GB free.
-    mem_limit: 2500m
-    memswap_limit: 2500m
-    shm_size: 256mb
+      - AZUL_LOGIN_PROXY=${AZUL_LOGIN_PROXY_PROD:-}
+      - AZUL_FIREBASE_API_KEY=${AZUL_FIREBASE_API_KEY_PROD}
+      - AZUL_FIREBASE_APP_ID=${AZUL_FIREBASE_APP_ID_PROD}
+      - AZUL_FIREBASE_PROJECT_ID=${AZUL_FIREBASE_PROJECT_ID_PROD}
+      - AZUL_FIREBASE_PROJECT_NUMBER=${AZUL_FIREBASE_PROJECT_NUMBER_PROD}
+    # No ports: only the API reaches it, over the Compose network. No browser since the HTTP
+    # login replaced Camoufox; 512 MB covers Python, the Node VM and the Go sensor.
+    mem_limit: 512m
+    memswap_limit: 512m
     healthcheck:
       test: [ "CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8083/health').read()==b'ok' else 1)" ]
       interval: 30s

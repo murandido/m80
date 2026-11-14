@@ -269,7 +269,7 @@ jobs:
         working-directory: backend/carriers/azul-login-service
         run: |
           pip install -r requirements.txt
-          python -m unittest test_login
+          python -m unittest test_http_login
 
       - name: Audit pdf-service
         run: pip-audit -r pdf-service/requirements.txt
