@@ -99,6 +99,22 @@ func TestWindowStart(t *testing.T) {
 		}
 	})
 
+	// time.Now() is UTC in the production container. 22:00 on 31 December in São Paulo is
+	// already 1 January there, and the year must not reset three hours early.
+	t.Run("a calendar year read from a UTC clock still follows São Paulo", func(t *testing.T) {
+		t.Parallel()
+		lastEvening := time.Date(2027, time.January, 1, 1, 0, 0, 0, time.UTC)
+		since, resetsAt := windowStart(data.CPFLimitWindowCalendarYear, lastEvening)
+
+		wantSince := time.Date(2026, time.January, 1, 0, 0, 0, 0, saoPaulo)
+		if !since.Equal(wantSince) {
+			t.Fatalf("since = %v, want %v", since, wantSince)
+		}
+		if wantReset := time.Date(2027, time.January, 1, 0, 0, 0, 0, saoPaulo); resetsAt == nil || !resetsAt.Equal(wantReset) {
+			t.Fatalf("resetsAt = %v, want %v", resetsAt, wantReset)
+		}
+	})
+
 	// The fallback matters more than it looks: a window value this code does not
 	// recognise must not read as "no window", which would show every account as
 	// having consumed nothing.

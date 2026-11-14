@@ -26,7 +26,7 @@ import { Switch } from "@/components/ui/switch"
 import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 import { ACCOUNT_CATEGORY_OPTIONS } from "@/lib/account-category"
-import { applyPaddedThousandsMask } from "@/lib/points"
+import { formatSignedPaddedPoints } from "@/lib/points"
 import { Account, updateAccountSchema } from "@/schemas/account"
 import { PersonOption } from "@/schemas/person"
 import { LoyaltyProgram } from "@/schemas/loyalty-program"
@@ -56,7 +56,6 @@ function toFormValues(account: Account): FormData {
     // a side whenever they disagreed. Empty is dropped by stripEmptyFields.
     administrator_id: "",
     category: account.category,
-    waives_redemption_fee: account.waives_redemption_fee,
     owns_point_inventory: account.owns_point_inventory,
     tracks_statement: account.tracks_statement,
     default_profit_share_percent: account.default_profit_share_percent,
@@ -278,36 +277,6 @@ export function EditAccountPanel({
                 />
               </div>
 
-
-              {/* waives_redemption_fee */}
-              <div className="flex flex-col gap-1 text-sm">
-                <Controller
-                  name="waives_redemption_fee"
-                  control={form.control}
-                  render={({ field }) => (
-                    <>
-                      <div className="flex items-center justify-between gap-3">
-                        <FieldLabel htmlFor="edit-account-waives-redemption-fee">
-                          Isenta de taxa de resgate
-                        </FieldLabel>
-                        <Switch
-                          id="edit-account-waives-redemption-fee"
-                          checked={field.value ?? false}
-                          onCheckedChange={field.onChange}
-                          disabled={isPending}
-                        />
-                      </div>
-                      <p className="text-xs text-slate-500">
-                        Contas Azul Diamante Unique não pagam a taxa de resgate. As emissões
-                        feitas aqui passam a registrar quanto foi economizado; nas demais
-                        contas a coluna fica vazia.
-                      </p>
-                    </>
-                  )}
-                />
-              </div>
-
-
               {/* owns_point_inventory */}
               <div className="flex flex-col gap-1 text-sm">
                 <Controller
@@ -413,7 +382,7 @@ export function EditAccountPanel({
                     </span>
                   ) : (
                     <span className="tabular-nums font-medium">
-                      {applyPaddedThousandsMask(String(expected))} pontos
+                      {formatSignedPaddedPoints(expected)} pontos
                     </span>
                   )}
                 </div>
@@ -425,7 +394,7 @@ export function EditAccountPanel({
                     <span className="text-xs text-slate-400">sincronizado da companhia</span>
                   ) : (
                     <span className="tabular-nums font-medium">
-                      {applyPaddedThousandsMask(String(realBalance))} pontos
+                      {formatSignedPaddedPoints(realBalance)} pontos
                     </span>
                   )}
                 </div>
@@ -442,8 +411,8 @@ export function EditAccountPanel({
                   ) : (
                     <p className="text-xs text-amber-800">
                       {divergence > 0
-                        ? `O painel conta ${applyPaddedThousandsMask(String(divergence))} pontos a mais do que a companhia — falta lançar alguma emissão.`
-                        : `A companhia mostra ${applyPaddedThousandsMask(String(-divergence))} pontos a mais que o painel — falta lançar algum lote.`}
+                        ? `O painel conta ${formatSignedPaddedPoints(divergence)} pontos a mais do que a companhia — falta lançar alguma emissão.`
+                        : `A companhia mostra ${formatSignedPaddedPoints(-divergence)} pontos a mais que o painel — falta lançar algum lote.`}
                     </p>
                   ))}
               </div>

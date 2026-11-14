@@ -10,14 +10,6 @@ export const PROMO_STATUS_LABELS: Record<string, string> = {
   error: "Erro",
 }
 
-export const PROMO_STATUS_OPTIONS = [
-  { value: "success", label: PROMO_STATUS_LABELS.success },
-  { value: "failure", label: PROMO_STATUS_LABELS.failure },
-  { value: "unknown", label: PROMO_STATUS_LABELS.unknown },
-  { value: "refused", label: PROMO_STATUS_LABELS.refused },
-  { value: "error", label: PROMO_STATUS_LABELS.error },
-]
-
 export function promoStatusLabel(status: string): string {
   return PROMO_STATUS_LABELS[status] ?? status
 }

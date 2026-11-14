@@ -85,7 +85,7 @@ func (h *InventoryClosingHandler) GetInventoryClosing(w http.ResponseWriter, r *
 	data := schemas.InventoryClosingDataResponse{Accounts: []schemas.InventoryClosingResponse{}}
 	// Netted across accounts, the same way ReadClosing nets across batches: one transfer
 	// per pair of agencies, not one per account per batch.
-	var pointSettlements, feeSettlements []inventory.Settlement
+	var pointSettlements []inventory.Settlement
 	var accountParts [][]inventory.SettlementPart
 	var accountAgencies []inventory.BatchResult
 
@@ -134,9 +134,7 @@ func (h *InventoryClosingHandler) GetInventoryClosing(w http.ResponseWriter, r *
 		data.Totals.CostCents += closing.CostCents
 		data.Totals.RevenueCents += closing.RevenueCents
 		data.Totals.PendingPoints += closing.PendingPoints
-		data.Totals.RedemptionFeeSavedCents += closing.RedemptionFeeSavedCents
 		pointSettlements = append(pointSettlements, closing.Settlements...)
-		feeSettlements = append(feeSettlements, closing.FeeSettlements...)
 		accountParts = append(accountParts, closing.Parts)
 		// SummariseAgencies adds consumers up across batches; each account's agency totals
 		// are handed to it as one batch's worth, to add them up across accounts.
@@ -145,8 +143,6 @@ func (h *InventoryClosingHandler) GetInventoryClosing(w http.ResponseWriter, r *
 
 	data.Totals.ProfitCents = data.Totals.RevenueCents - data.Totals.CostCents
 	data.Totals.Settlements = settlementResponses(inventory.NetSettlements(pointSettlements), names)
-	data.Totals.FeeSettlements = settlementResponses(inventory.NetSettlements(feeSettlements), names)
-	data.Totals.TotalSettlements = settlementResponses(inventory.NetSettlements(pointSettlements, feeSettlements), names)
 	data.Totals.Parts = partResponses(inventory.MergeParts(accountParts...), names)
 	data.Totals.Agencies = consumerResponses(inventory.SummariseAgencies(accountAgencies), names)
 
@@ -228,12 +224,8 @@ func toClosingResponse(
 		RevenueCents:     closing.RevenueCents,
 		ProfitCents:      closing.ProfitCents,
 		Settlements:      settlementResponses(closing.Settlements, names),
-
-		RedemptionFeeSavedCents: closing.RedemptionFeeSavedCents,
-		FeeSettlements:          settlementResponses(closing.FeeSettlements, names),
-		TotalSettlements:        settlementResponses(closing.TotalSettlements, names),
-		Agencies:                consumerResponses(closing.Agencies, names),
-		Parts:                   partResponses(closing.Parts, names),
+		Agencies:         consumerResponses(closing.Agencies, names),
+		Parts:            partResponses(closing.Parts, names),
 	}
 
 	for _, batch := range closing.Batches {
@@ -251,12 +243,8 @@ func toClosingResponse(
 			RemainingPoints:    batch.RemainingPoints,
 			Consumers:          make([]schemas.InventoryConsumerResponse, 0, len(batch.Consumers)),
 			Settlements:        settlementResponses(batch.Settlements, names),
-
-			RedemptionFeeSavedCents: batch.RedemptionFeeSavedCents,
-			FeeSettlements:          settlementResponses(batch.FeeSettlements, names),
-			TotalSettlements:        settlementResponses(batch.TotalSettlements, names),
-			Lines:                   make([]schemas.InventoryBatchLineResponse, 0, len(batch.Lines)),
-			Parts:                   partResponses(batch.Parts, names),
+			Lines:              make([]schemas.InventoryBatchLineResponse, 0, len(batch.Lines)),
+			Parts:              partResponses(batch.Parts, names),
 		}
 
 		if label, ok := labels[batch.BatchID]; ok {
@@ -271,16 +259,15 @@ func toClosingResponse(
 		line.Consumers = append(line.Consumers, consumerResponses(batch.Consumers, names)...)
 		for _, slice := range batch.Lines {
 			line.Lines = append(line.Lines, schemas.InventoryBatchLineResponse{
-				IssuanceID:              slice.IssuanceID,
-				ProgramLocator:          slice.ProgramLocator,
-				OccurredOn:              slice.OccurredOn.Format(batchDateLayout),
-				AgencyID:                slice.AgencyID,
-				AgencyName:              nameOf(names, slice.AgencyID),
-				Points:                  slice.Points,
-				CostCents:               slice.CostCents,
-				RevenueCents:            slice.RevenueCents,
-				ProfitCents:             slice.RevenueCents - slice.CostCents,
-				RedemptionFeeSavedCents: slice.RedemptionFeeSavedCents,
+				IssuanceID:     slice.IssuanceID,
+				ProgramLocator: slice.ProgramLocator,
+				OccurredOn:     slice.OccurredOn.Format(batchDateLayout),
+				AgencyID:       slice.AgencyID,
+				AgencyName:     nameOf(names, slice.AgencyID),
+				Points:         slice.Points,
+				CostCents:      slice.CostCents,
+				RevenueCents:   slice.RevenueCents,
+				ProfitCents:    slice.RevenueCents - slice.CostCents,
 			})
 		}
 
@@ -379,13 +366,12 @@ func consumerResponses(consumers []inventory.Consumer, names map[string]string) 
 	responses := make([]schemas.InventoryConsumerResponse, 0, len(consumers))
 	for _, consumer := range consumers {
 		responses = append(responses, schemas.InventoryConsumerResponse{
-			AgencyID:                consumer.AgencyID,
-			AgencyName:              nameOf(names, consumer.AgencyID),
-			Points:                  consumer.Points,
-			CostCents:               consumer.CostCents,
-			RevenueCents:            consumer.RevenueCents,
-			ProfitCents:             consumer.ProfitCents,
-			RedemptionFeeSavedCents: consumer.RedemptionFeeSavedCents,
+			AgencyID:     consumer.AgencyID,
+			AgencyName:   nameOf(names, consumer.AgencyID),
+			Points:       consumer.Points,
+			CostCents:    consumer.CostCents,
+			RevenueCents: consumer.RevenueCents,
+			ProfitCents:  consumer.ProfitCents,
 		})
 	}
 	return responses
@@ -478,7 +464,7 @@ func scopeClosing(closing inventory.Closing, scope access.AgencyScope) inventory
 	}
 
 	batches := make([]inventory.BatchResult, 0, len(closing.Batches))
-	closing.CostCents, closing.RevenueCents, closing.RedemptionFeeSavedCents = 0, 0, 0
+	closing.CostCents, closing.RevenueCents = 0, 0
 	for _, batch := range closing.Batches {
 		if !scope.Allows(batch.FundingAgencyID) {
 			continue
@@ -500,19 +486,14 @@ func scopeClosing(closing inventory.Closing, scope access.AgencyScope) inventory
 		}
 		batch.Lines = lines
 		batch.Settlements = involved(batch.Settlements)
-		batch.FeeSettlements = involved(batch.FeeSettlements)
-		batch.TotalSettlements = involved(batch.TotalSettlements)
 		batch.Parts = involvedParts(batch.Parts)
 		batches = append(batches, batch)
 		closing.CostCents += batch.ChargedCents
 		closing.RevenueCents += batch.RevenueCents
-		closing.RedemptionFeeSavedCents += batch.RedemptionFeeSavedCents
 	}
 	closing.Batches = batches
 	closing.ProfitCents = closing.RevenueCents - closing.CostCents
 	closing.Settlements = involved(closing.Settlements)
-	closing.FeeSettlements = involved(closing.FeeSettlements)
-	closing.TotalSettlements = involved(closing.TotalSettlements)
 	closing.Parts = involvedParts(closing.Parts)
 	// The agency totals are added up again from the kept batches, whose consumers are
 	// already narrowed to the caller's agencies.

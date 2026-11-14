@@ -80,12 +80,32 @@ func Cancel(db *gorm.DB, issuance data.Issuance, in CancelInput, actorID string)
 	issuance.CancellationFee = in.CancellationFee
 	// Only ever turned on here: a plain cancellation of a booking this system really made
 	// must leave the flag alone, and reverting a cancellation clears it (UncancelIssuance).
+	columns := map[string]any{
+		"active":           false,
+		"cancelled_at":     issuance.CancelledAt,
+		"cancelled_by_id":  issuance.CancelledByID,
+		"refunded_points":  issuance.RefundedPoints,
+		"refunded_taxes":   issuance.RefundedTaxes,
+		"cancellation_fee": issuance.CancellationFee,
+	}
 	if in.CancellationOnly {
 		issuance.CancellationOnly = true
+		columns["cancellation_only"] = true
 	}
 
-	if err := db.Save(&issuance).Error; err != nil {
-		return data.Issuance{}, err
+	// A conditional write of the cancellation columns alone, never a Save of the whole
+	// row: every caller looked the issuance up before this without a lock, so the struct
+	// may already be stale. "active = TRUE" in the WHERE is the guard that actually holds -
+	// two cancels racing each other both pass the check above, and Postgres re-evaluates
+	// the condition for the one that waited on the row, which then matches nothing. Writing
+	// only these columns also keeps a stale struct from reverting an edit committed in
+	// between.
+	result := db.Model(&data.Issuance{}).Where("id = ? AND active = TRUE", issuance.ID).Updates(columns)
+	if result.Error != nil {
+		return data.Issuance{}, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return data.Issuance{}, ErrIssuanceAlreadyCancelled
 	}
 
 	// The sale's ledger is left alone - the money the client handed over does not stop

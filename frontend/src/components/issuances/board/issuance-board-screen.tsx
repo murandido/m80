@@ -10,7 +10,6 @@ import {
   buildEmissaoResumo,
 } from "@/components/issuances/emissao-message"
 import { copyEmissaoText } from "@/components/issuances/copy-emissao-menu"
-import { RedemptionFeeSummary } from "@/components/issuances/redemption-fee-summary"
 import { IssuanceBoard } from "@/components/issuances/board/issuance-board"
 import { IssuancePanel } from "@/components/issuances/board/issuance-panel"
 import {
@@ -215,7 +214,6 @@ export function IssuanceBoardScreen({
           onOpen={openCard}
           onAdd={startNewIssuance}
         />
-        <RedemptionFeeSummary rows={board.rows} />
       </div>
 
       {openRow && (

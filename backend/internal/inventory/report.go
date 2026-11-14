@@ -23,13 +23,6 @@ type Slice struct {
 	Points       int
 	CostCents    int
 	RevenueCents int
-	// RedemptionFeeSavedCents is this slice's part of the redemption fee the booking did not
-	// pay because the account is exempt (Azul's Diamante Unique). The issuing agency still
-	// charged it to the client, so it is a gain on the account like the margin on the points,
-	// and is split by the same percent. Prorated by points like the revenue, so a booking
-	// that drew on two batches leaves part of the saving on each, and a reversal gives its
-	// share back.
-	RedemptionFeeSavedCents int
 
 	// What the screen lists when a batch is opened: which booking or refund this slice is.
 	IssuanceID     string
@@ -39,12 +32,11 @@ type Slice struct {
 
 // Consumer is one agency's activity against one batch.
 type Consumer struct {
-	AgencyID                string
-	Points                  int
-	CostCents               int
-	RevenueCents            int
-	ProfitCents             int
-	RedemptionFeeSavedCents int
+	AgencyID     string
+	Points       int
+	CostCents    int
+	RevenueCents int
+	ProfitCents  int
 }
 
 // Settlement is one agency owing the batch's funder. A negative amount is the funder
@@ -71,17 +63,10 @@ type BatchResult struct {
 	ProfitCents     int
 	RemainingPoints int
 
-	// RedemptionFeeSavedCents is the redemption fee saved by every booking on this batch,
-	// kept apart from the profit on the points so the screen can show each on its own.
-	RedemptionFeeSavedCents int
-
 	Consumers []Consumer
-	// Settlements are on the points alone, exactly as the spreadsheet computed them.
+	// Settlements are what each agency owes the funder, exactly as the spreadsheet computed
+	// them.
 	Settlements []Settlement
-	// FeeSettlements split the redemption fee saved by the same percent, and
-	// TotalSettlements are the two netted per pair of agencies - what is actually paid.
-	FeeSettlements   []Settlement
-	TotalSettlements []Settlement
 
 	// Lines are the period's slices on this batch, in date order, so the screen can list the
 	// bookings and refunds behind each figure.
@@ -99,9 +84,6 @@ const (
 	// PartProfitShare is the share of an agency's profit on the points that belongs to the
 	// other side.
 	PartProfitShare = "profit_share"
-	// PartFeeShare is the share of the redemption fee an agency saved that belongs to the
-	// other side.
-	PartFeeShare = "fee_share"
 )
 
 // MixedPercent marks a merged part whose batches did not all use the same percent, so no
@@ -109,7 +91,7 @@ const (
 const MixedPercent = -1
 
 // SettlementPart is one term of a settlement: Payer owes Payee AmountCents, which is
-// Percent% of BaseCents (the payer's own cost, profit or saved fee). AmountCents is exactly
+// Percent% of BaseCents (the payer's own cost or profit). AmountCents is exactly
 // the value the settlement was summed from, rounding included, so the parts of a pair always
 // add up to its settlement to the centavo.
 type SettlementPart struct {
@@ -154,7 +136,7 @@ func MergeParts(lists ...[]SettlementPart) []SettlementPart {
 }
 
 // SummariseAgencies adds each agency's activity up across batches: the points it issued,
-// what they cost, what they sold for, the profit and the redemption fee it saved.
+// what they cost, what they sold for and the profit.
 func SummariseAgencies(batches []BatchResult) []Consumer {
 	byAgency := map[string]*Consumer{}
 	order := make([]string, 0)
@@ -170,7 +152,6 @@ func SummariseAgencies(batches []BatchResult) []Consumer {
 			total.CostCents += consumer.CostCents
 			total.RevenueCents += consumer.RevenueCents
 			total.ProfitCents += consumer.ProfitCents
-			total.RedemptionFeeSavedCents += consumer.RedemptionFeeSavedCents
 		}
 	}
 	summaries := make([]Consumer, 0, len(order))
@@ -226,12 +207,10 @@ func SummariseBatch(batch Batch, fundingAgencyID string, sharePercent int, slice
 		consumer.Points += slice.Points
 		consumer.CostCents += slice.CostCents
 		consumer.RevenueCents += slice.RevenueCents
-		consumer.RedemptionFeeSavedCents += slice.RedemptionFeeSavedCents
 
 		result.ConsumedPoints += slice.Points
 		result.ChargedCents += slice.CostCents
 		result.RevenueCents += slice.RevenueCents
-		result.RedemptionFeeSavedCents += slice.RedemptionFeeSavedCents
 		result.Lines = append(result.Lines, slice)
 	}
 
@@ -245,11 +224,10 @@ func SummariseBatch(batch Batch, fundingAgencyID string, sharePercent int, slice
 	result.ProfitCents = result.RevenueCents - result.ChargedCents
 	result.RemainingPoints = batch.Points - result.ConsumedPoints
 
-	funderProfit, funderFee := 0, 0
+	funderProfit := 0
 	if funder, ok := byAgency[fundingAgencyID]; ok {
 		funder.ProfitCents = funder.RevenueCents - funder.CostCents
 		funderProfit = funder.ProfitCents
-		funderFee = funder.RedemptionFeeSavedCents
 	}
 
 	for _, agencyID := range order {
@@ -265,9 +243,9 @@ func SummariseBatch(batch Batch, fundingAgencyID string, sharePercent int, slice
 			continue
 		}
 
-		spent, earned, fee := 0, 0, 0
+		spent, earned := 0, 0
 		if consumer, ok := byAgency[agencyID]; ok {
-			spent, earned, fee = consumer.CostCents, consumer.ProfitCents, consumer.RedemptionFeeSavedCents
+			spent, earned = consumer.CostCents, consumer.ProfitCents
 		}
 
 		// Each term is computed once and used both for the settlement and as a part, so the
@@ -275,12 +253,6 @@ func SummariseBatch(batch Batch, fundingAgencyID string, sharePercent int, slice
 		earnedShare := shareOf(earned, 100-sharePercent)
 		funderShare := shareOf(funderProfit, sharePercent)
 		owed := spent + earnedShare - funderShare
-
-		// The saved fee follows the profit's rule without the cost term: nobody paid for it,
-		// so each side owes the other its share of what it kept.
-		feeShare := shareOf(fee, 100-sharePercent)
-		funderFeeShare := shareOf(funderFee, sharePercent)
-		owedFee := feeShare - funderFeeShare
 
 		addPart := func(kind, payer, payee string, base, percent, amount int) {
 			if amount == 0 {
@@ -294,8 +266,6 @@ func SummariseBatch(batch Batch, fundingAgencyID string, sharePercent int, slice
 		addPart(PartCost, agencyID, fundingAgencyID, spent, 100, spent)
 		addPart(PartProfitShare, agencyID, fundingAgencyID, earned, 100-sharePercent, earnedShare)
 		addPart(PartProfitShare, fundingAgencyID, agencyID, funderProfit, sharePercent, funderShare)
-		addPart(PartFeeShare, agencyID, fundingAgencyID, fee, 100-sharePercent, feeShare)
-		addPart(PartFeeShare, fundingAgencyID, agencyID, funderFee, sharePercent, funderFeeShare)
 
 		// Nothing spent and nothing earned on either side is not a settlement, it is an
 		// empty line. Dropping it keeps a report from listing agencies with nothing to do
@@ -307,16 +277,8 @@ func SummariseBatch(batch Batch, fundingAgencyID string, sharePercent int, slice
 				AmountCents: owed,
 			})
 		}
-		if owedFee != 0 {
-			result.FeeSettlements = append(result.FeeSettlements, Settlement{
-				AgencyID:    agencyID,
-				ToAgencyID:  fundingAgencyID,
-				AmountCents: owedFee,
-			})
-		}
 	}
 
-	result.TotalSettlements = NetSettlements(result.Settlements, result.FeeSettlements)
 	return result
 }
 

@@ -70,29 +70,37 @@ jobs:
         include:
           - image: m80-api
             context: backend
+            file: backend/Dockerfile
             target: prod
             build-args: SERVICE_NAME=api
           - image: m80-bot
             context: backend
+            file: backend/Dockerfile
             target: prod
             build-args: SERVICE_NAME=bot
           - image: m80-promo
             context: backend
+            file: backend/Dockerfile
             target: prod-chrome
             build-args: SERVICE_NAME=promo
           - image: m80-pdf-service
             context: backend/pdf-service
+            file: backend/pdf-service/Dockerfile
             target: ""
             build-args: ""
           # The Azul login service, which main's Compose file expects on every box
           # running the prod profile. Built on the native arm64 runner for the same
-          # reason as promo: it installs a browser.
+          # reason as promo: it installs a browser. Same shape as deploy-vps: the
+          # context is the backend so the Go module and carriers/third_party are
+          # visible, and the file: keeps it from silently building backend/Dockerfile.
           - image: m80-azul-login-service
-            context: backend/carriers/azul-login-service
+            context: backend
+            file: backend/carriers/azul-login-service/Dockerfile
             target: ""
             build-args: ""
           - image: m80-frontend
             context: frontend
+            file: frontend/Dockerfile
             target: ""
             # Still api-prod: the CA box runs the same "prod" Compose profile,
             # so the service name it talks to is the same one. What separates
@@ -122,6 +130,7 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
           target: ${{ matrix.target }}
           build-args: ${{ matrix.build-args }}
           push: true

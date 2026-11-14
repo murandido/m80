@@ -35,8 +35,11 @@ var (
 	testDB     *gorm.DB
 	testDBErr  error
 
-	// phoneCounter feeds unique, valid Brazilian phone numbers to seeded users.
-	phoneCounter int64
+	// phoneCounter feeds unique, valid Brazilian phone numbers to seeded users. It starts
+	// halfway up the range because some tests here commit their users (the race and paid-switch
+	// tests), and the other packages count the same 1199 numbers from zero against the same
+	// database in parallel: a committed duplicate fails their insert on idx_users_phone.
+	phoneCounter int64 = 5_000_000
 )
 
 // setupTestDB connects once per test binary. It first probes connectivity with a silent
@@ -704,5 +707,40 @@ func TestUncancelIssuance_ClearsCancellationOnly(t *testing.T) {
 			t.Error("cancellation_only is still set: the row would vanish from the supplier " +
 				"balance, counted neither as issued nor as refunded")
 		}
+	})
+}
+
+// The panel refuses negative amounts, but the Go side used to take them: a fee of -15000
+// made the sale "owe back" R$ 150 more than came in, which with a client became credit
+// on the next sale. Zero stays valid - it is how "no fee" is typed.
+func TestCancelIssuance_RejectsNegativeAmounts(t *testing.T) {
+	for _, field := range []string{"cancellation_fee", "refunded_points", "refunded_taxes"} {
+		t.Run(field, func(t *testing.T) {
+			runInTx(t, func(tx *gorm.DB) {
+				issuance, user := seedIssuance(t, tx)
+
+				rec := callCancel(tx, issuance.ID, user.ID, `{"`+field+`": -1}`)
+				if rec.Code != http.StatusBadRequest {
+					t.Fatalf("status: got %d, want %d (body: %s)", rec.Code, http.StatusBadRequest, rec.Body.String())
+				}
+
+				var persisted data.Issuance
+				if err := tx.First(&persisted, "id = ?", issuance.ID).Error; err != nil {
+					t.Fatalf("failed to re-read issuance: %v", err)
+				}
+				if !persisted.Active {
+					t.Error("the issuance was cancelled with a negative amount")
+				}
+			})
+		})
+	}
+
+	t.Run("zero is valid", func(t *testing.T) {
+		runInTx(t, func(tx *gorm.DB) {
+			issuance, user := seedIssuance(t, tx)
+			if rec := callCancel(tx, issuance.ID, user.ID, `{"cancellation_fee": 0}`); rec.Code != http.StatusOK {
+				t.Fatalf("zero fee: got %d (body: %s)", rec.Code, rec.Body.String())
+			}
+		})
 	})
 }

@@ -8,13 +8,13 @@ export type Direction = "down" | "up" | "tab-right" | "tab-left"
 
 // "Cia aérea", "Localizador", "Data do voo", "Passageiro principal", "Origem",
 // "Destino", "Pontos", "Valor milheiro", "Taxas", "Valor total" (calculated),
-// "Conta", "Emissor", "Agência", "Status", "Observação", "Taxa de resgate".
-export const COLUMN_COUNT = 16
+// "Conta", "Emissor", "Agência", "Status", "Observação".
+export const COLUMN_COUNT = 15
 // "Data da emissão" sits after all of them, and is the one column the operator can hide.
 // Hiding it is passing COLUMN_COUNT where the resolvers below take a count - which only
 // works because it is last: no other index moves.
-export const ISSUED_ON_COLUMN_INDEX = 16
-export const COLUMN_COUNT_WITH_ISSUED_ON = 17
+export const ISSUED_ON_COLUMN_INDEX = 15
+export const COLUMN_COUNT_WITH_ISSUED_ON = 16
 export const LOCATOR_COLUMN_INDEX = 1
 export const PASSENGER_COLUMN_INDEX = 3
 export const ORIGIN_COLUMN_INDEX = 4
@@ -25,7 +25,6 @@ export const TAXES_COLUMN_INDEX = 8
 export const CALCULATED_COLUMN_INDEX = 9
 export const ACCOUNT_COLUMN_INDEX = 10
 export const OBSERVATION_COLUMN_INDEX = 14
-export const REDEMPTION_FEE_COLUMN_INDEX = 15
 
 function isSkippableRow(row: NavigableRow): boolean {
   return row.status === "cancelled"

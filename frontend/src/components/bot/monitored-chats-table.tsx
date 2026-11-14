@@ -39,14 +39,11 @@ import {
   setListenedChatPromoModeAction,
   stopListenedChatAction,
 } from "@/actions/listened-chats"
+import { formatDateTime } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import type { ListenedChat } from "@/schemas/listened-chats"
 
 const COLUMN_COUNT = 4
-
-function formatDateTime(iso: string): string {
-  return new Date(iso).toLocaleString("pt-BR")
-}
 
 export function MonitoredChatsTable({ chats }: { chats: ListenedChat[] }) {
   const router = useRouter()

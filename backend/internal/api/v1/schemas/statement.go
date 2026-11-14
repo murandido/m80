@@ -325,6 +325,26 @@ type AzulStatementSingleResponse struct {
 	Data    AzulStatementResponse `json:"data"`
 }
 
+// AzulBrowserKeyRequest carries a customerKey captured from a login the operator made in their own
+// browser, with the CPF that login was typed with. The API checks both before storing the key.
+type AzulBrowserKeyRequest struct {
+	CustomerKey   string `json:"customer_key" validate:"required"`
+	LoginDocument string `json:"login_document" validate:"required"`
+}
+
+// AzulBrowserKeyResponse confirms the key was checked with Azul and stored; the first sync runs
+// in the background.
+type AzulBrowserKeyResponse struct {
+	Connected bool `json:"connected" example:"true"`
+}
+
+// AzulBrowserKeySingleResponse is the browser-key route's envelope.
+type AzulBrowserKeySingleResponse struct {
+	Success bool                   `json:"success" example:"true"`
+	Message string                 `json:"message" example:"Conta conectada"`
+	Data    AzulBrowserKeyResponse `json:"data"`
+}
+
 // AzulConnectSingleResponse is the connect route's envelope.
 type AzulConnectSingleResponse struct {
 	Success bool                `json:"success" example:"true"`

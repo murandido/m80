@@ -6,8 +6,10 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/murandido/m-80-backend/internal/businessday"
 	"github.com/murandido/m-80-backend/internal/data"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -178,10 +180,19 @@ func seedIssuance(t *testing.T, tx *gorm.DB, f fixture, issuedOn string, points 
 		AccountID:          f.account.ID,
 		IssuerID:           f.user.ID,
 		AgencyID:           f.agency.ID,
-		CreatedAt:          day(issuedOn),
+		CreatedAt:          instantOn(issuedOn),
 	}
 	mustCreate(t, tx, &issuance)
 	return issuance
+}
+
+// instantOn is a moment inside that São Paulo calendar day - midday, so no reading of it
+// can land on a neighbouring day. day() is midnight UTC, the shape a DATE column has, and as
+// an instant that is still the evening before in São Paulo: seeding created_at or
+// cancelled_at with it would date the event a day early under DayOf.
+func instantOn(value string) time.Time {
+	date := day(value)
+	return time.Date(date.Year(), date.Month(), date.Day(), 12, 0, 0, 0, businessday.Location)
 }
 
 func mustCreate(t *testing.T, tx *gorm.DB, value any) {
@@ -223,7 +234,10 @@ func sumCost(rows []data.PointBatchAllocation) int {
 	return total
 }
 
-var phoneCounter int64
+// Each test package draws seeded phones from its own million (handlers 5M, bot 1M,
+// inventory 2M, legacyimport 3M, statement 4M): the packages run in parallel against
+// one Postgres, and a user one of them commits collides on idx_users_phone otherwise.
+var phoneCounter int64 = 2_000_000
 
 // nextPhone hands out distinct, valid Brazilian mobile numbers - users.phone is unique.
 // Atomic because runInTx marks its tests parallel: a plain increment would hand the same

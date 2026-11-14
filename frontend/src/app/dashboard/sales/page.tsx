@@ -92,7 +92,11 @@ export default async function SalesClientsPage({
 
   return (
     <div className="p-4 sm:p-8">
-      <LiveRefresh />
+      {/* The table refreshes its own rows and totals on every event; the route is only
+          refetched for what it alone renders that events move - the filtered client's
+          credit. Refreshing it always re-read the whole client register, the agencies and
+          the session on every colleague's issuance, against a per-user rate limit. */}
+      {filteredClientId && <LiveRefresh />}
       <div className="flex flex-col gap-4 sm:gap-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-lg font-semibold text-slate-800">

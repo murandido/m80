@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button"
 import { startSmilesLoginAction } from "@/actions/statement"
 import { statementSyncStateSchema, type SmilesAuthenticator, type StatementSyncState } from "@/schemas/inventory"
 import { SmilesConnectDialog } from "@/components/accounts/smiles-connect-dialog"
+import { formatSignedPaddedPoints } from "@/lib/points"
 import { Account } from "@/schemas/account"
 
 // The stable identifier of the Smiles program is its code, not its name or id.
@@ -23,10 +24,6 @@ const POLL_INTERVAL_MS = 4000
 // How long to keep polling for that first read before giving up on it. It normally lands in
 // seconds; past this the card just shows what it has, and a reload or the ticker will catch up.
 const POLL_TIMEOUT_MS = 60_000
-
-function formatPoints(points: number): string {
-  return points.toLocaleString("pt-BR")
-}
 
 interface SmilesAccountControlsProps {
   account: Account
@@ -178,20 +175,38 @@ export function SmilesAccountControls({ account }: SmilesAccountControlsProps) {
     return (
       <div className="flex items-center justify-between gap-2 border-t border-slate-100 bg-slate-50 px-4 py-2">
         <span className="text-xs text-slate-500">Conta Smiles ainda não conectada</span>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleConnect}
-          disabled={isStarting}
-          className="border-orange-600 text-orange-600 hover:border-orange-500 hover:bg-orange-500 hover:text-white"
-        >
-          {isStarting ? (
-            <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <Link2 className="mr-1 h-3.5 w-3.5" />
+        <div className="flex items-center gap-2">
+          {/* Losing the session does not lose the history: a blocked holder keeps the
+              statement already synced, and the page reads it from the database. The link
+              stays available while there is something to read. */}
+          {account.tracks_statement && account.smiles_last_synced_at && (
+            <Button
+              asChild
+              variant="outline"
+              size="sm"
+              className="border-slate-800 text-slate-800 hover:border-orange-500 hover:bg-orange-500 hover:text-white"
+            >
+              <Link href={`/dashboard/accounts/${account.id}/statement`}>
+                <FileText className="mr-1 h-3.5 w-3.5" />
+                Ver extrato
+              </Link>
+            </Button>
           )}
-          Conectar
-        </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleConnect}
+            disabled={isStarting}
+            className="border-orange-600 text-orange-600 hover:border-orange-500 hover:bg-orange-500 hover:text-white"
+          >
+            {isStarting ? (
+              <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Link2 className="mr-1 h-3.5 w-3.5" />
+            )}
+            Conectar
+          </Button>
+        </div>
         {dialog}
       </div>
     )
@@ -201,7 +216,7 @@ export function SmilesAccountControls({ account }: SmilesAccountControlsProps) {
   // round that read the statement, so on an account that does not track it it is empty or stale.
   const balancePoints = account.real_balance_points ?? status?.last_balance_points
   const balance =
-    balancePoints != null ? `${formatPoints(balancePoints)} milhas` : "Saldo ainda não sincronizado"
+    balancePoints != null ? `${formatSignedPaddedPoints(balancePoints)} milhas` : "Saldo ainda não sincronizado"
   const lastSyncedAt = status?.last_synced_at ?? account.smiles_last_synced_at
   const syncedAt = lastSyncedAt
     ? `atualizado ${formatDistanceToNow(new Date(lastSyncedAt), {

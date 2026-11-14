@@ -212,6 +212,15 @@ const IssuanceCard = memo(function IssuanceCard({
             <span className="flex h-6 min-w-6 items-center justify-center rounded-full bg-white px-1.5 text-xs font-medium text-slate-900 tabular-nums">
               {number}
             </span>
+            {/* What the red ring means: the last save of this card failed. */}
+            {row.hasError && (
+              <span
+                className="rounded-full bg-white px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-red-700 uppercase"
+                title="A última alteração desta emissão não foi salva"
+              >
+                não salvo
+              </span>
+            )}
             {/* The ticket changed after it was issued - the panel lists how. */}
             {row.adjustments.length > 0 && (
               <span

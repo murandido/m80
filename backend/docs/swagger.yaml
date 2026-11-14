@@ -525,12 +525,6 @@ definitions:
         type: boolean
       updated_at:
         type: string
-      waives_redemption_fee:
-        description: |-
-          WaivesRedemptionFee is true on an account exempt from the airline's redemption fee -
-          Azul's Diamante Unique. It is what turns a computed fee into "saved" instead of
-          "owed" on the issuances made through this account.
-        type: boolean
     type: object
   schemas.AccountSingleResponse:
     properties:
@@ -1496,11 +1490,6 @@ definitions:
           above - an account administered for someone else has a statement worth watching and no
           inventory to cost. Omitted means false.
         type: boolean
-      waives_redemption_fee:
-        description: |-
-          WaivesRedemptionFee marks an account that pays no redemption fee - Azul's Diamante
-          Unique. Omitted means false, which is what every account paid before this existed.
-        type: boolean
     required:
     - holder_id
     - loyalty_program_id
@@ -1738,23 +1727,6 @@ definitions:
         type: string
       name:
         type: string
-      redemption_fee_advance_days:
-        example: 120
-        minimum: 0
-        type: integer
-      redemption_fee_domestic_cents:
-        description: |-
-          The redemption fee charged per passenger and per trecho when the ticket is issued
-          fewer than RedemptionFeeAdvanceDays days before the flight. All three nil means the
-          program charges no such fee, which is not the same as a fee of zero: nothing is
-          computed at all. See data.LoyaltyProgram and migration 40.
-        example: 6990
-        minimum: 0
-        type: integer
-      redemption_fee_international_cents:
-        example: 17490
-        minimum: 0
-        type: integer
     required:
     - code
     - default_airline_id
@@ -2136,8 +2108,6 @@ definitions:
       program_locator:
         example: ALCTKJ
         type: string
-      redemption_fee_saved_cents:
-        type: integer
       revenue_cents:
         type: integer
     type: object
@@ -2158,10 +2128,6 @@ definitions:
         type: array
       cost_cents:
         type: integer
-      fee_settlements:
-        items:
-          $ref: '#/definitions/schemas.InventorySettlementResponse'
-        type: array
       funding_agency_id:
         type: string
       funding_agency_name:
@@ -2188,14 +2154,6 @@ definitions:
       profit_share_percent:
         example: 50
         type: integer
-      redemption_fee_saved_cents:
-        description: |-
-          RedemptionFeeSavedCents is the redemption fee this batch's bookings did not pay
-          because the account is exempt (Azul's Diamante Unique). FeeSettlements split it by
-          the batch's percent, and TotalSettlements net that with the points: the three parts
-          of the settlement the screen shows.
-        example: 27960
-        type: integer
       remaining_points:
         type: integer
       revenue_cents:
@@ -2203,13 +2161,6 @@ definitions:
       settled_at:
         type: string
       settlements:
-        description: |-
-          Settlements are on the points alone - unchanged from before the redemption fee
-          entered the closing.
-        items:
-          $ref: '#/definitions/schemas.InventorySettlementResponse'
-        type: array
-      total_settlements:
         items:
           $ref: '#/definitions/schemas.InventorySettlementResponse'
         type: array
@@ -2246,7 +2197,7 @@ definitions:
       agencies:
         description: |-
           Agencies is each agency's activity in the period, and Parts the terms of the
-          settlement merged across batches: the calculation behind total_settlements.
+          settlement merged across batches: the calculation behind settlements.
         items:
           $ref: '#/definitions/schemas.InventoryConsumerResponse'
         type: array
@@ -2274,10 +2225,6 @@ definitions:
           batches and the bookings add up to reality - no statement export carries a position.
           Real is null until somebody looks. See inventory.ExpectedBalances.
         type: integer
-      fee_settlements:
-        items:
-          $ref: '#/definitions/schemas.InventorySettlementResponse'
-        type: array
       parts:
         items:
           $ref: '#/definitions/schemas.InventorySettlementPartResponse'
@@ -2294,10 +2241,6 @@ definitions:
         type: string
       real_balance_points:
         type: integer
-      redemption_fee_saved_cents:
-        description: The period's redemption fee saved, its split, and the split netted
-          with the points.
-        type: integer
       revenue_cents:
         type: integer
       settlements:
@@ -2307,10 +2250,6 @@ definitions:
       starts_on:
         example: "2026-08-01"
         type: string
-      total_settlements:
-        items:
-          $ref: '#/definitions/schemas.InventorySettlementResponse'
-        type: array
       unsupported_split:
         description: |-
           UnsupportedSplit warns that this account has more than two partner agencies, which
@@ -2326,10 +2265,6 @@ definitions:
         type: array
       cost_cents:
         type: integer
-      fee_settlements:
-        items:
-          $ref: '#/definitions/schemas.InventorySettlementResponse'
-        type: array
       parts:
         items:
           $ref: '#/definitions/schemas.InventorySettlementPartResponse'
@@ -2338,15 +2273,9 @@ definitions:
         type: integer
       profit_cents:
         type: integer
-      redemption_fee_saved_cents:
-        type: integer
       revenue_cents:
         type: integer
       settlements:
-        items:
-          $ref: '#/definitions/schemas.InventorySettlementResponse'
-        type: array
-      total_settlements:
         items:
           $ref: '#/definitions/schemas.InventorySettlementResponse'
         type: array
@@ -2362,10 +2291,6 @@ definitions:
       points:
         type: integer
       profit_cents:
-        type: integer
-      redemption_fee_saved_cents:
-        description: RedemptionFeeSavedCents is the redemption fee this agency's bookings
-          did not pay.
         type: integer
       revenue_cents:
         type: integer
@@ -2798,22 +2723,6 @@ definitions:
         type: integer
       program_locator:
         type: string
-      redemption_fee_manual:
-        description: |-
-          RedemptionFeeManual says an operator typed the amount by hand, which is what stops
-          the next Traveos sync from recomputing over the correction.
-        type: boolean
-      redemption_fee_saved_cents:
-        description: |-
-          RedemptionFeeSavedCents is the airline's redemption fee this issuance did not pay,
-          because the account it was made on is exempt. Null on every ordinary account and
-          whenever the rule could not be applied (no synced itinerary, or a program with no fee
-          configured) - which is not the same as zero, and zero is a real answer: the rule ran
-          and there was no fee to avoid.
-
-          It does not take part in what the client owes: it is recorded for control and billed
-          nowhere. See data.Issuance.
-        type: integer
       refunded_points:
         type: integer
       refunded_taxes:
@@ -3279,16 +3188,6 @@ definitions:
         type: string
       name:
         type: string
-      redemption_fee_advance_days:
-        type: integer
-      redemption_fee_domestic_cents:
-        description: |-
-          Null when the program charges no redemption fee. Same reason as the cap above: the
-          airlines move these - Azul's launched at 90 days and a price per tier - so they are
-          editable rather than only seeded.
-        type: integer
-      redemption_fee_international_cents:
-        type: integer
       updated_at:
         type: string
     type: object
@@ -4078,12 +3977,48 @@ definitions:
         example: '***77'
         type: string
     type: object
-  schemas.SmilesChallengeRequest:
+  schemas.SmilesBrowserChallengeCompleteRequest:
+    properties:
+      authenticator_id:
+        type: string
+      oob_code:
+        type: string
+    required:
+    - authenticator_id
+    - oob_code
+    type: object
+  schemas.SmilesBrowserChallengeRequest:
     properties:
       authenticator_id:
         type: string
     required:
     - authenticator_id
+    type: object
+  schemas.SmilesBrowserChallengeResponse:
+    properties:
+      authenticator_id:
+        type: string
+      channel:
+        example: sms
+        type: string
+      client_id:
+        type: string
+      mfa_token:
+        type: string
+      sent_to:
+        example: '***77'
+        type: string
+    type: object
+  schemas.SmilesBrowserChallengeSingleResponse:
+    properties:
+      data:
+        $ref: '#/definitions/schemas.SmilesBrowserChallengeResponse'
+      message:
+        example: Peça o código pelo navegador
+        type: string
+      success:
+        example: true
+        type: boolean
     type: object
   schemas.SmilesChallengeResponse:
     properties:
@@ -4765,13 +4700,6 @@ definitions:
           above - an account administered for someone else has a statement worth watching and no
           inventory to cost. Omitted means false.
         type: boolean
-      waives_redemption_fee:
-        description: |-
-          WaivesRedemptionFee marks an account that pays no redemption fee - Azul's Diamante
-          Unique. Changing it does not rewrite what past issuances already recorded: the saving
-          is stored on the issuance and only moves when that issuance is written again. See
-          data.Issuance.RedemptionFeeSavedCents.
-        type: boolean
     type: object
   schemas.UpdateAgencyNicknameRequest:
     properties:
@@ -4895,18 +4823,6 @@ definitions:
         type: integer
       program_locator:
         type: string
-      redemption_fee_saved_cents:
-        description: |-
-          The redemption fee this issuance avoided, in centavos, corrected by hand. A value pins
-          the correction against the automatic recalculation; an explicit null releases the
-          issuance back to the rule and recomputes it on the spot.
-
-          This field is the reason the handler reads the raw body as well as the struct: for
-          every other field here an absent key and a JSON null both decode to nil and mean
-          "leave alone", and that is exactly the distinction the override needs.
-        example: 6990
-        minimum: 0
-        type: integer
       status:
         description: |-
           Status transitions the issuance between incomplete/complete/cancelled. "deleted"
@@ -4965,23 +4881,6 @@ definitions:
         type: string
       name:
         type: string
-      redemption_fee_advance_days:
-        example: 120
-        minimum: 0
-        type: integer
-      redemption_fee_domestic_cents:
-        description: |-
-          The redemption fee charged per passenger and per trecho when the ticket is issued
-          fewer than RedemptionFeeAdvanceDays days before the flight. All three nil means the
-          program charges no such fee, which is not the same as a fee of zero: nothing is
-          computed at all. See data.LoyaltyProgram and migration 40.
-        example: 6990
-        minimum: 0
-        type: integer
-      redemption_fee_international_cents:
-        example: 17490
-        minimum: 0
-        type: integer
     type: object
   schemas.UpdateMeRequest:
     properties:
@@ -6709,15 +6608,14 @@ paths:
       summary: Conectar conta Smiles (primeiro passo do login)
       tags:
       - Estoque de pontos
-  /accounts/{id}/smiles-connect/challenge:
+  /accounts/{id}/smiles-connect/challenge/browser:
     post:
       consumes:
       - application/json
-      description: Pede à Smiles que envie o código no canal escolhido (um dos ids
-        devolvidos por /smiles-connect). Cada chamada dispara um SMS ou e-mail de
-        verdade, e a Smiles limita reenvios por canal — então o painel não reenvia
-        sozinho. Responde com o canal e o destino mascarado, para a tela dizer onde
-        o código chegou.
+      description: Devolve o mfa_token e o client id públicos para a extensão executar
+        o POST que o edge recusa a clientes HTTP. O canal escolhido é validado contra
+        os cadastrados na conta, e o destino volta mascarado. A extensão completa
+        em /smiles-connect/challenge/complete.
       parameters:
       - description: Conta
         in: path
@@ -6729,7 +6627,62 @@ paths:
         name: request
         required: true
         schema:
-          $ref: '#/definitions/schemas.SmilesChallengeRequest'
+          $ref: '#/definitions/schemas.SmilesBrowserChallengeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/schemas.SmilesBrowserChallengeSingleResponse'
+        "400":
+          description: Corpo inválido
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+        "401":
+          description: Não autenticado
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+        "403":
+          description: Requer admin
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+        "404":
+          description: Conta não encontrada
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+        "409":
+          description: Não há login em andamento, ou ele expirou
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+        "422":
+          description: Canal não é da conta
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Preparar o desafio da Smiles para o navegador do operador
+      tags:
+      - Estoque de pontos
+  /accounts/{id}/smiles-connect/challenge/complete:
+    post:
+      consumes:
+      - application/json
+      description: Guarda o oob_code devolvido pela extensão e confirma que o código
+        foi enviado, com o canal e o destino mascarado. Depois disso o operador digita
+        os dígitos em /smiles-connect/code, como no caminho normal.
+      parameters:
+      - description: Conta
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Resultado do navegador
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/schemas.SmilesBrowserChallengeCompleteRequest'
       produces:
       - application/json
       responses:
@@ -6761,13 +6714,9 @@ paths:
           description: Canal não é da conta
           schema:
             $ref: '#/definitions/schemas.ErrorResponse'
-        "429":
-          description: A Smiles está limitando os envios
-          schema:
-            $ref: '#/definitions/schemas.ErrorResponse'
       security:
       - BearerAuth: []
-      summary: Pedir o código de verificação da Smiles
+      summary: Concluir o desafio que o navegador do operador executou
       tags:
       - Estoque de pontos
   /accounts/{id}/smiles-connect/code:
@@ -9291,7 +9240,8 @@ paths:
           schema:
             $ref: '#/definitions/schemas.ErrorResponse'
         "404":
-          description: Conta não encontrada
+          description: Conta não encontrada ou com lote financiado por agência fora
+            do escopo
           schema:
             $ref: '#/definitions/schemas.ErrorResponse'
         "422":
@@ -9334,7 +9284,8 @@ paths:
           schema:
             $ref: '#/definitions/schemas.ErrorResponse'
         "404":
-          description: Período não encontrado
+          description: Período não encontrado ou conta com lote financiado por agência
+            fora do escopo
           schema:
             $ref: '#/definitions/schemas.ErrorResponse'
         "422":
@@ -10326,21 +10277,19 @@ paths:
       description: 'Gera uma planilha .xlsx das emissões filtradas. O layout é escolhido
         por layout: control (padrão) ou legacy. Layout control: planilha manual de
         controle numa aba única (a emissão cancelada é atribuída a quem cancelou,
-        que é onde a listagem também a mostra), colunas A:O (Nº, Companhia, Localizador,
+        que é onde a listagem também a mostra), colunas A:N (Nº, Companhia, Localizador,
         Data do Voo, Passageiro Principal, Origem, Destino, Pontos, Milheiro, Taxa,
-        Total, Conta, Observação, Taxa Resgate, Emissor), as linhas agrupadas em blocos
-        por companhia, o bloco TOTAL DAS CONTAS ao final e, ao lado da tabela, um
-        quadro por conta e companhia com os localizadores e o total de pontos. A coluna
-        Emissor identifica quem fez cada linha, já que todos os emissores ficam na
-        mesma aba. Dentro de cada bloco a ordem é a da listagem (da mais antiga para
-        a mais recente). Aceita os mesmos filtros da listagem (data, programa de fidelidade,
-        cia aérea, conta, agência e emissor). Emissão cancelada no mesmo dia em que
-        foi criada entra pelo líquido (pontos e taxas menos o reembolso); cancelada
-        em outro dia entra só pelo reembolso, negativo. A linha cancelada é destacada
-        em vermelho claro. Layout legacy: a antiga planilha EMISSÕES GERAIS, uma tabela
-        só (B:P) com os totais do modelo, mais a coluna TAXA RESGATE em Q. Nos dois
-        layouts a Taxa Resgate é a taxa que a conta isenta (Azul Diamante Unique)
-        deixou de pagar, em branco nas contas comuns, com o mesmo sinal dos pontos.'
+        Total, Conta, Observação, Emissor), as linhas agrupadas em blocos por companhia,
+        o bloco TOTAL DAS CONTAS ao final e, ao lado da tabela, um quadro por conta
+        e companhia com os localizadores e o total de pontos. A coluna Emissor identifica
+        quem fez cada linha, já que todos os emissores ficam na mesma aba. Dentro
+        de cada bloco a ordem é a da listagem (da mais antiga para a mais recente).
+        Aceita os mesmos filtros da listagem (data, programa de fidelidade, cia aérea,
+        conta, agência e emissor). Emissão cancelada no mesmo dia em que foi criada
+        entra pelo líquido (pontos e taxas menos o reembolso); cancelada em outro
+        dia entra só pelo reembolso, negativo. A linha cancelada é destacada em vermelho
+        claro. Layout legacy: a antiga planilha EMISSÕES GERAIS, uma tabela só (B:P)
+        com os totais do modelo.'
       parameters:
       - description: Data inicial da emissão (YYYY-MM-DD), inclusiva
         in: query
