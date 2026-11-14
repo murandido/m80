@@ -47,6 +47,9 @@ export function AzulAccountControls({ account }: AzulAccountControlsProps) {
   // Remembers we were mid-connect, so the moment the poll reports it finished we refresh the page
   // to pull the freshly synced balance into the card.
   const wasConnecting = useRef(false)
+  // When this tab last asked for a connect. A state detail written after it is the outcome of that
+  // attempt, which is worth showing even on a state whose detail is usually a read error.
+  const [connectRequestedAt, setConnectRequestedAt] = useState<number | null>(null)
 
   // Every Azul account can connect: the balance is read for all of them. "Acompanhar extrato"
   // only decides whether the statement link shows - see SyncAccount on the backend.
@@ -66,13 +69,16 @@ export function AzulAccountControls({ account }: AzulAccountControlsProps) {
     }
   }, [account.id])
 
-  // On mount, learn whether a connect is already in flight - but only for a not-yet-connected
-  // account, which is the one state where a login can be running or needed. A connected account
-  // shows its balance straight from the server render, no request per card on every page load.
+  // On mount, learn whether a connect is already in flight, and why the last one failed - but only
+  // for an account that is not connected or is waiting for a login, the states where a login can
+  // be running or needed. A healthy connected account shows its balance straight from the server
+  // render, no request per card on every page load.
   // The fetch is inlined (rather than calling fetchStatus) so the setState lands inside the
   // promise callback, not the effect body, and a late response for an unmounted card is dropped.
+  const waitingForLogin =
+    account.azul_sync_state === "needs_reconnect" || account.azul_sync_state === "needs_attention"
   useEffect(() => {
-    if (!enabled || account.azul_connected) return
+    if (!enabled || (account.azul_connected && !waitingForLogin)) return
     let active = true
     fetch(`/api/accounts/${account.id}/azul-status`, { cache: "no-store" })
       .then((response) => (response.ok ? response.json() : null))
@@ -85,7 +91,7 @@ export function AzulAccountControls({ account }: AzulAccountControlsProps) {
     return () => {
       active = false
     }
-  }, [enabled, account.azul_connected, account.id])
+  }, [enabled, account.azul_connected, waitingForLogin, account.id])
 
   const connecting = status?.connecting ?? false
 
@@ -120,6 +126,7 @@ export function AzulAccountControls({ account }: AzulAccountControlsProps) {
         return
       }
       toast.success("Login iniciado. O saldo aparece assim que a conta conectar.")
+      setConnectRequestedAt(Date.now())
       // Show "conectando" at once, then let the poll take over with the server's own timestamp.
       setStatus((prev) => ({
         connected: prev?.connected ?? account.azul_connected,
@@ -148,7 +155,8 @@ export function AzulAccountControls({ account }: AzulAccountControlsProps) {
             Conectando… {since ? formatConnectingElapsed(since, now) : ""}
           </span>
           <span className="text-xs text-slate-500">
-            O login pode levar alguns minutos. Pode sair da página — ele continua.
+            O login pode levar alguns minutos, ou mais se houver outras contas na fila. Pode sair
+            da página — ele continua.
           </span>
         </div>
       </div>
@@ -156,11 +164,35 @@ export function AzulAccountControls({ account }: AzulAccountControlsProps) {
   }
 
   const connected = status?.connected ?? account.azul_connected
+  const syncState = status?.state ?? account.azul_sync_state
+
+  // Why the last connect did not finish, as the backend wrote it for the operator (Portuguese,
+  // with what to do). Shown where it can only be a connect outcome: a never-connected account or
+  // one parked for a login - plus any state right after a connect from this tab, so a click that
+  // failed always says why instead of the card silently going back to where it was.
+  const answeredThisAttempt =
+    connectRequestedAt != null &&
+    status?.updated_at != null &&
+    Date.parse(status.updated_at) >= connectRequestedAt
+  const connectDetail =
+    status?.detail && (!connected || syncState === "needs_reconnect" || answeredThisAttempt)
+      ? status.detail
+      : null
+  // An account outcome (password, lock) is the operator's to fix; anything else is a wait.
+  const accountProblem =
+    syncState === "error" || syncState === "needs_attention" || syncState === "needs_reconnect"
 
   if (!connected) {
     return (
       <div className="flex items-center justify-between gap-2 border-t border-slate-100 bg-slate-50 px-4 py-2">
-        <span className="text-xs text-slate-500">Conta Azul ainda não conectada</span>
+        <div className="flex flex-col">
+          <span className="text-xs text-slate-500">Conta Azul ainda não conectada</span>
+          {connectDetail && (
+            <span className={`text-xs ${accountProblem ? "text-rose-700" : "text-amber-700"}`}>
+              {connectDetail}
+            </span>
+          )}
+        </div>
         <Button
           variant="outline"
           size="sm"
@@ -194,7 +226,6 @@ export function AzulAccountControls({ account }: AzulAccountControlsProps) {
 
   // A connected account whose sync stopped: Azul refused the key (needs_reconnect) or the rounds
   // keep failing (needs_attention). Either way the fix is a login, so offer it right here.
-  const syncState = status?.state ?? account.azul_sync_state
   const needsLogin = syncState === "needs_reconnect" || syncState === "needs_attention"
 
   return (
@@ -202,11 +233,16 @@ export function AzulAccountControls({ account }: AzulAccountControlsProps) {
       <div className="flex flex-col">
         <span className="text-sm font-medium text-slate-800">{balance}</span>
         {syncedAt && <span className="text-xs text-slate-500">{syncedAt}</span>}
-        {needsLogin && (
+        {needsLogin && !connectDetail && (
           <span className="text-xs text-rose-700">
             {syncState === "needs_reconnect"
               ? "A Azul não reconhece mais a conta — atualize a senha"
               : "Sincronização falhando — confira a senha"}
+          </span>
+        )}
+        {connectDetail && (
+          <span className={`text-xs ${accountProblem ? "text-rose-700" : "text-amber-700"}`}>
+            {connectDetail}
           </span>
         )}
       </div>
