@@ -89,25 +89,31 @@ jobs:
         include:
           - image: m80-api
             context: backend
+            file: backend/Dockerfile
             target: prod
             build-args: SERVICE_NAME=api
           - image: m80-bot
             context: backend
+            file: backend/Dockerfile
             target: prod
             build-args: SERVICE_NAME=bot
           - image: m80-promo
             context: backend
+            file: backend/Dockerfile
             target: prod-chrome
             build-args: SERVICE_NAME=promo
           - image: m80-pdf-service
             context: backend/pdf-service
+            file: backend/pdf-service/Dockerfile
             target: ""
             build-args: ""
-          # The Azul login service. Like the promo image it installs a browser,
-          # so building on the native arm64 runner (not QEMU) is what keeps it
-          # viable.
+          # The Azul login service builds the Go BMP sensor and the Python
+          # service. The context is the backend so the Go module and
+          # carriers/third_party are visible; the file: below is what keeps it
+          # from silently building backend/Dockerfile under this image name.
           - image: m80-azul-login-service
-            context: backend/carriers/azul-login-service
+            context: backend
+            file: backend/carriers/azul-login-service/Dockerfile
             target: ""
             build-args: ""
           # The panel. Building it here also gives it the CI it never had on
@@ -117,6 +123,7 @@ jobs:
           # is the same in every environment.
           - image: m80-frontend
             context: frontend
+            file: frontend/Dockerfile
             target: ""
             build-args: BACKEND_URL=http://api-prod:8080
     steps:
@@ -144,6 +151,7 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
           target: ${{ matrix.target }}
           build-args: ${{ matrix.build-args }}
           push: true

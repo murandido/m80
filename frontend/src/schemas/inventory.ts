@@ -379,6 +379,13 @@ export const azulConnectResponseSchema = z.object({
   data: z.object({ connecting: z.boolean() }).nullish(),
 })
 
+// What the API answers after checking and storing a key from a login made in the browser.
+export const azulBrowserKeyResponseSchema = z.object({
+  success: z.boolean(),
+  message: z.string(),
+  data: z.object({ connected: z.boolean() }).nullish(),
+})
+
 // --- Statement page: entries with the resolved issuance link ---
 
 // The kinds a statement line can carry, mirroring data.AzulLine* and data.SmilesLine* on the

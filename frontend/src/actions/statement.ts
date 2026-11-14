@@ -7,6 +7,7 @@ import {
   batchLinkResponseSchema,
   bookingLinkResponseSchema,
   azulConnectResponseSchema,
+  azulBrowserKeyResponseSchema,
   statementEntriesResponseSchema,
   smilesBrowserChallengeResponseSchema,
   smilesChallengeResponseSchema,
@@ -133,6 +134,39 @@ export async function connectAzulAccountAction(
     }
     const parsed = azulConnectResponseSchema.safeParse(json)
     if (!parsed.success || !parsed.data.data) {
+      return { error: "Resposta inesperada do servidor." }
+    }
+    revalidatePath("/dashboard/sales/inventory")
+    revalidatePath("/dashboard/accounts")
+    return { success: true }
+  } catch {
+    return { error: "Erro de conexão com o servidor." }
+  }
+}
+
+// Stores the key from a login the operator made in their own browser (the fallback when the
+// server-side login cannot get through). The API checks that the login was made with the
+// account's CPF and that Azul answers for the key before keeping it, so the answer is final:
+// connected, or an error saying why nothing was stored.
+export async function storeAzulBrowserKeyAction(
+  accountId: string,
+  customerKey: string,
+  loginDocument: string,
+): Promise<{ error: string } | { success: true }> {
+  try {
+    const { base, token } = await accountsAuth()
+    const res = await fetch(`${base}/${encodeURIComponent(accountId)}/azul-customer-key`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ customer_key: customerKey, login_document: loginDocument }),
+      cache: "no-store",
+    })
+    const json = await res.json().catch(() => null)
+    if (!res.ok) {
+      return { error: json?.message || "Não consegui gravar a conexão." }
+    }
+    const parsed = azulBrowserKeyResponseSchema.safeParse(json)
+    if (!parsed.success || !parsed.data.data?.connected) {
       return { error: "Resposta inesperada do servidor." }
     }
     revalidatePath("/dashboard/sales/inventory")
