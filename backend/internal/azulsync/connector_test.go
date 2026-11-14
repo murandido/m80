@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/murandido/m-80-backend/carriers/azul"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/promotion"
 	"gorm.io/gorm"
@@ -179,4 +180,94 @@ func TestConnectFailureMessageNeverShowsAStatusCode(t *testing.T) {
 	if got := ConnectFailureMessage(errors.New("dial tcp: refused")); strings.Contains(got, "dial") {
 		t.Errorf("a plain error leaked into the message: %q", got)
 	}
+}
+
+// The browser fallback: a key captured in the operator's browser is checked before it is kept.
+func TestStoreBrowserKey(t *testing.T) {
+	keyOf := func(t *testing.T, tx *gorm.DB, id string) string {
+		t.Helper()
+		var reloaded data.Account
+		if err := tx.First(&reloaded, "id = ?", id).Error; err != nil {
+			t.Fatalf("reloading: %v", err)
+		}
+		if reloaded.AzulCustomerKey == nil {
+			return ""
+		}
+		return *reloaded.AzulCustomerKey
+	}
+
+	t.Run("stores a key that Azul answers for, from a login with the account's CPF", func(t *testing.T) {
+		runInTx(t, func(tx *gorm.DB) {
+			account := seedAccount(t, tx, "")
+			withCredentials(t, tx, account) // login 12345678900
+			reader := &fakeReader{balances: []azul.Balance{{Points: 1000}}}
+			connector := NewConnector(tx, NewConnectTracker(), &fakeLogin{}, reader)
+
+			// The extension reports the CPF as typed, which may carry the mask.
+			maskedCPF := "123.456.789-00"
+			if err := connector.StoreBrowserKey(context.Background(), account.ID, "browser-key", maskedCPF); err != nil {
+				t.Fatalf("StoreBrowserKey: %v", err)
+			}
+			if got := keyOf(t, tx, account.ID); got != "browser-key" {
+				t.Errorf("customerKey = %q, want browser-key", got)
+			}
+			if got := stateOf(t, tx, account.ID).State; got != data.AzulSyncPending {
+				t.Errorf("state = %q, want pending", got)
+			}
+			if connector.Tracker.IsConnecting(account.ID) {
+				t.Error("the tracker mark was not cleared")
+			}
+		})
+	})
+
+	refusals := []struct {
+		name     string
+		reader   *fakeReader
+		document string
+		want     error
+	}{
+		{"another holder's login", &fakeReader{balances: []azul.Balance{{}}}, "99988877766", ErrDocumentMismatch},
+		{"a key Azul does not know", &fakeReader{balanceErr: azul.ErrNotFound}, "12345678900", ErrKeyRejected},
+		{"a check the edge blocked", &fakeReader{balanceErr: azul.ErrEdgeBlocked}, "12345678900", ErrKeyUnverified},
+		{"no read client", nil, "12345678900", ErrVerifierUnavailable},
+	}
+	for _, tc := range refusals {
+		t.Run("refuses "+tc.name, func(t *testing.T) {
+			runInTx(t, func(tx *gorm.DB) {
+				account := seedAccount(t, tx, "")
+				withCredentials(t, tx, account)
+				var reader Reader
+				if tc.reader != nil {
+					reader = tc.reader
+				}
+				connector := NewConnector(tx, NewConnectTracker(), &fakeLogin{}, reader)
+
+				err := connector.StoreBrowserKey(context.Background(), account.ID, "browser-key", tc.document)
+				if !errors.Is(err, tc.want) {
+					t.Fatalf("err = %v, want %v", err, tc.want)
+				}
+				if got := keyOf(t, tx, account.ID); got != "" {
+					t.Errorf("customerKey = %q, want nothing stored", got)
+				}
+			})
+		})
+	}
+
+	t.Run("refuses while a server-side login runs", func(t *testing.T) {
+		runInTx(t, func(tx *gorm.DB) {
+			account := seedAccount(t, tx, "")
+			withCredentials(t, tx, account)
+			reader := &fakeReader{balances: []azul.Balance{{}}}
+			connector := NewConnector(tx, NewConnectTracker(), &fakeLogin{}, reader)
+			connector.Tracker.Begin(account.ID)
+
+			err := connector.StoreBrowserKey(context.Background(), account.ID, "browser-key", "12345678900")
+			if !errors.Is(err, ErrAlreadyConnecting) {
+				t.Fatalf("err = %v, want ErrAlreadyConnecting", err)
+			}
+			if reader.balanceAt != 0 {
+				t.Error("the key was checked with Azul while another login was running")
+			}
+		})
+	})
 }
