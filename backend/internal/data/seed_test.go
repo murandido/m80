@@ -1,6 +1,7 @@
 package data
 
 import (
+	"database/sql"
 	"fmt"
 	"os"
 	"sync"
@@ -67,7 +68,10 @@ func runOnEmptyCatalog(t *testing.T, fn func(tx *gorm.DB)) {
 	t.Helper()
 	db := setupTestDB(t)
 
-	tx := db.Begin()
+	// Repeatable read pins one snapshot for the whole test. Under the default read
+	// committed, a loyalty program another package commits mid-test shows up in this
+	// transaction's counts even though the catalog was emptied first.
+	tx := db.Begin(&sql.TxOptions{Isolation: sql.LevelRepeatableRead})
 	if tx.Error != nil {
 		t.Fatalf("begin: %v", tx.Error)
 	}
