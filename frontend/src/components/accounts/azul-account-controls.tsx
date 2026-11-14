@@ -1,14 +1,15 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState, useTransition } from "react"
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, useTransition } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { formatDistanceToNow } from "date-fns"
 import { ptBR } from "date-fns/locale"
 import { toast } from "sonner"
-import { FileText, Link2, Loader2, Plug } from "lucide-react"
+import { FileText, Globe, Link2, Loader2, Plug } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { connectAzulAccountAction } from "@/actions/statement"
+import { connectAzulAccountAction, storeAzulBrowserKeyAction } from "@/actions/statement"
+import { azulConnectBridgeReady, requestAzulBrowserConnect } from "@/lib/azul-connect-extension"
 import { statementSyncStateSchema, type StatementSyncState } from "@/schemas/inventory"
 import { formatConnectingElapsed } from "@/lib/elapsed"
 import { formatSignedPaddedPoints } from "@/lib/points"
@@ -23,6 +24,10 @@ const AZUL_PROGRAM_CODE = "AZUL"
 // couple of minutes (with retries), so a five-second poll is plenty to catch the finish without
 // hammering the API.
 const POLL_INTERVAL_MS = 5000
+
+// The extension marks the document before the panel's scripts run and never unmarks it, so there
+// is nothing to subscribe to; the server render has no extension.
+const subscribeToNothing = () => () => {}
 
 interface AzulAccountControlsProps {
   account: Account
@@ -50,6 +55,11 @@ export function AzulAccountControls({ account }: AzulAccountControlsProps) {
   // When this tab last asked for a connect. A state detail written after it is the outcome of that
   // attempt, which is worth showing even on a state whose detail is usually a read error.
   const [connectRequestedAt, setConnectRequestedAt] = useState<number | null>(null)
+  // The fallback: the operator logs in on the Azul site in a tab the extension opens. Offered only
+  // when the extension is there to answer, and tracked here because it lives in this tab - a
+  // person is typing in the other one.
+  const bridgeReady = useSyncExternalStore(subscribeToNothing, azulConnectBridgeReady, () => false)
+  const [browserConnecting, setBrowserConnecting] = useState(false)
 
   // Every Azul account can connect: the balance is read for all of them. "Acompanhar extrato"
   // only decides whether the statement link shows - see SyncAccount on the backend.
@@ -143,6 +153,58 @@ export function AzulAccountControls({ account }: AzulAccountControlsProps) {
     })
   }
 
+  async function handleBrowserConnect() {
+    setBrowserConnecting(true)
+    try {
+      const answer = await requestAzulBrowserConnect(account.id, account.login ?? "")
+      if ("error" in answer) {
+        toast.error(answer.error)
+        return
+      }
+      const stored = await storeAzulBrowserKeyAction(account.id, answer.customerKey, answer.document)
+      if ("error" in stored) {
+        toast.error(stored.error)
+        return
+      }
+      toast.success("Conta conectada pelo navegador. O saldo aparece em instantes.")
+      await fetchStatus()
+      router.refresh()
+    } finally {
+      setBrowserConnecting(false)
+    }
+  }
+
+  const browserButton = bridgeReady ? (
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={() => void handleBrowserConnect()}
+      disabled={isConnecting}
+      title="Abre a Azul numa aba para você fazer o login; use quando o Conectar automático não funcionar"
+      className="border-slate-400 text-slate-700 hover:border-slate-600 hover:bg-slate-600 hover:text-white"
+    >
+      <Globe className="mr-1 h-3.5 w-3.5" />
+      Pelo navegador
+    </Button>
+  ) : null
+
+  if (browserConnecting) {
+    return (
+      <div className="flex items-center justify-between gap-2 border-t border-slate-100 bg-slate-50 px-4 py-2">
+        <div className="flex flex-col">
+          <span className="flex items-center gap-1.5 text-sm font-medium text-sky-700">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            Aguardando o login na aba da Azul…
+          </span>
+          <span className="text-xs text-slate-500">
+            Na aba que abriu, clique em Entrar no topo: o login e a senha entram sozinhos. Depois
+            confirme. Para cancelar, feche a aba.
+          </span>
+        </div>
+      </div>
+    )
+  }
+
   // A login in flight - whether this tab started it or it was already running when the card
   // mounted. Shown with a running timer so it reads as working, not stuck.
   if (connecting) {
@@ -193,20 +255,23 @@ export function AzulAccountControls({ account }: AzulAccountControlsProps) {
             </span>
           )}
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleConnect}
-          disabled={isConnecting}
-          className="border-sky-700 text-sky-700 hover:border-sky-600 hover:bg-sky-600 hover:text-white"
-        >
-          {isConnecting ? (
-            <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <Link2 className="mr-1 h-3.5 w-3.5" />
-          )}
-          Conectar
-        </Button>
+        <div className="flex items-center gap-2">
+          {browserButton}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleConnect}
+            disabled={isConnecting}
+            className="border-sky-700 text-sky-700 hover:border-sky-600 hover:bg-sky-600 hover:text-white"
+          >
+            {isConnecting ? (
+              <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Link2 className="mr-1 h-3.5 w-3.5" />
+            )}
+            Conectar
+          </Button>
+        </div>
       </div>
     )
   }
@@ -247,20 +312,23 @@ export function AzulAccountControls({ account }: AzulAccountControlsProps) {
         )}
       </div>
       {needsLogin && (
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleConnect}
-          disabled={isConnecting}
-          className="ml-auto border-sky-700 text-sky-700 hover:border-sky-600 hover:bg-sky-600 hover:text-white"
-        >
-          {isConnecting ? (
-            <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <Plug className="mr-1 h-3.5 w-3.5" />
-          )}
-          Reconectar
-        </Button>
+        <div className="ml-auto flex items-center gap-2">
+          {browserButton}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleConnect}
+            disabled={isConnecting}
+            className="border-sky-700 text-sky-700 hover:border-sky-600 hover:bg-sky-600 hover:text-white"
+          >
+            {isConnecting ? (
+              <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Plug className="mr-1 h-3.5 w-3.5" />
+            )}
+            Reconectar
+          </Button>
+        </div>
       )}
       {account.tracks_statement && (
         <Button
