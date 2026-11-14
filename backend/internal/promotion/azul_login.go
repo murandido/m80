@@ -56,12 +56,26 @@ func (c *Client) AzulLogin(ctx context.Context, req AzulLoginRequest) (string, e
 		return "", fmt.Errorf("promotion: promo service returned status %d with an unreadable body: %w",
 			resp.StatusCode, err)
 	}
-	if resp.StatusCode != http.StatusOK || decoded.CustomerKey == "" {
-		// A login that failed is an outcome to report to the operator, not a 500. Wrap the
-		// service's own message so the panel can show why (bad password, edge block, ...).
+	// The service answers 502 for a login outcome about the account (bad
+	// password, a 200 without a key), 503 when the Azul edge refused the shared
+	// device or the rate, and 400/409/500 for its own failures. Only the 502 is a
+	// credential outcome the panel should count; an edge block, a busy queue or a
+	// dead service must not look like a wrong password.
+	if resp.StatusCode == http.StatusBadGateway {
 		if decoded.Error != "" {
 			return "", fmt.Errorf("%w: %s", ErrAzulLoginFailed, decoded.Error)
 		}
+		return "", ErrAzulLoginFailed
+	}
+	if resp.StatusCode != http.StatusOK {
+		if decoded.Error != "" {
+			return "", fmt.Errorf("promotion: azul login service returned HTTP %d: %s",
+				resp.StatusCode, decoded.Error)
+		}
+		return "", fmt.Errorf("promotion: azul login service returned HTTP %d", resp.StatusCode)
+	}
+	if decoded.CustomerKey == "" {
+		// 200 but no key is still a failure - the login never surfaced a customerKey.
 		return "", ErrAzulLoginFailed
 	}
 	return decoded.CustomerKey, nil

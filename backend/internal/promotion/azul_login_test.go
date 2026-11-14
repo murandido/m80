@@ -64,6 +64,46 @@ func TestAzulLogin_EmptyKeyIsFailure(t *testing.T) {
 	}
 }
 
+func TestAzulLogin_ServerErrorIsTransport(t *testing.T) {
+	// A 500/409 is the login service failing, not a credential outcome: the
+	// connector must not count it toward needs_attention.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"login transport failed; try again shortly"}`))
+	}))
+	defer srv.Close()
+
+	_, err := azulTestClient(srv.URL).AzulLogin(context.Background(),
+		AzulLoginRequest{DocumentNumber: "x", Password: "y"})
+	if err == nil {
+		t.Fatal("expected an error for a server failure")
+	}
+	if errors.Is(err, ErrAzulLoginFailed) {
+		t.Error("a service failure must not read as a login failure")
+	}
+}
+
+func TestAzulLogin_EdgeBlockIsNotALoginFailure(t *testing.T) {
+	// A 503 is the Azul edge refusing the shared device or the rate. Counting it
+	// would push every account that tries to connect into needs_attention.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":"edge refused the login (HTTP 403)"}`))
+	}))
+	defer srv.Close()
+
+	_, err := azulTestClient(srv.URL).AzulLogin(context.Background(),
+		AzulLoginRequest{DocumentNumber: "x", Password: "y"})
+	if err == nil {
+		t.Fatal("expected an error for an edge block")
+	}
+	if errors.Is(err, ErrAzulLoginFailed) {
+		t.Error("an edge block must not read as a login failure")
+	}
+}
+
 func TestAzulLogin_UnreachableIsTransportError(t *testing.T) {
 	// A dead service is not a login failure: it must NOT read as ErrAzulLoginFailed, or the
 	// panel would tell the operator their password is wrong when the service is simply down.

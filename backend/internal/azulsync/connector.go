@@ -87,8 +87,15 @@ func (c *Connector) run(ctx context.Context, account data.Account) {
 		Password:       *account.Password,
 	})
 	if err != nil {
-		if markErr := MarkLoginFailure(c.DB, account.ID, err); markErr != nil {
-			slog.Error("azul connect: failed to record login failure", "account_id", account.ID, "err", markErr)
+		// A login outcome about the account (bad password) counts toward its
+		// failure streak. An edge block on the shared device, a rate limit or a
+		// transport failure - the login service down or its queue full - is an
+		// infrastructure problem, not a credential one, and must not raise
+		// needs_attention: the caller can simply try again.
+		if errors.Is(err, promotion.ErrAzulLoginFailed) {
+			if markErr := MarkLoginFailure(c.DB, account.ID, err); markErr != nil {
+				slog.Error("azul connect: failed to record login failure", "account_id", account.ID, "err", markErr)
+			}
 		}
 		// The credentials are never logged; err from the login service is already credential-free.
 		slog.Warn("azul connect: login did not complete", "account_id", account.ID, "err", err)
