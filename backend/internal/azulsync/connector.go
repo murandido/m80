@@ -92,10 +92,15 @@ func (c *Connector) run(ctx context.Context, account data.Account) {
 		// transport failure - the login service down or its queue full - is an
 		// infrastructure problem, not a credential one, and must not raise
 		// needs_attention: the caller can simply try again.
+		//
+		// Either way the reason is written for the panel: an operator who clicked Conectar must
+		// see why nothing happened, not a card that silently went back to "não conectada".
+		mark := MarkConnectInterrupted
 		if errors.Is(err, promotion.ErrAzulLoginFailed) {
-			if markErr := MarkLoginFailure(c.DB, account.ID, err); markErr != nil {
-				slog.Error("azul connect: failed to record login failure", "account_id", account.ID, "err", markErr)
-			}
+			mark = MarkLoginFailure
+		}
+		if markErr := mark(c.DB, account.ID, err); markErr != nil {
+			slog.Error("azul connect: failed to record the login outcome", "account_id", account.ID, "err", markErr)
 		}
 		// The credentials are never logged; err from the login service is already credential-free.
 		slog.Warn("azul connect: login did not complete", "account_id", account.ID, "err", err)

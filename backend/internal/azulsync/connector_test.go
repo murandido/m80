@@ -3,6 +3,7 @@ package azulsync
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/murandido/m-80-backend/internal/data"
@@ -106,4 +107,76 @@ func TestConnectorRunStoresTheNewKey(t *testing.T) {
 			t.Error("the tracker mark was not cleared")
 		}
 	})
+}
+
+// A connect the Azul edge turned away says nothing about the password: the reason is written for
+// the operator, and neither the state nor the failure streak moves.
+func TestConnectorRunRecordsAnEdgeBlockWithoutCountingIt(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		account := seedAccount(t, tx, "")
+		withCredentials(t, tx, account)
+		login := &fakeLogin{err: &promotion.AzulLoginError{Reason: promotion.AzulLoginReasonBlocked}}
+		connector := NewConnector(tx, NewConnectTracker(), login, nil)
+		var reloaded data.Account
+		if err := tx.First(&reloaded, "id = ?", account.ID).Error; err != nil {
+			t.Fatalf("reloading: %v", err)
+		}
+		connector.Tracker.Begin(account.ID)
+		connector.run(context.Background(), reloaded)
+
+		state := stateOf(t, tx, account.ID)
+		if state.State != data.AzulSyncPending || state.ConsecutiveFailures != 0 {
+			t.Errorf("state = %q failures = %d, want pending with 0", state.State, state.ConsecutiveFailures)
+		}
+		if state.Detail == nil || *state.Detail != ConnectFailureMessage(login.err) {
+			t.Errorf("detail = %v, want the edge-block message", state.Detail)
+		}
+	})
+}
+
+// A refused password does count, and the operator reads why in Portuguese.
+func TestConnectorRunCountsARefusedPassword(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		account := seedAccount(t, tx, "")
+		withCredentials(t, tx, account)
+		login := &fakeLogin{err: &promotion.AzulLoginError{Reason: promotion.AzulLoginReasonCredentials}}
+		connector := NewConnector(tx, NewConnectTracker(), login, nil)
+		var reloaded data.Account
+		if err := tx.First(&reloaded, "id = ?", account.ID).Error; err != nil {
+			t.Fatalf("reloading: %v", err)
+		}
+		connector.Tracker.Begin(account.ID)
+		connector.run(context.Background(), reloaded)
+
+		state := stateOf(t, tx, account.ID)
+		if state.State != data.AzulSyncError || state.ConsecutiveFailures != 1 {
+			t.Errorf("state = %q failures = %d, want error with 1", state.State, state.ConsecutiveFailures)
+		}
+		if state.Detail == nil || *state.Detail != ConnectFailureMessage(login.err) {
+			t.Errorf("detail = %v, want the refused-password message", state.Detail)
+		}
+	})
+}
+
+func TestConnectFailureMessageNeverShowsAStatusCode(t *testing.T) {
+	reasons := []string{
+		promotion.AzulLoginReasonCredentials, promotion.AzulLoginReasonLocked,
+		promotion.AzulLoginReasonRejected, promotion.AzulLoginReasonNoKey,
+		promotion.AzulLoginReasonBlocked, promotion.AzulLoginReasonBusy,
+		promotion.AzulLoginReasonDisabled, promotion.AzulLoginReasonUnavailable, "unknown",
+	}
+	seen := map[string]bool{}
+	for _, reason := range reasons {
+		message := ConnectFailureMessage(&promotion.AzulLoginError{Reason: reason, Message: "HTTP 401"})
+		if strings.Contains(message, "HTTP") {
+			t.Errorf("%s: message %q leaks the technical detail", reason, message)
+		}
+		seen[message] = true
+	}
+	if len(seen) < 8 {
+		t.Errorf("only %d distinct messages for %d reasons", len(seen), len(reasons))
+	}
+	if got := ConnectFailureMessage(errors.New("dial tcp: refused")); strings.Contains(got, "dial") {
+		t.Errorf("a plain error leaked into the message: %q", got)
+	}
 }

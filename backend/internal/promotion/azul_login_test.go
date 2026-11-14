@@ -116,3 +116,47 @@ func TestAzulLogin_UnreachableIsTransportError(t *testing.T) {
 		t.Error("an unreachable service must not read as a login failure")
 	}
 }
+
+func TestAzulLogin_CarriesTheServiceReason(t *testing.T) {
+	cases := []struct {
+		name        string
+		status      int
+		body        string
+		wantReason  string
+		wantAccount bool
+	}{
+		{"wrong password", http.StatusBadGateway, `{"error":"credentials refused (HTTP 401)","reason":"credentials"}`, AzulLoginReasonCredentials, true},
+		{"locked", http.StatusBadGateway, `{"error":"account locked (HTTP 423)","reason":"locked"}`, AzulLoginReasonLocked, true},
+		{"502 without reason", http.StatusBadGateway, `{"error":"login failed"}`, AzulLoginReasonRejected, true},
+		{"502 with an infra reason", http.StatusBadGateway, `{"error":"x","reason":"blocked"}`, AzulLoginReasonRejected, true},
+		{"edge block", http.StatusServiceUnavailable, `{"error":"edge refused","reason":"blocked"}`, AzulLoginReasonBlocked, false},
+		{"disabled", http.StatusServiceUnavailable, `{"error":"disabled","reason":"disabled"}`, AzulLoginReasonDisabled, false},
+		// The status bounds the class: an account reason on a 503 must never mark the account.
+		{"503 with an account reason", http.StatusServiceUnavailable, `{"error":"x","reason":"credentials"}`, AzulLoginReasonBlocked, false},
+		{"queue full", http.StatusConflict, `{"error":"queued","reason":"busy"}`, AzulLoginReasonBusy, false},
+		{"service failure", http.StatusInternalServerError, `{"error":"transport","reason":"unavailable"}`, AzulLoginReasonUnavailable, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
+
+			_, err := azulTestClient(srv.URL).AzulLogin(context.Background(),
+				AzulLoginRequest{DocumentNumber: "x", Password: "y"})
+			var loginErr *AzulLoginError
+			if !errors.As(err, &loginErr) {
+				t.Fatalf("err = %v, want an *AzulLoginError", err)
+			}
+			if loginErr.Reason != tc.wantReason {
+				t.Errorf("reason = %q, want %q", loginErr.Reason, tc.wantReason)
+			}
+			if got := errors.Is(err, ErrAzulLoginFailed); got != tc.wantAccount {
+				t.Errorf("errors.Is(ErrAzulLoginFailed) = %v, want %v", got, tc.wantAccount)
+			}
+		})
+	}
+}
