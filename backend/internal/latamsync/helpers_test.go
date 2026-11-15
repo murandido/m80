@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/murandido/m-80-backend/carriers/latam"
 	"github.com/murandido/m-80-backend/internal/data"
+	"github.com/murandido/m-80-backend/internal/testdb"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -23,6 +24,7 @@ var (
 
 func setupTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
+	testdb.RequireTestDatabase(t)
 	testDBOnce.Do(func() {
 		dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=disable",
 			os.Getenv("DB_HOST"), os.Getenv("DB_USER"), os.Getenv("DB_PASSWORD"),

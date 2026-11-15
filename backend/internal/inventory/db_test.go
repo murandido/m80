@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/murandido/m-80-backend/internal/businessday"
 	"github.com/murandido/m-80-backend/internal/data"
+	"github.com/murandido/m-80-backend/internal/testdb"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -33,6 +34,7 @@ var (
 
 func setupTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
+	testdb.RequireTestDatabase(t)
 
 	testDBOnce.Do(func() {
 		dsn := fmt.Sprintf(

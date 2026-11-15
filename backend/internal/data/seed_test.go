@@ -10,6 +10,8 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+
+	"github.com/murandido/m-80-backend/internal/testdb"
 )
 
 // Same shape as the handlers' setupTestDB: probe the connection quietly first so a
@@ -22,6 +24,7 @@ var (
 
 func setupTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
+	testdb.RequireTestDatabase(t)
 
 	testDBOnce.Do(func() {
 		dsn := fmt.Sprintf(

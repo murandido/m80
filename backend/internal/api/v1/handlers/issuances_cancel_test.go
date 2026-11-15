@@ -19,6 +19,7 @@ import (
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/events"
+	"github.com/murandido/m-80-backend/internal/testdb"
 	"github.com/murandido/m-80-backend/internal/utils"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -48,6 +49,7 @@ var (
 // connect path (which applies the golang-migrate schema).
 func setupTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
+	testdb.RequireTestDatabase(t)
 
 	testDBOnce.Do(func() {
 		dsn := fmt.Sprintf(
