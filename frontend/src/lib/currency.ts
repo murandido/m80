@@ -1,4 +1,4 @@
-import { parseDecimalInput } from "@/lib/decimal"
+import { parseDecimalInput, roundScaled } from "@/lib/decimal"
 
 const brlFormatter = new Intl.NumberFormat("pt-BR", {
   style: "currency",
@@ -26,5 +26,16 @@ export function parseCurrencyBRLInput(text: string): number | null {
 // parseCurrencyBRLInput so a value that arrived some other way - the result of an expression
 // typed into a cell, say - lands on the same rounding instead of its own.
 export function centsFromReais(value: number): number {
-  return Math.round(value * 100)
+  return roundScaled(value, 100)
+}
+
+// What a number of points is worth at a price per thousand (centavos), rounded up to the
+// cent. The same rule as sale.PointsValueCents in the backend, which is what the payments
+// screen charges: the board's total, the copied EMISSAO message and the payments screen all
+// have to show the same centavo for the same issuance. A zero or negative product truncates
+// toward zero, as the Go function does.
+export function pointsValueCents(points: number, valueOfTheThousand: number): number {
+  const product = points * valueOfTheThousand
+  if (product <= 0) return Math.trunc(product / 1000)
+  return Math.ceil(product / 1000)
 }

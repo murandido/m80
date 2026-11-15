@@ -80,3 +80,12 @@ export function sanitizeDecimalInput(raw: string): string {
   const fraction = cleaned.slice(first + 1).replace(/[.,]/g, "")
   return `${whole}${separator}${fraction}`
 }
+
+// roundScaled multiplies a typed decimal into an integer unit (centavos, points) and rounds
+// half away from zero. The product is first cut back to 15 significant digits because binary
+// floating point lands a hair short on exact halves: 1.005 * 100 is 100.49999999999999, so a
+// plain Math.round turned "1,005" into R$ 1,00 instead of R$ 1,01.
+export function roundScaled(value: number, factor: number): number {
+  const magnitude = Math.round(Number((Math.abs(value) * factor).toPrecision(15)))
+  return value < 0 ? -magnitude : magnitude
+}
