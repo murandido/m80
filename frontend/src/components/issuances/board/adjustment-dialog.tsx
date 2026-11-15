@@ -28,7 +28,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { DateInput } from "@/components/ui/date-input"
 import { todayISO } from "@/components/issuances/board/use-issuance-board"
 import { cn } from "@/lib/utils"
-import { formatCurrencyBRL, parseCurrencyBRLInput } from "@/lib/currency"
+import { formatCurrencyBRL, parseCurrencyBRLInput, pointsValueCents } from "@/lib/currency"
 import {
   formatPointsInThousands,
   formatSignedPaddedPoints,
@@ -133,7 +133,7 @@ function toInput(values: AdjustmentFormData): IssuanceAdjustmentInput {
 // priced by magnitude and rounded up, the sign put back, the taxes added when passed on.
 // The figure saved is always the server's.
 export function previewClientCents(input: IssuanceAdjustmentInput): number {
-  const magnitude = Math.ceil((Math.abs(input.points) * input.value_of_the_thousand) / 1000)
+  const magnitude = pointsValueCents(Math.abs(input.points), input.value_of_the_thousand)
   const pointsCents = input.points < 0 ? -magnitude : magnitude
   return pointsCents + (input.taxes_passed_to_client ? input.taxes : 0)
 }

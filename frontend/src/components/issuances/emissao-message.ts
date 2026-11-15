@@ -1,3 +1,4 @@
+import { pointsValueCents } from "@/lib/currency"
 import { IssuanceRow } from "@/components/issuances/types"
 import { AccountOption } from "@/schemas/account"
 import { Agency } from "@/schemas/agency"
@@ -59,12 +60,14 @@ export function formatPlainCents(cents: number): string {
  * Shared with the calculated column on purpose. The bot re-derives this number and refuses
  * the message when it disagrees with the one written on line 3 (validateTotal), so the
  * total on screen and the total in the copied text have to come from the same expression.
+ * It rounds up to the cent, like the payments screen, so the board never shows a centavo
+ * less than the client is charged.
  */
 export function issuanceTotalCents(
   row: Pick<IssuanceRow, "points" | "value_of_the_thousand" | "taxes">,
 ): number | null {
   if (row.points === null || row.value_of_the_thousand === null) return null
-  return Math.round((row.points / 1000) * row.value_of_the_thousand) + (row.taxes ?? 0)
+  return pointsValueCents(row.points, row.value_of_the_thousand) + (row.taxes ?? 0)
 }
 
 /**
