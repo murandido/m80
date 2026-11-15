@@ -53,9 +53,8 @@ import type { Airline } from "@/schemas/airline"
 import type { LoyaltyProgram } from "@/schemas/loyalty-program"
 
 // The state behind the issuances board: the rows, their autosave, the live refresh and the
-// itinerary lookups. Ported from issuances-grid.tsx rather than extracted out of it: the
-// board was built on the ca-mode branch, where every merge from main touched the grid. What
-// is shared (types, reconcileRows, the actions) is imported, not copied.
+// itinerary lookups. It began as a port of the old spreadsheet's state (since removed); what
+// is shared with the rest of the panel (types, reconcileRows, the actions) is imported.
 //
 // What the grid has and this does not: the cell selection machine, paste capture and the
 // undo stack. A form has native focus, native paste and per-field undo.

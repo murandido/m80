@@ -36,9 +36,8 @@ import { useUrlQuery } from "@/hooks/use-url-query"
 import { cn } from "@/lib/utils"
 import type { GridReferenceData } from "@/components/issuances/grid-context"
 
-// The same seven URL keys the grid's filter bar writes (issuances-filter-bar.tsx), so the
-// page's resolveFilters and the sticky-filter cookie read the board exactly as they read
-// the grid. Duplicated rather than imported for the reason use-issuance-board.ts gives.
+// The seven URL keys the page's resolveFilters and the sticky-filter cookie read, so a
+// filtered board survives a reload and a link exactly as the old spreadsheet's filters did.
 const FILTER_KEYS = [
   "date_from",
   "date_to",

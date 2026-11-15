@@ -27,9 +27,7 @@ interface ComboboxNavigation {
 //
 // The highlight starts on the first option so that identifying the row and pressing
 // Enter is the whole interaction; before this, picking anything meant reaching for the
-// mouse. Mirrors the issuances grid cell (components/issuances/cells/combobox-cell.tsx),
-// which is not refactored to use this: Enter there commits the cell and moves down, so
-// it carries gating this does not need.
+// mouse.
 //
 // Escape is deliberately absent - Radix's PopoverContent already closes on it.
 export function useComboboxNavigation({

@@ -34,7 +34,7 @@ export type EmissaoText = { text: string } | { missing: string[] }
 
 /**
  * Points as the bot writes them: 31000 -> "31k", 89912 -> "89,912k".
- * Same transform the Pontos cell uses while editing (cells/number-cell.tsx).
+ * Same transform the board's Pontos field uses while editing (board/number-parsing.ts).
  */
 export function formatPointsK(points: number): string {
   return `${String(points / 1000).replace(".", ",")}k`
