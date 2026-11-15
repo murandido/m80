@@ -23,6 +23,14 @@ célula) ficou no histórico: veja este arquivo no commit `a132caf`.
   origem, destino, data e passageiro, e os valores nunca travam. Depois do save, o sweep de sync
   grava o itinerário de verdade. Esse sweep nunca roda ao lado de uma prévia da mesma linha (com
   a Traveos seriam duas importações) e pula a combinação que a prévia já viu falhar.
+- **O sync depois do save reaproveita a prévia:** a reserva que a prévia encontrou fica guardada
+  na memória da API por 15 minutos (`backend/internal/issuance/preview_cache.go`), pela mesma
+  combinação de campos do `attemptKey` (cia, localizadores, número de compra, origem e sobrenome),
+  tanto como foi perguntada quanto como fica depois que a prévia preenche o rascunho. O primeiro
+  sync da emissão salva dentro dessa janela grava essa reserva sem perguntar de novo à cia, e
+  registra a tentativa como `found` do mesmo provedor. A entrada é consumida nesse sync: um
+  "rebuscar" depois dele, uma prévia que falhou ou um campo mudado antes do save vão ao provedor
+  como antes.
 - **Campos da busca por cia:** origem só onde `airlines.requires_origin` está ligado (GOL e Azul),
   e o campo **Sobrenome** (`issuances.passenger_last_name`) só na visão simplificada, com o
   autocompletar ligado numa cia com `requires_last_name`. O Sobrenome é o que a cia recebe (`BookingLastName`); o Passageiro
