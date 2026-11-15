@@ -43,6 +43,17 @@ import (
 // proceeds even on an already-synced issuance, and asks Traveos to re-check the
 // booking against the airline first rather than answering from its own snapshot.
 func Sync(ctx context.Context, db *gorm.DB, registry *booking.Registry, issuanceID string, force bool) error {
+	return syncIssuance(ctx, db, registry, issuanceID, force, previewBookings)
+}
+
+func syncIssuance(
+	ctx context.Context,
+	db *gorm.DB,
+	registry *booking.Registry,
+	issuanceID string,
+	force bool,
+	previews *previewBookingCache,
+) error {
 	var issuance data.Issuance
 	if err := db.WithContext(ctx).First(&issuance, "id = ?", issuanceID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -100,13 +111,40 @@ func Sync(ctx context.Context, db *gorm.DB, registry *booking.Registry, issuance
 		}
 	}()
 
-	fetched, source, err := attemptProviders(ctx, registry, providers, issuance, airline, force,
-		func(attempt data.BookingLookupAttempt) {
-			attempt.SyncID = syncID
-			attempts = append(attempts, attempt)
-		})
-	if err != nil {
-		return err
+	record := func(attempt data.BookingLookupAttempt) {
+		attempt.SyncID = syncID
+		attempts = append(attempts, attempt)
+	}
+
+	var (
+		fetched *booking.Booking
+		source  string
+		err     error
+	)
+	// The panel's preview usually asked the providers about this very booking moments
+	// before the save, and its answer is reused instead of asking again - which for the
+	// vendor is a slow scrape, and for an airline one more request its edge may count.
+	//
+	// That holds even under force=true. force means "our copy may be stale, ask
+	// again"; a booking fetched within the last few minutes, before this issuance even
+	// existed, is not the stale copy force is about - there is no copy yet. The entry
+	// is taken, not read, so an operator who presses refetch afterwards does reach the
+	// provider.
+	//
+	// The reused answer is recorded as the "found" attempt of the provider that gave
+	// it, so booking_lookup_attempts and booking_source read as if Sync had asked.
+	if cached, ok := previews.take(previewKey(airline.ID, issuance)); ok {
+		slog.Info("reusing the booking the preview fetched",
+			"issuance_id", issuance.ID, "airline", airline.Code, "provider", cached.source)
+		fetched, source = cached.booking, cached.source
+		attempt := lookupAttempt(issuance, airline, source, nil, 0)
+		attempt.DurationMS = cached.durationMS
+		record(attempt)
+	} else {
+		fetched, source, err = attemptProviders(ctx, registry, providers, issuance, airline, force, record)
+		if err != nil {
+			return err
+		}
 	}
 
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
