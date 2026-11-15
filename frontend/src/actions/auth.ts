@@ -4,6 +4,7 @@ import { cookies } from "next/headers"
 import { loginSchema } from "@/schemas/auth"
 import { env } from "@/lib/env"
 import { clientIpHeader } from "@/lib/client-ip"
+import { SESSION_COOKIE, sessionCookieOptions } from "@/lib/session-cookie"
 import { redirect } from "next/navigation"
 import { z } from "zod"
 
@@ -50,17 +51,9 @@ export async function loginAction(
 
     const { token } = responseBody.data.data
 
-    // save in a secure cookie
+    // Same name and attributes the proxy uses when it renews the session.
     const cookieStore = await cookies()
-    cookieStore.set("auth_token", token, {
-      httpOnly: true,
-      // Off in development so the cookie still works over plain http://localhost.
-      secure: env.NODE_ENV === "production",
-      // "strict" would drop the cookie when the panel is reached from an
-      // external link, and there is no OAuth round trip here that would need it.
-      sameSite: "lax",
-      maxAge: 60 * 60 * 24 * 7, // 7 days
-    })
+    cookieStore.set(SESSION_COOKIE, token, sessionCookieOptions)
   } catch {
     return { error: "Connection error with the server." }
   }
