@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/murandido/m-80-backend/internal/sale"
 	"github.com/murandido/m-80-backend/internal/utils"
 )
 
@@ -251,14 +252,22 @@ func parseEmissaoOwners(line string, msg *emissaoMessage) error {
 // typos: a misread of any single field makes the sum disagree, and the message
 // is refused instead of silently persisting a wrong price.
 func validateTotal(msg *emissaoMessage) error {
-	// Same arithmetic as the panel's own calculated column: round to the nearest
-	// cent, then add the taxes untouched.
-	expected := (msg.Points*msg.ValueOfTheThousand+500)/1000 + msg.Taxes
+	// Same arithmetic as the panel's calculated column and the payments screen: the
+	// points priced rounding up to the cent (sale.PointsValueCents), then the taxes
+	// added untouched.
+	pointsCents := sale.PointsValueCents(msg.Points, msg.ValueOfTheThousand)
+	expected := pointsCents + msg.Taxes
 
-	if expected != msg.Total {
+	// The board used to round to the nearest cent, so a message copied from a tab still
+	// running the old bundle - or added up by hand that way - is one cent below. Both
+	// readings describe the same three stored numbers (the total itself is never saved),
+	// so accepting it costs nothing; refusing it would bounce a correct ticket.
+	nearestCents := (msg.Points*msg.ValueOfTheThousand+500)/1000 + msg.Taxes
+
+	if msg.Total != expected && msg.Total != nearestCents {
 		return operatorErrorf(nil,
 			"As contas da linha 3 não fecham: %s + %s = %s, mas a mensagem diz %s",
-			formatCents((msg.Points*msg.ValueOfTheThousand+500)/1000),
+			formatCents(pointsCents),
 			formatCents(msg.Taxes),
 			formatCents(expected),
 			formatCents(msg.Total),
