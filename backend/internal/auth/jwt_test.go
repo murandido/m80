@@ -66,6 +66,21 @@ func TestGenerateToken_ExpiresInSevenDays(t *testing.T) {
 	}
 }
 
+// iat is informational, but it is what lets anyone reading a token tell how old the
+// session behind it is, so it must be the signing time.
+func TestGenerateToken_SetsIssuedAt(t *testing.T) {
+	token, err := GenerateToken("u1", "11911112222", "user")
+	if err != nil {
+		t.Fatalf("GenerateToken failed: %v", err)
+	}
+
+	claims, _ := ValidateToken(token)
+	iat := time.Unix(int64(claims["iat"].(float64)), 0)
+	if diff := time.Since(iat); diff < 0 || diff > 5*time.Second {
+		t.Errorf("iat is not the signing time: %v", iat)
+	}
+}
+
 func TestGenerateToken_EmptySecret(t *testing.T) {
 	t.Setenv("JWT_SECRET", "")
 
