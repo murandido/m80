@@ -4811,6 +4811,43 @@ const docTemplate = `{
                 }
             }
         },
+        "/auth/refresh": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Troca um token JWT ainda válido por um novo, com validade cheia. O painel chama esta rota enquanto a pessoa usa o sistema, para a sessão não expirar no meio do trabalho.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Autenticação"
+                ],
+                "summary": "Renovar a sessão",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.AuthLoginResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Token ausente, inválido ou expirado",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Erro ao gerar token",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/azul-city-codes": {
             "post": {
                 "security": [

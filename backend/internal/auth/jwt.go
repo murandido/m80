@@ -17,21 +17,28 @@ func jwtSecret() []byte {
 	return []byte(os.Getenv("JWT_SECRET"))
 }
 
+// TokenLifetime is how long a panel session lasts without being used. It is not a hard
+// cap on a session: POST /auth/refresh trades a valid token for a fresh one, so someone who
+// keeps using the panel is never logged out, and only a week of inactivity ends the session.
+// The panel's session cookie is given the same max age.
+const TokenLifetime = 7 * 24 * time.Hour
+
 func GenerateToken(userID, phone, role string) (string, error) {
 	secret := jwtSecret()
 	if len(secret) == 0 {
 		return "", errors.New("JWT secret not set in .env")
 	}
 
-	// the token expires in 7 days
-	expirationTime := time.Now().Add(7 * 24 * time.Hour)
-
+	now := time.Now()
 	claims := jwt.MapClaims{
 		"user_id": userID,
 		"phone":   phone,
 		"role":    role,
-		"exp":     expirationTime.Unix(),
-		"iss":     "m-80-api",
+		// iat is informational - nothing validates against it. Tokens signed before it was
+		// added are still accepted, and the panel decides when to renew from exp alone.
+		"iat": now.Unix(),
+		"exp": now.Add(TokenLifetime).Unix(),
+		"iss": "m-80-api",
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
