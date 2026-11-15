@@ -45,6 +45,7 @@ src/
 ## Autenticação
 - Token JWT reside no cookie `auth_token`.
 - `src/proxy.ts` — invalida o cookie e redireciona em caso de 401.
+- **A sessão é deslizante.** O token vale 7 dias, mas o `src/proxy.ts` troca por um novo (`POST /auth/refresh`) quando ele passa de 1 dia e regrava o cookie com os mesmos atributos (`src/lib/session-cookie.ts`, usado também pelo login). Quem usa o painel ao menos uma vez por semana nunca é deslogado. Falha na renovação nunca desloga: o token atual segue valendo e a próxima request tenta de novo. O nome do cookie é lido pela extensão — não renomeie nem dê `Domain`.
 - Layouts verificam sessão ativa chamando `/auth/me` no backend.
 - Não leia o token diretamente em Client Components; acesse via Server Component ou Server Action.
 - **O backend Go não lê cookies.** Ao chamar a API (Server Action ou Server Component), leia o token do cookie e anexe manualmente como header `Authorization: Bearer <token>` em cada `fetch` — não existe um client HTTP central que faça isso automaticamente.
