@@ -239,50 +239,6 @@ func deriveIssuanceStatus(complete bool, cancelledAt *time.Time) string {
 	return "incomplete"
 }
 
-func toIssuanceSummaryResponse(issuance data.Issuance) schemas.IssuanceSummaryResponse {
-	status := deriveIssuanceStatus(issuance.Complete, issuance.CancelledAt)
-
-	resp := schemas.IssuanceSummaryResponse{
-		ID:                  issuance.ID,
-		ProgramLocator:      issuance.ProgramLocator,
-		AirlineLocator:      issuance.AirlineLocator,
-		IssuedAt:            issuance.CreatedAt,
-		MainPassengerName:   issuance.MainPassengerName,
-		OriginIATACode:      issuance.OriginIATACode,
-		DestinationIATACode: issuance.DestinationIATACode,
-		Points:              issuance.Points,
-		ValueOfTheThousand:  issuance.ValueOfTheThousand,
-		Taxes:               issuance.Taxes,
-		TraveosSyncedAt:     issuance.TraveosSyncedAt,
-		TraveosSyncingAt:    freshTraveosSyncing(issuance.TraveosSyncingAt),
-		TraveosAttemptedAt:  issuance.TraveosAttemptedAt,
-		Imported:            issuance.Imported,
-		CancellationOnly:    issuance.CancellationOnly,
-		Status:              status,
-	}
-
-	if issuance.LoyaltyProgram != nil {
-		resp.LoyaltyProgramName = issuance.LoyaltyProgram.Name
-	}
-	if issuance.Airline != nil {
-		resp.AirlineName = issuance.Airline.Name
-	}
-	if issuance.Account != nil {
-		resp.AccountLogin = issuance.Account.Login
-	}
-	if issuance.Issuer != nil {
-		resp.IssuerName = issuance.Issuer.Name
-	}
-	if issuance.Agency != nil {
-		resp.AgencyName = issuance.Agency.Name
-	}
-	if len(issuance.Flights) > 0 {
-		resp.FlightDate = &issuance.Flights[0].DepartureAt
-	}
-
-	return resp
-}
-
 // issuanceErrorResponse maps the issuance service's typed errors onto the exact
 // status and message this API has always returned for them, so extracting the
 // service out of these handlers changed no response the panel can observe. The
@@ -688,38 +644,6 @@ func (h *IssuanceHandler) GetIssuancesExport(w http.ResponseWriter, r *http.Requ
 	if _, err := w.Write(content); err != nil {
 		slog.Error("failed to write issuances export response", "err", err)
 	}
-}
-
-// GetIssuancesSummary handles the GET /issuances/summary route.
-// @Summary      Listar emissões (resumo)
-// @Description  Retorna uma versão enxuta das emissões ativas, com apenas os campos usados em telas de listagem.
-// @Tags         Emissões
-// @Produce      json
-// @Security     BearerAuth
-// @Success      200  {object}  schemas.IssuanceSummaryListResponse
-// @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
-// @Failure      500  {object}  schemas.ErrorResponse "Erro ao buscar emissões"
-// @Router       /issuances/summary [get]
-func (h *IssuanceHandler) GetIssuancesSummary(w http.ResponseWriter, r *http.Request) {
-	var issuances []data.Issuance
-
-	query := preloadIssuanceAssociations(h.DB).
-		Preload("Flights", func(db *gorm.DB) *gorm.DB {
-			return db.Where("direction = ?", "outbound").Order("leg_order asc")
-		})
-	query = middleware.AgencyScopeFrom(r.Context()).Restrict(query, "issuances.agency_id")
-
-	if err := query.Find(&issuances).Error; err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch issuances")
-		return
-	}
-
-	resp := make([]schemas.IssuanceSummaryResponse, 0, len(issuances))
-	for _, issuance := range issuances {
-		resp = append(resp, toIssuanceSummaryResponse(issuance))
-	}
-
-	utils.SendJSON(w, r, http.StatusOK, "Issuances fetched successfully", resp)
 }
 
 // GetIssuance handles the GET /issuances/{id} route

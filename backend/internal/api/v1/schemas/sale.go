@@ -120,8 +120,7 @@ type SalePaymentResponse struct {
 }
 
 // SaleResponse is a flat, denormalized view of a sale for the "Vendas > Clientes" table -
-// no nested relations, in the spirit of IssuanceSummaryResponse. Monetary fields are in
-// cents, like everywhere else in the API.
+// no nested relations. Monetary fields are in cents, like everywhere else in the API.
 type SaleResponse struct {
 	ID         string  `json:"id"`
 	IssuanceID string  `json:"issuance_id"`
