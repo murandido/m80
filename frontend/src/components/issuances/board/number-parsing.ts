@@ -6,9 +6,8 @@ import {
   pointsFromThousands,
 } from "@/lib/points"
 
-// The number fields of the board's form speak the grid's grammar (cells/number-cell.tsx):
-// points in milheiros, money in reais with a comma or a dot, and either one may be a sum.
-// Kept here rather than imported from the cell, which keeps it to itself.
+// The number fields of the board's form: points in milheiros, money in reais with a comma
+// or a dot, and either one may be a sum.
 export type NumberMode = "points" | "currency"
 
 export function parseNumberText(text: string, mode: NumberMode): number | null {

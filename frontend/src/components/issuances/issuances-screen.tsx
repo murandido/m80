@@ -44,8 +44,6 @@ interface IssuancesScreenProps {
 }
 
 // The issuances are a board of cards with a side panel (see components/issuances/board/).
-// The spreadsheet's files (issuances-grid.tsx, cells/, the filter bar) are no longer
-// rendered; they stay until the board has settled in production, then go in a cleanup.
 export function IssuancesScreen({
   initialIssuances,
   filterQuery,
