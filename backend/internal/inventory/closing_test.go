@@ -281,3 +281,46 @@ func TestReadClosingPartsAddUpToTheSettlement(t *testing.T) {
 		}
 	})
 }
+
+// Revenue is priced the way payments charges the client: rounded up to the cent. 12.345
+// points at R$ 24,50 the thousand is R$ 302,4525, so the slice earns R$ 302,46 - not the
+// R$ 302,45 a nearest-cent rule gave - and cancelling it in the same period gives back
+// exactly that, leaving nothing behind.
+func TestReadClosingRoundsRevenueUpLikePayments(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		f := seedFixture(t, tx)
+		seedBatch(t, tx, f, "2026-08-01", 500000, 500000)
+		issuance := seedIssuance(t, tx, f, "2026-08-15", 12345)
+		if err := tx.Model(&issuance).Update("value_of_the_thousand", 2450).Error; err != nil {
+			t.Fatalf("setting the rate: %v", err)
+		}
+
+		if err := Recompute(tx, f.account.ID); err != nil {
+			t.Fatalf("Recompute: %v", err)
+		}
+		closing, err := ReadClosing(tx, f.account.ID, day("2026-08-01"), day("2026-08-31"))
+		if err != nil {
+			t.Fatalf("ReadClosing: %v", err)
+		}
+		if closing.RevenueCents != 30246 {
+			t.Errorf("revenue = %d cents, want 30246", closing.RevenueCents)
+		}
+
+		if err := tx.Model(&issuance).Updates(map[string]any{
+			"active":       false,
+			"cancelled_at": instantOn("2026-08-20"),
+		}).Error; err != nil {
+			t.Fatalf("cancelling: %v", err)
+		}
+		if err := Recompute(tx, f.account.ID); err != nil {
+			t.Fatalf("Recompute after cancelling: %v", err)
+		}
+		closing, err = ReadClosing(tx, f.account.ID, day("2026-08-01"), day("2026-08-31"))
+		if err != nil {
+			t.Fatalf("ReadClosing after cancelling: %v", err)
+		}
+		if closing.RevenueCents != 0 {
+			t.Errorf("revenue after cancelling = %d cents, want 0", closing.RevenueCents)
+		}
+	})
+}
