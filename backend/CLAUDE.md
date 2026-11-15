@@ -90,6 +90,7 @@ As seguintes vars devem estar definidas (via `.env` ou ambiente Docker):
   docker compose --profile test run --rm whatsapp-bot-test
   ```
   Esse é o serviço que roda `./internal/...` inteiro; o `api-test` cobre só `./cmd/api/...`. Os dois já rodaram a árvore `internal` inteira, ao mesmo tempo, contra o mesmo banco — era o dobro do trabalho para um único conjunto de resultados.
+- **Teste de banco só roda em banco cujo nome termina em `_test`.** O `setupTestDB` de cada pacote chama `testdb.RequireTestDatabase` (`internal/testdb`) antes de conectar: `DB_NAME` vazio dá skip (nenhum banco configurado), e qualquer outro nome sem o sufixo **reprova** com "refusing to run against database". Existe porque vários testes commitam fixture ou esvaziam tabela, e um `DB_NAME` apontando para o banco de dev o apagaria. O CI já usa `m80_test`; no `.env` local, `DB_NAME_TEST` tem que terminar em `_test` também. Teste novo que abre banco passa pela mesma chamada.
 - **Esse serviço builda uma imagem (`COPY`), não monta volume.** Sem `build`, o Compose reusa a imagem em cache e você roda **código velho** com a saída toda verde — teste novo simplesmente não aparece na lista. Rebuild explícito a cada rodada que precisa valer:
   ```bash
   docker compose --profile test build whatsapp-bot-test
