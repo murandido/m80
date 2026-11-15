@@ -572,6 +572,100 @@
                 }
             }
         },
+        "/accounts/{id}/azul-customer-key": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Recebe a customerKey capturada de um login feito pelo funcionário no próprio navegador (pela extensão) e o CPF usado nesse login. Só grava se o CPF for o da conta e se a Azul responder o saldo com essa chave; depois roda a primeira sincronização em segundo plano.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Estoque de pontos"
+                ],
+                "summary": "Conectar conta Azul com a chave do login feito no navegador",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Conta",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Chave e CPF do login",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/schemas.AzulBrowserKeyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.AzulBrowserKeySingleResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Payload inválido",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Não autenticado",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Requer admin",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Conta não encontrada",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Já existe um login em andamento para esta conta",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "O login não foi feito com o CPF da conta, ou a conta não tem login salvo",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "A Azul não reconheceu a chave, ou não deu para conferir agora",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Leitura da Azul não configurada neste servidor",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/accounts/{id}/azul-statement": {
             "get": {
                 "security": [
@@ -6630,43 +6724,6 @@
                 }
             }
         },
-        "/issuances/summary": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Retorna uma versão enxuta das emissões ativas, com apenas os campos usados em telas de listagem.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Emissões"
-                ],
-                "summary": "Listar emissões (resumo)",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/schemas.IssuanceSummaryListResponse"
-                        }
-                    },
-                    "401": {
-                        "description": "Não autenticado",
-                        "schema": {
-                            "$ref": "#/definitions/schemas.ErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "Erro ao buscar emissões",
-                        "schema": {
-                            "$ref": "#/definitions/schemas.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
         "/issuances/{id}": {
             "get": {
                 "security": [
@@ -8912,6 +8969,78 @@
                         "description": "Erro ao deletar observação",
                         "schema": {
                             "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/passengers/extract": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Lê com IA os passageiros de uma mensagem colada ou de fotos de documentos, para a extensão preencher o formulário da cia. Nada é guardado.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Passageiros"
+                ],
+                "summary": "Extrair passageiros de texto ou foto de documento",
+                "parameters": [
+                    {
+                        "description": "Texto e imagens colados, misturados",
+                        "name": "payload",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/schemas.PassengerExtractRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/passengerextract.Passenger"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/utils.StandardResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/utils.StandardResponse"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/utils.StandardResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "$ref": "#/definitions/utils.StandardResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/utils.StandardResponse"
                         }
                     }
                 }
@@ -12875,6 +13004,85 @@
                 "VerdictCancellation"
             ]
         },
+        "passengerextract.Passenger": {
+            "type": "object",
+            "properties": {
+                "birth_date": {
+                    "type": "string"
+                },
+                "cpf": {
+                    "type": "string"
+                },
+                "document_expiry": {
+                    "type": "string"
+                },
+                "document_issuing_country": {
+                    "type": "string"
+                },
+                "document_number": {
+                    "type": "string"
+                },
+                "document_type": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "escalated": {
+                    "description": "Whether a stronger model had to re-read one of this passenger's images.",
+                    "type": "boolean"
+                },
+                "first_name": {
+                    "type": "string"
+                },
+                "gender": {
+                    "type": "string"
+                },
+                "gender_source": {
+                    "type": "string"
+                },
+                "illegible_fields": {
+                    "description": "Fields a document showed but could not be read with certainty; left for a human.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "last_name": {
+                    "type": "string"
+                },
+                "nationality": {
+                    "type": "string"
+                },
+                "notes": {
+                    "type": "string"
+                },
+                "phone": {
+                    "type": "string"
+                },
+                "shared_fields": {
+                    "description": "Fields filled from another passenger of the same paste (e-mail, phone).",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "source_images": {
+                    "description": "1-based numbers of the pasted images this passenger was read from; empty when they came\nfrom the text alone.",
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "warnings": {
+                    "description": "Problems the checks found, for the extension to flag.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "schemas.AccountBeneficiaryListResponse": {
             "type": "object",
             "properties": {
@@ -13691,6 +13899,46 @@
                 }
             }
         },
+        "schemas.AzulBrowserKeyRequest": {
+            "type": "object",
+            "required": [
+                "customer_key",
+                "login_document"
+            ],
+            "properties": {
+                "customer_key": {
+                    "type": "string"
+                },
+                "login_document": {
+                    "type": "string"
+                }
+            }
+        },
+        "schemas.AzulBrowserKeyResponse": {
+            "type": "object",
+            "properties": {
+                "connected": {
+                    "type": "boolean",
+                    "example": true
+                }
+            }
+        },
+        "schemas.AzulBrowserKeySingleResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/schemas.AzulBrowserKeyResponse"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "Conta conectada"
+                },
+                "success": {
+                    "type": "boolean",
+                    "example": true
+                }
+            }
+        },
         "schemas.AzulCityCodeRequest": {
             "type": "object",
             "required": [
@@ -14133,7 +14381,8 @@
             "type": "object",
             "properties": {
                 "cancellation_fee": {
-                    "type": "integer"
+                    "type": "integer",
+                    "minimum": 0
                 },
                 "cancellation_only": {
                     "description": "CancellationOnly marks the issuance as a row that exists only to carry this\nestorno: the booking was made outside the panel, so its points were never miles\nissued here and the supplier balance must count the refund alone. Registering the\nbooking and then cancelling it with twice the points is what this replaces.",
@@ -14145,10 +14394,13 @@
                     "example": "2026-09-05"
                 },
                 "refunded_points": {
-                    "type": "integer"
+                    "description": "Never negative, mirroring the panel's own form: a negative fee would make the sale\nowe the client back more than came in, and a negative refund would skew the\naccount's expected balance.",
+                    "type": "integer",
+                    "minimum": 0
                 },
                 "refunded_taxes": {
-                    "type": "integer"
+                    "type": "integer",
+                    "minimum": 0
                 }
             }
         },
@@ -16258,98 +16510,6 @@
                 }
             }
         },
-        "schemas.IssuanceSummaryListResponse": {
-            "type": "object",
-            "properties": {
-                "data": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/schemas.IssuanceSummaryResponse"
-                    }
-                },
-                "message": {
-                    "type": "string",
-                    "example": "Emissões listadas com sucesso"
-                },
-                "success": {
-                    "type": "boolean",
-                    "example": true
-                }
-            }
-        },
-        "schemas.IssuanceSummaryResponse": {
-            "type": "object",
-            "properties": {
-                "account_login": {
-                    "type": "string"
-                },
-                "agency_name": {
-                    "type": "string"
-                },
-                "airline_locator": {
-                    "type": "string"
-                },
-                "airline_name": {
-                    "type": "string"
-                },
-                "cancellation_only": {
-                    "type": "boolean"
-                },
-                "destination_iata_code": {
-                    "type": "string"
-                },
-                "flight_date": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "imported": {
-                    "type": "boolean"
-                },
-                "issued_at": {
-                    "type": "string"
-                },
-                "issuer_name": {
-                    "type": "string"
-                },
-                "loyalty_program_name": {
-                    "type": "string"
-                },
-                "main_passenger_name": {
-                    "type": "string"
-                },
-                "origin_iata_code": {
-                    "type": "string"
-                },
-                "points": {
-                    "type": "integer"
-                },
-                "program_locator": {
-                    "type": "string"
-                },
-                "status": {
-                    "description": "Status is derived: \"incomplete\" | \"complete\" | \"cancelled\".",
-                    "type": "string",
-                    "example": "incomplete"
-                },
-                "taxes": {
-                    "type": "integer"
-                },
-                "traveos_attempted_at": {
-                    "type": "string"
-                },
-                "traveos_synced_at": {
-                    "type": "string"
-                },
-                "traveos_syncing_at": {
-                    "type": "string"
-                },
-                "value_of_the_thousand": {
-                    "type": "integer"
-                }
-            }
-        },
         "schemas.LatamCallbackRequest": {
             "type": "object",
             "required": [
@@ -17031,6 +17191,22 @@
                 "success": {
                     "type": "boolean",
                     "example": true
+                }
+            }
+        },
+        "schemas.PassengerExtractRequest": {
+            "type": "object",
+            "properties": {
+                "images": {
+                    "type": "array",
+                    "maxItems": 20,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "text": {
+                    "type": "string",
+                    "maxLength": 20000
                 }
             }
         },
