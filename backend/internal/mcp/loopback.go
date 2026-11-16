@@ -36,7 +36,8 @@ type envelope struct {
 	Data    json.RawMessage `json:"data"`
 }
 
-// call runs one request through the /api/v1 router as who, and returns the envelope's data.
+// call runs one request through the /api/v1 router as who, and returns the envelope's data,
+// with credentials and documents removed (see redact).
 // path is relative to /api/v1 (e.g. "/issuances").
 func (s *Server) call(ctx context.Context, who caller, method, path string, query url.Values, body any) (json.RawMessage, error) {
 	token, err := auth.GenerateTokenWithLifetime(who.UserID, who.Phone, who.Role, loopbackTokenLifetime)
@@ -91,7 +92,9 @@ func (s *Server) call(ctx context.Context, who caller, method, path string, quer
 	if len(env.Data) == 0 {
 		return json.RawMessage(`null`), nil
 	}
-	return env.Data, nil
+	// Every answer goes through redact, not just the ones known to carry secrets: an
+	// endpoint that starts embedding an account tomorrow must not leak its password today.
+	return redact(env.Data), nil
 }
 
 // get is call for a GET that decodes data into out.
