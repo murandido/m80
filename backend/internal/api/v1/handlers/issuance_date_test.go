@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/events"
+	"github.com/murandido/m-80-backend/internal/inventory"
 	"gorm.io/gorm"
 )
 
@@ -43,10 +44,10 @@ func TestRebaseToDayKeepsTheClock(t *testing.T) {
 	}
 }
 
-// The costing reads the UTC day of created_at, so a late-evening clock kept as it is would
-// put the issuance on the following day there - the operator picks the 3rd and the batch of
-// the 4th gets charged. Midday is the same calendar day in both zones.
-func TestRebaseToDayStaysOnTheChosenDayInUTC(t *testing.T) {
+// A late-evening clock lands on the chosen day where it counts: the costing reads the São
+// Paulo day of created_at (inventory.DayOf), not the UTC one, so 22:30 on the 3rd is costed
+// on the 3rd even though it is already the 4th in UTC.
+func TestRebaseToDayStaysOnTheChosenDayForTheCosting(t *testing.T) {
 	t.Parallel()
 	loc := saoPaulo(t)
 
@@ -55,11 +56,11 @@ func TestRebaseToDayStaysOnTheChosenDayInUTC(t *testing.T) {
 
 	moved := rebaseToDay(moment, day)
 
-	if moved.UTC().Format("2006-01-02") != "2026-09-03" {
-		t.Errorf("UTC day: got %s, want 2026-09-03", moved.UTC().Format("2006-01-02"))
+	if got := inventory.DayOf(moved).Format("2006-01-02"); got != "2026-09-03" {
+		t.Errorf("costing day: got %s, want 2026-09-03", got)
 	}
-	if moved.Format("2006-01-02") != "2026-09-03" {
-		t.Errorf("local day: got %s, want 2026-09-03", moved.Format("2006-01-02"))
+	if moved.Format("2006-01-02 15:04") != "2026-09-03 22:30" {
+		t.Errorf("local moment: got %s, want 2026-09-03 22:30", moved.Format("2006-01-02 15:04"))
 	}
 }
 
@@ -78,6 +79,30 @@ func TestRebaseToDayReadsTheClockInTheTargetZone(t *testing.T) {
 
 	if got := moved.In(loc).Format("2006-01-02 15:04:05"); got != "2026-09-03 09:00:04" {
 		t.Errorf("got %s, want the 3rd at 09:00:04 local", got)
+	}
+}
+
+// An issuance recorded late in the evening keeps its clock. 21:30 in São Paulo is already
+// the next day in UTC; swapping it for midday (the old rule) sorted it ahead of everything
+// recorded that afternoon, since the lists order by created_at.
+func TestRebaseToDayKeepsALateEveningClock(t *testing.T) {
+	t.Parallel()
+	loc := saoPaulo(t)
+
+	// 21:30:15 in São Paulo on the 3rd, which is 00:30:15 on the 4th in UTC.
+	moment := time.Date(2026, 9, 4, 0, 30, 15, 0, time.UTC)
+	day := time.Date(2026, 9, 3, 0, 0, 0, 0, loc)
+
+	moved := rebaseToDay(moment, day)
+
+	if got := moved.In(loc).Format("2006-01-02 15:04:05"); got != "2026-09-03 21:30:15" {
+		t.Errorf("got %s, want the 3rd at 21:30:15 local", got)
+	}
+
+	// And it still sorts after a row recorded that afternoon.
+	afternoon := rebaseToDay(time.Date(2026, 9, 3, 18, 0, 0, 0, time.UTC), day)
+	if !moved.After(afternoon) {
+		t.Errorf("the 21:30 row (%s) sorts before the 15:00 row (%s)", moved, afternoon)
 	}
 }
 
@@ -102,11 +127,7 @@ func TestUpdateIssuanceMovesTheDay(t *testing.T) {
 	runInTx(t, func(tx *gorm.DB) {
 		issuance, user := seedIssuance(t, tx)
 
-		// Stamped rather than left at now(): the clock this test asserts on has to be one
-		// that survives the move, and a row seeded late at night would not. Past 21:00 in
-		// São Paulo the same clock falls on the next UTC day, and rebaseToDay drops to
-		// midday on purpose so the day the operator picked is the day the costing reads.
-		// Left to the wall clock, this test passed by day and failed by night.
+		// Stamped rather than left at now(), so the clock this test asserts on is a known one.
 		before := time.Date(2026, 8, 1, 9, 0, 4, 0, saoPaulo(t))
 		if err := tx.Model(&issuance).UpdateColumn("created_at", before).Error; err != nil {
 			t.Fatalf("stamping the issuance: %v", err)
