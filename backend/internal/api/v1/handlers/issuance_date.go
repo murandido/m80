@@ -50,12 +50,13 @@ func localDayOf(moment time.Time) string {
 // (internal/inventory/recompute.go), so flattening every backdated row to one instant
 // would leave their FIFO order to whatever the database happened to return.
 //
-// The exception is the late evening: when the kept clock falls on the next UTC day, midday
-// is used instead. It dates from when the costing read the UTC day of created_at; the
-// costing now reads the São Paulo day (inventory.DayOf), so the rule is no longer what
-// keeps the day right. It is left in place because it is harmless - midday is the same
-// calendar day in both zones - and dropping it would change the clock stored on corrected
-// rows, which nothing here needs.
+// The late evening keeps its clock too. A click at 21:30 in São Paulo is already the next
+// day in UTC, and this used to swap it for midday so a costing that read the UTC day of
+// created_at would not file it a day late. Nothing reads that day any more - the costing,
+// the lists and the exports all resolve the São Paulo day (businessday, inventory.DayOf) -
+// and midday was not harmless: the lists sort by created_at, so an issuance recorded at
+// 21:30 jumped ahead of everything recorded that afternoon, on the board and on the
+// payments screen alike.
 func rebaseToDay(moment, day time.Time) time.Time {
 	// Read in the target zone, not as it comes out of the database. created_at arrives in
 	// UTC, and taking its hour as if it were local moved the clock by the offset on every
@@ -66,9 +67,6 @@ func rebaseToDay(moment, day time.Time) time.Time {
 		local.Hour(), local.Minute(), local.Second(), local.Nanosecond(),
 		day.Location(),
 	)
-	if rebased.UTC().Day() != rebased.Day() {
-		return time.Date(day.Year(), day.Month(), day.Day(), 12, 0, 0, 0, day.Location())
-	}
 	return rebased
 }
 
