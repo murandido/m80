@@ -24,6 +24,13 @@ func jwtSecret() []byte {
 const TokenLifetime = 7 * 24 * time.Hour
 
 func GenerateToken(userID, phone, role string) (string, error) {
+	return GenerateTokenWithLifetime(userID, phone, role, TokenLifetime)
+}
+
+// GenerateTokenWithLifetime signs a token that dies sooner than a panel session. The MCP server
+// mints one per tool call to run it through the /api/v1 router as the token's owner, and a
+// leaked one of those should be worthless within minutes, not a week.
+func GenerateTokenWithLifetime(userID, phone, role string, lifetime time.Duration) (string, error) {
 	secret := jwtSecret()
 	if len(secret) == 0 {
 		return "", errors.New("JWT secret not set in .env")
@@ -37,7 +44,7 @@ func GenerateToken(userID, phone, role string) (string, error) {
 		// iat is informational - nothing validates against it. Tokens signed before it was
 		// added are still accepted, and the panel decides when to renew from exp alone.
 		"iat": now.Unix(),
-		"exp": now.Add(TokenLifetime).Unix(),
+		"exp": now.Add(lifetime).Unix(),
 		"iss": "m-80-api",
 	}
 
