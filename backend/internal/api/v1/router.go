@@ -98,6 +98,10 @@ func NewRouter(db *gorm.DB, broker *events.Broker, bookings *booking.Registry, m
 		// inside RegisterLegacyImportRoutes. Delete this line along with the rest of
 		// the importer once the migration off the spreadsheets is done.
 		routes.RegisterLegacyImportRoutes(r, db, broker)
+		// The panel side of the MCP server (tokens, activity, proposals), dev-gated inside.
+		// /mcp itself is mounted by internal/api, outside this group: its credential is an
+		// MCP token, which these routes never accept.
+		routes.RegisterMCPRoutes(r, db)
 	})
 
 	// The statement client's own area, outside the staff group above: the only routes that role
