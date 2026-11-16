@@ -62,6 +62,7 @@ func NewHandler(db *gorm.DB, v1 http.Handler) http.Handler {
 	s.registerSystemTools(server)
 	s.registerStockTools(server)
 	s.registerIssuanceTools(server)
+	s.registerProposalTools(server)
 
 	// Stateless + JSON responses: every POST stands alone, so nothing depends on session
 	// affinity or a long-lived SSE stream surviving the hop through the panel's relay.

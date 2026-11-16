@@ -44,7 +44,19 @@ func (s *Server) call(ctx context.Context, who caller, method, path string, quer
 	if err != nil {
 		return nil, fmt.Errorf("mcp: sign loopback token: %w", err)
 	}
+	raw, err := serveV1(ctx, s.v1, method, path, query, body, "Bearer "+token)
+	if err != nil {
+		return nil, err
+	}
+	// Every answer goes through redact, not just the ones known to carry secrets: an
+	// endpoint that starts embedding an account tomorrow must not leak its password today.
+	return redact(raw), nil
+}
 
+// serveV1 runs one request through v1 with the given Authorization header and unwraps the
+// envelope. It is shared by the tools, which sign a token for the MCP token's owner, and by
+// proposal approval, which forwards the approver's own session.
+func serveV1(ctx context.Context, v1 http.Handler, method, path string, query url.Values, body any, authorization string) (json.RawMessage, error) {
 	var reader *bytes.Reader
 	if body != nil {
 		raw, err := json.Marshal(body)
@@ -61,23 +73,23 @@ func (s *Server) call(ctx context.Context, who caller, method, path string, quer
 		target += "?" + query.Encode()
 	}
 
-	// The tool's context may descend from the /mcp request, which carries the outer router's
-	// chi.Context. chi reuses a route context it finds instead of starting its own, so the
-	// v1 router would route against the wrong path; shadowing it with a nil one makes the
-	// loopback request route from scratch.
+	// The context may descend from a request routed by chi (/mcp, or the approve route),
+	// which carries that router's chi.Context. chi reuses a route context it finds instead of
+	// starting its own, so v1 would route against the wrong path; shadowing it with a nil
+	// one makes the loopback request route from scratch.
 	ctx = context.WithValue(ctx, chi.RouteCtxKey, (*chi.Context)(nil))
 
 	req, err := http.NewRequestWithContext(ctx, method, "http://loopback"+target, reader)
 	if err != nil {
 		return nil, fmt.Errorf("mcp: build request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Authorization", authorization)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
 
 	rec := httptest.NewRecorder()
-	s.v1.ServeHTTP(rec, req)
+	v1.ServeHTTP(rec, req)
 
 	var env envelope
 	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
@@ -92,9 +104,7 @@ func (s *Server) call(ctx context.Context, who caller, method, path string, quer
 	if len(env.Data) == 0 {
 		return json.RawMessage(`null`), nil
 	}
-	// Every answer goes through redact, not just the ones known to carry secrets: an
-	// endpoint that starts embedding an account tomorrow must not leak its password today.
-	return redact(env.Data), nil
+	return env.Data, nil
 }
 
 // get is call for a GET that decodes data into out.

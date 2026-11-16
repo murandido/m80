@@ -16,6 +16,8 @@ import (
 
 func NewRouter(db *gorm.DB, broker *events.Broker, bookings *booking.Registry, monitor *health.Monitor, smilesGuard *smilessync.SessionGuard, latamGuard *latamsync.SessionGuard, azulConnector *azulsync.Connector) chi.Router {
 	r := chi.NewRouter()
+	// The groups below shadow r; approved MCP proposals need the whole router.
+	root := r
 
 	authHandler := handlers.NewAuthHandler(db)
 
@@ -101,7 +103,7 @@ func NewRouter(db *gorm.DB, broker *events.Broker, bookings *booking.Registry, m
 		// The panel side of the MCP server (tokens, activity, proposals), dev-gated inside.
 		// /mcp itself is mounted by internal/api, outside this group: its credential is an
 		// MCP token, which these routes never accept.
-		routes.RegisterMCPRoutes(r, db)
+		routes.RegisterMCPRoutes(r, db, root)
 	})
 
 	// The statement client's own area, outside the staff group above: the only routes that role

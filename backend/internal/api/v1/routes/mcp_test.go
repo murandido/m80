@@ -4,7 +4,9 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/murandido/m-80-backend/internal/data"
+	"gorm.io/gorm"
 )
 
 // Everything the panel does with the MCP server - minting tokens, reading the agent's activity,
@@ -17,15 +19,20 @@ func TestMCPRoutesAreDevOnly(t *testing.T) {
 		{http.MethodGet, "/mcp-tokens"},
 		{http.MethodPost, "/mcp-tokens"},
 		{http.MethodDelete, "/mcp-tokens/" + id},
+		{http.MethodGet, "/mcp-proposals"},
+		{http.MethodPost, "/mcp-proposals/" + id + "/approve"},
+		{http.MethodPost, "/mcp-proposals/" + id + "/reject"},
+		{http.MethodGet, "/mcp-calls"},
 	}
+	register := func(r chi.Router, db *gorm.DB) { RegisterMCPRoutes(r, db, nil) }
 
 	for _, tc := range cases {
 		for _, role := range []string{data.RoleUser, data.RoleAdmin} {
-			if code := callRoute(t, RegisterMCPRoutes, role, tc.method, tc.path); code != http.StatusForbidden {
+			if code := callRoute(t, register, role, tc.method, tc.path); code != http.StatusForbidden {
 				t.Errorf("%s %s as %s: got %d, want 403", tc.method, tc.path, role, code)
 			}
 		}
-		if code := callRoute(t, RegisterMCPRoutes, data.RoleDev, tc.method, tc.path); code == http.StatusForbidden {
+		if code := callRoute(t, register, data.RoleDev, tc.method, tc.path); code == http.StatusForbidden {
 			t.Errorf("%s %s as dev: got 403, want the gate to let it through", tc.method, tc.path)
 		}
 	}
