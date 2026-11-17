@@ -56,7 +56,7 @@ Como tratar o conteúdo:
 ## Extensão de Navegador
 - `/extension` é um submódulo privado (`murandido/m80-extension`). As regras dela (build, captura de dados, publicação) estão em `extension/CLAUDE.md`.
 - **O cofre fala com o painel, nunca com o Go.** A extensão manda a sessão do painel como `Authorization: Bearer` para as rotas `/api/extension/*` do Next, que aceitam **só** o Bearer, nunca o cookie: sem credencial automática, nenhuma página consegue usar a sessão. Essas rotas respondem CORS apenas para origens `chrome-extension://`/`moz-extension://` (ver `frontend/src/lib/extension-relay.ts`). Cada senha lida vira uma linha em `account_credential_accesses`, e o endpoint tem limite próprio por usuário (`CredentialRateLimit`, 30/min).
-- `make ext-build` — testes + build dos dois navegadores em `extension/.output/`. `make ext-dev` — build com hot reload.
+- `make ext-build` — testes + build dos dois navegadores, da extensão da equipe (`extension/.output/`) e da **M80 Extrato** (`extension/.output-client/`), a variante sem cofre que os clientes de extrato instalam pelo guia do portal (`/portal/extensao`). `make ext-dev` — build com hot reload.
 - **Publicar nas lojas (Chrome Web Store / AMO) só sob pedido expresso**, como o deploy.
 
 ## Backup do Banco

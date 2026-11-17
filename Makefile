@@ -56,9 +56,10 @@ db-restore:
 ext-dev:
 	cd extension && pnpm install && pnpm dev
 
-# Production builds for both browsers, in extension/.output/{chrome,firefox}-mv3
+# Production builds for both browsers, in extension/.output/{chrome,firefox}-mv3 (the team's)
+# and extension/.output-client/{chrome,firefox}-mv3 (M80 Extrato, for statement clients)
 ext-build:
-	cd extension && pnpm install && pnpm test && pnpm build && pnpm build:firefox
+	cd extension && pnpm install && pnpm test && pnpm build && pnpm build:firefox && pnpm build:client && pnpm build:client:firefox
 
 # UTILS
 # Clears caches and builds (does not delete Docker volumes to avoid data loss)
