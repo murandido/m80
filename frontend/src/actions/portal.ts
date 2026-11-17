@@ -57,8 +57,8 @@ export async function getPortalEntriesAction(
   }
 }
 
-// Saves a new airline password. It does not connect on its own: the client presses Conectar
-// (Azul) or asks the team for the code step (Smiles) afterwards.
+// Saves a new airline password. On an Azul account whose key Azul refused, a different password
+// starts the reconnect on its own (the API does it); otherwise the client presses Conectar.
 export async function updatePortalPasswordAction(
   accountId: string,
   password: string,

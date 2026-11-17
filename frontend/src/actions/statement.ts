@@ -47,6 +47,27 @@ async function accountsAuth() {
   return { base: `${env.BACKEND_URL}/api/v1/accounts`, token }
 }
 
+// Which side of the panel a connect runs from. The statement client's portal mounts the same
+// connect routes under /portal/accounts/{id}, behind the account grant, so the actions below only
+// swap the prefix; the API decides who may call which. A client passing "staff" gets a 403.
+export type ConnectArea = "staff" | "portal"
+
+async function connectAuth(area: ConnectArea) {
+  const { base, token } = await accountsAuth()
+  if (area === "portal") return { base: `${env.BACKEND_URL}/api/v1/portal/accounts`, token }
+  return { base, token }
+}
+
+// After a connect, the screens that show the account's sync state.
+function revalidateConnected(area: ConnectArea) {
+  if (area === "portal") {
+    revalidatePath("/portal", "layout")
+    return
+  }
+  revalidatePath("/dashboard/accounts")
+  revalidatePath("/dashboard/sales/inventory")
+}
+
 type AzulStatementResult =
   | { error: string }
   | { success: true; statement: SyncedStatement }
@@ -152,9 +173,10 @@ export async function storeAzulBrowserKeyAction(
   accountId: string,
   customerKey: string,
   loginDocument: string,
+  area: ConnectArea = "staff",
 ): Promise<{ error: string } | { success: true }> {
   try {
-    const { base, token } = await accountsAuth()
+    const { base, token } = await connectAuth(area)
     const res = await fetch(`${base}/${encodeURIComponent(accountId)}/azul-customer-key`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
@@ -169,8 +191,7 @@ export async function storeAzulBrowserKeyAction(
     if (!parsed.success || !parsed.data.data?.connected) {
       return { error: "Resposta inesperada do servidor." }
     }
-    revalidatePath("/dashboard/sales/inventory")
-    revalidatePath("/dashboard/accounts")
+    revalidateConnected(area)
     return { success: true }
   } catch {
     return { error: "Erro de conexão com o servidor." }
@@ -546,9 +567,12 @@ type SmilesLoginStart =
 // Step one: log in with the credentials already stored on the account. Almost always Smiles
 // answers "a code is required" and hands back the channels the holder registered; an account
 // without a second factor is connected outright.
-export async function startSmilesLoginAction(accountId: string): Promise<SmilesLoginStart> {
+export async function startSmilesLoginAction(
+  accountId: string,
+  area: ConnectArea = "staff",
+): Promise<SmilesLoginStart> {
   try {
-    const { base, token } = await accountsAuth()
+    const { base, token } = await connectAuth(area)
     const res = await fetch(`${base}/${encodeURIComponent(accountId)}/smiles-connect`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}` },
@@ -563,8 +587,7 @@ export async function startSmilesLoginAction(accountId: string): Promise<SmilesL
       return { error: "Resposta inesperada do servidor." }
     }
     if (parsed.data.data.connected) {
-      revalidatePath("/dashboard/accounts")
-      revalidatePath("/dashboard/sales/inventory")
+      revalidateConnected(area)
       return { success: true, connected: true }
     }
     return {
@@ -591,9 +614,10 @@ export interface SmilesBrowserChallengeMaterial {
 export async function browserChallengeSmilesLoginAction(
   accountId: string,
   authenticatorId: string,
+  area: ConnectArea = "staff",
 ): Promise<{ error: string } | ({ success: true } & SmilesBrowserChallengeMaterial)> {
   try {
-    const { base, token } = await accountsAuth()
+    const { base, token } = await connectAuth(area)
     const res = await fetch(
       `${base}/${encodeURIComponent(accountId)}/smiles-connect/challenge/browser`,
       {
@@ -629,9 +653,10 @@ export async function completeBrowserChallengeSmilesLoginAction(
   accountId: string,
   authenticatorId: string,
   oobCode: string,
+  area: ConnectArea = "staff",
 ): Promise<{ error: string } | { success: true; sentTo: string }> {
   try {
-    const { base, token } = await accountsAuth()
+    const { base, token } = await connectAuth(area)
     const res = await fetch(
       `${base}/${encodeURIComponent(accountId)}/smiles-connect/challenge/complete`,
       {
@@ -661,9 +686,10 @@ export async function completeBrowserChallengeSmilesLoginAction(
 export async function confirmSmilesLoginAction(
   accountId: string,
   code: string,
+  area: ConnectArea = "staff",
 ): Promise<{ error: string } | { success: true }> {
   try {
-    const { base, token } = await accountsAuth()
+    const { base, token } = await connectAuth(area)
     const res = await fetch(`${base}/${encodeURIComponent(accountId)}/smiles-connect/code`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
@@ -674,8 +700,7 @@ export async function confirmSmilesLoginAction(
     if (!res.ok) {
       return { error: json?.message || "Erro ao confirmar o código." }
     }
-    revalidatePath("/dashboard/accounts")
-    revalidatePath("/dashboard/sales/inventory")
+    revalidateConnected(area)
     return { success: true }
   } catch {
     return { error: "Erro de conexão com o servidor." }
