@@ -40,7 +40,7 @@ Contas `user` e `admin` só enxergam e agem nas agências atribuídas a elas em 
 - Vazamento aceito: o conflito de localizador (`ErrProgramLocatorTaken`) continua global e revela que o localizador existe em outra agência.
 
 ## Cliente de Extrato (`statement_client`)
-Perfil para cliente de fora que só lê o extrato Azul/Smiles das contas concedidas a ele em `user_accounts` (migrations 000088/000089). Qualquer admin cadastra e concede contas em `/dashboard/users`.
+Perfil para cliente de fora que só lê o extrato Azul/Smiles das contas concedidas a ele em `user_accounts` (migrations 000090/000091). Qualquer admin cadastra e concede contas em `/dashboard/users`.
 - **O grupo privado do `v1/router.go` é só da equipe:** além do `RequireAuth`, ele usa `middleware.RequireStaff()` (`user`, `admin` e, como sempre, `dev`). Rota nova nesse grupo já nasce fechada para o cliente. **Não** monte rota de equipe fora desse grupo, e não troque o `RequireStaff` por uma lista que esqueça de barrar um perfil novo.
 - O cliente só alcança `/auth/me` e o grupo `/portal` (`v1/routes/portal.go`). Toda rota `/portal/accounts/{id}/...` passa pelo `middleware.RequireLinkedAccount`, que responde **404** (nunca 403) para conta não concedida, arquivada ou id malformado.
 - **O extrato do portal sai sem vínculos:** os builders `buildAzulStatementEntries`/`buildSmilesStatementEntries` recebem `includeLinks=false`, então passageiro, emissão, lote e custo dos pontos nunca chegam ao cliente. O CSV já não traz nada disso.

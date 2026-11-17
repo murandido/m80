@@ -10,7 +10,7 @@ import (
 )
 
 // The values of the user_role Postgres enum, created in migration 000001 and extended by
-// 000032 and 000088. They are plain strings because User.Role has to stay a string for gorm and for
+// 000032 and 000090. They are plain strings because User.Role has to stay a string for gorm and for
 // the JSON contract; a named type would ripple into both for no gain.
 const (
 	RoleUser  = "user"
