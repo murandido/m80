@@ -2,11 +2,13 @@ package data
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"sync"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -71,29 +73,107 @@ func runOnEmptyCatalog(t *testing.T, fn func(tx *gorm.DB)) {
 	t.Helper()
 	db := setupTestDB(t)
 
+	tx := beginOnEmptyCatalog(t, db)
+	defer tx.Rollback()
+
+	fn(tx)
+}
+
+// emptyCatalogAttempts bounds the retries of beginOnEmptyCatalog. A conflict needs another
+// package to commit a delete on the same tables inside a window of milliseconds, so a
+// second attempt almost always gets through; five keeps a genuinely stuck database from
+// looping forever.
+const emptyCatalogAttempts = 5
+
+// beginOnEmptyCatalog opens the repeatable-read transaction and empties the catalog in it,
+// starting over when Postgres aborts the emptying with a serialization failure.
+//
+// Packages test in parallel against one database, and other packages commit and then
+// delete their own airlines and loyalty programs as fixtures. When one of them deletes a
+// row this transaction's snapshot still sees, our DELETE of the same row cannot be
+// serialized and fails with SQLSTATE 40001 - nothing the test did wrong, and nothing has
+// run yet, so a fresh transaction with a fresh snapshot is the whole answer.
+func beginOnEmptyCatalog(t *testing.T, db *gorm.DB) *gorm.DB {
+	t.Helper()
+	var lastErr error
+	for attempt := 1; attempt <= emptyCatalogAttempts; attempt++ {
+		tx, err := tryEmptyCatalog(db)
+		if err == nil {
+			return tx
+		}
+		if !isSerializationFailure(err) {
+			t.Fatalf("emptying the catalog: %v", err)
+		}
+		lastErr = err
+	}
+	t.Fatalf("emptying the catalog: still conflicting after %d attempts: %v", emptyCatalogAttempts, lastErr)
+	return nil
+}
+
+func tryEmptyCatalog(db *gorm.DB) (*gorm.DB, error) {
 	// Repeatable read pins one snapshot for the whole test. Under the default read
 	// committed, a loyalty program another package commits mid-test shows up in this
 	// transaction's counts even though the catalog was emptied first.
 	tx := db.Begin(&sql.TxOptions{Isolation: sql.LevelRepeatableRead})
 	if tx.Error != nil {
-		t.Fatalf("begin: %v", tx.Error)
+		return nil, fmt.Errorf("begin: %w", tx.Error)
 	}
-	defer tx.Rollback()
 
-	// Packages test in parallel against one database, and the concurrency tests need
-	// committed accounts: those rows would trip the foreign key on the DELETE below. The
-	// checks stay off only inside this transaction, which never commits.
+	// The concurrency tests need committed accounts: those rows would trip the foreign
+	// key on the DELETE below. The checks stay off only inside this transaction, which
+	// never commits.
 	if err := tx.Exec("SET LOCAL session_replication_role = replica").Error; err != nil {
-		t.Fatalf("relaxing foreign keys: %v", err)
+		tx.Rollback()
+		return nil, fmt.Errorf("relaxing foreign keys: %w", err)
 	}
 
 	for _, table := range []string{"loyalty_programs", "airlines"} {
 		if err := tx.Exec("DELETE FROM " + table).Error; err != nil {
-			t.Fatalf("clearing %s: %v", table, err)
+			tx.Rollback()
+			return nil, fmt.Errorf("clearing %s: %w", table, err)
 		}
 	}
+	return tx, nil
+}
 
-	fn(tx)
+func isSerializationFailure(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "40001"
+}
+
+// TestEmptyingTheCatalogRecognisesAConcurrentDelete reproduces, on purpose, the conflict
+// beginOnEmptyCatalog retries: a committed delete of a row this transaction's snapshot
+// still sees. It pins down that the error reaching the test is still recognisable as a
+// serialization failure after gorm has wrapped it - if it stopped being, the retry would
+// silently turn back into the flaky failure it replaced.
+func TestEmptyingTheCatalogRecognisesAConcurrentDelete(t *testing.T) {
+	db := setupTestDB(t)
+
+	fixture := Airline{Name: "Conflict Air", Code: "ZZCONFLICT"}
+	if err := db.Create(&fixture).Error; err != nil {
+		t.Fatalf("committing the fixture: %v", err)
+	}
+	t.Cleanup(func() { db.Unscoped().Where("id = ?", fixture.ID).Delete(&Airline{}) })
+
+	tx := db.Begin(&sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+	if tx.Error != nil {
+		t.Fatalf("begin: %v", tx.Error)
+	}
+	defer tx.Rollback()
+	// The snapshot is taken at the first statement, not at BEGIN.
+	if err := tx.Exec("SELECT 1 FROM airlines WHERE id = ?", fixture.ID).Error; err != nil {
+		t.Fatalf("taking the snapshot: %v", err)
+	}
+
+	// Another package cleaning up its fixture, committed outside our transaction.
+	if err := db.Unscoped().Where("id = ?", fixture.ID).Delete(&Airline{}).Error; err != nil {
+		t.Fatalf("concurrent delete: %v", err)
+	}
+
+	err := tx.Exec("DELETE FROM airlines WHERE id = ?", fixture.ID).Error
+	if !isSerializationFailure(err) {
+		t.Fatalf("deleting a row deleted since the snapshot: got %v, want a serialization failure", err)
+	}
 }
 
 func countAirlines(t *testing.T, tx *gorm.DB) int64 {
