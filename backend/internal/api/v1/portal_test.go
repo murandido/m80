@@ -153,12 +153,51 @@ func TestPortal_PasswordIsWriteOnlyAndConnectFollowsTheProgram(t *testing.T) {
 		t.Errorf("blank password: %d, want 400", rec.Code)
 	}
 
-	// The Azul connect only exists for an Azul account, and there is no Smiles connect at all.
+	// Each connect only exists for its own program.
 	if rec := call(router, http.MethodPost, "/portal/accounts/"+smiles.ID+"/azul-connect", token, ""); rec.Code != http.StatusNotFound {
 		t.Errorf("azul-connect on a Smiles account: %d, want 404", rec.Code)
 	}
-	if rec := call(router, http.MethodPost, "/portal/accounts/"+smiles.ID+"/smiles-connect", token, ""); rec.Code != http.StatusNotFound && rec.Code != http.StatusMethodNotAllowed {
-		t.Errorf("smiles-connect: %d, want no such route", rec.Code)
+	if rec := call(router, http.MethodPost, "/portal/accounts/"+azul.ID+"/smiles-connect", token, ""); rec.Code != http.StatusNotFound {
+		t.Errorf("smiles-connect on an Azul account: %d, want 404", rec.Code)
+	}
+}
+
+// The connects are the staff handlers mounted behind the grant. These calls stop before any
+// airline is contacted (no pending login, an empty key), which is enough to tell a reachable route
+// from a refused one without a network in the test.
+func TestPortal_ConnectRoutesFollowTheGrantAndTheProgram(t *testing.T) {
+	db := setupTestDB(t)
+	tx := db.Begin()
+	t.Cleanup(func() { tx.Rollback() })
+	router := newTestRouter(tx)
+
+	azul := portalAccount(t, tx, "AZUL")
+	smiles := portalAccount(t, tx, "SMILES")
+	notGranted := portalAccount(t, tx, "SMILES")
+	token := statementClient(t, tx, azul, smiles)
+
+	smilesCode := `{"code": "123456"}`
+	smilesChallenge := `{"authenticator_id": "sms|abc"}`
+	cases := []struct {
+		name, path, body string
+		want             int
+	}{
+		{"smiles code without a pending login", "/portal/accounts/" + smiles.ID + "/smiles-connect/code", smilesCode, http.StatusConflict},
+		{"smiles browser challenge without a pending login", "/portal/accounts/" + smiles.ID + "/smiles-connect/challenge/browser", smilesChallenge, http.StatusConflict},
+		{"smiles code on an account not granted", "/portal/accounts/" + notGranted.ID + "/smiles-connect/code", smilesCode, http.StatusNotFound},
+		{"smiles code on an Azul account", "/portal/accounts/" + azul.ID + "/smiles-connect/code", smilesCode, http.StatusNotFound},
+		{"azul key without a key", "/portal/accounts/" + azul.ID + "/azul-customer-key", `{}`, http.StatusBadRequest},
+		{"azul key on a Smiles account", "/portal/accounts/" + smiles.ID + "/azul-customer-key", `{}`, http.StatusNotFound},
+	}
+	for _, tc := range cases {
+		if rec := call(router, http.MethodPost, tc.path, token, tc.body); rec.Code != tc.want {
+			t.Errorf("%s: %d %s, want %d", tc.name, rec.Code, rec.Body.String(), tc.want)
+		}
+	}
+
+	// Disconnecting stays with the team.
+	if rec := call(router, http.MethodDelete, "/portal/accounts/"+smiles.ID+"/smiles-connect", token, ""); rec.Code != http.StatusMethodNotAllowed && rec.Code != http.StatusNotFound {
+		t.Errorf("smiles disconnect: %d, want no such route", rec.Code)
 	}
 }
 

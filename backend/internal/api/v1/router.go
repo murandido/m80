@@ -104,7 +104,7 @@ func NewRouter(db *gorm.DB, broker *events.Broker, bookings *booking.Registry, m
 	// reaches besides /auth/me. Gated inside RegisterPortalRoutes.
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.RequireAuth(db))
-		routes.RegisterPortalRoutes(r, db, azulConnector)
+		routes.RegisterPortalRoutes(r, db, azulConnector, smilesConnect)
 	})
 
 	return r
