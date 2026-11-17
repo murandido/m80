@@ -128,7 +128,15 @@ export function buildCalculo(row: IssuanceRow): EmissaoText {
   }
 }
 
-/** The whole four-line message. */
+// Closes the summary that goes to the agency. It sits after the message rather than inside
+// it, and this summary is not meant to be pasted where the bot listens: the bot would read
+// the separator as a fifth line (an observation code) and refuse the message.
+const AGENCY_DISCLAIMER = [
+  "———————————",
+  "É de responsabilidade da agência a conferência da reserva dentro do prazo de 24h, após esse período não nos responsabilizamos por erros.",
+].join("\n")
+
+/** The whole four-line message, followed by the agency disclaimer. */
 export function buildEmissaoResumo(row: IssuanceRow, ref: EmissaoReferenceData): EmissaoText {
   const program = ref.loyaltyPrograms.find((p) => p.id === row.loyalty_program_id)
   const account = ref.accounts.find((a) => a.id === row.account_id)
@@ -202,5 +210,7 @@ export function buildEmissaoResumo(row: IssuanceRow, ref: EmissaoReferenceData):
   // instruction to record who administers the account, not a description of the issuance.
   const owners = `${nickname?.nickname ?? accountFallbackLabel(account, ref.people)}${agencySuffix}`
 
-  return { text: [header, route, calculo.text, owners].join("\n") }
+  return {
+    text: `${[header, route, calculo.text, owners].join("\n")}\n\n${AGENCY_DISCLAIMER}`,
+  }
 }
