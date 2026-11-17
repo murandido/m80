@@ -13,6 +13,8 @@ const roleOptions: { value: Role; label: string }[] = [
   { value: "user", label: "Usuário" },
   { value: "admin", label: "Admin" },
   { value: "dev", label: "Desenvolvedor" },
+  // An outside customer who only reads the statement of the accounts granted to them.
+  { value: "statement_client", label: "Cliente (extrato)" },
 ]
 
 // Shared by the create form and the edit panel, which carried a byte-for-byte copy of this

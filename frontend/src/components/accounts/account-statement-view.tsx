@@ -201,6 +201,11 @@ interface AccountStatementViewProps {
   // screen never guesses.
   syncedProgram: SyncedProgram
   entries: StatementEntries
+  // "client" is the statement client's portal: the same statement with nothing of the agency's
+  // bookkeeping - no issuance/batch links, no edit mode, no city assignment, no staff reconnect
+  // notice - and the CSV comes through the portal's own route. The API already leaves the links
+  // out for that role; hiding the rows keeps "Não vinculada" from reading as a problem to them.
+  variant?: "staff" | "client"
 }
 
 export function AccountStatementView({
@@ -210,7 +215,9 @@ export function AccountStatementView({
   program,
   syncedProgram,
   entries,
+  variant = "staff",
 }: AccountStatementViewProps) {
+  const isClient = variant === "client"
   const [editMode, setEditMode] = useState(false)
   // Overrides keyed by locator, so linking one line updates every line that shares the locator
   // without a refetch. Undefined means "use the value the server sent".
@@ -337,7 +344,9 @@ export function AccountStatementView({
   const exportParams = new URLSearchParams({ program: syncedProgram })
   if (dateFrom) exportParams.set("date_from", dateFrom)
   if (dateTo) exportParams.set("date_to", dateTo)
-  const exportHref = `/api/accounts/${accountId}/statement-export?${exportParams.toString()}`
+  const exportHref = isClient
+    ? `/api/portal/accounts/${accountId}/export?${exportParams.toString()}`
+    : `/api/accounts/${accountId}/statement-export?${exportParams.toString()}`
 
   return (
     <div className="flex flex-col gap-4">
@@ -385,10 +394,11 @@ export function AccountStatementView({
             </span>
           </div>
         </div>
-        {syncState.detail && (
+        {/* The raw sync error is for the team; the API already leaves it out for a client. */}
+        {syncState.detail && !isClient && (
           <p className="text-xs text-slate-500">{syncState.detail}</p>
         )}
-        {syncedProgram === "azul" && (
+        {syncedProgram === "azul" && !isClient && (
           <AzulReconnectNotice accountId={accountId} state={syncState.state} />
         )}
       </div>
@@ -457,10 +467,12 @@ export function AccountStatementView({
             </Button>
           )}
         </div>
-        <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
-          <Switch checked={editMode} onCheckedChange={setEditMode} />
-          Editar vínculos
-        </label>
+        {!isClient && (
+          <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
+            <Switch checked={editMode} onCheckedChange={setEditMode} />
+            Editar vínculos
+          </label>
+        )}
       </div>
 
       <span ref={listTopRef} className="text-sm text-slate-500">
@@ -507,6 +519,7 @@ export function AccountStatementView({
                     linked: linkedFor(item.lines[0]),
                     linkedBatch: linkedBatchFor(item.lines[0]),
                     editMode,
+                    showLinks: !isClient,
                     onLinkedChange: (lineKey: string, linked: StatementLinkedIssuance | null) =>
                       setOverrides((prev) => ({ ...prev, [lineKey]: linked })),
                     onBatchLinkedChange: (lineKey: string, linked: StatementLinkedBatch | null) =>
@@ -570,6 +583,8 @@ interface StatementLineProps {
   linked: StatementLinkedIssuance | null
   linkedBatch: StatementLinkedBatch | null
   editMode: boolean
+  // Whether the issuance/batch rows are drawn at all - off on the client portal.
+  showLinks: boolean
   onLinkedChange: (linkKey: string, linked: StatementLinkedIssuance | null) => void
   onBatchLinkedChange: (linkKey: string, linked: StatementLinkedBatch | null) => void
 }
@@ -582,6 +597,7 @@ function StatementLine({
   linked,
   linkedBatch,
   editMode,
+  showLinks,
   onLinkedChange,
   onBatchLinkedChange,
 }: StatementLineProps) {
@@ -635,7 +651,7 @@ function StatementLine({
 
       {pointsMismatch && <PointsMismatchNote />}
 
-      {linkable && (
+      {showLinks && linkable && (
         <BookingLink
           accountId={accountId}
           syncedProgram={syncedProgram}
@@ -646,7 +662,7 @@ function StatementLine({
         />
       )}
 
-      {batchLinkable && (
+      {showLinks && batchLinkable && (
         <BatchLink
           accountId={accountId}
           syncedProgram={syncedProgram}
@@ -676,6 +692,7 @@ function StatementGroupRow({
   linked,
   linkedBatch,
   editMode,
+  showLinks,
   onLinkedChange,
   onBatchLinkedChange,
 }: StatementGroupRowProps) {
@@ -746,7 +763,7 @@ function StatementGroupRow({
 
       {group.points_mismatch && <PointsMismatchNote />}
 
-      {isLinkable(group.kind) && (
+      {showLinks && isLinkable(group.kind) && (
         <BookingLink
           accountId={accountId}
           syncedProgram={syncedProgram}
@@ -757,7 +774,7 @@ function StatementGroupRow({
         />
       )}
 
-      {isBatchLinkable(group.kind) && (
+      {showLinks && isBatchLinkable(group.kind) && (
         <BatchLink
           accountId={accountId}
           syncedProgram={syncedProgram}

@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/murandido/m-80-backend/internal/access"
 	"github.com/murandido/m-80-backend/internal/data"
 	"gorm.io/gorm"
 )
@@ -252,6 +253,43 @@ func TestExportAzulStatementCoversOnlyThePeriod(t *testing.T) {
 		}
 		if got := dataRows(export("date_from=not-a-day")); got != 4 {
 			t.Errorf("an unparseable bound gave %d rows, want it ignored (all 4)", got)
+		}
+	})
+}
+
+// The statement client's view: the same lines, but nothing about the issuance a line maps to.
+func TestAzulStatementEntriesWithoutLinksHidesTheIssuance(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		account, user := seedAzulStatementTarget(t, tx)
+		seedAzulStatementIssuance(t, tx, account, user, "MJF6HC")
+		locator := "MJF6HC"
+		seedAzulLine(t, tx, account.ID, "2026-09-10", data.AzulLineRedemption, -25000, &locator)
+
+		handler := NewStatementHandler(tx)
+		withLinks, _, err := handler.buildAzulStatementEntries(account, access.AgencyScope{All: true}, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if withLinks.Lines[0].LinkedIssuance == nil {
+			t.Fatal("precondition: the staff view should link the redemption")
+		}
+
+		withoutLinks, _, err := handler.buildAzulStatementEntries(account, access.AgencyScope{All: true}, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(withoutLinks.Lines) != 1 || withoutLinks.Lines[0].Points != -25000 {
+			t.Fatalf("lines = %+v, want the one redemption", withoutLinks.Lines)
+		}
+		for _, line := range withoutLinks.Lines {
+			if line.LinkedIssuance != nil || line.LinkedBatch != nil {
+				t.Errorf("line %s carries a link", line.Key)
+			}
+		}
+		for _, group := range withoutLinks.Groups {
+			if group.LinkedIssuance != nil || group.PointsMismatch {
+				t.Errorf("group %s carries a link", group.Key)
+			}
 		}
 	})
 }

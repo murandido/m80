@@ -183,7 +183,7 @@ func toIssuanceResponse(issuance data.Issuance) schemas.IssuanceResponse {
 		// The issuer's grants are not loaded here - nothing on an issuance reads them - but
 		// the field still has to be a list: a nil slice went out as null and the panel's
 		// schema rejected the whole issuance list over it.
-		issuer := toUserResponse(*issuance.Issuer, nil)
+		issuer := toUserResponse(*issuance.Issuer, nil, nil)
 		resp.Issuer = &issuer
 	}
 	if issuance.Agency != nil {
