@@ -26,7 +26,7 @@ import (
 func RegisterPortalRoutes(r chi.Router, db *gorm.DB, connector *azulsync.Connector, smilesConnect *handlers.SmilesConnectHandler) {
 	statementHandler := handlers.NewStatementHandler(db)
 	statementHandler.Tracker = connector.Tracker
-	portal := handlers.NewPortalHandler(db, statementHandler)
+	portal := handlers.NewPortalHandler(db, statementHandler, connector)
 	azulConnect := handlers.NewAzulConnectHandler(connector)
 
 	r.Route("/portal", func(r chi.Router) {

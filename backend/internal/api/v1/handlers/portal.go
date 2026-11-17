@@ -31,10 +31,18 @@ type PortalHandler struct {
 	DB        *gorm.DB
 	Statement *StatementHandler
 	Validator *validator.Validate
+	// AzulConnector is the process-wide one, so a new password saved here starts the same
+	// reconnect the staff account update starts. Nil disables it (tests that do not need it).
+	AzulConnector AzulConnectStarter
 }
 
-func NewPortalHandler(db *gorm.DB, statementHandler *StatementHandler) *PortalHandler {
-	return &PortalHandler{DB: db, Statement: statementHandler, Validator: validator.New()}
+func NewPortalHandler(db *gorm.DB, statementHandler *StatementHandler, azulConnector *azulsync.Connector) *PortalHandler {
+	handler := &PortalHandler{DB: db, Statement: statementHandler, Validator: validator.New()}
+	// Assigned only when present: a nil *Connector in the interface would not compare to nil.
+	if azulConnector != nil {
+		handler.AzulConnector = azulConnector
+	}
+	return handler
 }
 
 // ListPortalAccounts handles GET /portal/accounts
@@ -225,7 +233,7 @@ func (h *PortalHandler) PortalStatementExport(w http.ResponseWriter, r *http.Req
 
 // UpdatePortalPassword handles PUT /portal/accounts/{id}/password
 // @Summary      Trocar a senha da conta na companhia
-// @Description  Grava a nova senha (criptografada) para o próximo "Conectar". Não conecta sozinho e nunca devolve a senha.
+// @Description  Grava a nova senha (criptografada) e nunca a devolve. Numa conta Azul cuja chave a Azul recusou (precisa reconectar), uma senha diferente da salva dispara o login sozinho, como na tela da equipe; nos outros casos vale para o próximo "Conectar".
 // @Tags         Portal
 // @Accept       json
 // @Produce      json
@@ -248,6 +256,15 @@ func (h *PortalHandler) UpdatePortalPassword(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	accountID := chi.URLParam(r, "id")
+	// Decrypted by AfterFind, so a resend of the same password can be told from a new one.
+	var account data.Account
+	if err := h.DB.Select("id", "password").First(&account, "id = ?", accountID).Error; err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Não consegui salvar a senha")
+		return
+	}
+	changed := account.Password == nil || *account.Password != req.Password
+
 	// Encrypted here and written with UpdateColumn: Account.BeforeSave would encrypt a full
 	// struct save, but this route touches the one column and nothing else on the account.
 	encrypted, err := utils.Encrypt(req.Password)
@@ -255,10 +272,14 @@ func (h *PortalHandler) UpdatePortalPassword(w http.ResponseWriter, r *http.Requ
 		utils.SendError(w, r, http.StatusInternalServerError, "Não consegui salvar a senha")
 		return
 	}
-	if err := h.DB.Model(&data.Account{}).Where("id = ?", chi.URLParam(r, "id")).
+	if err := h.DB.Model(&data.Account{}).Where("id = ?", accountID).
 		UpdateColumn("password", encrypted).Error; err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Não consegui salvar a senha")
 		return
+	}
+
+	if changed && middleware.LinkedProgramFrom(r.Context()) == portalProgramAzul {
+		reconnectAzulAfterPasswordChange(r.Context(), h.DB, h.AzulConnector, accountID)
 	}
 
 	utils.SendJSON(w, r, http.StatusOK, "Senha salva", nil)
