@@ -10785,7 +10785,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Grava a nova senha (criptografada) para o próximo \"Conectar\". Não conecta sozinho e nunca devolve a senha.",
+                "description": "Grava a nova senha (criptografada) e nunca a devolve. Numa conta Azul cuja chave a Azul recusou (precisa reconectar), uma senha diferente da salva dispara o login sozinho, como na tela da equipe; nos outros casos vale para o próximo \"Conectar\".",
                 "consumes": [
                     "application/json"
                 ],
