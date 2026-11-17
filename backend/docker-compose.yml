@@ -458,6 +458,8 @@ services:
       # Server-side only, and deliberately a service name rather than a public
       # URL - the browser never talks to the Go API.
       - BACKEND_URL=http://api-prod:8080
+      # The M80 Extrato store link for the portal's install guide; blank shows "em breve".
+      - CLIENT_EXTENSION_STORE_URL=${CLIENT_EXTENSION_STORE_URL_PROD:-}
     restart: always
     depends_on:
       api-prod:
