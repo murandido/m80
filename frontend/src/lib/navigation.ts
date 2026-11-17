@@ -4,6 +4,7 @@ import {
   Award,
   Bot,
   Building2,
+  Cpu,
   FileUp,
   HandCoins,
   IdCard,
@@ -105,6 +106,9 @@ export const navSections: NavSection[] = [
       // points the bot at the wrong form. Being in the panel is what removes the
       // deploy from the loop; it does not have to be open to everyone on shift.
       { title: "Automação de Promoções", url: "/dashboard/promotions", icon: Sparkles, roles: [] },
+      // Dev-only: approving a proposal cancels issuances and closes periods with the
+      // approver's session, and a token carries its owner's whole authority.
+      { title: "Agente MCP", url: "/dashboard/mcp", icon: Cpu, roles: [] },
     ],
   },
 ]
