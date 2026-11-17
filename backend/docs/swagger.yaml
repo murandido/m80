@@ -1825,6 +1825,15 @@ definitions:
     - default_airline_id
     - name
     type: object
+  schemas.CreateMCPTokenRequest:
+    properties:
+      name:
+        example: Claude Code - notebook
+        maxLength: 80
+        type: string
+    required:
+    - name
+    type: object
   schemas.CreateObservationPresetRequest:
     properties:
       code:
@@ -11245,6 +11254,206 @@ paths:
       summary: Atualizar programa de fidelidade
       tags:
       - Programas de Fidelidade
+  /mcp-calls:
+    get:
+      description: Trilha das chamadas de ferramenta feitas pelo agente MCP, das mais
+        recentes para as mais antigas.
+      parameters:
+      - description: Quantidade (padrão 100, máximo 500)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "403":
+          description: Acesso restrito a desenvolvedores
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Listar chamadas MCP
+      tags:
+      - MCP
+  /mcp-proposals:
+    get:
+      description: Lista as propostas do agente MCP, das mais recentes para as mais
+        antigas. Propostas pendentes há mais de 48h viram expired antes da leitura.
+      parameters:
+      - description: pending (padrão), applied, rejected, failed, expired ou all
+        in: query
+        name: status
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "403":
+          description: Acesso restrito a desenvolvedores
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Listar propostas MCP
+      tags:
+      - MCP
+  /mcp-proposals/{id}/approve:
+    post:
+      description: Executa a operação proposta pelo agente com a sessão de quem aprova
+        (o perfil e o escopo checados são os do aprovador). Se a API recusar a operação,
+        a proposta vira failed com a mensagem da recusa.
+      parameters:
+      - description: ID da proposta
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "403":
+          description: Acesso restrito a desenvolvedores
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+        "404":
+          description: Proposta não encontrada
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+        "422":
+          description: Proposta já decidida ou expirada
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Aprovar proposta MCP
+      tags:
+      - MCP
+  /mcp-proposals/{id}/reject:
+    post:
+      description: Encerra a proposta sem executar nada.
+      parameters:
+      - description: ID da proposta
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "403":
+          description: Acesso restrito a desenvolvedores
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+        "404":
+          description: Proposta não encontrada
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+        "422":
+          description: Proposta já decidida ou expirada
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Rejeitar proposta MCP
+      tags:
+      - MCP
+  /mcp-tokens:
+    get:
+      description: Lista os tokens do servidor MCP, inclusive os revogados. O valor
+        do token nunca é devolvido.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "403":
+          description: Acesso restrito a desenvolvedores
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Listar tokens MCP
+      tags:
+      - MCP
+    post:
+      consumes:
+      - application/json
+      description: Cria um token MCP do próprio usuário. O valor em claro é devolvido
+        só nesta resposta.
+      parameters:
+      - description: Nome do token
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/schemas.CreateMCPTokenRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            type: object
+        "400":
+          description: Dados inválidos
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+        "403":
+          description: Acesso restrito a desenvolvedores
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Criar token MCP
+      tags:
+      - MCP
+  /mcp-tokens/{id}:
+    delete:
+      description: Revoga um token MCP. A linha fica, para a trilha de chamadas continuar
+        apontando para ela.
+      parameters:
+      - description: ID do token
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "403":
+          description: Acesso restrito a desenvolvedores
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+        "404":
+          description: Token não encontrado
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Revogar token MCP
+      tags:
+      - MCP
   /observation-presets:
     get:
       description: Retorna todas as observações padrão cadastradas no sistema.
