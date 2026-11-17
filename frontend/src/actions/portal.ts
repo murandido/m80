@@ -3,7 +3,12 @@
 import { cookies } from "next/headers"
 import { revalidatePath } from "next/cache"
 import { env } from "@/lib/env"
-import { getPortalAccountsSchema, type PortalAccount } from "@/schemas/portal"
+import {
+  changeOwnPasswordSchema,
+  getPortalAccountsSchema,
+  type ChangeOwnPasswordRequest,
+  type PortalAccount,
+} from "@/schemas/portal"
 import { statementEntriesResponseSchema, type StatementEntries } from "@/schemas/inventory"
 
 // Server actions for the statement client's portal. Every call goes to /api/v1/portal, which
@@ -89,6 +94,33 @@ export async function connectPortalAzulAction(
     })
     const json = await res.json().catch(() => null)
     if (!res.ok) return { error: json?.message || "Erro ao conectar a conta." }
+    return { success: true }
+  } catch {
+    return { error: "Erro de conexão com o servidor." }
+  }
+}
+
+// Changes the client's own M80 password. Only the password fields go: name and phone are what the
+// team registered, and the phone is the login. A wrong current password is a 403 (never 401, so a
+// typo does not log the client out).
+export async function changeOwnPasswordAction(
+  data: ChangeOwnPasswordRequest,
+): Promise<{ error: string } | { success: true }> {
+  const parsed = changeOwnPasswordSchema.safeParse(data)
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Dados inválidos." }
+  try {
+    const token = (await cookies()).get("auth_token")?.value
+    const res = await fetch(`${env.BACKEND_URL}/api/v1/auth/me`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        current_password: parsed.data.current_password,
+        new_password: parsed.data.new_password,
+      }),
+      cache: "no-store",
+    })
+    if (res.status === 403) return { error: "Senha atual incorreta." }
+    if (!res.ok) return { error: "Não consegui trocar a senha. Tente de novo." }
     return { success: true }
   } catch {
     return { error: "Erro de conexão com o servidor." }

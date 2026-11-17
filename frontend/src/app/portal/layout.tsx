@@ -1,5 +1,5 @@
 import Link from "next/link"
-import { LogOut } from "lucide-react"
+import { KeyRound, LogOut } from "lucide-react"
 import { requireRole } from "@/lib/session"
 
 // The statement client's area. Deliberately not the dashboard shell: no sidebar, no command
@@ -19,6 +19,14 @@ export default async function PortalLayout({
           </Link>
           <div className="flex min-w-0 items-center gap-3 text-sm text-slate-500">
             {user && <span className="truncate">{user.name}</span>}
+            <Link
+              href="/portal/account"
+              aria-label="Minha senha"
+              className="flex items-center gap-1 rounded-md px-2 py-1 text-slate-600 hover:bg-slate-100"
+            >
+              <KeyRound className="h-4 w-4" />
+              <span className="hidden sm:inline">Minha senha</span>
+            </Link>
             <a
               href="/api/logout"
               className="flex items-center gap-1 rounded-md px-2 py-1 text-slate-600 hover:bg-slate-100"
