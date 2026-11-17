@@ -59,6 +59,12 @@ Como tratar o conteúdo:
 - `make ext-build` — testes + build dos dois navegadores, da extensão da equipe (`extension/.output/`) e da **M80 Extrato** (`extension/.output-client/`), a variante sem cofre que os clientes de extrato instalam pelo guia do portal (`/portal/extensao`). `make ext-dev` — build com hot reload.
 - **Publicar nas lojas (Chrome Web Store / AMO) só sob pedido expresso**, como o deploy.
 
+## Agente MCP
+- O painel expõe um **servidor MCP pessoal** em `/api/mcp` (relay sem lógica em `frontend/src/app/api/mcp/route.ts`) que chega ao Go em `/mcp` (`backend/internal/mcp`). É por ele que o Claude Code, e rotinas agendadas no futuro, cuidam do estoque de pontos e das emissões.
+- **A credencial é um token MCP** (`m80mcp_…`), criado em *Dev Mode → Agente MCP*. Ele só vale em `/mcp`, nunca como sessão do painel, e age com o perfil e as agências do dono. Guarde-o no `~/.claude.json` (`claude mcp add --scope user --transport http m80 https://<domínio>/api/mcp --header "Authorization: Bearer <token>"`), nunca num arquivo do repositório.
+- **Três níveis de autonomia:** leitura direta; escrita livre (criar/editar emissão, alteração, lote de pontos, sync Traveos), que roda direto; e escrita destrutiva (cancelar, descancelar, excluir, fechar/reabrir período, acerto de lote), que só grava uma **proposta**. Proposta só é aprovada por dev, no painel, e roda com a sessão de quem aprova. Expira em 48h.
+- Toda chamada de ferramenta vira linha em `mcp_calls`: é a única trilha das escritas livres, porque `audit_logs` não registra edição. Detalhes de implementação em `backend/internal/api/CLAUDE.md`.
+
 ## Backup do Banco
 - Existe backup automatizado: um **systemd timer** roda `backend/scripts/db-backup.sh` diariamente às 03:30 na máquina de produção (`deploy/systemd/`). Runbook completo em `docs/backup.md`.
 - `make db-backup` — dump agora. **Rode antes de qualquer migration destrutiva ou deploy arriscado.**
