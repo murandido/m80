@@ -89,6 +89,51 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	utils.SendJSON(w, r, http.StatusOK, "Login successful", responseData)
 }
 
+// Refresh trades the caller's still-valid token for a fresh one, which is what makes the
+// panel session sliding: the panel calls it once a token is past its first day, so a person
+// who keeps using the panel never reaches the end of the token's lifetime. A token that is
+// expired or belongs to a deleted user never gets here - RequireAuth answers 401 first - so
+// renewal can extend a live session but never revive a dead one.
+//
+// The claims are signed from the database row, not copied from the old token: a phone or
+// role changed since login is what the new token carries.
+// @Summary      Renovar a sessão
+// @Description  Troca um token JWT ainda válido por um novo, com validade cheia. O painel chama esta rota enquanto a pessoa usa o sistema, para a sessão não expirar no meio do trabalho.
+// @Tags         Autenticação
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200  {object}  schemas.AuthLoginResponse
+// @Failure      401  {object}  schemas.ErrorResponse "Token ausente, inválido ou expirado"
+// @Failure      500  {object}  schemas.ErrorResponse "Erro ao gerar token"
+// @Router       /auth/refresh [post]
+func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
+	userCtx, ok := r.Context().Value(middleware.UserContextKey).(data.User)
+	if !ok {
+		utils.SendError(w, r, http.StatusUnauthorized, "Unauthorized or invalid context")
+		return
+	}
+
+	// RequireAuth loads only id and role; the phone claim needs the full row. The user was
+	// found a moment ago, so a failure here is the database, not the session - 500, never
+	// 401, because the panel logs out on 401.
+	var user data.User
+	if err := h.DB.Select("id", "phone", "role").First(&user, "id = ?", userCtx.ID).Error; err != nil {
+		slog.Error("auth: failed to load the user to refresh the token", "user_id", userCtx.ID, "err", err)
+		utils.SendError(w, r, http.StatusInternalServerError, "Error refreshing token")
+		return
+	}
+
+	token, err := auth.GenerateToken(user.ID, user.Phone, user.Role)
+	if err != nil {
+		slog.Error("auth: failed to sign the refreshed token", "user_id", user.ID, "err", err)
+		utils.SendError(w, r, http.StatusInternalServerError, "Error generating token")
+		return
+	}
+
+	// Same shape as the login response, so the panel reads both with one schema.
+	utils.SendJSON(w, r, http.StatusOK, "Token refreshed", map[string]string{"token": token})
+}
+
 // Me return the data of the authenticated user in the moment
 // @Summary      Dados do usuário autenticado
 // @Description  Retorna os dados do usuário cujo token JWT foi enviado no header Authorization.
@@ -187,7 +232,7 @@ func (h *AuthHandler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// The phone is both the login and how the bot recognizes the issuer, and a JWT
-	// lives seven days with no revocation - so anything that could take the account
+	// has no revocation (and renews while in use) - so anything that could take the account
 	// over from a session left open asks for the current password. 403, never 401:
 	// the panel drops the session cookie on 401, and a typo is not a logout.
 	if (phoneChanged || req.NewPassword != "") && !user.CheckPassword(req.CurrentPassword) {

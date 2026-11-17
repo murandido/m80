@@ -3,9 +3,9 @@ import { Issuance, IssuanceAdjustment, IssuanceStatus } from "@/schemas/issuance
 
 export type SaveStatus = "idle" | "saving" | "success" | "error"
 
-// Client-side row shape the grid edits. A row with id === null is a draft that
+// Client-side row shape the board edits. A row with id === null is a draft that
 // only lives in React state until the required fields for POST /issuances are
-// filled - see issuances-grid.tsx.
+// filled.
 export interface IssuanceRow {
   // Stable client-side identity, distinct from the backend id (which a draft
   // row doesn't have yet) - used to address a row across async save calls
@@ -36,7 +36,7 @@ export interface IssuanceRow {
   taxes: number | null // centavos
   account_id: string | null
   // Which of the account's aliases was picked. Null for accounts with no registered
-  // alias, which are still selectable - see grid-cell.tsx.
+  // alias, which are still selectable.
   account_nickname_id: string | null
   issuer_id: string | null
   agency_id: string | null
@@ -136,7 +136,7 @@ export function issuanceToRow(issuance: Issuance): IssuanceRow {
 
 // issuerId defaults a new draft row's "Emissor" to the logged-in user, and agencyId its
 // "Agência" to the configured default agency - both still freely editable before the row is
-// first created (see issuances-grid.tsx).
+// first created.
 export function makeDraftRow(
   issuerId?: string | null,
   agencyId?: string | null,

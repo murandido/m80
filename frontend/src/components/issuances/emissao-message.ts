@@ -1,3 +1,4 @@
+import { pointsValueCents } from "@/lib/currency"
 import { IssuanceRow } from "@/components/issuances/types"
 import { AccountOption } from "@/schemas/account"
 import { Agency } from "@/schemas/agency"
@@ -33,7 +34,7 @@ export type EmissaoText = { text: string } | { missing: string[] }
 
 /**
  * Points as the bot writes them: 31000 -> "31k", 89912 -> "89,912k".
- * Same transform the Pontos cell uses while editing (cells/number-cell.tsx).
+ * Same transform the board's Pontos field uses while editing (board/number-parsing.ts).
  */
 export function formatPointsK(points: number): string {
   return `${String(points / 1000).replace(".", ",")}k`
@@ -59,12 +60,14 @@ export function formatPlainCents(cents: number): string {
  * Shared with the calculated column on purpose. The bot re-derives this number and refuses
  * the message when it disagrees with the one written on line 3 (validateTotal), so the
  * total on screen and the total in the copied text have to come from the same expression.
+ * It rounds up to the cent, like the payments screen, so the board never shows a centavo
+ * less than the client is charged.
  */
 export function issuanceTotalCents(
   row: Pick<IssuanceRow, "points" | "value_of_the_thousand" | "taxes">,
 ): number | null {
   if (row.points === null || row.value_of_the_thousand === null) return null
-  return Math.round((row.points / 1000) * row.value_of_the_thousand) + (row.taxes ?? 0)
+  return pointsValueCents(row.points, row.value_of_the_thousand) + (row.taxes ?? 0)
 }
 
 /**
@@ -125,7 +128,15 @@ export function buildCalculo(row: IssuanceRow): EmissaoText {
   }
 }
 
-/** The whole four-line message. */
+// Closes the summary that goes to the agency. It sits after the message rather than inside
+// it, and this summary is not meant to be pasted where the bot listens: the bot would read
+// the separator as a fifth line (an observation code) and refuse the message.
+const AGENCY_DISCLAIMER = [
+  "———————————",
+  "É de responsabilidade da agência a conferência da reserva dentro do prazo de 24h, após esse período não nos responsabilizamos por erros.",
+].join("\n")
+
+/** The whole four-line message, followed by the agency disclaimer. */
 export function buildEmissaoResumo(row: IssuanceRow, ref: EmissaoReferenceData): EmissaoText {
   const program = ref.loyaltyPrograms.find((p) => p.id === row.loyalty_program_id)
   const account = ref.accounts.find((a) => a.id === row.account_id)
@@ -199,5 +210,7 @@ export function buildEmissaoResumo(row: IssuanceRow, ref: EmissaoReferenceData):
   // instruction to record who administers the account, not a description of the issuance.
   const owners = `${nickname?.nickname ?? accountFallbackLabel(account, ref.people)}${agencySuffix}`
 
-  return { text: [header, route, calculo.text, owners].join("\n") }
+  return {
+    text: `${[header, route, calculo.text, owners].join("\n")}\n\n${AGENCY_DISCLAIMER}`,
+  }
 }

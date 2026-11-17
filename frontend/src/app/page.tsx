@@ -6,7 +6,7 @@ import { LoginForm } from "@/components/auth/LoginForm"
 export const metadata: Metadata = {
   title: "Entrar",
   description:
-    "Acesse o painel M-80 com o telefone e a senha cadastrados por um administrador.",
+    "Acesse o painel M80 com o telefone e a senha cadastrados por um administrador.",
 }
 
 export default function Home() {

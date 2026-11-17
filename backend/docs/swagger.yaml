@@ -910,6 +910,33 @@ definitions:
         example: true
         type: boolean
     type: object
+  schemas.AzulBrowserKeyRequest:
+    properties:
+      customer_key:
+        type: string
+      login_document:
+        type: string
+    required:
+    - customer_key
+    - login_document
+    type: object
+  schemas.AzulBrowserKeyResponse:
+    properties:
+      connected:
+        example: true
+        type: boolean
+    type: object
+  schemas.AzulBrowserKeySingleResponse:
+    properties:
+      data:
+        $ref: '#/definitions/schemas.AzulBrowserKeyResponse'
+      message:
+        example: Conta conectada
+        type: string
+      success:
+        example: true
+        type: boolean
+    type: object
   schemas.AzulCityCodeRequest:
     properties:
       city:
@@ -2873,68 +2900,6 @@ definitions:
       success:
         example: true
         type: boolean
-    type: object
-  schemas.IssuanceSummaryListResponse:
-    properties:
-      data:
-        items:
-          $ref: '#/definitions/schemas.IssuanceSummaryResponse'
-        type: array
-      message:
-        example: Emissões listadas com sucesso
-        type: string
-      success:
-        example: true
-        type: boolean
-    type: object
-  schemas.IssuanceSummaryResponse:
-    properties:
-      account_login:
-        type: string
-      agency_name:
-        type: string
-      airline_locator:
-        type: string
-      airline_name:
-        type: string
-      cancellation_only:
-        type: boolean
-      destination_iata_code:
-        type: string
-      flight_date:
-        type: string
-      id:
-        type: string
-      imported:
-        type: boolean
-      issued_at:
-        type: string
-      issuer_name:
-        type: string
-      loyalty_program_name:
-        type: string
-      main_passenger_name:
-        type: string
-      origin_iata_code:
-        type: string
-      points:
-        type: integer
-      program_locator:
-        type: string
-      status:
-        description: 'Status is derived: "incomplete" | "complete" | "cancelled".'
-        example: incomplete
-        type: string
-      taxes:
-        type: integer
-      traveos_attempted_at:
-        type: string
-      traveos_synced_at:
-        type: string
-      traveos_syncing_at:
-        type: string
-      value_of_the_thousand:
-        type: integer
     type: object
   schemas.LatamCallbackRequest:
     properties:
@@ -5599,6 +5564,71 @@ paths:
       security:
       - BearerAuth: []
       summary: Conectar conta Azul (descobrir o customerKey)
+      tags:
+      - Estoque de pontos
+  /accounts/{id}/azul-customer-key:
+    post:
+      consumes:
+      - application/json
+      description: Recebe a customerKey capturada de um login feito pelo funcionário
+        no próprio navegador (pela extensão) e o CPF usado nesse login. Só grava se
+        o CPF for o da conta e se a Azul responder o saldo com essa chave; depois
+        roda a primeira sincronização em segundo plano.
+      parameters:
+      - description: Conta
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Chave e CPF do login
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/schemas.AzulBrowserKeyRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/schemas.AzulBrowserKeySingleResponse'
+        "400":
+          description: Payload inválido
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+        "401":
+          description: Não autenticado
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+        "403":
+          description: Requer admin
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+        "404":
+          description: Conta não encontrada
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+        "409":
+          description: Já existe um login em andamento para esta conta
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+        "422":
+          description: O login não foi feito com o CPF da conta, ou a conta não tem
+            login salvo
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+        "502":
+          description: A Azul não reconheceu a chave, ou não deu para conferir agora
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+        "503":
+          description: Leitura da Azul não configurada neste servidor
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Conectar conta Azul com a chave do login feito no navegador
       tags:
       - Estoque de pontos
   /accounts/{id}/azul-statement:
@@ -8501,6 +8531,31 @@ paths:
       summary: Atualizar os próprios dados
       tags:
       - Autenticação
+  /auth/refresh:
+    post:
+      description: Troca um token JWT ainda válido por um novo, com validade cheia.
+        O painel chama esta rota enquanto a pessoa usa o sistema, para a sessão não
+        expirar no meio do trabalho.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/schemas.AuthLoginResponse'
+        "401":
+          description: Token ausente, inválido ou expirado
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+        "500":
+          description: Erro ao gerar token
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Renovar a sessão
+      tags:
+      - Autenticação
   /azul-city-codes:
     post:
       consumes:
@@ -10684,30 +10739,6 @@ paths:
       security:
       - BearerAuth: []
       summary: Prévia da reserva
-      tags:
-      - Emissões
-  /issuances/summary:
-    get:
-      description: Retorna uma versão enxuta das emissões ativas, com apenas os campos
-        usados em telas de listagem.
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/schemas.IssuanceSummaryListResponse'
-        "401":
-          description: Não autenticado
-          schema:
-            $ref: '#/definitions/schemas.ErrorResponse'
-        "500":
-          description: Erro ao buscar emissões
-          schema:
-            $ref: '#/definitions/schemas.ErrorResponse'
-      security:
-      - BearerAuth: []
-      summary: Listar emissões (resumo)
       tags:
       - Emissões
   /latam-connect/callback:

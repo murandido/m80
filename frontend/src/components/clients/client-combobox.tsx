@@ -17,8 +17,7 @@ interface ClientComboboxProps {
   placeholder?: string
   disabled?: boolean
   className?: string
-  // When set, a search matching no existing client offers to create it, mirroring the
-  // account column of the issuances grid (components/issuances/cells/combobox-cell.tsx).
+  // When set, a search matching no existing client offers to create it.
   // The filter bars omit it: creating a client there would filter the list down to a
   // client that by definition has no sales yet.
   onCreate?: (name: string) => void

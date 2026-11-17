@@ -4,11 +4,11 @@ import type { SupplierBalance, SupplierIssuance } from "@/schemas/sale"
 // been agreed. Null is not zero: a missing cost is what stops the payment summary from
 // being generated, and rendering it as R$ 0,00 would hide exactly that.
 //
-// The rounding is the project's own - points/1000 * rate, rounded half up - and matches
-// supplierLineAmount in backend/internal/api/v1/handlers/sales_report.go as well as
-// issuanceTotalCents in components/issuances/emissao-message.ts. All three have to agree to
-// the centavo, because the operator reads one, the supplier reads another, and the bot
-// checksums the third.
+// The rounding - points/1000 * rate, rounded half up - matches supplierLineAmount in
+// backend/internal/api/v1/handlers/sales_report.go, which prints the supplier's PDF, and the
+// two have to agree to the centavo. It is deliberately not the client side's rule
+// (pointsValueCents, rounded up): this is what the agency pays the supplier, priced at the
+// supplier's own rate, and nothing on the client side is compared against it.
 //
 // cost_cents overrides all of that on an account that owns its points, and has to: there
 // the cost is the sum of the batch slices that paid for the booking, and the rate beside it

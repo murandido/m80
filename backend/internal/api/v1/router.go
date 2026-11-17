@@ -31,6 +31,7 @@ func NewRouter(db *gorm.DB, broker *events.Broker, bookings *booking.Registry, m
 
 			r.Get("/me", authHandler.Me)
 			r.Put("/me", authHandler.UpdateMe)
+			r.Post("/refresh", authHandler.Refresh)
 		})
 	})
 

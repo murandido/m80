@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/murandido/m-80-backend/internal/data"
+	"github.com/murandido/m-80-backend/internal/testdb"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waCommon"
 	"go.mau.fi/whatsmeow/proto/waE2E"
@@ -42,6 +43,7 @@ var (
 
 func setupTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
+	testdb.RequireTestDatabase(t)
 
 	testDBOnce.Do(func() {
 		dsn := fmt.Sprintf(

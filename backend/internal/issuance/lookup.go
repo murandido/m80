@@ -57,7 +57,20 @@ type LookupPreview struct {
 //
 // Nothing is recorded in booking_lookup_attempts: its issuance_id is NOT NULL, and a
 // lookup has no issuance to point at. The Sync after the save records its own.
+//
+// A booking it finds is kept for a while (see previewBookingCache), so that Sync can
+// write the itinerary without asking the airline the same question seconds later.
 func Lookup(ctx context.Context, db *gorm.DB, registry *booking.Registry, input LookupInput) (*LookupPreview, error) {
+	return lookup(ctx, db, registry, input, previewBookings)
+}
+
+func lookup(
+	ctx context.Context,
+	db *gorm.DB,
+	registry *booking.Registry,
+	input LookupInput,
+	cache *previewBookingCache,
+) (*LookupPreview, error) {
 	var airline data.Airline
 	if err := db.WithContext(ctx).First(&airline, "id = ?", input.AirlineID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -85,7 +98,15 @@ func Lookup(ctx context.Context, db *gorm.DB, registry *booking.Registry, input 
 		LatamPurchaseNumber: input.LatamPurchaseNumber,
 	}
 
-	fetched, source, err := attemptProviders(ctx, registry, providers, transient, airline, false, nil)
+	// Only the answering provider's timing is kept: it is what the Sync that reuses
+	// this booking records as its own "found" attempt.
+	var foundDurationMS int
+	fetched, source, err := attemptProviders(ctx, registry, providers, transient, airline, false,
+		func(attempt data.BookingLookupAttempt) {
+			if attempt.Outcome == data.LookupFound {
+				foundDurationMS = attempt.DurationMS
+			}
+		})
 	if err != nil {
 		return nil, err
 	}
@@ -94,6 +115,8 @@ func Lookup(ctx context.Context, db *gorm.DB, registry *booking.Registry, input 
 		return resolveAirportCode(db.WithContext(ctx), code)
 	})
 	preview.Source = source
+
+	cache.put(previewKeys(airline.ID, transient, preview), fetched, source, foundDurationMS)
 	return preview, nil
 }
 

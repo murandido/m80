@@ -48,6 +48,8 @@ func RegisterAzulStatementRoutes(r chi.Router, db *gorm.DB, connector *azulsync.
 	})
 
 	r.With(middleware.RequireAdmin()).Post("/accounts/{id}/azul-connect", connect.ConnectAzulAccount)
+	// The fallback: a key captured from a login the operator made in their own browser.
+	r.With(middleware.RequireAdmin()).Post("/accounts/{id}/azul-customer-key", connect.StoreAzulBrowserKey)
 
 	// The city-to-IATA table is global, not per-account: assigning a code fixes the route display
 	// for every account's statement at once.

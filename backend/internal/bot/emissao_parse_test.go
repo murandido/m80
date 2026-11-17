@@ -275,3 +275,28 @@ func parseAmountsLine(t *testing.T, amounts string) emissaoMessage {
 	}
 	return *msg
 }
+
+// 12.345 points at R$ 24,50 the thousand is R$ 302,4525: the payments screen charges
+// R$ 302,46, and the board now shows the same. A total written the old nearest-cent way
+// (R$ 302,45) still describes the same stored numbers and is accepted; anything else is not.
+func TestValidateTotal_RoundsUpLikePaymentsAndAcceptsTheNearestCent(t *testing.T) {
+	tests := []struct {
+		name    string
+		total   int
+		wantErr bool
+	}{
+		{name: "rounded up, like payments", total: 30246},
+		{name: "nearest cent, the old board rule", total: 30245},
+		{name: "a cent below both", total: 30244, wantErr: true},
+		{name: "a cent above both", total: 30247, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg := &emissaoMessage{Points: 12345, ValueOfTheThousand: 2450, Total: tt.total}
+			err := validateTotal(msg)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("validateTotal(total=%d) error = %v, wantErr %v", tt.total, err, tt.wantErr)
+			}
+		})
+	}
+}

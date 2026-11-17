@@ -1599,8 +1599,8 @@ func sameCalendarDay(a, b time.Time, loc *time.Location) bool {
 	return calendarDate(a, loc).Equal(calendarDate(b, loc))
 }
 
-// accountLabel replicates the grid's account labelling (see grid-cell.tsx): the picked
-// alias when set, otherwise the holder's name, the login, or the id as last resort.
+// accountLabel replicates the panel's account labelling: the picked alias when set,
+// otherwise the holder's name, the login, or the id as last resort.
 func accountLabel(issuance data.Issuance) string {
 	if issuance.AccountNickname != nil {
 		return issuance.AccountNickname.Nickname

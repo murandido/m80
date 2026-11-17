@@ -578,6 +578,100 @@ const docTemplate = `{
                 }
             }
         },
+        "/accounts/{id}/azul-customer-key": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Recebe a customerKey capturada de um login feito pelo funcionário no próprio navegador (pela extensão) e o CPF usado nesse login. Só grava se o CPF for o da conta e se a Azul responder o saldo com essa chave; depois roda a primeira sincronização em segundo plano.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Estoque de pontos"
+                ],
+                "summary": "Conectar conta Azul com a chave do login feito no navegador",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Conta",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Chave e CPF do login",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/schemas.AzulBrowserKeyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.AzulBrowserKeySingleResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Payload inválido",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Não autenticado",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Requer admin",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Conta não encontrada",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Já existe um login em andamento para esta conta",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "O login não foi feito com o CPF da conta, ou a conta não tem login salvo",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "A Azul não reconheceu a chave, ou não deu para conferir agora",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Leitura da Azul não configurada neste servidor",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/accounts/{id}/azul-statement": {
             "get": {
                 "security": [
@@ -4717,6 +4811,43 @@ const docTemplate = `{
                 }
             }
         },
+        "/auth/refresh": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Troca um token JWT ainda válido por um novo, com validade cheia. O painel chama esta rota enquanto a pessoa usa o sistema, para a sessão não expirar no meio do trabalho.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Autenticação"
+                ],
+                "summary": "Renovar a sessão",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.AuthLoginResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Token ausente, inválido ou expirado",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Erro ao gerar token",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/azul-city-codes": {
             "post": {
                 "security": [
@@ -6629,43 +6760,6 @@ const docTemplate = `{
                     },
                     "503": {
                         "description": "Nenhum provedor configurado neste servidor",
-                        "schema": {
-                            "$ref": "#/definitions/schemas.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
-        "/issuances/summary": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Retorna uma versão enxuta das emissões ativas, com apenas os campos usados em telas de listagem.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "Emissões"
-                ],
-                "summary": "Listar emissões (resumo)",
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/schemas.IssuanceSummaryListResponse"
-                        }
-                    },
-                    "401": {
-                        "description": "Não autenticado",
-                        "schema": {
-                            "$ref": "#/definitions/schemas.ErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "Erro ao buscar emissões",
                         "schema": {
                             "$ref": "#/definitions/schemas.ErrorResponse"
                         }
@@ -14105,6 +14199,46 @@ const docTemplate = `{
                 }
             }
         },
+        "schemas.AzulBrowserKeyRequest": {
+            "type": "object",
+            "required": [
+                "customer_key",
+                "login_document"
+            ],
+            "properties": {
+                "customer_key": {
+                    "type": "string"
+                },
+                "login_document": {
+                    "type": "string"
+                }
+            }
+        },
+        "schemas.AzulBrowserKeyResponse": {
+            "type": "object",
+            "properties": {
+                "connected": {
+                    "type": "boolean",
+                    "example": true
+                }
+            }
+        },
+        "schemas.AzulBrowserKeySingleResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/schemas.AzulBrowserKeyResponse"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "Conta conectada"
+                },
+                "success": {
+                    "type": "boolean",
+                    "example": true
+                }
+            }
+        },
         "schemas.AzulCityCodeRequest": {
             "type": "object",
             "required": [
@@ -16681,98 +16815,6 @@ const docTemplate = `{
                 "success": {
                     "type": "boolean",
                     "example": true
-                }
-            }
-        },
-        "schemas.IssuanceSummaryListResponse": {
-            "type": "object",
-            "properties": {
-                "data": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/schemas.IssuanceSummaryResponse"
-                    }
-                },
-                "message": {
-                    "type": "string",
-                    "example": "Emissões listadas com sucesso"
-                },
-                "success": {
-                    "type": "boolean",
-                    "example": true
-                }
-            }
-        },
-        "schemas.IssuanceSummaryResponse": {
-            "type": "object",
-            "properties": {
-                "account_login": {
-                    "type": "string"
-                },
-                "agency_name": {
-                    "type": "string"
-                },
-                "airline_locator": {
-                    "type": "string"
-                },
-                "airline_name": {
-                    "type": "string"
-                },
-                "cancellation_only": {
-                    "type": "boolean"
-                },
-                "destination_iata_code": {
-                    "type": "string"
-                },
-                "flight_date": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "imported": {
-                    "type": "boolean"
-                },
-                "issued_at": {
-                    "type": "string"
-                },
-                "issuer_name": {
-                    "type": "string"
-                },
-                "loyalty_program_name": {
-                    "type": "string"
-                },
-                "main_passenger_name": {
-                    "type": "string"
-                },
-                "origin_iata_code": {
-                    "type": "string"
-                },
-                "points": {
-                    "type": "integer"
-                },
-                "program_locator": {
-                    "type": "string"
-                },
-                "status": {
-                    "description": "Status is derived: \"incomplete\" | \"complete\" | \"cancelled\".",
-                    "type": "string",
-                    "example": "incomplete"
-                },
-                "taxes": {
-                    "type": "integer"
-                },
-                "traveos_attempted_at": {
-                    "type": "string"
-                },
-                "traveos_synced_at": {
-                    "type": "string"
-                },
-                "traveos_syncing_at": {
-                    "type": "string"
-                },
-                "value_of_the_thousand": {
-                    "type": "integer"
                 }
             }
         },

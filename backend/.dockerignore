@@ -2,4 +2,4 @@
 bin
 tmp
 postgres_data
-.env
+.env*

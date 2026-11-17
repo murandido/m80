@@ -1,4 +1,4 @@
-import { parseDecimalInput, sanitizeDecimalInput } from "@/lib/decimal"
+import { parseDecimalInput, roundScaled, sanitizeDecimalInput } from "@/lib/decimal"
 
 // How the panel reads and writes point counts.
 //
@@ -46,7 +46,7 @@ export function sanitizeThousandsInput(raw: string): string {
 // parsePointsFromThousands so a value that arrived some other way - the result of an
 // expression typed into the cell, say - lands on the same rounding instead of its own.
 export function pointsFromThousands(value: number): number {
-  return Math.round(value * 1000)
+  return roundScaled(value, 1000)
 }
 
 // Text typed in milheiros to the absolute point count the API stores: "10" is ten thousand
