@@ -7,6 +7,10 @@ const nextConfig: NextConfig = {
   // from having to ship 800 MB of node_modules just to run `next start`.
   output: "standalone",
   reactCompiler: true,
+  // `next dev` writes an AGENTS.md whenever it detects a coding agent, and rewrites it if
+  // deleted, leaving an untracked file in every clone. What it says already lives in
+  // frontend/CLAUDE.md; with this off, the next `next dev` also removes the block.
+  agentRules: false,
   experimental: {
     serverActions: {
       // The spreadsheet importer uploads the whole workbook through a server action, and
