@@ -715,7 +715,7 @@ func (h *AccountHandler) UpdateAccount(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Password != nil && *req.Password != "" && *req.Password != previousPassword {
-		h.reconnectAzulAfterPasswordChange(r.Context(), account.ID)
+		reconnectAzulAfterPasswordChange(r.Context(), h.DB, h.AzulConnector, account.ID)
 	}
 
 	updated := []schemas.AccountResponse{toAccountResponse(account)}
@@ -728,25 +728,29 @@ func (h *AccountHandler) UpdateAccount(w http.ResponseWriter, r *http.Request) {
 // reconnectAzulAfterPasswordChange starts the Azul login for an account whose customerKey Azul
 // refused (needs_reconnect), now that it has a new password: that is the fix the panel asked for,
 // so nobody should have to also remember to click Reconectar. Any other state is left alone - a
-// healthy account does not need a browser login because its password was edited. Failures only
-// log: the account was saved, and the panel shows the sync state on its own.
-func (h *AccountHandler) reconnectAzulAfterPasswordChange(ctx context.Context, accountID string) {
-	if h.AzulConnector == nil {
+// healthy account does not need a login because its password was edited. Failures only log: the
+// account was saved, and the panel shows the sync state on its own.
+//
+// Shared by the staff account update and the statement client's portal, the two places a
+// password is saved. Both call it only when the password actually changed: the one automatic
+// retry is spent on a password nobody has tried yet, never on a resend of the one Azul refused.
+func reconnectAzulAfterPasswordChange(ctx context.Context, db *gorm.DB, connector AzulConnectStarter, accountID string) {
+	if connector == nil {
 		return
 	}
-	state, err := azulsync.LoadState(h.DB, accountID)
+	state, err := azulsync.LoadState(db, accountID)
 	if err != nil {
-		slog.Error("account update: reading the Azul sync state", "account_id", accountID, "err", err)
+		slog.Error("password change: reading the Azul sync state", "account_id", accountID, "err", err)
 		return
 	}
 	if state.State != data.AzulSyncNeedsReconnect {
 		return
 	}
-	if err := h.AzulConnector.Start(ctx, accountID); err != nil && !errors.Is(err, azulsync.ErrAlreadyConnecting) {
-		slog.Warn("account update: could not start the Azul reconnect", "account_id", accountID, "err", err)
+	if err := connector.Start(ctx, accountID); err != nil && !errors.Is(err, azulsync.ErrAlreadyConnecting) {
+		slog.Warn("password change: could not start the Azul reconnect", "account_id", accountID, "err", err)
 		return
 	}
-	slog.Info("account update: password changed; reconnecting Azul", "account_id", accountID)
+	slog.Info("password change: reconnecting Azul", "account_id", accountID)
 }
 
 // DeleteAccount handles the DELETE /accounts/{id} route.

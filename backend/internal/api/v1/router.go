@@ -19,6 +19,14 @@ func NewRouter(db *gorm.DB, broker *events.Broker, bookings *booking.Registry, m
 
 	authHandler := handlers.NewAuthHandler(db)
 
+	// One Smiles connect for the staff screens and the client portal. Its tracker holds the
+	// logins waiting on a verification code, so both sides must share it: two trackers would let
+	// an operator and a client start competing logins for one account. The guard comes from
+	// cmd/api because it is what keeps a connect's first sync and a ticker round from renewing
+	// the same session at once - the tenant treats two uses of one refresh token as theft and
+	// revokes the lot.
+	smilesConnect := handlers.NewSmilesConnectHandler(db, smilessync.NewLoginTracker(), smilesGuard)
+
 	r.Route("/auth", func(r chi.Router) {
 		// public routes - login carries its own, much stricter per-IP limit on top
 		// of the router-wide one, since it is the only route where an unauthenticated
@@ -63,7 +71,7 @@ func NewRouter(db *gorm.DB, broker *events.Broker, bookings *booking.Registry, m
 		routes.RegisterPointBatchOriginRoutes(r, db)
 		routes.RegisterPointBatchRoutes(r, db)
 		routes.RegisterAzulStatementRoutes(r, db, azulConnector)
-		routes.RegisterSmilesStatementRoutes(r, db, smilesGuard)
+		routes.RegisterSmilesStatementRoutes(r, db, smilesConnect)
 		routes.RegisterLatamRoutes(r, db, latamGuard)
 		routes.RegisterInventoryPeriodRoutes(r, db)
 		// Reads passengers out of pasted text or document photos for the browser extension.
@@ -96,7 +104,7 @@ func NewRouter(db *gorm.DB, broker *events.Broker, bookings *booking.Registry, m
 	// reaches besides /auth/me. Gated inside RegisterPortalRoutes.
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.RequireAuth(db))
-		routes.RegisterPortalRoutes(r, db, azulConnector)
+		routes.RegisterPortalRoutes(r, db, azulConnector, smilesConnect)
 	})
 
 	return r

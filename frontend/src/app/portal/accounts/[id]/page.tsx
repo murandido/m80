@@ -51,6 +51,8 @@ export default async function PortalAccountPage({
       <PortalConnectPanel
         accountId={id}
         program={syncedProgram}
+        login={account.login ?? null}
+        holderName={account.holder_name}
         connected={account.connected}
         state={account.state}
         hasPassword={account.has_password}

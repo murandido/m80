@@ -29,3 +29,21 @@ export const getPortalAccountsSchema = {
     data: z.array(portalAccountSchema).nullish(),
   }),
 }
+
+// The statement client changing their own M80 password (PUT /auth/me with only the password
+// fields). The bounds are the API's; the confirmation never leaves the browser.
+export const changeOwnPasswordSchema = z
+  .object({
+    current_password: z.string().min(1, "Informe a senha atual"),
+    new_password: z
+      .string()
+      .min(6, "A senha precisa ter no mínimo 6 caracteres")
+      .max(20, "A senha pode ter no máximo 20 caracteres"),
+    confirm_password: z.string(),
+  })
+  .refine((data) => data.new_password === data.confirm_password, {
+    path: ["confirm_password"],
+    message: "As senhas não conferem",
+  })
+
+export type ChangeOwnPasswordRequest = z.infer<typeof changeOwnPasswordSchema>

@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useTransition } from "react"
+import Link from "next/link"
 import { toast } from "sonner"
 import { Loader2, Mail, Smartphone } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -18,6 +19,7 @@ import {
   browserChallengeSmilesLoginAction,
   completeBrowserChallengeSmilesLoginAction,
   confirmSmilesLoginAction,
+  type ConnectArea,
 } from "@/actions/statement"
 import { challengeBridgeReady, requestSmilesChallenge } from "@/lib/smiles-challenge-extension"
 import type { SmilesAuthenticator } from "@/schemas/inventory"
@@ -36,6 +38,9 @@ interface Props {
   // Called when the login window lapsed and the operator has to start over, so the caller can
   // drop the channels it is holding.
   onExpired: () => void
+  // The staff screens or the statement client's portal: same conversation, different routes,
+  // and a different extension to point at when it is missing.
+  area?: ConnectArea
 }
 
 // The conversation Smiles requires, as two steps in one dialog: pick where the code goes, then
@@ -49,12 +54,15 @@ export function SmilesConnectDialog({
   onOpenChange,
   onConnected,
   onExpired,
+  area = "staff",
 }: Props) {
   const [sentTo, setSentTo] = useState<string | null>(null)
   const [code, setCode] = useState("")
   // Shown inside the dialog rather than as a toast: a wrong code is answered by retyping it
   // right here, and a toast would take the message away from where the answer goes.
   const [error, setError] = useState<string | null>(null)
+  // The portal answers a missing extension with the install guide, not just a sentence.
+  const [missingExtension, setMissingExtension] = useState(false)
   const [isPending, startTransition] = useTransition()
 
   // The tenant's challenge runs in the operator's own browser - the only client the edge treats
@@ -63,9 +71,16 @@ export function SmilesConnectDialog({
     authenticator: SmilesAuthenticator,
   ): Promise<{ error: string } | { sentTo: string }> {
     if (!challengeBridgeReady()) {
-      return { error: "Instale a extensão M80 neste navegador para receber o código de conexão." }
+      setMissingExtension(true)
+      return {
+        error:
+          area === "portal"
+            ? "Para receber o código, instale a extensão M80 Extrato neste navegador e recarregue a página."
+            : "Instale a extensão M80 neste navegador para receber o código de conexão.",
+      }
     }
-    const material = await browserChallengeSmilesLoginAction(accountId, authenticator.id)
+    setMissingExtension(false)
+    const material = await browserChallengeSmilesLoginAction(accountId, authenticator.id, area)
     if ("error" in material) return { error: material.error }
     const answer = await requestSmilesChallenge({
       clientId: material.clientId,
@@ -77,6 +92,7 @@ export function SmilesConnectDialog({
       accountId,
       authenticator.id,
       answer.oobCode,
+      area,
     )
     if ("error" in completed) return { error: completed.error }
     return { sentTo: completed.sentTo }
@@ -108,7 +124,7 @@ export function SmilesConnectDialog({
     }
     setError(null)
     startTransition(async () => {
-      const result = await confirmSmilesLoginAction(accountId, code)
+      const result = await confirmSmilesLoginAction(accountId, code, area)
       if ("error" in result) {
         if (result.error.includes("expirou")) {
           toast.error(result.error)
@@ -132,6 +148,7 @@ export function SmilesConnectDialog({
     setSentTo(null)
     setCode("")
     setError(null)
+    setMissingExtension(false)
   }
 
   return (
@@ -204,6 +221,11 @@ export function SmilesConnectDialog({
         )}
 
         {error && <p className="text-destructive text-sm">{error}</p>}
+        {missingExtension && area === "portal" && (
+          <Link href="/portal/extensao" className="text-sm font-medium text-sky-700 underline">
+            Como instalar a extensão
+          </Link>
+        )}
 
         <DialogFooter>
           {sentTo ? (

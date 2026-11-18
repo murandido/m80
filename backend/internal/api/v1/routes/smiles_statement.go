@@ -4,7 +4,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/handlers"
-	"github.com/murandido/m-80-backend/internal/smilessync"
 	"gorm.io/gorm"
 )
 
@@ -16,20 +15,13 @@ import (
 // It is the twin of RegisterAzulStatementRoutes, and the two share the link handlers: pinning a
 // statement line to an issuance or to a batch is the same operation in both programmes, keyed by
 // account and line, so there is one implementation and one pair of tables behind both paths.
-func RegisterSmilesStatementRoutes(r chi.Router, db *gorm.DB, guard *smilessync.SessionGuard) {
-	// The tracker is per-process and belongs to these routes alone: it holds the logins that
-	// are waiting on a verification code, and nothing outside the connect flow has any use for
-	// it.
-	//
-	// The guard comes from outside, and that is the point. It is what stops a connect's first
-	// sync and a ticker round from renewing the same session at once - the tenant treats two
-	// uses of one refresh token as a stolen token and revokes the lot, which costs the operator
-	// a new code. A guard created here would protect these handlers from each other and leave
-	// the ticker on the other side of the fence.
-	tracker := smilessync.NewLoginTracker()
-
+func RegisterSmilesStatementRoutes(r chi.Router, db *gorm.DB, connect *handlers.SmilesConnectHandler) {
+	// The connect handler comes from outside because it is shared with the statement client's
+	// portal (RegisterPortalRoutes): its tracker holds the logins waiting on a verification code,
+	// and an operator and a client reconnecting the same account must see the same pending login,
+	// not two that each expect a different code. Its guard is the ticker's, for the reason given
+	// where it is built (v1.NewRouter).
 	h := handlers.NewStatementHandler(db)
-	connect := handlers.NewSmilesConnectHandler(db, tracker, guard)
 
 	r.Route("/accounts/{id}/smiles-statement", func(r chi.Router) {
 		r.Use(middleware.RequireAdmin())

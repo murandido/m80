@@ -5,7 +5,9 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/murandido/m-80-backend/internal/api/v1/handlers"
 	"github.com/murandido/m-80-backend/internal/data"
+	"github.com/murandido/m-80-backend/internal/smilessync"
 	"gorm.io/gorm"
 )
 
@@ -155,7 +157,7 @@ func TestPointsInventoryRoutesAreAdminOnlyIncludingReads(t *testing.T) {
 // registerSmilesRoutes adapts the Smiles registration to the table's signature. It passes no
 // session guard: these cases never reach a handler, because the gate is what is under test.
 func registerSmilesRoutes(r chi.Router, db *gorm.DB) {
-	RegisterSmilesStatementRoutes(r, db, nil)
+	RegisterSmilesStatementRoutes(r, db, handlers.NewSmilesConnectHandler(db, smilessync.NewLoginTracker(), nil))
 }
 
 // registerLatamRoutes adapts the LATAM registration to the table's signature, with no guard for
