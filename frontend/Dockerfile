@@ -47,6 +47,9 @@ USER node
 # to be copied separately.
 COPY --from=builder --chown=node:node /app/.next/standalone ./
 COPY --from=builder --chown=node:node /app/.next/static ./.next/static
+# public/ is not traced either: without it every file there (the portal's install
+# screenshots) answers 404 in production while working under `next dev`.
+COPY --from=builder --chown=node:node /app/public ./public
 ENV PORT=3000
 # Without this the standalone server binds to localhost and Caddy cannot reach it
 # from its own container.

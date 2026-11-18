@@ -29,15 +29,32 @@ const INSTALL_STEPS: Step[] = [
   {
     title: "Clique em “Usar no Chrome”",
     body: "É o botão azul no canto direito da página. Em outros navegadores ele pode se chamar “Obter” ou “Adicionar”.",
+    image: {
+      src: "/portal/extensao/loja.png",
+      alt: "Página da M80 Extrato na Chrome Web Store com o botão Usar no Chrome",
+      width: 1110,
+      height: 630,
+    },
   },
   {
     title: "Confirme em “Adicionar extensão”",
-    body: "O navegador mostra o que a extensão pode acessar: o site do M80 e as páginas de login da Azul e da Smiles. Ela não lê nenhum outro site.",
+    body: "O navegador mostra o que a extensão pode acessar: o site do M80 e as páginas de login da Azul e da Smiles. Ela não lê nenhum outro site. Se o seu Chrome estiver em inglês, o botão se chama “Add extension”.",
+    image: {
+      src: "/portal/extensao/adicionar.png",
+      alt: "Diálogo do Chrome pedindo para confirmar a instalação da M80 Extrato",
+      width: 460,
+      height: 240,
+    },
   },
-
   {
     title: "Recarregue esta página",
     body: "Aperte F5. O aviso no topo desta página fica verde quando a extensão está pronta.",
+    image: {
+      src: "/portal/extensao/instalada.png",
+      alt: "Aviso verde dizendo que a extensão já está instalada neste navegador",
+      width: 658,
+      height: 82,
+    },
   },
 ]
 
@@ -69,7 +86,7 @@ function StepList({ steps, startAt = 1 }: { steps: Step[]; startAt?: number }) {
                 alt={step.image.alt}
                 width={step.image.width}
                 height={step.image.height}
-                className="h-auto w-full max-w-xl rounded-md border border-slate-200"
+                className="h-auto w-auto max-w-full rounded-md border border-slate-200"
               />
             )}
           </div>
