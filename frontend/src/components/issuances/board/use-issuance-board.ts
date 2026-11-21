@@ -23,6 +23,7 @@ import { useAutocompletePreference } from "@/hooks/use-autocomplete-preference"
 import { useAirports } from "@/hooks/use-airports"
 import { useSSE } from "@/hooks/use-sse"
 import { defaultAgencyId } from "@/lib/default-agency"
+import { findExactAccountMatch } from "@/lib/account-match"
 import { normalizeSearch } from "@/lib/search"
 import {
   attachAdministratorToAccountAction,
@@ -1028,19 +1029,19 @@ export function useIssuanceBoard({
       const programId = row.loyalty_program_id
       const { nickname, administratorName } = parseAccountEntry(typed)
 
-      const wanted = normalizeSearch(nickname)
-      let existing: { accountId: string; nicknameId: string } | null = null
-      for (const account of accountsRef.current) {
-        if (account.deleted_at || account.loyalty_program_id !== programId)
-          continue
-        const match = account.nicknames.find(
-          (entry) => normalizeSearch(entry.nickname) === wanted,
-        )
-        if (match) {
-          existing = { accountId: account.id, nicknameId: match.id }
-          break
-        }
-      }
+      // An alias or the main name typed whole points at an account that already exists:
+      // registering it again would split one holder into two accounts.
+      const match = findExactAccountMatch(
+        accountsRef.current.filter(
+          (account) =>
+            !account.deleted_at && account.loyalty_program_id === programId,
+        ),
+        referenceData.people,
+        nickname,
+      )
+      const existing = match
+        ? { accountId: match.account.id, nicknameId: match.nicknameId }
+        : null
 
       setPendingAccountLabels((prev) => ({ ...prev, [rowKey]: typed }))
       const clearPending = () =>
