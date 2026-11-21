@@ -4,6 +4,7 @@ import {
   Children,
   cloneElement,
   isValidElement,
+  type ReactNode,
   useId,
   useRef,
   useState,
@@ -536,15 +537,21 @@ export interface ComboOption {
   // Shown beside the label in the list and searched too - a program's full name next to
   // its code, an airport's city.
   hint?: string
+  // Replaces label + hint in the list, for options that need more than one line - an
+  // account shows its main name over the aliases that matched.
+  content?: ReactNode
+  // Other spellings that count as typing this option exactly: an account's aliases. An
+  // exact match is taken on blur and hides the create entry, as typing the label does.
+  exactTexts?: string[]
 }
 
-interface ComboFieldProps extends BaseFieldProps {
-  options: ComboOption[] | ((query: string) => ComboOption[])
+interface ComboFieldProps<Option extends ComboOption> extends BaseFieldProps {
+  options: Option[] | ((query: string) => Option[])
   selectedKey: string | null
   // What the field reads when nothing is focused. Defaults to the selected option's label;
   // an account being created shows the typed alias while its requests run.
   displayValue?: string
-  onPick: (option: ComboOption) => void
+  onPick: (option: Option) => void
   // Text that matches no option. Returning true means it was taken (an airport code typed
   // whole); otherwise the field goes back to its value.
   onFreeText?: (text: string) => boolean
@@ -578,7 +585,7 @@ function filterOptions(options: ComboOption[], typed: string): ComboOption[] {
 // highlight; Enter picks it and moves on. Tab picks the highlight only after the operator
 // typed or arrowed - otherwise tabbing through an untouched field would write whatever
 // happened to be first in the list.
-export function ComboField({
+export function ComboField<Option extends ComboOption>({
   name,
   label,
   options,
@@ -595,7 +602,7 @@ export function ComboField({
   hint,
   className,
   busy,
-}: ComboFieldProps) {
+}: ComboFieldProps<Option>) {
   const id = useId()
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
@@ -609,7 +616,7 @@ export function ComboField({
   const resolve = (typed: string) =>
     typeof options === "function"
       ? options(typed)
-      : filterOptions(options, typed)
+      : (filterOptions(options, typed) as Option[])
   const allOptions = typeof options === "function" ? null : options
   const selectedLabel =
     displayValue ??
@@ -619,8 +626,10 @@ export function ComboField({
   const isEditing = query !== null
   const filtered = isEditing ? resolve(query) : []
   const exactMatch = isEditing
-    ? filtered.find(
-        (option) => normalizeSearch(option.label) === normalizeSearch(query),
+    ? filtered.find((option) =>
+        [option.label, ...(option.exactTexts ?? [])].some(
+          (text) => normalizeSearch(text) === normalizeSearch(query),
+        ),
       )
     : undefined
   const showCreate =
@@ -637,7 +646,7 @@ export function ComboField({
     setInteracted(false)
   }
 
-  function pick(option: ComboOption) {
+  function pick(option: Option) {
     resolvedRef.current = true
     finish()
     if (option.key !== selectedKey) onPick(option)
@@ -795,11 +804,17 @@ export function ComboField({
                       index === activeIndex && "bg-accent",
                     )}
                   >
-                    <span className="shrink-0 font-medium">{option.label}</span>
-                    {option.hint && (
-                      <span className="text-muted-foreground truncate text-xs">
-                        {option.hint}
-                      </span>
+                    {option.content ?? (
+                      <>
+                        <span className="shrink-0 font-medium">
+                          {option.label}
+                        </span>
+                        {option.hint && (
+                          <span className="text-muted-foreground truncate text-xs">
+                            {option.hint}
+                          </span>
+                        )}
+                      </>
                     )}
                   </button>
                 ))}

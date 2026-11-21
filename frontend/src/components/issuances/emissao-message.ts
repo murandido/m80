@@ -1,4 +1,5 @@
 import { pointsValueCents } from "@/lib/currency"
+import { accountMainName } from "@/lib/account-match"
 import { IssuanceRow } from "@/components/issuances/types"
 import { AccountOption } from "@/schemas/account"
 import { Agency } from "@/schemas/agency"
@@ -68,15 +69,6 @@ export function issuanceTotalCents(
 ): number | null {
   if (row.points === null || row.value_of_the_thousand === null) return null
   return pointsValueCents(row.points, row.value_of_the_thousand) + (row.taxes ?? 0)
-}
-
-/**
- * How to name an account that has no registered alias - used both by the account combobox
- * and by line 4 of the message, which is why it lives here rather than in either of them.
- */
-export function accountFallbackLabel(account: AccountOption, people: PersonOption[]): string {
-  const holder = people.find((p) => p.id === account.holder_id)
-  return holder?.name ?? account.login ?? account.id
 }
 
 /**
@@ -208,7 +200,7 @@ export function buildEmissaoResumo(row: IssuanceRow, ref: EmissaoReferenceData):
       : ""
   // The administrator (line 4's optional middle field) is left out: in the bot it is an
   // instruction to record who administers the account, not a description of the issuance.
-  const owners = `${nickname?.nickname ?? accountFallbackLabel(account, ref.people)}${agencySuffix}`
+  const owners = `${nickname?.nickname ?? accountMainName(account, ref.people)}${agencySuffix}`
 
   return {
     text: `${[header, route, calculo.text, owners].join("\n")}\n\n${AGENCY_DISCLAIMER}`,

@@ -1599,12 +1599,11 @@ func sameCalendarDay(a, b time.Time, loc *time.Location) bool {
 	return calendarDate(a, loc).Equal(calendarDate(b, loc))
 }
 
-// accountLabel replicates the panel's account labelling: the picked alias when set,
-// otherwise the holder's name, the login, or the id as last resort.
+// accountLabel replicates the panel's account labelling: the holder's name, otherwise the
+// login, the alias picked on the issuance, or the id as last resort. The alias comes after
+// the holder because one account answers to many of them, and the sheet should name the
+// account the same way on every row.
 func accountLabel(issuance data.Issuance) string {
-	if issuance.AccountNickname != nil {
-		return issuance.AccountNickname.Nickname
-	}
 	if issuance.Account != nil {
 		if issuance.Account.Holder != nil && issuance.Account.Holder.Name != "" {
 			return issuance.Account.Holder.Name
@@ -1612,6 +1611,9 @@ func accountLabel(issuance data.Issuance) string {
 		if issuance.Account.Login != nil && *issuance.Account.Login != "" {
 			return *issuance.Account.Login
 		}
+	}
+	if issuance.AccountNickname != nil && issuance.AccountNickname.Nickname != "" {
+		return issuance.AccountNickname.Nickname
 	}
 	return issuance.AccountID
 }

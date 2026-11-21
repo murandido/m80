@@ -10,10 +10,12 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover"
 import { useComboboxNavigation } from "@/hooks/use-combobox-navigation"
+import { accountMainName, rankAccountMatches } from "@/lib/account-match"
 import { normalizeSearch } from "@/lib/search"
 import { cn } from "@/lib/utils"
 import { AccountOption, LoyaltyProgramSummary } from "@/schemas/account"
 import { PersonOption } from "@/schemas/person"
+import { AccountMatchOption } from "@/components/accounts/account-match-option"
 
 interface AccountComboboxProps {
   accounts: AccountOption[]
@@ -38,44 +40,13 @@ interface AccountComboboxProps {
   initialQuery?: string
 }
 
-// Accounts have no name of their own; identify one by its holder, falling back to
-// login, then a registered alias, then a short id. Mirrors the grid's labelling so
-// the same account reads the same way in the filter and in the spreadsheet.
-function accountLabel(account: AccountOption, people: PersonOption[]): string {
-  const holder = people.find((p) => p.id === account.holder_id)
-  return (
-    holder?.name ??
-    account.login ??
-    account.nicknames[0]?.nickname ??
-    account.id.slice(0, 8)
-  )
-}
-
-function matches(
-  account: AccountOption,
-  people: PersonOption[],
-  program: LoyaltyProgramSummary | undefined,
-  query: string,
-): boolean {
-  const needle = normalizeSearch(query)
-  if (!needle) return true
-
-  return (
-    normalizeSearch(accountLabel(account, people)).includes(needle) ||
-    (program !== undefined &&
-      (normalizeSearch(program.name).includes(needle) ||
-        normalizeSearch(program.code).includes(needle))) ||
-    account.nicknames.some((n) => normalizeSearch(n.nickname).includes(needle))
-  )
-}
-
 export function AccountCombobox({
   accounts,
   people,
   loyaltyPrograms,
   value,
   onChange,
-  placeholder = "Buscar por titular, login ou programa...",
+  placeholder = "Buscar por nome, apelido ou programa...",
   disabled,
   onCreate,
   initialQuery = "",
@@ -91,11 +62,14 @@ export function AccountCombobox({
   )
 
   const selected = accounts.find((a) => a.id === value)
+  // One entry per account, best match first: the main name on top and the aliases that
+  // answered the query under it. The program is searchable too, so "azul" still narrows.
   const filtered = useMemo(
     () =>
-      accounts.filter((a) =>
-        matches(a, people, programById.get(a.loyalty_program_id), query),
-      ),
+      rankAccountMatches(accounts, people, query, (account) => {
+        const program = programById.get(account.loyalty_program_id)
+        return program ? [program.name, program.code] : []
+      }),
     [accounts, people, programById, query],
   )
 
@@ -108,7 +82,7 @@ export function AccountCombobox({
     typed !== "" &&
     !accounts.some(
       (account) =>
-        normalizeSearch(accountLabel(account, people)) ===
+        normalizeSearch(accountMainName(account, people)) ===
           normalizeSearch(typed) ||
         account.nicknames.some(
           (n) => normalizeSearch(n.nickname) === normalizeSearch(typed),
@@ -134,7 +108,7 @@ export function AccountCombobox({
     resetKey: open ? query : null,
     onSelect: (index) => {
       const option = filtered[index]
-      if (option) handleSelect(option.id)
+      if (option) handleSelect(option.account.id)
       else if (showCreate) handleCreate()
     },
   })
@@ -170,7 +144,7 @@ export function AccountCombobox({
               />
             )}
             <span className="truncate">
-              {selected ? accountLabel(selected, people) : placeholder}
+              {selected ? accountMainName(selected, people) : placeholder}
             </span>
           </span>
           <div className="flex shrink-0 items-center gap-1">
@@ -203,7 +177,7 @@ export function AccountCombobox({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Titular, login ou programa"
+            placeholder="Nome, apelido ou programa"
             className="pl-8"
           />
         </div>
@@ -213,32 +187,37 @@ export function AccountCombobox({
               Nenhuma conta encontrada.
             </p>
           )}
-          {filtered.map((account, index) => (
+          {filtered.map((match, index) => (
             <button
-              key={account.id}
+              key={match.account.id}
               type="button"
-              onClick={() => handleSelect(account.id)}
+              onClick={() => handleSelect(match.account.id)}
               className={cn(
-                "hover:bg-accent flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm",
+                "hover:bg-accent flex w-full items-start gap-2 rounded-sm px-2 py-1.5 text-left",
                 index === activeIndex && "bg-slate-200",
               )}
             >
               <span
-                className="h-2.5 w-2.5 shrink-0 rounded-full border border-slate-300"
-                style={{ backgroundColor: programById.get(account.loyalty_program_id)?.color }}
+                className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full border border-slate-300"
+                style={{
+                  backgroundColor: programById.get(match.account.loyalty_program_id)
+                    ?.color,
+                }}
               />
-              <span className="flex min-w-0 flex-1 flex-col">
-                <span className="truncate">
-                  {accountLabel(account, people)}
-                </span>
-                <span className="text-muted-foreground truncate text-xs">
-                  {programById.get(account.loyalty_program_id)?.name}
-                  {/* Only the merge picker ever asks for archived accounts, and there
-                      they are the common case - saying so stops one reading as live. */}
-                  {account.deleted_at && " · arquivada"}
-                </span>
-              </span>
-              {account.id === value && <Check className="h-4 w-4 shrink-0" />}
+              <AccountMatchOption
+                match={match}
+                footer={
+                  <span className="text-muted-foreground truncate text-xs">
+                    {programById.get(match.account.loyalty_program_id)?.name}
+                    {/* Only the merge picker ever asks for archived accounts, and there
+                        they are the common case - saying so stops one reading as live. */}
+                    {match.account.deleted_at && " · arquivada"}
+                  </span>
+                }
+              />
+              {match.account.id === value && (
+                <Check className="mt-1 h-4 w-4 shrink-0" />
+              )}
             </button>
           ))}
 

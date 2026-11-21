@@ -45,12 +45,13 @@ import { CancelIssuanceButton } from "@/components/issuances/cancel-issuance-dia
 import { AdjustmentsSection } from "@/components/issuances/board/adjustments-section"
 import { copyEmissaoText } from "@/components/issuances/copy-emissao-menu"
 import {
-  accountFallbackLabel,
   buildCalculo,
   buildEmissaoResumo,
   issuanceTotalCents,
 } from "@/components/issuances/emissao-message"
 import { parseAccountEntry } from "@/components/issuances/account-entry"
+import { AccountMatchOption } from "@/components/accounts/account-match-option"
+import { accountMainName, rankAccountMatches } from "@/lib/account-match"
 import { isRowSyncing, type IssuanceRow } from "@/components/issuances/types"
 import {
   ComboField,
@@ -119,32 +120,44 @@ type AccountChoice = ComboOption & {
   nicknameId: string | null
 }
 
-// One option per alias, narrowed to the row's program - the grid's buildAccountOptions.
+// One option per account, narrowed to the row's program and ranked against what was typed:
+// the main name on top, the aliases that matched under it. One entry per alias made the same
+// account show up several times, and nobody could tell whether those were one account or many.
 function accountOptions(
   accounts: AccountOption[],
   people: PersonOption[],
+  loyaltyPrograms: { id: string; name: string }[],
   programId: string | null,
+  typed: string,
 ): AccountChoice[] {
-  return accounts
+  const eligible = accounts
     .filter((account) => !account.deleted_at)
     .filter((account) => !programId || account.loyalty_program_id === programId)
-    .flatMap((account): AccountChoice[] =>
-      account.nicknames.length > 0
-        ? account.nicknames.map((nickname) => ({
-            key: nickname.id,
-            label: nickname.nickname,
-            accountId: account.id,
-            nicknameId: nickname.id,
-          }))
-        : [
-            {
-              key: account.id,
-              label: accountFallbackLabel(account, people),
-              accountId: account.id,
-              nicknameId: null,
-            },
-          ],
-    )
+  return rankAccountMatches(eligible, people, typed).map((match) => ({
+    key: match.account.id,
+    label: match.mainName,
+    exactTexts: match.account.nicknames.map((entry) => entry.nickname),
+    accountId: match.account.id,
+    nicknameId: match.nicknameId,
+    content: (
+      <AccountMatchOption
+        match={match}
+        // Without a program the list mixes them, and two accounts of one holder would
+        // read the same - the program is the only thing telling them apart.
+        footer={
+          programId ? undefined : (
+            <span className="text-muted-foreground truncate text-xs">
+              {
+                loyaltyPrograms.find(
+                  (program) => program.id === match.account.loyalty_program_id,
+                )?.name
+              }
+            </span>
+          )
+        }
+      />
+    ),
+  }))
 }
 
 interface IssuancePanelProps {
@@ -277,25 +290,22 @@ export function IssuancePanel({
       })),
     [airlines],
   )
-  const accountChoices = useMemo(
-    () => accountOptions(accounts, people, row.loyalty_program_id),
-    [accounts, people, row.loyalty_program_id],
+  const accountChoices = (typed: string) =>
+    accountOptions(
+      accounts,
+      people,
+      loyaltyPrograms,
+      row.loyalty_program_id,
+      typed,
+    )
+  // The account's main name, whatever alias it was picked by - an archived account still
+  // labels the issuance made on it, though it is not offered.
+  const pickedAccount = accounts.find(
+    (candidate) => candidate.id === row.account_id,
   )
-  const selectedAccountKey = row.account_nickname_id ?? row.account_id
-  // An archived account still labels the issuance made on it, though it is not offered.
   const accountDisplay =
     board.pendingAccountLabels[row.key] ??
-    accountChoices.find((option) => option.key === selectedAccountKey)?.label ??
-    (() => {
-      const account = accounts.find(
-        (candidate) => candidate.id === row.account_id,
-      )
-      if (!account) return ""
-      return (
-        account.nicknames.find((entry) => entry.id === row.account_nickname_id)
-          ?.nickname ?? accountFallbackLabel(account, people)
-      )
-    })()
+    (pickedAccount ? accountMainName(pickedAccount, people) : "")
 
   const patch = (fields: Partial<IssuanceRow>) => applyPatch(row.key, fields)
 
@@ -464,25 +474,22 @@ export function IssuancePanel({
       name="account"
       label="Conta"
       options={accountChoices}
-      selectedKey={selectedAccountKey}
+      selectedKey={row.account_id}
       displayValue={accountDisplay}
       busy={Boolean(board.pendingAccountLabels[row.key])}
-      onPick={(option) => {
-        const choice = accountChoices.find(
-          (candidate) => candidate.key === option.key,
-        )
-        if (choice)
-          patch({
-            account_id: choice.accountId,
-            account_nickname_id: choice.nicknameId,
-          })
-      }}
+      onPick={(choice) =>
+        patch({
+          account_id: choice.accountId,
+          account_nickname_id: choice.nicknameId,
+        })
+      }
       create={{
         label: (typed) => {
           const { nickname } = parseAccountEntry(typed)
-          const exists = accountChoices.some(
-            (option) =>
-              normalizeSearch(option.label) === normalizeSearch(nickname),
+          const exists = accountChoices(nickname).some((option) =>
+            [option.label, ...(option.exactTexts ?? [])].some(
+              (text) => normalizeSearch(text) === normalizeSearch(nickname),
+            ),
           )
           return exists
             ? `Usar a conta "${nickname}"`

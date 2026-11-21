@@ -20,19 +20,22 @@ func TestAccountLabel(t *testing.T) {
 		want  string
 	}{
 		{
-			name:  "alias wins when present",
-			given: data.Issuance{AccountNickname: &data.AccountNickname{Nickname: "Conta VIP"}},
-			want:  "Conta VIP",
+			name: "holder name wins over the picked alias",
+			given: data.Issuance{
+				Account:         &data.Account{Holder: &data.Person{Name: "Ana Souza"}},
+				AccountNickname: &data.AccountNickname{Nickname: "Conta VIP"},
+			},
+			want: "Ana Souza",
 		},
 		{
-			name:  "holder name when no alias",
-			given: data.Issuance{Account: &data.Account{Holder: &data.Person{Name: "Ana Souza"}}},
-			want:  "Ana Souza",
-		},
-		{
-			name:  "login when no alias and no holder",
-			given: data.Issuance{Account: &data.Account{Login: strptr("ana@example.com")}},
+			name:  "login when there is no holder",
+			given: data.Issuance{Account: &data.Account{Login: strptr("ana@example.com")}, AccountNickname: &data.AccountNickname{Nickname: "Conta VIP"}},
 			want:  "ana@example.com",
+		},
+		{
+			name:  "alias when there is no holder and no login",
+			given: data.Issuance{Account: &data.Account{}, AccountNickname: &data.AccountNickname{Nickname: "Conta VIP"}},
+			want:  "Conta VIP",
 		},
 		{
 			name:  "account id as last resort",

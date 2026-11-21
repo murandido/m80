@@ -170,17 +170,19 @@ func saleListQuery(db *gorm.DB) *gorm.DB {
 		Where("issuances.deleted_at IS NULL")
 }
 
-// saleAccountLabel mirrors the grid's account labelling (and export.accountLabel): the
-// alias picked on the issuance when there is one, then the holder, then the login.
+// saleAccountLabel mirrors the panel's account labelling (and export.accountLabel): the
+// holder's name, then the login, then the alias picked on the issuance. The holder comes
+// first because an account answers to many aliases, and showing whichever one an issuance
+// was typed with made the same account read as several different ones.
 func saleAccountLabel(row saleRow) string {
-	if row.AccountNickname != nil && *row.AccountNickname != "" {
-		return *row.AccountNickname
-	}
 	if row.HolderName != nil && *row.HolderName != "" {
 		return *row.HolderName
 	}
 	if row.AccountLogin != nil && *row.AccountLogin != "" {
 		return *row.AccountLogin
+	}
+	if row.AccountNickname != nil && *row.AccountNickname != "" {
+		return *row.AccountNickname
 	}
 	return row.AccountID
 }
