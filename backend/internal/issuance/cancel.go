@@ -91,6 +91,15 @@ func Cancel(db *gorm.DB, issuance data.Issuance, in CancelInput, actorID string)
 	if in.CancellationOnly {
 		issuance.CancellationOnly = true
 		columns["cancellation_only"] = true
+
+		// A booking made outside the panel was paid outside it too, and that money is the
+		// client's: written on the sale now, while it is still live and worth its price, the
+		// cancellation below turns it into the client's credit. Only the panel sets this
+		// flag here - the spreadsheet importer marks its rows on creation and cancels them
+		// without it, so its estornos never claim a payment nobody recorded.
+		if err := sale.RecordPaidOutsideSystem(db, issuance.ID, issuance.CreatedAt, actorID); err != nil {
+			return data.Issuance{}, err
+		}
 	}
 
 	// A conditional write of the cancellation columns alone, never a Save of the whole

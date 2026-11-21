@@ -244,7 +244,8 @@ export function CancelIssuanceButton({ r }: { r: number }) {
                     Ligue quando a reserva foi feita fora do painel e você a cadastrou só
                     para lançar este estorno. Os pontos deixam de contar como emitidos e o
                     saldo do fornecedor fica só com o reembolso — sem precisar dobrar os
-                    pontos reembolsados.
+                    pontos reembolsados. O valor da passagem conta como pago pelo cliente
+                    fora do sistema e vira crédito dele.
                   </p>
                 </Field>
               )}
