@@ -7292,7 +7292,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Cancela uma emissão (active=false, cancelled_at=now, ou a data em cancelled_on), registra os valores de reembolso, reseta o pagamento da venda associada (se paga) e grava um audit log. Tudo numa única transação. Com cancellation_only=true, a emissão passa a valer apenas como estorno: o saldo do fornecedor conta o reembolso e não os pontos, para o caso da reserva ter sido feita fora do painel.",
+                "description": "Cancela uma emissão (active=false, cancelled_at=now, ou a data em cancelled_on), registra os valores de reembolso e grava um audit log. Tudo numa única transação. Os pagamentos da venda não são apagados: a venda passa a dever só a multa, e o que o cliente pagou além dela vira crédito dele. Com cancellation_only=true, a emissão passa a valer apenas como estorno: o saldo do fornecedor conta o reembolso e não os pontos, para o caso da reserva ter sido feita fora do painel, e o valor da passagem é lançado como pago pelo cliente fora do sistema, virando crédito dele.",
                 "consumes": [
                     "application/json"
                 ],
@@ -7972,7 +7972,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Reverte o cancelamento de uma emissão (active=true, limpa cancelled_at/cancelled_by e os valores de reembolso). O status volta a ser derivado de complete. Se o cancelamento havia resetado o pagamento da venda associada, restaura paid=true, voltando ao estado original. Grava um audit log. Tudo numa única transação.",
+                "description": "Reverte o cancelamento de uma emissão (active=true, limpa cancelled_at/cancelled_by e os valores de reembolso). O status volta a ser derivado de complete. A venda volta a dever o preço da passagem; se o cancelamento era só de estorno, o pagamento fora do sistema que ele lançou é retirado. Grava um audit log. Tudo numa única transação.",
                 "consumes": [
                     "application/json"
                 ],
