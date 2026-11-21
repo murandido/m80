@@ -1204,7 +1204,7 @@ func (h *IssuanceHandler) DeleteIssuance(w http.ResponseWriter, r *http.Request)
 
 // CancelIssuance handles the POST /issuances/{id}/cancel route.
 // @Summary      Cancelar emissão
-// @Description  Cancela uma emissão (active=false, cancelled_at=now, ou a data em cancelled_on), registra os valores de reembolso, reseta o pagamento da venda associada (se paga) e grava um audit log. Tudo numa única transação. Com cancellation_only=true, a emissão passa a valer apenas como estorno: o saldo do fornecedor conta o reembolso e não os pontos, para o caso da reserva ter sido feita fora do painel.
+// @Description  Cancela uma emissão (active=false, cancelled_at=now, ou a data em cancelled_on), registra os valores de reembolso e grava um audit log. Tudo numa única transação. Os pagamentos da venda não são apagados: a venda passa a dever só a multa, e o que o cliente pagou além dela vira crédito dele. Com cancellation_only=true, a emissão passa a valer apenas como estorno: o saldo do fornecedor conta o reembolso e não os pontos, para o caso da reserva ter sido feita fora do painel, e o valor da passagem é lançado como pago pelo cliente fora do sistema, virando crédito dele.
 // @Tags         Emissões
 // @Accept       json
 // @Produce      json
@@ -1303,7 +1303,7 @@ func (h *IssuanceHandler) CancelIssuance(w http.ResponseWriter, r *http.Request)
 
 // UncancelIssuance handles the POST /issuances/{id}/uncancel route.
 // @Summary      Reverter cancelamento de emissão
-// @Description  Reverte o cancelamento de uma emissão (active=true, limpa cancelled_at/cancelled_by e os valores de reembolso). O status volta a ser derivado de complete. Se o cancelamento havia resetado o pagamento da venda associada, restaura paid=true, voltando ao estado original. Grava um audit log. Tudo numa única transação.
+// @Description  Reverte o cancelamento de uma emissão (active=true, limpa cancelled_at/cancelled_by e os valores de reembolso). O status volta a ser derivado de complete. A venda volta a dever o preço da passagem; se o cancelamento era só de estorno, o pagamento fora do sistema que ele lançou é retirado. Grava um audit log. Tudo numa única transação.
 // @Tags         Emissões
 // @Accept       json
 // @Produce      json
@@ -1388,6 +1388,14 @@ func (h *IssuanceHandler) UncancelIssuance(w http.ResponseWriter, r *http.Reques
 		}
 		if result.RowsAffected == 0 {
 			return errIssuanceNotCancelled
+		}
+
+		// Cancelling with cancellation_only recorded the client's outside payment; the
+		// revert says the booking is live, so that claim goes along with the flag.
+		if issuance.CancellationOnly {
+			if err := sale.RemovePaidOutsideSystem(tx, issuance.ID); err != nil {
+				return err
+			}
 		}
 
 		if err := sale.RecalculateByIssuance(tx, issuance.ID); err != nil {
