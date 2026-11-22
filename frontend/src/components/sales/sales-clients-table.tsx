@@ -33,6 +33,7 @@ import {
 } from "@/app/dashboard/sales/period-params"
 import { formatCurrencyBRL, parseCurrencyBRLInput } from "@/lib/currency"
 import { cn } from "@/lib/utils"
+import type { Agency } from "@/schemas/agency"
 import type { Client } from "@/schemas/client"
 import type { Sale } from "@/schemas/sale"
 
@@ -53,6 +54,9 @@ interface SalesClientsTableProps {
   // The period on screen, which the history across clients is narrowed to.
   dateFrom: string
   dateTo: string
+  // For the client form inside the pickers. Only a dev sees and changes a client's agency.
+  agencies: Agency[]
+  viewerIsDev: boolean
 }
 
 // One grid for the header, every row and the footer, so the columns line up without a
@@ -116,6 +120,8 @@ export function SalesClientsTable({
   clientCreditCents,
   dateFrom,
   dateTo,
+  agencies,
+  viewerIsDev,
 }: SalesClientsTableProps) {
   const router = useRouter()
   const pathname = usePathname()
@@ -141,10 +147,19 @@ export function SalesClientsTable({
   }
   const selectedClientIds = useMemo(() => parseClientIds(clientFilter), [clientFilter])
 
+  // Clients edited or deleted from a picker's form. The route refresh that follows brings the
+  // register back, but the pickers have to show the change on the click.
+  const [editedClients, setEditedClients] = useState<Record<string, Client>>({})
+  const [deletedClientIds, setDeletedClientIds] = useState<Set<string>>(new Set())
+
   const clientOptions = useMemo(() => {
     const known = new Set(clients.map((c) => c.id))
     return [...clients, ...createdClients.filter((c) => !known.has(c.id))]
-  }, [clients, createdClients])
+      .filter((c) => !deletedClientIds.has(c.id))
+      .map((c) => editedClients[c.id] ?? c)
+      // A dev moving a client to another agency takes it out of this agency's pickers.
+      .filter((c) => c.agency_id === agencyId || c.agency_id === null)
+  }, [clients, createdClients, editedClients, deletedClientIds, agencyId])
 
   // The list is a window over the server's listing: only the pages near what is on screen
   // are in memory, and only the rows on screen are in the DOM.
@@ -160,7 +175,13 @@ export function SalesClientsTable({
     const known = new Set(clientOptions.map((c) => c.id))
     const carried: Client[] = []
     for (const sale of loaded) {
-      if (!sale.client_id || !sale.client_name || known.has(sale.client_id)) continue
+      if (
+        !sale.client_id ||
+        !sale.client_name ||
+        known.has(sale.client_id) ||
+        deletedClientIds.has(sale.client_id)
+      )
+        continue
       known.add(sale.client_id)
       carried.push({
         id: sale.client_id,
@@ -172,7 +193,7 @@ export function SalesClientsTable({
       })
     }
     return carried.length === 0 ? clientOptions : [...clientOptions, ...carried]
-  }, [clientOptions, loaded, agencyId])
+  }, [clientOptions, loaded, agencyId, deletedClientIds])
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
@@ -391,6 +412,32 @@ export function SalesClientsTable({
     persist(sale, patch, { client_id: clientId || null }, "Erro ao vincular cliente.", () =>
       pushUndo(undoLink({ ...sale, ...patch })),
     )
+  }
+
+  // A client fixed from a picker's form. The rows carry the client's name from the server, so
+  // the window is refetched to show a rename on every sale of theirs.
+  function handleClientSaved(client: Client) {
+    setEditedClients((prev) => ({ ...prev, [client.id]: client }))
+    toast.success("Cliente atualizado.")
+    list.refresh()
+    router.refresh()
+  }
+
+  // Deleting a client unlinks their sales on the server (ON DELETE SET NULL); the refetch
+  // shows those rows back on "Vincular cliente...".
+  function handleClientDeleted(clientId: string) {
+    setDeletedClientIds((prev) => new Set(prev).add(clientId))
+    if (payingClientId === clientId) setPayingClientId("")
+    toast.success("Cliente excluído.")
+    list.refresh()
+    router.refresh()
+  }
+
+  const manageClients = {
+    agencies,
+    showAgency: viewerIsDev,
+    onSaved: handleClientSaved,
+    onDeleted: handleClientDeleted,
   }
 
   // Creating and linking are one gesture from the operator's point of view, so a failure
@@ -728,6 +775,7 @@ export function SalesClientsTable({
                   onChange={(clientId) => handleClientChange(sale, clientId)}
                   onCreate={(name) => handleClientCreate(sale, name)}
                   onOpenChange={trackEditing(sale.id)}
+                  manage={manageClients}
                   disabled={isSaving}
                   className="border-transparent"
                 />
@@ -803,6 +851,7 @@ export function SalesClientsTable({
               clients={clientOptions}
               value={payingClientId}
               onChange={setPayingClientId}
+              manage={manageClients}
               className="border-transparent"
             />
           </div>

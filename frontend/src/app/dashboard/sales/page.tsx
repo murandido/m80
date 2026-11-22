@@ -83,6 +83,8 @@ export default async function SalesClientsPage({
     filteredClientId ? fetchClientCredit(api, filteredClientId, authHeader) : null,
   ])
 
+  const viewerIsDev = user?.role === "dev"
+
   // The backend falls back to the user's default agency when agency_id is absent; resolving
   // it here too is what lets the combobox show its name instead of an empty placeholder.
   const effectiveFilters = {
@@ -158,13 +160,21 @@ export default async function SalesClientsPage({
           query={query.toString()}
           // A sale's client belongs to the sale's agency, so the pickers offer only the
           // clients of the agency this list is showing.
-          clients={(clients ?? []).filter((c) => c.agency_id === effectiveFilters.agency_id)}
+          // A dev also gets the clients that have no agency yet (migration 72): the client
+          // form in the picker is where one is assigned.
+          clients={(clients ?? []).filter(
+            (c) =>
+              c.agency_id === effectiveFilters.agency_id ||
+              (viewerIsDev && c.agency_id === null),
+          )}
           agencyId={effectiveFilters.agency_id}
           clientFilter={filters.client_ids}
           clientCreditCents={clientCreditCents}
           dateFrom={period.date_from}
           dateTo={period.date_to}
           paidFilter={filters.paid}
+          agencies={agencies ?? []}
+          viewerIsDev={viewerIsDev}
         />
       </div>
     </div>
