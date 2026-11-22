@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"slices"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
@@ -66,6 +67,9 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		Password: req.Password,
 		Role:     req.Role,
 	}
+	if !applyPartner(w, r, &user, req.IsPartner, req.PartnerClientName) {
+		return
+	}
 
 	err := h.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&user).Error; err != nil {
@@ -88,6 +92,32 @@ func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	utils.SendJSON(w, r, http.StatusCreated, "User created successfully", toUserResponse(user, agencies[user.ID], accounts[user.ID]))
+}
+
+// applyPartner writes the team/partner choice onto the user, answering 400 and returning
+// false when it does not fit. Only staff can be partners: a statement client issues nothing.
+// The client name is kept only for a partner, so it cannot come back into force unnoticed
+// if the user is turned into a partner again later.
+func applyPartner(w http.ResponseWriter, r *http.Request, user *data.User, isPartner *bool, clientName *string) bool {
+	if isPartner != nil {
+		user.IsPartner = *isPartner
+	}
+	if clientName != nil {
+		trimmed := strings.TrimSpace(*clientName)
+		if trimmed == "" {
+			user.PartnerClientName = nil
+		} else {
+			user.PartnerClientName = &trimmed
+		}
+	}
+	if user.IsPartner && user.Role == data.RoleStatementClient {
+		utils.SendError(w, r, http.StatusBadRequest, "Cliente de extrato não pode ser parceiro")
+		return false
+	}
+	if !user.IsPartner {
+		user.PartnerClientName = nil
+	}
+	return true
 }
 
 // sendGrantError answers the grant validation errors with their own status and reports
@@ -276,6 +306,10 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 
 	if req.Role != "" {
 		user.Role = req.Role
+	}
+
+	if !applyPartner(w, r, &user, req.IsPartner, req.PartnerClientName) {
+		return
 	}
 
 	err = h.DB.Transaction(func(tx *gorm.DB) error {

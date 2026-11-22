@@ -28,14 +28,18 @@ const (
 var UserRoles = []string{RoleUser, RoleAdmin, RoleDev, RoleStatementClient}
 
 type User struct {
-	ID        string         `gorm:"primaryKey;type:uuid" json:"id"`
-	Name      string         `gorm:"not null" json:"name"`
-	Phone     string         `gorm:"uniqueIndex:idx_users_phone,where:deleted_at IS NULL;not null" json:"phone"`
-	Password  string         `gorm:"not null" json:"-"`
-	Role      string         `gorm:"type:user_role;not null;default:'user'" json:"role"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
-	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+	ID       string `gorm:"primaryKey;type:uuid" json:"id"`
+	Name     string `gorm:"not null" json:"name"`
+	Phone    string `gorm:"uniqueIndex:idx_users_phone,where:deleted_at IS NULL;not null" json:"phone"`
+	Password string `gorm:"not null" json:"-"`
+	Role     string `gorm:"type:user_role;not null;default:'user'" json:"role"`
+	// IsPartner marks someone who issues for themselves rather than for the team: the
+	// sales of the issuances they issue are linked to PartnerClientName automatically.
+	IsPartner         bool           `gorm:"not null;default:false" json:"is_partner"`
+	PartnerClientName *string        `json:"partner_client_name"`
+	CreatedAt         time.Time      `json:"created_at"`
+	UpdatedAt         time.Time      `json:"updated_at"`
+	DeletedAt         gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
 func (u *User) BeforeCreate(tx *gorm.DB) (err error) {

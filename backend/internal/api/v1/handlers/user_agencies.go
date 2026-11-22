@@ -69,13 +69,15 @@ func toUserResponse(user data.User, agencyIDs, accountIDs []string) schemas.User
 		accountIDs = []string{}
 	}
 	return schemas.UserResponse{
-		ID:         user.ID,
-		Name:       user.Name,
-		Phone:      user.Phone,
-		Role:       user.Role,
-		AgencyIDs:  agencyIDs,
-		AccountIDs: accountIDs,
-		CreatedAt:  user.CreatedAt,
+		ID:                user.ID,
+		Name:              user.Name,
+		Phone:             user.Phone,
+		Role:              user.Role,
+		AgencyIDs:         agencyIDs,
+		AccountIDs:        accountIDs,
+		IsPartner:         user.IsPartner,
+		PartnerClientName: user.PartnerClientName,
+		CreatedAt:         user.CreatedAt,
 	}
 }
 
