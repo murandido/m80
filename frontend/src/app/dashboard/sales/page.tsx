@@ -2,7 +2,7 @@ import type { Metadata } from "next"
 import { Suspense } from "react"
 import { cookies } from "next/headers"
 import Link from "next/link"
-import { ExternalLink, FileText } from "lucide-react"
+import { ExternalLink, FileText, TriangleAlert } from "lucide-react"
 import { env } from "@/lib/env"
 import { fetchList } from "@/lib/fetch-list"
 import { canAccess } from "@/lib/navigation"
@@ -84,6 +84,9 @@ export default async function SalesClientsPage({
   ])
 
   const viewerIsDev = user?.role === "dev"
+  const pendingAgencyCount = viewerIsDev
+    ? (clients ?? []).filter((c) => c.agency_id === null).length
+    : 0
 
   // The backend falls back to the user's default agency when agency_id is absent; resolving
   // it here too is what lets the combobox show its name instead of an empty placeholder.
@@ -125,6 +128,20 @@ export default async function SalesClientsPage({
             <SalesHelpPopover />
           </div>
         </div>
+
+        {/* The to-do list for making clients.agency_id NOT NULL: the clients migration 000072
+            could not place, because they bought through more than one agency. Only a dev is
+            handed them, and the pencil in "Vincular cliente..." is where one is assigned. */}
+        {pendingAgencyCount > 0 && (
+          <div className="flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            <TriangleAlert className="h-4 w-4 shrink-0" />
+            {pendingAgencyCount === 1
+              ? "1 cliente ainda está sem agência"
+              : `${pendingAgencyCount} clientes ainda estão sem agência`}
+            . Eles aparecem em &quot;Vincular cliente...&quot; marcados &quot;Sem agência&quot;: o
+            lápis ao lado do nome escolhe a agência.
+          </div>
+        )}
 
         <SalesViewToggle
           active="clients"
