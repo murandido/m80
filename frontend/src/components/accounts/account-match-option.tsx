@@ -23,14 +23,18 @@ export function AccountMatchOption({ match, footer }: AccountMatchOptionProps) {
     <span className="flex min-w-0 flex-1 flex-col gap-0.5">
       <span className="truncate text-sm font-medium">{match.mainName}</span>
       {visible.length > 0 && (
-        <span className="text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
+        <span className="text-muted-foreground flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs">
           {visible.map((alias) => (
             <span
               key={alias.id}
+              // Every alias is its own chip so neighbours read apart ("Ana - R" next to
+              // "Ana Moura" used to run together); the closest one is the orange chip. The grey
+              // one carries a ring because the filter bars paint the active row slate-200 too.
               className={cn(
-                "max-w-full truncate",
-                alias.id === match.highlightedAliasId &&
-                  "rounded bg-orange-200 px-1 text-orange-950",
+                "max-w-full truncate rounded px-1",
+                alias.id === match.highlightedAliasId
+                  ? "bg-orange-200 text-orange-950"
+                  : "bg-slate-100 text-slate-700 ring-1 ring-slate-300 ring-inset",
               )}
             >
               {alias.nickname}
