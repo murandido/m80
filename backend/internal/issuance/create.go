@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/murandido/m-80-backend/internal/account"
 	"github.com/murandido/m-80-backend/internal/data"
+	"github.com/murandido/m-80-backend/internal/sale"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
@@ -180,6 +181,12 @@ func Create(db *gorm.DB, in CreateInput, actorID string) (data.Issuance, error) 
 		// is the only place that tracks who still has to be charged, and an issuance
 		// with no sale row would simply never surface there.
 		if err := tx.Create(&data.Sale{IssuanceID: issuance.ID}).Error; err != nil {
+			return err
+		}
+		// A partner issues for themselves, so their sale is born linked to them. The
+		// payments screen refreshes on issuance.created, which covers any sale the
+		// client's credit moved onto as well.
+		if _, err := sale.LinkPartnerClient(tx, issuance.ID); err != nil {
 			return err
 		}
 
