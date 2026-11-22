@@ -599,7 +599,8 @@ export function SalesClientsTable({
           </p>
         )}
 
-        {list.total === 0 && (
+        {/* Rows kept after leaving the filter are on screen though the count is zero. */}
+        {list.total === 0 && loaded.length === 0 && (
           <p className="text-muted-foreground py-10 text-center text-sm">
             Nenhuma venda no período selecionado.
           </p>
