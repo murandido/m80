@@ -859,6 +859,8 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// A new issuer who is a partner gets the sale, the same as when they create one.
+	issuerChanged := req.IssuerID != nil && *req.IssuerID != issuance.IssuerID
 	if req.IssuerID != nil {
 		var user data.User
 		if err := h.DB.First(&user, "id = ?", *req.IssuerID).Error; err != nil {
@@ -1086,7 +1088,18 @@ func (h *IssuanceHandler) UpdateIssuance(w http.ResponseWriter, r *http.Request)
 		// and then corrected kept a surplus (or a missing amount) nobody saw until the
 		// next payment of that client. A sale settled by hand follows the new price and
 		// stays settled.
-		return sale.RecalculateRepriced(tx, issuance.ID)
+		if err := sale.RecalculateRepriced(tx, issuance.ID); err != nil {
+			return err
+		}
+
+		// Never overwrites a client already on the sale; the payments screen refreshes on
+		// the issuance.updated below, which covers every sale the link moved.
+		if issuerChanged {
+			if _, err := sale.LinkPartnerClient(tx, issuance.ID); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 
 	if err != nil {

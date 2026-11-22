@@ -16,6 +16,11 @@ type CreateUserRequest struct {
 	// AccountIDs are the Azul/Smiles accounts whose statement a statement_client may read.
 	// Only valid with that role; any admin may send it.
 	AccountIDs *[]string `json:"account_ids" validate:"omitempty,dive,uuid"`
+	// IsPartner marks a partner rather than team staff: the sales of the issuances they
+	// issue are linked to PartnerClientName (their own name when empty). Absent leaves the
+	// current value alone.
+	IsPartner         *bool   `json:"is_partner"`
+	PartnerClientName *string `json:"partner_client_name" validate:"omitempty,max=120"`
 }
 
 // UserResponse defines how a user should be returned in the API
@@ -28,8 +33,11 @@ type UserResponse struct {
 	// itself means every agency.
 	AgencyIDs []string `json:"agency_ids"`
 	// AccountIDs are the accounts granted to a statement_client. Always empty for staff.
-	AccountIDs []string  `json:"account_ids"`
-	CreatedAt  time.Time `json:"created_at"`
+	AccountIDs []string `json:"account_ids"`
+	// IsPartner and PartnerClientName: see CreateUserRequest.
+	IsPartner         bool      `json:"is_partner"`
+	PartnerClientName *string   `json:"partner_client_name"`
+	CreatedAt         time.Time `json:"created_at"`
 }
 
 // UpdateUserRequest defines the payload for updating an existing user
@@ -45,6 +53,11 @@ type UpdateUserRequest struct {
 	// AccountIDs replaces a statement_client's accounts when present, with the same null vs
 	// empty semantics as AgencyIDs. Rejected for any other role.
 	AccountIDs *[]string `json:"account_ids" validate:"omitempty,dive,uuid"`
+	// IsPartner marks a partner rather than team staff: the sales of the issuances they
+	// issue are linked to PartnerClientName (their own name when empty). Absent leaves the
+	// current value alone.
+	IsPartner         *bool   `json:"is_partner"`
+	PartnerClientName *string `json:"partner_client_name" validate:"omitempty,max=120"`
 }
 
 // UpdateMeRequest is what a user may change about themselves. There is no role

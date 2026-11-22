@@ -18,6 +18,7 @@ import { Separator } from "@/components/ui/separator"
 import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 import { createUserSchema } from "@/schemas/user"
+import { PartnerField } from "@/components/users/partner-field"
 import { RoleSelector } from "@/components/users/role-selector"
 import { UserAgenciesField } from "@/components/users/user-agencies-field"
 import {
@@ -54,9 +55,14 @@ export function CreateUserForm({ viewerIsDev, agencies, statementAccounts }: Cre
       role: "user",
       agency_ids: viewerIsDev ? [] : undefined,
       account_ids: [],
+      is_partner: false,
+      partner_client_name: "",
     },
   })
   const role = useWatch({ control: form.control, name: "role" })
+  const isPartner = useWatch({ control: form.control, name: "is_partner" })
+  const partnerClientName = useWatch({ control: form.control, name: "partner_client_name" })
+  const userName = useWatch({ control: form.control, name: "name" })
 
   function handleToggle() {
     if (isOpen) {
@@ -75,6 +81,7 @@ export function CreateUserForm({ viewerIsDev, agencies, statementAccounts }: Cre
         ...data,
         agency_ids: data.role === "dev" || isClient ? undefined : data.agency_ids,
         account_ids: isClient ? (data.account_ids ?? []) : undefined,
+        is_partner: isClient ? false : data.is_partner,
       }
       const result = await createUserAction(payload)
 
@@ -235,6 +242,20 @@ export function CreateUserForm({ viewerIsDev, agencies, statementAccounts }: Cre
                     )}
                   />
                 </div>
+
+                {/* team or partner - a statement client issues nothing, so it is never one */}
+                {role !== "statement_client" && (
+                  <div className="flex flex-col gap-1 text-sm">
+                    <PartnerField
+                      isPartner={isPartner}
+                      onPartnerChange={(value) => form.setValue("is_partner", value)}
+                      clientName={partnerClientName}
+                      onClientNameChange={(value) => form.setValue("partner_client_name", value)}
+                      userName={userName}
+                      disabled={isPending}
+                    />
+                  </div>
+                )}
 
                 {/* accounts - what a statement client may read */}
                 {role === "statement_client" && (

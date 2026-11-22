@@ -66,7 +66,14 @@ export function UserCard({
       >
         <div className="flex items-center justify-between px-4 py-3">
           <div className="flex min-w-0 flex-col">
-            <span className="text-sm font-medium text-slate-800">{user.name}</span>
+            <span className="flex items-center gap-2 text-sm font-medium text-slate-800">
+              {user.name}
+              {user.is_partner && (
+                <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs font-normal text-amber-900">
+                  Parceiro · {(user.partner_client_name ?? user.name).toUpperCase()}
+                </span>
+              )}
+            </span>
             {/* Agencies are a dev's business; a client's accounts are any admin's, who grants them. */}
             {(viewerIsDev || user.role === "statement_client") && (
               <span className="truncate text-xs text-slate-500">{grantSummary}</span>
