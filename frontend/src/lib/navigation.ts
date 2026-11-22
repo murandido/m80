@@ -13,7 +13,6 @@ import {
   Plane,
   Sparkles,
   Ticket,
-  UserRound,
 } from "lucide-react"
 import type { User } from "@/schemas/user"
 
@@ -64,13 +63,12 @@ export const navSections: NavSection[] = [
   },
   {
     label: "Gestão",
-    // Deliberately mixed: Contas and Clientes are everyday operator screens, while
-    // Agências and Usuários are not. This is why permission moved from the section
+    // Deliberately mixed: Contas is an everyday operator screen, while Agências and
+    // Usuários are not. (Clientes lives in the payments control's client picker now.) This is why permission moved from the section
     // onto each link.
     items: [
       { title: "Agências", url: "/dashboard/agencies", icon: Building2, roles: [] },
       { title: "Contas", url: "/dashboard/accounts", icon: Landmark },
-      { title: "Clientes", url: "/dashboard/clients", icon: UserRound },
       { title: "Usuários do M80", url: "/dashboard/users", icon: IdCard, roles: ["admin"] },
       {
         title: "CPFs das Promoções",

@@ -1,8 +1,7 @@
 import type { Metadata } from "next"
 import { Suspense } from "react"
 import { cookies } from "next/headers"
-import Link from "next/link"
-import { ExternalLink, FileText } from "lucide-react"
+import { FileText, TriangleAlert } from "lucide-react"
 import { env } from "@/lib/env"
 import { fetchList } from "@/lib/fetch-list"
 import { canAccess } from "@/lib/navigation"
@@ -83,6 +82,11 @@ export default async function SalesClientsPage({
     filteredClientId ? fetchClientCredit(api, filteredClientId, authHeader) : null,
   ])
 
+  const viewerIsDev = user?.role === "dev"
+  const pendingAgencyCount = viewerIsDev
+    ? (clients ?? []).filter((c) => c.agency_id === null).length
+    : 0
+
   // The backend falls back to the user's default agency when agency_id is absent; resolving
   // it here too is what lets the combobox show its name instead of an empty placeholder.
   const effectiveFilters = {
@@ -103,14 +107,6 @@ export default async function SalesClientsPage({
             Controle de pagamentos
           </h1>
           <div className="flex flex-wrap items-center gap-2">
-            {/* Linking a sale to a client that does not exist yet is the common case here,
-                so the client register is one click away instead of a trip to the sidebar. */}
-            <Button asChild variant="ghost" className="text-slate-500">
-              <Link href="/dashboard/clients">
-                Gerenciar clientes
-                <ExternalLink className="h-4 w-4" />
-              </Link>
-            </Button>
             <Button asChild variant="outline">
               {/* Native download: the backend sets the filename via Content-Disposition, and
                   `query` is the same string that fetched the list on screen. */}
@@ -123,6 +119,20 @@ export default async function SalesClientsPage({
             <SalesHelpPopover />
           </div>
         </div>
+
+        {/* The to-do list for making clients.agency_id NOT NULL: the clients migration 000072
+            could not place, because they bought through more than one agency. Only a dev is
+            handed them, and the pencil in "Vincular cliente..." is where one is assigned. */}
+        {pendingAgencyCount > 0 && (
+          <div className="flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            <TriangleAlert className="h-4 w-4 shrink-0" />
+            {pendingAgencyCount === 1
+              ? "1 cliente ainda está sem agência"
+              : `${pendingAgencyCount} clientes ainda estão sem agência`}
+            . Eles aparecem em &quot;Vincular cliente...&quot; marcados &quot;Sem agência&quot;: o
+            lápis ao lado do nome escolhe a agência.
+          </div>
+        )}
 
         <SalesViewToggle
           active="clients"
@@ -158,13 +168,21 @@ export default async function SalesClientsPage({
           query={query.toString()}
           // A sale's client belongs to the sale's agency, so the pickers offer only the
           // clients of the agency this list is showing.
-          clients={(clients ?? []).filter((c) => c.agency_id === effectiveFilters.agency_id)}
+          // A dev also gets the clients that have no agency yet (migration 72): the client
+          // form in the picker is where one is assigned.
+          clients={(clients ?? []).filter(
+            (c) =>
+              c.agency_id === effectiveFilters.agency_id ||
+              (viewerIsDev && c.agency_id === null),
+          )}
           agencyId={effectiveFilters.agency_id}
           clientFilter={filters.client_ids}
           clientCreditCents={clientCreditCents}
           dateFrom={period.date_from}
           dateTo={period.date_to}
           paidFilter={filters.paid}
+          agencies={agencies ?? []}
+          viewerIsDev={viewerIsDev}
         />
       </div>
     </div>

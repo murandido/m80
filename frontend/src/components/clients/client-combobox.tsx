@@ -1,7 +1,7 @@
 "use client"
 
 import { useMemo, useState } from "react"
-import { Check, ChevronsUpDown, Plus, Search, X } from "lucide-react"
+import { Check, ChevronsUpDown, Pencil, Plus, Search, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -9,6 +9,8 @@ import { useComboboxNavigation } from "@/hooks/use-combobox-navigation"
 import { normalizeSearch } from "@/lib/search"
 import { cn } from "@/lib/utils"
 import { Client } from "@/schemas/client"
+import type { Agency } from "@/schemas/agency"
+import { ClientQuickEdit } from "@/components/clients/client-quick-edit"
 
 interface ClientComboboxProps {
   clients: Client[]
@@ -23,6 +25,14 @@ interface ClientComboboxProps {
   onCreate?: (name: string) => void
   // Reports the list opening and closing, for a table that highlights the row being edited.
   onOpenChange?: (open: boolean) => void
+  // When set, every client in the list gets a pencil that swaps the list for that client's
+  // form (name, phone, delete). The filter bars leave it out: they only pick.
+  manage?: {
+    agencies: Agency[]
+    showAgency: boolean
+    onSaved: (client: Client) => void
+    onDeleted: (clientId: string) => void
+  }
 }
 
 function matches(client: Client, query: string): boolean {
@@ -44,16 +54,21 @@ export function ClientCombobox({
   className,
   onCreate,
   onOpenChange,
+  manage,
 }: ClientComboboxProps) {
   const [open, setOpenState] = useState(false)
+  // The client whose form is showing in place of the list; reset whenever the list closes.
+  const [editingId, setEditingId] = useState<string | null>(null)
 
   function setOpen(next: boolean) {
     setOpenState(next)
+    if (!next) setEditingId(null)
     onOpenChange?.(next)
   }
   const [query, setQuery] = useState("")
 
   const selected = clients.find((c) => c.id === value)
+  const editing = editingId ? clients.find((c) => c.id === editingId) : undefined
   const filtered = useMemo(
     () => clients.filter((c) => matches(c, query)),
     [clients, query],
@@ -128,68 +143,111 @@ export function ClientCombobox({
           </div>
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-(--radix-popover-trigger-width) p-2" align="start">
-        <div className="relative mb-2">
-          <Search className="pointer-events-none absolute top-1/2 left-2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            autoFocus
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Nome ou telefone"
-            className="pl-8"
+      <PopoverContent
+        className={cn("w-(--radix-popover-trigger-width) p-2", manage && "min-w-72")}
+        align="start"
+      >
+        {editing && manage ? (
+          <ClientQuickEdit
+            key={editing.id}
+            client={editing}
+            agencies={manage.agencies}
+            showAgency={manage.showAgency}
+            onSaved={(client) => {
+              manage.onSaved(client)
+              setEditingId(null)
+            }}
+            onDeleted={(clientId) => {
+              manage.onDeleted(clientId)
+              setEditingId(null)
+            }}
+            onBack={() => setEditingId(null)}
           />
-        </div>
-        <div ref={listRef} className="max-h-56 overflow-y-auto">
-          {filtered.length === 0 && !showCreate && (
-            <p className="px-2 py-3 text-center text-sm text-muted-foreground">
-              Nenhum cliente encontrado.
-            </p>
-          )}
-          {filtered.map((client, index) => (
-            <button
-              key={client.id}
-              type="button"
-              onClick={() => handleSelect(client.id)}
-              className={cn(
-                "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent",
-                index === activeIndex && "bg-slate-200",
+        ) : (
+          <>
+            <div className="relative mb-2">
+              <Search className="pointer-events-none absolute top-1/2 left-2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                autoFocus
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="Nome ou telefone"
+                className="pl-8"
+              />
+            </div>
+            <div ref={listRef} className="max-h-56 overflow-y-auto">
+              {filtered.length === 0 && !showCreate && (
+                <p className="px-2 py-3 text-center text-sm text-muted-foreground">
+                  Nenhum cliente encontrado.
+                </p>
               )}
-            >
-              <span className="flex min-w-0 flex-1 flex-col">
-                <span className="truncate">{client.name}</span>
-                {client.phone && (
-                  <span className="truncate text-xs text-muted-foreground">
-                    {client.phone}
+              {filtered.map((client, index) => (
+                <button
+                  key={client.id}
+                  type="button"
+                  onClick={() => handleSelect(client.id)}
+                  className={cn(
+                    "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent",
+                    index === activeIndex && "bg-slate-200",
+                  )}
+                >
+                  <span className="flex min-w-0 flex-1 flex-col">
+                    <span className="truncate">{client.name}</span>
+                    {client.phone && (
+                      <span className="truncate text-xs text-muted-foreground">
+                        {client.phone}
+                      </span>
+                    )}
+                    {/* Only a dev is handed these (migration 72); the pencil assigns one. */}
+                    {client.agency_id === null && (
+                      <span className="truncate text-xs text-amber-700">Sem agência</span>
+                    )}
                   </span>
-                )}
-              </span>
-              {client.id === value && <Check className="h-4 w-4 shrink-0" />}
-            </button>
-          ))}
+                  {client.id === value && <Check className="h-4 w-4 shrink-0" />}
+                  {manage && (
+                    <span
+                      role="button"
+                      tabIndex={-1}
+                      title="Editar cliente"
+                      aria-label={`Editar ${client.name}`}
+                      // Inside the row's button: a click here must edit, not pick the client.
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        setEditingId(client.id)
+                      }}
+                      className="shrink-0 rounded p-1 text-slate-400 hover:bg-slate-300 hover:text-slate-800"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </span>
+                  )}
+                </button>
+              ))}
 
-          {showCreate && (
-            <button
-              type="button"
-              onClick={handleCreate}
-              className={cn(
-                "flex w-full items-start gap-1.5 rounded-sm px-2 py-2 text-left hover:bg-accent",
-                filtered.length > 0 && "mt-1 border-t",
-                activeIndex === filtered.length && "bg-slate-200",
+              {showCreate && (
+                <button
+                  type="button"
+                  onClick={handleCreate}
+                  className={cn(
+                    "flex w-full items-start gap-1.5 rounded-sm px-2 py-2 text-left hover:bg-accent",
+                    filtered.length > 0 && "mt-1 border-t",
+                    activeIndex === filtered.length && "bg-slate-200",
+                  )}
+                >
+                  <Plus className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm">
+                      Criar cliente &quot;{typed}&quot;
+                    </span>
+                    <span className="block text-xs text-muted-foreground">
+                      cadastra sem telefone e já vincula à venda
+                    </span>
+                  </span>
+                </button>
               )}
-            >
-              <Plus className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              <span className="min-w-0">
-                <span className="block truncate text-sm">
-                  Criar cliente &quot;{typed}&quot;
-                </span>
-                <span className="block text-xs text-muted-foreground">
-                  cadastra sem telefone e já vincula à venda
-                </span>
-              </span>
-            </button>
-          )}
-        </div>
+            </div>
+          </>
+        )}
       </PopoverContent>
     </Popover>
   )
