@@ -1996,7 +1996,16 @@ definitions:
         items:
           type: string
         type: array
+      is_partner:
+        description: |-
+          IsPartner marks a partner rather than team staff: the sales of the issuances they
+          issue are linked to PartnerClientName (their own name when empty). Absent leaves the
+          current value alone.
+        type: boolean
       name:
+        type: string
+      partner_client_name:
+        maxLength: 120
         type: string
       password:
         maxLength: 20
@@ -5199,7 +5208,16 @@ definitions:
         items:
           type: string
         type: array
+      is_partner:
+        description: |-
+          IsPartner marks a partner rather than team staff: the sales of the issuances they
+          issue are linked to PartnerClientName (their own name when empty). Absent leaves the
+          current value alone.
+        type: boolean
       name:
+        type: string
+      partner_client_name:
+        maxLength: 120
         type: string
       password:
         maxLength: 20
@@ -5247,7 +5265,12 @@ definitions:
         type: string
       id:
         type: string
+      is_partner:
+        description: 'IsPartner and PartnerClientName: see CreateUserRequest.'
+        type: boolean
       name:
+        type: string
+      partner_client_name:
         type: string
       phone:
         type: string

@@ -15607,8 +15607,16 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
+                "is_partner": {
+                    "description": "IsPartner marks a partner rather than team staff: the sales of the issuances they\nissue are linked to PartnerClientName (their own name when empty). Absent leaves the\ncurrent value alone.",
+                    "type": "boolean"
+                },
                 "name": {
                     "type": "string"
+                },
+                "partner_client_name": {
+                    "type": "string",
+                    "maxLength": 120
                 },
                 "password": {
                     "type": "string",
@@ -19877,8 +19885,16 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
+                "is_partner": {
+                    "description": "IsPartner marks a partner rather than team staff: the sales of the issuances they\nissue are linked to PartnerClientName (their own name when empty). Absent leaves the\ncurrent value alone.",
+                    "type": "boolean"
+                },
                 "name": {
                     "type": "string"
+                },
+                "partner_client_name": {
+                    "type": "string",
+                    "maxLength": 120
                 },
                 "password": {
                     "type": "string",
@@ -19941,7 +19957,14 @@ const docTemplate = `{
                 "id": {
                     "type": "string"
                 },
+                "is_partner": {
+                    "description": "IsPartner and PartnerClientName: see CreateUserRequest.",
+                    "type": "boolean"
+                },
                 "name": {
+                    "type": "string"
+                },
+                "partner_client_name": {
                     "type": "string"
                 },
                 "phone": {
