@@ -110,3 +110,29 @@ func TestGetSalesPageSearchesByLocatorAndPassenger(t *testing.T) {
 		}
 	})
 }
+
+// ids= answers with exactly the listed sales, whatever the other filters say: it is how the
+// panel refreshes a row an edit took out of the filter. A malformed id is refused rather than
+// left to fail in Postgres.
+func TestGetSalesPageByIDIgnoresTheFilter(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		client := seedClient(t, tx)
+		other := seedClient(t, tx)
+		issuedAt := time.Now().AddDate(0, 0, -1)
+		kept := seedClientSale(t, tx, client.ID, 1_000, issuedAt)
+		seedClientSale(t, tx, client.ID, 2_000, issuedAt)
+
+		page := callGetSalesPage(t, tx, "client_ids="+other.ID+"&ids="+kept.ID+","+uuid.New().String())
+		if len(page.Sales) != 1 || page.Sales[0].ID != kept.ID || page.Total != 1 {
+			t.Fatalf("ids lookup = %d sales (total %d), want only the listed sale that exists", len(page.Sales), page.Total)
+		}
+
+		handler := NewSaleHandler(tx, events.NewBroker())
+		req := withScope(httptest.NewRequest(http.MethodGet, "/sales/page?ids=not-a-uuid", nil), access.FullScope())
+		rec := httptest.NewRecorder()
+		handler.GetSalesPage(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("malformed id: status %d, want 400", rec.Code)
+		}
+	})
+}
