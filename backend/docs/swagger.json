@@ -11867,6 +11867,12 @@
                         "description": "Busca por localizador, passageiro, origem ou destino da emissão",
                         "name": "q",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "UUIDs de vendas separados por vírgula (máximo 200). Quando vem, devolve só essas vendas da agência, ignorando os demais filtros e a janela",
+                        "name": "ids",
+                        "in": "query"
                     }
                 ],
                 "responses": {

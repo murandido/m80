@@ -607,6 +607,7 @@ const (
 // @Param        client_ids          query  string  false  "UUIDs de clientes separados por vírgula; 'none' inclui as vendas sem cliente"
 // @Param        paid                query  boolean false  "Filtra por vendas pagas (true) ou em aberto (false)"
 // @Param        q                   query  string  false  "Busca por localizador, passageiro, origem ou destino da emissão"
+// @Param        ids                 query  string  false  "UUIDs de vendas separados por vírgula (máximo 200). Quando vem, devolve só essas vendas da agência, ignorando os demais filtros e a janela"
 // @Success      200  {object}  schemas.SalePageSingleResponse
 // @Failure      401  {object}  schemas.ErrorResponse "Não autenticado"
 // @Failure      500  {object}  schemas.ErrorResponse "Erro ao buscar vendas"
@@ -615,6 +616,11 @@ func (h *SaleHandler) GetSalesPage(w http.ResponseWriter, r *http.Request) {
 	agencyID, err := resolveAgencyFilter(h.DB, r)
 	if err != nil {
 		sendAgencyFilterError(w, r, err)
+		return
+	}
+
+	if raw := strings.TrimSpace(r.URL.Query().Get("ids")); raw != "" {
+		h.getSalesByID(w, r, agencyID, raw)
 		return
 	}
 
@@ -694,6 +700,52 @@ func (h *SaleHandler) GetSalesPage(w http.ResponseWriter, r *http.Request) {
 		Offset:    offset,
 		Limit:     limit,
 		OwedCents: owed,
+	})
+}
+
+// getSalesByID answers GET /sales/page?ids=...: the listed sales of the agency, whatever the
+// other filters say. The panel keeps a row on screen after an edit takes it out of the
+// filter (a pending sale just paid, under "em aberto"), and this is how it reads that row's
+// current values - the filtered pages no longer carry it. A sale deleted since is simply
+// absent from the answer, which is what lets the panel drop it.
+func (h *SaleHandler) getSalesByID(w http.ResponseWriter, r *http.Request, agencyID, raw string) {
+	ids := splitIDs(raw)
+	if len(ids) > salePageMaxLimit {
+		utils.SendError(w, r, http.StatusBadRequest, "Too many sale ids")
+		return
+	}
+	for _, id := range ids {
+		if _, err := uuid.Parse(id); err != nil {
+			utils.SendError(w, r, http.StatusBadRequest, "Invalid sale id")
+			return
+		}
+	}
+
+	var rows []saleRow
+	if err := saleListQuery(h.DB.WithContext(r.Context())).
+		Where("issuances.agency_id = ?", agencyID).
+		Where("sales.id IN ?", ids).
+		Order("issuances.created_at asc, sales.id").
+		Scan(&rows).Error; err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch sales")
+		return
+	}
+
+	from, to := parseDateRange(r)
+	alterations, err := alterationCentsInWindow(h.DB, rows, from, to)
+	if err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch the alterations of the sales")
+		return
+	}
+	sales := make([]schemas.SaleResponse, 0, len(rows))
+	for _, row := range rows {
+		sales = append(sales, asAlterationDay(toSaleResponse(row), alterations, from, to))
+	}
+
+	utils.SendJSON(w, r, http.StatusOK, "Sales fetched successfully", schemas.SalePageResponse{
+		Sales: sales,
+		Total: int64(len(sales)),
+		Limit: len(ids),
 	})
 }
 

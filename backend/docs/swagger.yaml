@@ -13474,6 +13474,11 @@ paths:
         in: query
         name: q
         type: string
+      - description: UUIDs de vendas separados por vírgula (máximo 200). Quando vem,
+          devolve só essas vendas da agência, ignorando os demais filtros e a janela
+        in: query
+        name: ids
+        type: string
       produces:
       - application/json
       responses:

@@ -25,6 +25,9 @@ interface WindowState {
   pages: Sale[][]
   // When the page at the top arrived, so the rows that came in above can fade in.
   arrivedAt: number
+  // Rows held on screen though the filter no longer matches them (see refresh). They sit in
+  // the pages but are not part of the server's count.
+  keptIds: Set<string>
   error: boolean
 }
 
@@ -34,6 +37,7 @@ const EMPTY: WindowState = {
   firstPage: 0,
   pages: [],
   arrivedAt: 0,
+  keptIds: new Set(),
   error: false,
 }
 
@@ -49,6 +53,52 @@ async function fetchWindow(query: string, offset: number, limit: number) {
 
 function fetchPage(query: string, page: number) {
   return fetchWindow(query, page * SALES_PAGE_SIZE, SALES_PAGE_SIZE)
+}
+
+// The current values of the listed sales, whatever the filter says. A sale missing from the
+// answer was deleted. The server takes at most a page's worth of ids per request.
+async function fetchSalesById(query: string, ids: string[]): Promise<Map<string, Sale>> {
+  const found = new Map<string, Sale>()
+  for (let at = 0; at < ids.length; at += SALES_PAGE_SIZE) {
+    const params = new URLSearchParams(query)
+    params.set("ids", ids.slice(at, at + SALES_PAGE_SIZE).join(","))
+    const res = await fetch(`/api/sales/page?${params.toString()}`, { cache: "no-store" })
+    const parsed = getSalesPageSchema.response.safeParse(await res.json())
+    if (!res.ok || !parsed.success) throw new Error("sales by id")
+    for (const sale of parsed.data.data.sales) found.set(sale.id, sale)
+  }
+  return found
+}
+
+// Puts the rows that left the filter back into the freshly fetched pages, each right after
+// the row it followed before, so nothing on screen moves.
+function mergeKeptRows(
+  heldPages: Sale[][],
+  freshPages: Sale[][],
+  kept: Map<string, Sale>,
+): Sale[][] {
+  return freshPages.map((fresh, index) => {
+    const held = heldPages[index] ?? []
+    const merged = [...fresh]
+    held.forEach((sale, position) => {
+      const current = kept.get(sale.id)
+      if (!current) return
+      const previous = held
+        .slice(0, position)
+        .reverse()
+        .find((candidate) => merged.some((row) => row.id === candidate.id))
+      const at = previous ? merged.findIndex((row) => row.id === previous.id) + 1 : 0
+      merged.splice(at, 0, current)
+    })
+    return merged
+  })
+}
+
+// A page fetched while rows are kept may carry one of them again - it was edited back into
+// the filter. Held once: duplicate rows would share a key in the virtual list.
+function withoutHeld(sales: Sale[], pages: Sale[][]): Sale[] {
+  const held = new Set(pages.flat().map((sale) => sale.id))
+  return sales.filter((sale) => !held.has(sale.id))
 }
 
 // The payments list the way a chat history works: it opens on the newest sales, scrolling
@@ -97,6 +147,7 @@ export function useSalesWindow(query: string) {
           firstPage,
           pages,
           arrivedAt: 0,
+          keptIds: new Set(),
           error: false,
         })
       })
@@ -119,7 +170,7 @@ export function useSalesWindow(query: string) {
       .then((data) => {
         if (generation.current !== current) return
         setState((prev) => {
-          const next = [data.sales, ...prev.pages]
+          const next = [withoutHeld(data.sales, prev.pages), ...prev.pages]
           const last = next[next.length - 1]
           if (next.length > MAX_PAGES && !last.some((s) => protectedIds.current.has(s.id))) {
             next.pop()
@@ -152,7 +203,7 @@ export function useSalesWindow(query: string) {
       .then((data) => {
         if (generation.current !== current) return
         setState((prev) => {
-          const next = [...prev.pages, data.sales]
+          const next = [...prev.pages, withoutHeld(data.sales, prev.pages)]
           let first = prev.firstPage
           if (next.length > MAX_PAGES && !next[0].some((s) => protectedIds.current.has(s.id))) {
             next.shift()
@@ -169,19 +220,38 @@ export function useSalesWindow(query: string) {
 
   // Refetches the pages held, and the length - after an edit (a payment can move money
   // between a client's sales) and on every server event.
+  //
+  // A row already on screen stays on screen even when the refetch says the filter no longer
+  // matches it: marking a sale paid under "em aberto" used to make it vanish under the
+  // operator's cursor, along with any row a client payment settled. Such rows are read again
+  // by id, so they show their current values, and keep their place until the filter changes
+  // or the page reloads. Only a deleted sale leaves.
   const refresh = useCallback(() => {
     const { firstPage, pages } = stateRef.current
     if (pages.length === 0) return
     const current = generation.current
-    Promise.all(pages.map((_, i) => fetchPage(query, firstPage + i)))
-      .then((fresh) => {
+    ;(async () => {
+      const fresh = await Promise.all(pages.map((_, i) => fetchPage(query, firstPage + i)))
+      const freshIds = new Set(fresh.flatMap((page) => page.sales.map((sale) => sale.id)))
+      const missing = pages.flat().filter((sale) => !freshIds.has(sale.id))
+      const kept = missing.length
+        ? await fetchSalesById(query, missing.map((sale) => sale.id))
+        : new Map<string, Sale>()
+      return { fresh, kept }
+    })()
+      .then(({ fresh, kept }) => {
         if (generation.current !== current) return
         setState((prev) =>
           prev.firstPage !== firstPage || prev.pages.length !== fresh.length
             ? prev
             : {
                 ...prev,
-                pages: fresh.map((page) => page.sales),
+                pages: mergeKeptRows(
+                  prev.pages,
+                  fresh.map((page) => page.sales),
+                  kept,
+                ),
+                keptIds: new Set(kept.keys()),
                 total: fresh[fresh.length - 1].total,
                 owedCents: fresh[fresh.length - 1].owed_cents,
               },
@@ -254,6 +324,8 @@ export function useSalesWindow(query: string) {
   const sales = state.pages.flat()
   const firstIndex = state.firstPage * SALES_PAGE_SIZE
   const total = state.total
+  // The kept rows are not in the server's count, so they do not count towards the end of it.
+  const listedCount = sales.filter((sale) => !state.keptIds.has(sale.id)).length
   return {
     total,
     owedCents: state.owedCents,
@@ -264,7 +336,7 @@ export function useSalesWindow(query: string) {
     // When the page on top arrived, for the fade of rows that came in above.
     arrivedAt: state.arrivedAt,
     hasOlder: state.firstPage > 0,
-    hasNewer: total !== null && firstIndex + sales.length < total,
+    hasNewer: total !== null && firstIndex + listedCount < total,
     loadOlder,
     loadNewer,
     refresh,
