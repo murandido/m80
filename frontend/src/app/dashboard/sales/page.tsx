@@ -1,8 +1,7 @@
 import type { Metadata } from "next"
 import { Suspense } from "react"
 import { cookies } from "next/headers"
-import Link from "next/link"
-import { ExternalLink, FileText, TriangleAlert } from "lucide-react"
+import { FileText, TriangleAlert } from "lucide-react"
 import { env } from "@/lib/env"
 import { fetchList } from "@/lib/fetch-list"
 import { canAccess } from "@/lib/navigation"
@@ -108,14 +107,6 @@ export default async function SalesClientsPage({
             Controle de pagamentos
           </h1>
           <div className="flex flex-wrap items-center gap-2">
-            {/* Linking a sale to a client that does not exist yet is the common case here,
-                so the client register is one click away instead of a trip to the sidebar. */}
-            <Button asChild variant="ghost" className="text-slate-500">
-              <Link href="/dashboard/clients">
-                Gerenciar clientes
-                <ExternalLink className="h-4 w-4" />
-              </Link>
-            </Button>
             <Button asChild variant="outline">
               {/* Native download: the backend sets the filename via Content-Disposition, and
                   `query` is the same string that fetched the list on screen. */}

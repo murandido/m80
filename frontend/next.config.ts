@@ -11,6 +11,13 @@ const nextConfig: NextConfig = {
   // deleted, leaving an untracked file in every clone. What it says already lives in
   // frontend/CLAUDE.md; with this off, the next `next dev` also removes the block.
   agentRules: false,
+  // The clients register moved into the payments control ("Vincular cliente..." edits and
+  // deletes a client in place), so the old screen's address lands there.
+  async redirects() {
+    return [
+      { source: "/dashboard/clients", destination: "/dashboard/sales", permanent: false },
+    ]
+  },
   experimental: {
     serverActions: {
       // The spreadsheet importer uploads the whole workbook through a server action, and

@@ -111,12 +111,6 @@ export default async function SalesSuppliersPage({
       <div className="flex flex-col gap-4 sm:gap-6">
         <div className="flex items-center justify-between gap-4">
           <h1 className="text-lg font-semibold text-slate-800">Controle de pagamentos</h1>
-          <Button asChild variant="ghost" size="sm" className="text-slate-500">
-            <Link href="/dashboard/clients">
-              Gerenciar clientes
-              <ExternalLink className="h-4 w-4" />
-            </Link>
-          </Button>
           {/* Where the cost comes from on an account that owns its points: the batches,
               not the rate typed on this screen. */}
           <Button asChild variant="ghost" size="sm" className="text-slate-500">
