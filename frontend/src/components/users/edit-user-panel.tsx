@@ -25,6 +25,7 @@ import { Separator } from "@/components/ui/separator"
 import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 import { User, updateUserSchema } from "@/schemas/user"
+import { PartnerField } from "@/components/users/partner-field"
 import { RoleSelector } from "@/components/users/role-selector"
 import { UserAgenciesField } from "@/components/users/user-agencies-field"
 import {
@@ -68,9 +69,14 @@ export function EditUserPanel({
       role: user.role,
       agency_ids: viewerIsDev ? user.agency_ids : undefined,
       account_ids: user.account_ids,
+      is_partner: user.is_partner,
+      partner_client_name: user.partner_client_name ?? "",
     },
   })
   const role = useWatch({ control: form.control, name: "role" })
+  const isPartner = useWatch({ control: form.control, name: "is_partner" })
+  const partnerClientName = useWatch({ control: form.control, name: "partner_client_name" })
+  const userName = useWatch({ control: form.control, name: "name" })
 
   // Re-seeded whenever the panel closes, and whenever the record itself changes
   // while closed. The second half matters after a save or a merge: the panel closes
@@ -85,6 +91,8 @@ export function EditUserPanel({
         role: user.role,
         agency_ids: viewerIsDev ? user.agency_ids : undefined,
         account_ids: user.account_ids,
+        is_partner: user.is_partner,
+        partner_client_name: user.partner_client_name ?? "",
       })
       // eslint-disable-next-line react-hooks/set-state-in-effect -- resets the panel each time it opens for a user
       setShowPassword(false)
@@ -99,6 +107,7 @@ export function EditUserPanel({
         ...data,
         agency_ids: isClient ? undefined : data.agency_ids,
         account_ids: isClient ? (data.account_ids ?? []) : undefined,
+        is_partner: isClient ? false : data.is_partner,
       })
       if (result.error) {
         form.setError("root", { message: result.error })
@@ -262,6 +271,20 @@ export function EditUserPanel({
                   )}
                 />
               </div>
+
+              {/* team or partner - a statement client issues nothing, so it is never one */}
+              {role !== "statement_client" && (
+                <div className="flex flex-col gap-1 text-sm">
+                  <PartnerField
+                    isPartner={isPartner}
+                    onPartnerChange={(value) => form.setValue("is_partner", value)}
+                    clientName={partnerClientName}
+                    onClientNameChange={(value) => form.setValue("partner_client_name", value)}
+                    userName={userName}
+                    disabled={isPending}
+                  />
+                </div>
+              )}
 
               {/* accounts - what a statement client may read */}
               {role === "statement_client" && (

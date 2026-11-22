@@ -16,10 +16,12 @@ export async function updateUserAction(
   const cookieStore = await cookies()
   const token = cookieStore.get("auth_token")?.value
 
-  const body: Record<string, string | string[]> = {
+  const body: Record<string, string | string[] | boolean> = {
     name: data.name,
     phone: data.phone,
     role: data.role,
+    is_partner: data.is_partner,
+    partner_client_name: data.partner_client_name,
   }
   if (data.password) {
     body.password = data.password

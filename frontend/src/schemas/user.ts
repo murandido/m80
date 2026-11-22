@@ -34,6 +34,13 @@ export const userSchema = z.object({
     .array(z.string())
     .nullish()
     .transform((value) => value ?? []),
+  // A partner issues on their own behalf: their sales are linked to partner_client_name
+  // (their own name when null). Defaulted for an API that predates the fields.
+  is_partner: z
+    .boolean()
+    .nullish()
+    .transform((value) => value ?? false),
+  partner_client_name: z.string().nullish(),
   created_at: z.string(),
 })
 
@@ -76,6 +83,8 @@ export const updateUserSchema = {
     agency_ids: z.array(z.string()).optional(),
     // Only for a statement client; the form drops it for any other role.
     account_ids: z.array(z.string()).optional(),
+    is_partner: z.boolean(),
+    partner_client_name: z.string().max(120, "No máximo 120 caracteres"),
   }),
   response: z.object({
     success: z.boolean(),
@@ -108,6 +117,8 @@ export const createUserSchema = {
     // See updateUserSchema: only a dev sends it.
     agency_ids: z.array(z.string()).optional(),
     account_ids: z.array(z.string()).optional(),
+    is_partner: z.boolean(),
+    partner_client_name: z.string().max(120, "No máximo 120 caracteres"),
   }),
   response: z.object({
     success: z.boolean(),
