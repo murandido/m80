@@ -63,6 +63,7 @@ Como tratar o conteúdo:
 - O painel expõe um **servidor MCP pessoal** em `/api/mcp` (relay sem lógica em `frontend/src/app/api/mcp/route.ts`) que chega ao Go em `/mcp` (`backend/internal/mcp`). É por ele que o Claude Code, e rotinas agendadas no futuro, cuidam do estoque de pontos e das emissões.
 - **A credencial é um token MCP** (`m80mcp_…`), criado em *Dev Mode → Agente MCP*. Ele só vale em `/mcp`, nunca como sessão do painel, e age com o perfil e as agências do dono. Guarde-o no `~/.claude.json` (`claude mcp add --scope user --transport http m80 https://<domínio>/api/mcp --header "Authorization: Bearer <token>"`), nunca num arquivo do repositório.
 - **Três níveis de autonomia:** leitura direta; escrita livre (criar/editar emissão, alteração, lote de pontos, sync Traveos), que roda direto; e escrita destrutiva (cancelar, descancelar, excluir, fechar/reabrir período, acerto de lote), que só grava uma **proposta**. Proposta só é aprovada por dev, no painel, e roda com a sessão de quem aprova. Expira em 48h.
+- **Agente com usuário próprio:** um token pode pertencer a outro usuário (ex.: "Agente M80") e ter uma política, com as ferramentas que escreve sozinho e os limites; o que ela não cobre vira proposta. Rotinas deixam um relatório por dia na mesma página. Roteiro da conferência das liminares: `docs/mcp-routine-injunctions.md`.
 - Toda chamada de ferramenta vira linha em `mcp_calls`: é a única trilha das escritas livres, porque `audit_logs` não registra edição. Detalhes de implementação em `backend/internal/api/CLAUDE.md`.
 
 ## Backup do Banco
