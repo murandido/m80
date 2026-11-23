@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
@@ -20,7 +21,18 @@ type MCPToken struct {
 	TokenHash  string     `gorm:"column:token_hash;not null" json:"-"`
 	LastUsedAt *time.Time `gorm:"column:last_used_at" json:"last_used_at"`
 	RevokedAt  *time.Time `gorm:"column:revoked_at" json:"revoked_at"`
-	CreatedAt  time.Time  `json:"created_at"`
+	// AllowedWriteTools is which free-write tools the token runs directly (migration 000094).
+	// nil means all of them; an empty list means none, and every write becomes a proposal.
+	AllowedWriteTools pq.StringArray `gorm:"column:allowed_write_tools;type:text[]" json:"allowed_write_tools"`
+	// Limits caps what the token writes directly; past a ceiling a write becomes a proposal.
+	Limits    *MCPTokenLimits `gorm:"column:limits;type:jsonb;serializer:json" json:"limits"`
+	CreatedAt time.Time       `json:"created_at"`
+}
+
+// MCPTokenLimits are the ceilings on a token's direct writes. A nil field is no ceiling.
+type MCPTokenLimits struct {
+	MaxBatchPoints   *int `json:"max_batch_points,omitempty"`
+	MaxBatchesPerDay *int `json:"max_batches_per_day,omitempty"`
 }
 
 func (t *MCPToken) BeforeCreate(tx *gorm.DB) error {
@@ -98,4 +110,25 @@ func ExpireStaleMCPProposals(db *gorm.DB, now time.Time) error {
 	return db.Model(&MCPProposal{}).
 		Where("status = ? AND created_at < ?", MCPProposalPending, now.Add(-MCPProposalLifetime)).
 		Updates(map[string]any{"status": MCPProposalExpired, "decided_at": now}).Error
+}
+
+// MCPReport is what an agent's routine found on one day (migration 000094). One per token per
+// day: writing again on the same day replaces it.
+type MCPReport struct {
+	ID         string         `gorm:"primaryKey;type:uuid" json:"id"`
+	TokenID    string         `gorm:"column:token_id;type:uuid;not null" json:"token_id"`
+	ReportDate time.Time      `gorm:"column:report_date;type:date;not null" json:"report_date"`
+	Title      string         `gorm:"not null" json:"title"`
+	Summary    string         `gorm:"not null" json:"summary"`
+	Findings   datatypes.JSON `gorm:"type:jsonb" json:"findings"`
+	Actions    datatypes.JSON `gorm:"type:jsonb" json:"actions"`
+	CreatedAt  time.Time      `json:"created_at"`
+	UpdatedAt  time.Time      `json:"updated_at"`
+}
+
+func (r *MCPReport) BeforeCreate(tx *gorm.DB) error {
+	if r.ID == "" {
+		r.ID = uuid.New().String()
+	}
+	return nil
 }
