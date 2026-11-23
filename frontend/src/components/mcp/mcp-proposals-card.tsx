@@ -112,6 +112,7 @@ export function MCPProposalsCard({ proposals }: { proposals: MCPProposal[] }) {
                   <div className="flex items-center gap-2">
                     <Badge variant="secondary">{toolLabel(proposal.tool)}</Badge>
                     <span className="text-xs text-muted-foreground">
+                      {proposal.user_name ? `por ${proposal.user_name} · ` : ""}
                       {formatDateTime(proposal.created_at)} · expira {formatDateTime(proposal.expires_at)}
                     </span>
                   </div>

@@ -8,10 +8,13 @@ import {
   decideMCPProposalSchema,
   listMCPCallsSchema,
   listMCPProposalsSchema,
+  listMCPReportsSchema,
   listMCPTokensSchema,
   revokeMCPTokenSchema,
 } from "@/schemas/mcp"
-import type { MCPCall, MCPProposal, MCPToken } from "@/schemas/mcp"
+import type { MCPCall, MCPProposal, MCPReport, MCPToken } from "@/schemas/mcp"
+import { getUsersSchema } from "@/schemas/user"
+import type { User } from "@/schemas/user"
 
 type Envelope = z.ZodType<{ success: boolean; message: string; data?: unknown }>
 
@@ -50,14 +53,37 @@ export async function listMCPTokensAction(): Promise<{ error: string } | { data:
   return callApi("/mcp-tokens", listMCPTokensSchema.response, "Erro ao listar tokens MCP.")
 }
 
-export async function createMCPTokenAction(input: z.infer<typeof createMCPTokenSchema.request>) {
+export async function createMCPTokenAction(input: z.input<typeof createMCPTokenSchema.request>) {
   const request = createMCPTokenSchema.request.safeParse(input)
-  if (!request.success) return { error: "Nome inválido." }
+  if (!request.success) return { error: request.error.issues[0]?.message ?? "Dados inválidos." }
+  const form = request.data
+
+  const limits =
+    form.max_batch_points || form.max_batches_per_day
+      ? { max_batch_points: form.max_batch_points ?? null, max_batches_per_day: form.max_batches_per_day ?? null }
+      : null
 
   return callApi("/mcp-tokens", createMCPTokenSchema.response, "Erro ao criar token MCP.", {
     method: "POST",
-    body: JSON.stringify(request.data),
+    body: JSON.stringify({
+      name: form.name,
+      user_id: form.user_id || null,
+      // Unrestricted is null, not every tool listed: a tool added later is then allowed too,
+      // which is what a person's own token wants.
+      allowed_write_tools: form.restricted ? form.allowed_write_tools : null,
+      limits,
+    }),
   })
+}
+
+// The staff a token can belong to. The API leaves statement clients out of this list by
+// default, and the backend refuses them as token owners anyway.
+export async function listTokenOwnersAction(): Promise<{ error: string } | { data: User[] }> {
+  return callApi("/users", getUsersSchema.response, "Erro ao listar usuários.")
+}
+
+export async function listMCPReportsAction(): Promise<{ error: string } | { data: MCPReport[] }> {
+  return callApi("/mcp-reports?limit=30", listMCPReportsSchema.response, "Erro ao listar relatórios MCP.")
 }
 
 export async function revokeMCPTokenAction(id: string) {
