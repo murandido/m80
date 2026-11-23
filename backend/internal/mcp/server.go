@@ -94,6 +94,7 @@ const (
 	extraTokenID = "token_id"
 	extraPhone   = "phone"
 	extraRole    = "role"
+	extraPolicy  = "policy"
 )
 
 // errUnavailable is what verifyToken returns when the database cannot answer. It is not an
@@ -140,6 +141,7 @@ func (s *Server) verifyToken(_ context.Context, token string, _ *http.Request) (
 			extraTokenID: record.ID,
 			extraPhone:   record.User.Phone,
 			extraRole:    record.User.Role,
+			extraPolicy:  policyOf(record),
 		},
 	}, nil
 }
@@ -150,6 +152,9 @@ type caller struct {
 	UserID  string
 	Phone   string
 	Role    string
+	// Policy is nil for a token with no write policy: every free write runs directly, which
+	// is what a person's own token wants. See write.go.
+	Policy *tokenPolicy
 }
 
 func callerFrom(req *sdk.CallToolRequest) (caller, error) {
@@ -163,5 +168,6 @@ func callerFrom(req *sdk.CallToolRequest) (caller, error) {
 	if tokenID == "" || info.UserID == "" {
 		return caller{}, fmt.Errorf("chamada sem token")
 	}
-	return caller{TokenID: tokenID, UserID: info.UserID, Phone: phone, Role: role}, nil
+	policy, _ := info.Extra[extraPolicy].(*tokenPolicy)
+	return caller{TokenID: tokenID, UserID: info.UserID, Phone: phone, Role: role, Policy: policy}, nil
 }

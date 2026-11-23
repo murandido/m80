@@ -211,15 +211,27 @@ type listBatchesInput struct {
 }
 
 type addBatchInput struct {
-	AccountID          string  `json:"account_id" jsonschema:"ID (uuid) da conta que recebe os pontos. Precisa ter estoque próprio."`
-	OriginID           *string `json:"origin_id,omitempty" jsonschema:"ID da origem (compra, transferência, bônus...). Veja list_point_batch_origins. Obrigatório, salvo em saldo de abertura."`
-	AcquiredOn         string  `json:"acquired_on" jsonschema:"Dia em que os pontos entraram (AAAA-MM-DD)."`
-	Points             int     `json:"points" jsonschema:"Quantidade de pontos, inteiro positivo (50 mil = 50000)."`
-	CostCents          int     `json:"cost_cents" jsonschema:"Custo total do lote em centavos (R$ 894,72 = 89472). Zero para bônus."`
-	FundingAgencyID    string  `json:"funding_agency_id" jsonschema:"ID da agência que pagou pelos pontos. Veja list_agencies."`
-	ProfitSharePercent *int    `json:"profit_share_percent,omitempty" jsonschema:"Divisão de lucro deste lote (0-100). Vazio usa o padrão da conta."`
-	Opening            bool    `json:"opening,omitempty" jsonschema:"Saldo de abertura (carregado de antes), não uma compra."`
-	Note               *string `json:"note,omitempty" jsonschema:"Observação livre."`
+	AccountID          string       `json:"account_id" jsonschema:"ID (uuid) da conta que recebe os pontos. Precisa ter estoque próprio."`
+	OriginID           *string      `json:"origin_id,omitempty" jsonschema:"ID da origem (compra, transferência, bônus...). Veja list_point_batch_origins. Obrigatório, salvo em saldo de abertura."`
+	AcquiredOn         string       `json:"acquired_on" jsonschema:"Dia em que os pontos entraram (AAAA-MM-DD)."`
+	Points             int          `json:"points" jsonschema:"Quantidade de pontos, inteiro positivo (50 mil = 50000)."`
+	CostCents          int          `json:"cost_cents" jsonschema:"Custo total do lote em centavos (R$ 894,72 = 89472). Zero para bônus."`
+	FundingAgencyID    string       `json:"funding_agency_id" jsonschema:"ID da agência que pagou pelos pontos. Veja list_agencies."`
+	ProfitSharePercent *int         `json:"profit_share_percent,omitempty" jsonschema:"Divisão de lucro deste lote (0-100). Vazio usa o padrão da conta."`
+	Opening            bool         `json:"opening,omitempty" jsonschema:"Saldo de abertura (carregado de antes), não uma compra."`
+	Note               *string      `json:"note,omitempty" jsonschema:"Observação livre."`
+	Source             *batchSource `json:"source,omitempty" jsonschema:"De onde veio o lote (obrigatório para tokens de agente com política de escrita)."`
+}
+
+// body is the request the API takes: the source goes into the note, not into a field.
+func (in addBatchInput) body() addBatchInput {
+	out := in
+	if in.Source != nil {
+		note := in.Source.note(in.Note)
+		out.Note = &note
+	}
+	out.Source = nil
+	return out
 }
 
 type updateBatchInput struct {
@@ -316,19 +328,59 @@ func (s *Server) registerStockTools(server *sdk.Server) {
 
 	addTool(s, server, &sdk.Tool{
 		Name: "add_point_batch",
-		Description: "Lança um lote de pontos (entrada no estoque) numa conta com estoque próprio. Grava direto. " +
-			"Recusado se a data cair num período já fechado. Confira a conta, a origem e a agência antes; para corrigir depois use update_point_batch.",
+		Description: "Lança um lote de pontos (entrada no estoque) numa conta com estoque próprio. Recusado se a data cair num período já fechado. " +
+			"Token de agente (com política): exige source; só grava direto se o extrato mostrar um crédito sem lote com a mesma data e pontos, " +
+			"sem lote igual já lançado e dentro dos limites do token; senão vira proposta. Prefira record_statement_batches quando houver extrato.",
 		Annotations: &sdk.ToolAnnotations{DestructiveHint: boolPtr(false)},
 	}, func(ctx context.Context, who caller, in addBatchInput) (any, error) {
-		return s.call(ctx, who, http.MethodPost, "/point-batches", nil, in)
+		if err := requireSource(who, in.Source); err != nil {
+			return nil, err
+		}
+		reasons, err := s.batchReasons(who, in.Points, 1)
+		if err != nil {
+			return nil, err
+		}
+		if who.Policy != nil {
+			// An agent records a batch by itself only when the statement already shows the
+			// credit; everything else needs a human to confirm the points exist.
+			if duplicate, err := s.duplicateBatch(ctx, who, in.AccountID, in.AcquiredOn, in.Points); err != nil {
+				return nil, err
+			} else if duplicate {
+				reasons = append(reasons, "já existe lote com a mesma data e os mesmos pontos")
+			}
+			matched, err := s.statementMatch(ctx, who, in.AccountID, in.AcquiredOn, in.Points)
+			if err != nil || !matched {
+				reasons = append(reasons, "o extrato não mostra um crédito sem lote com essa data e esses pontos")
+			}
+		}
+		return s.writeOrPropose(ctx, who, "add_point_batch", writeIntent{
+			Operation: Operation{Method: http.MethodPost, Path: "/point-batches", Body: bodyOf(in.body())},
+			Summary:   fmt.Sprintf("Lançar lote de %d pontos em %s (custo %d centavos)", in.Points, in.AcquiredOn, in.CostCents),
+			Preview:   func() (any, error) { return in, nil },
+			Reasons:   reasons,
+		})
 	})
 
 	addTool(s, server, &sdk.Tool{
 		Name:        "update_point_batch",
-		Description: "Corrige um lote de pontos (data, pontos, custo, origem, agência, divisão, observação). Grava direto. Mudar de conta não existe: exclua (proposta) e lance de novo.",
+		Description: "Corrige um lote de pontos (data, pontos, custo, origem, agência, divisão, observação). Grava direto, salvo limite do token. Mudar de conta não existe: exclua (proposta) e lance de novo.",
 		Annotations: &sdk.ToolAnnotations{DestructiveHint: boolPtr(false), IdempotentHint: true},
 	}, func(ctx context.Context, who caller, in updateBatchInput) (any, error) {
-		return s.call(ctx, who, http.MethodPut, "/point-batches/"+url.PathEscape(in.BatchID), nil, in.Changes)
+		var reasons []string
+		if in.Changes.Points != nil {
+			// A correction can add points as surely as a new batch can, so the same ceiling
+			// applies; it is not a new batch, so the daily count is left alone.
+			var err error
+			if reasons, err = s.batchReasons(who, *in.Changes.Points, 0); err != nil {
+				return nil, err
+			}
+		}
+		return s.writeOrPropose(ctx, who, "update_point_batch", writeIntent{
+			Operation: Operation{Method: http.MethodPut, Path: "/point-batches/" + url.PathEscape(in.BatchID), Body: bodyOf(in.Changes)},
+			Summary:   "Corrigir lote " + in.BatchID,
+			Preview:   func() (any, error) { return in.Changes, nil },
+			Reasons:   reasons,
+		})
 	})
 
 	addTool(s, server, &sdk.Tool{

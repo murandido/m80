@@ -26,8 +26,9 @@ func addTool[In any](s *Server, server *sdk.Server, tool *sdk.Tool, fn toolFunc[
 		}
 
 		started := s.now()
-		out, callErr := fn(ctx, who, in)
-		s.recordCall(who, tool.Name, in, started, callErr)
+		outcome := &callOutcome{}
+		out, callErr := fn(context.WithValue(ctx, outcomeKey{}, outcome), who, in)
+		s.recordCall(who, tool.Name, in, started, outcome, callErr)
 		if callErr != nil {
 			return nil, nil, callErr
 		}
@@ -40,10 +41,21 @@ func addTool[In any](s *Server, server *sdk.Server, tool *sdk.Tool, fn toolFunc[
 	})
 }
 
-func (s *Server) recordCall(who caller, tool string, in any, started time.Time, callErr error) {
+func (s *Server) recordCall(who caller, tool string, in any, started time.Time, outcome *callOutcome, callErr error) {
 	args, err := json.Marshal(in)
 	if err != nil {
 		args = []byte(`null`)
+	}
+	// A write that became a proposal is marked in its args: the trail shows it, and the
+	// daily batch ceiling does not count it as a batch written.
+	if outcome != nil && outcome.Proposed {
+		var fields map[string]any
+		if json.Unmarshal(args, &fields) == nil && fields != nil {
+			fields["_outcome"] = "proposed"
+			if marked, err := json.Marshal(fields); err == nil {
+				args = marked
+			}
+		}
 	}
 	row := data.MCPCall{
 		TokenID:    who.TokenID,

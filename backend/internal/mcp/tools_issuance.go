@@ -301,11 +301,15 @@ func (s *Server) registerIssuanceTools(server *sdk.Server) {
 
 	addTool(s, server, &sdk.Tool{
 		Name: "create_issuance",
-		Description: "Registra uma emissão. Grava direto e consome o estoque da conta (FIFO). Recusada se o localizador já existir numa emissão ativa, " +
+		Description: "Registra uma emissão. Grava direto (ou vira proposta, se o token não puder escrever sozinho) e consome o estoque da conta (FIFO). Recusada se o localizador já existir numa emissão ativa, " +
 			"se a conta estiver arquivada ou se a data cair num período fechado. Antes, confira que ela não existe (search_issuances).",
 		Annotations: &sdk.ToolAnnotations{DestructiveHint: boolPtr(false)},
 	}, func(ctx context.Context, who caller, in createIssuanceInput) (any, error) {
-		return s.call(ctx, who, http.MethodPost, "/issuances", nil, in)
+		return s.writeOrPropose(ctx, who, "create_issuance", writeIntent{
+			Operation: Operation{Method: http.MethodPost, Path: "/issuances", Body: bodyOf(in)},
+			Summary:   fmt.Sprintf("Criar emissão %s (%d pontos)", in.ProgramLocator, in.Points),
+			Preview:   func() (any, error) { return in, nil },
+		})
 	})
 
 	addTool(s, server, &sdk.Tool{
@@ -316,7 +320,14 @@ func (s *Server) registerIssuanceTools(server *sdk.Server) {
 		if in.Changes.Status != nil && *in.Changes.Status == "cancelled" {
 			return nil, fmt.Errorf("cancelar exige aprovação: use propose_cancel_issuance")
 		}
-		return s.call(ctx, who, http.MethodPatch, issuancePath(in.IssuanceID), nil, in.Changes)
+		return s.writeOrPropose(ctx, who, "update_issuance", writeIntent{
+			Operation: Operation{Method: http.MethodPatch, Path: issuancePath(in.IssuanceID), Body: bodyOf(in.Changes)},
+			Summary:   "Editar emissão " + in.IssuanceID,
+			Preview: func() (any, error) {
+				current, err := s.issuancePreview(ctx, who, in.IssuanceID)
+				return map[string]any{"current": current, "changes": in.Changes}, err
+			},
+		})
 	})
 
 	addTool(s, server, &sdk.Tool{
@@ -324,7 +335,14 @@ func (s *Server) registerIssuanceTools(server *sdk.Server) {
 		Description: "Registra uma alteração de passagem (remarcação, troca de trecho) numa emissão ativa: pontos e taxas cobrados ou devolvidos. Grava direto e entra no custeio do dia occurred_on.",
 		Annotations: &sdk.ToolAnnotations{DestructiveHint: boolPtr(false)},
 	}, func(ctx context.Context, who caller, in addAdjustmentInput) (any, error) {
-		return s.call(ctx, who, http.MethodPost, issuancePath(in.IssuanceID, "adjustments"), nil, in.Adjustment)
+		return s.writeOrPropose(ctx, who, "add_adjustment", writeIntent{
+			Operation: Operation{Method: http.MethodPost, Path: issuancePath(in.IssuanceID, "adjustments"), Body: bodyOf(in.Adjustment)},
+			Summary:   fmt.Sprintf("Registrar alteração (%+d pontos) na emissão %s: %s", in.Adjustment.Points, in.IssuanceID, in.Adjustment.Reason),
+			Preview: func() (any, error) {
+				current, err := s.issuancePreview(ctx, who, in.IssuanceID)
+				return map[string]any{"issuance": current, "adjustment": in.Adjustment}, err
+			},
+		})
 	})
 
 	addTool(s, server, &sdk.Tool{
@@ -332,7 +350,11 @@ func (s *Server) registerIssuanceTools(server *sdk.Server) {
 		Description: "Corrige uma alteração de passagem, substituindo todos os campos. Grava direto. Excluir é propose_delete_adjustment.",
 		Annotations: &sdk.ToolAnnotations{DestructiveHint: boolPtr(false), IdempotentHint: true},
 	}, func(ctx context.Context, who caller, in updateAdjustmentInput) (any, error) {
-		return s.call(ctx, who, http.MethodPatch, issuancePath(in.IssuanceID, "adjustments", url.PathEscape(in.AdjustmentID)), nil, in.Adjustment)
+		return s.writeOrPropose(ctx, who, "update_adjustment", writeIntent{
+			Operation: Operation{Method: http.MethodPatch, Path: issuancePath(in.IssuanceID, "adjustments", url.PathEscape(in.AdjustmentID)), Body: bodyOf(in.Adjustment)},
+			Summary:   fmt.Sprintf("Corrigir alteração %s da emissão %s: %s", in.AdjustmentID, in.IssuanceID, in.Adjustment.Reason),
+			Preview:   func() (any, error) { return in.Adjustment, nil },
+		})
 	})
 
 	addTool(s, server, &sdk.Tool{
@@ -340,7 +362,10 @@ func (s *Server) registerIssuanceTools(server *sdk.Server) {
 		Description: "Busca de novo na Traveos/cia os dados da reserva (voos, passageiros) e completa a emissão. Grava direto.",
 		Annotations: &sdk.ToolAnnotations{DestructiveHint: boolPtr(false), IdempotentHint: true, OpenWorldHint: boolPtr(true)},
 	}, func(ctx context.Context, who caller, in issuanceIDInput) (any, error) {
-		return s.call(ctx, who, http.MethodPost, issuancePath(in.IssuanceID, "traveos-sync"), nil, nil)
+		return s.writeOrPropose(ctx, who, "sync_issuance_traveos", writeIntent{
+			Operation: Operation{Method: http.MethodPost, Path: issuancePath(in.IssuanceID, "traveos-sync")},
+			Summary:   "Completar a emissão " + in.IssuanceID + " com os dados da Traveos",
+		})
 	})
 
 	addTool(s, server, &sdk.Tool{

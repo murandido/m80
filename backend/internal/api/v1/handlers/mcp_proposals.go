@@ -56,6 +56,10 @@ func toMCPProposalResponse(p data.MCPProposal, names map[string]string) schemas.
 			resp.DecidedByName = &name
 		}
 	}
+	// Whose token proposed it: an agent's own user reads differently from a person's.
+	if name, ok := names[p.UserID]; ok {
+		resp.UserName = &name
+	}
 	return resp
 }
 
@@ -90,7 +94,7 @@ func (h *MCPProposalHandler) GetMCPProposals(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	names, err := h.deciderNames(proposals)
+	names, err := h.userNames(proposals)
 	if err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Erro ao listar propostas MCP")
 		return
@@ -102,9 +106,10 @@ func (h *MCPProposalHandler) GetMCPProposals(w http.ResponseWriter, r *http.Requ
 	utils.SendJSON(w, r, http.StatusOK, "Propostas MCP listadas com sucesso", resp)
 }
 
-func (h *MCPProposalHandler) deciderNames(proposals []data.MCPProposal) (map[string]string, error) {
+func (h *MCPProposalHandler) userNames(proposals []data.MCPProposal) (map[string]string, error) {
 	var ids []string
 	for _, p := range proposals {
+		ids = append(ids, p.UserID)
 		if p.DecidedByID != nil {
 			ids = append(ids, *p.DecidedByID)
 		}
@@ -132,7 +137,7 @@ func (h *MCPProposalHandler) sendDecision(w http.ResponseWriter, r *http.Request
 	case err != nil:
 		utils.SendError(w, r, http.StatusInternalServerError, "Erro ao decidir a proposta")
 	default:
-		names, nameErr := h.deciderNames([]data.MCPProposal{proposal})
+		names, nameErr := h.userNames([]data.MCPProposal{proposal})
 		if nameErr != nil {
 			names = map[string]string{}
 		}
