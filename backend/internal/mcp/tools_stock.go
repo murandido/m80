@@ -105,9 +105,13 @@ func (a stockAccount) label() string {
 	return a.Program + " " + a.ID
 }
 
-func (s *Server) listStockAccounts(ctx context.Context, who caller, program string) ([]stockAccount, error) {
+func (s *Server) listStockAccounts(ctx context.Context, who caller, program, category string) ([]stockAccount, error) {
+	var query url.Values
+	if category = strings.TrimSpace(category); category != "" {
+		query = url.Values{"category": {category}}
+	}
 	var accounts []apiAccount
-	if err := s.get(ctx, who, "/accounts", nil, &accounts); err != nil {
+	if err := s.get(ctx, who, "/accounts", query, &accounts); err != nil {
 		return nil, err
 	}
 	program = strings.ToUpper(strings.TrimSpace(program))
@@ -124,6 +128,7 @@ func (s *Server) listStockAccounts(ctx context.Context, who caller, program stri
 type stockOverviewInput struct {
 	Program       string `json:"program,omitempty" jsonschema:"Código do programa para filtrar: SMILES, LATAM, AZUL... Vazio traz todos."`
 	InventoryOnly bool   `json:"inventory_only,omitempty" jsonschema:"Só contas com estoque próprio (owns_point_inventory), as que têm saldo esperado."`
+	Category      string `json:"category,omitempty" jsonschema:"Categoria da conta: injunction (liminar), standard ou unidentified. Vazio traz todas."`
 }
 
 type programTotals struct {
@@ -135,9 +140,10 @@ type programTotals struct {
 }
 
 type stockAlertsInput struct {
-	DivergenceThresholdPoints int `json:"divergence_threshold_points,omitempty" jsonschema:"Diferença mínima entre saldo real e esperado para alertar, em pontos. Padrão 1000."`
-	StaleAfterDays            int `json:"stale_after_days,omitempty" jsonschema:"Saldo real lido há mais dias que isto é considerado desatualizado. Padrão 3."`
-	CPFRemainingThreshold     int `json:"cpf_remaining_threshold,omitempty" jsonschema:"Alerta quando restam esta quantidade ou menos de CPFs no limite do programa. Padrão 2."`
+	DivergenceThresholdPoints int    `json:"divergence_threshold_points,omitempty" jsonschema:"Diferença mínima entre saldo real e esperado para alertar, em pontos. Padrão 1000."`
+	StaleAfterDays            int    `json:"stale_after_days,omitempty" jsonschema:"Saldo real lido há mais dias que isto é considerado desatualizado. Padrão 3."`
+	CPFRemainingThreshold     int    `json:"cpf_remaining_threshold,omitempty" jsonschema:"Alerta quando restam esta quantidade ou menos de CPFs no limite do programa. Padrão 2."`
+	Category                  string `json:"category,omitempty" jsonschema:"Só contas desta categoria: injunction (liminar), standard ou unidentified. Vazio traz todas."`
 }
 
 type stockAlert struct {
@@ -262,7 +268,7 @@ func (s *Server) registerStockTools(server *sdk.Server) {
 			"saldo real lido da cia e quando, divergência (real menos esperado), estado da sincronização e uso do limite de CPFs. Pontos inteiros.",
 		Annotations: readOnly(),
 	}, func(ctx context.Context, who caller, in stockOverviewInput) (any, error) {
-		accounts, err := s.listStockAccounts(ctx, who, in.Program)
+		accounts, err := s.listStockAccounts(ctx, who, in.Program, in.Category)
 		if err != nil {
 			return nil, err
 		}
@@ -299,7 +305,7 @@ func (s *Server) registerStockTools(server *sdk.Server) {
 			"sincronização com problema (pedir reconexão/login) e contas perto do limite de CPFs. Feita para rodar em rotina; lista vazia = tudo em ordem.",
 		Annotations: readOnly(),
 	}, func(ctx context.Context, who caller, in stockAlertsInput) (any, error) {
-		accounts, err := s.listStockAccounts(ctx, who, "")
+		accounts, err := s.listStockAccounts(ctx, who, "", in.Category)
 		if err != nil {
 			return nil, err
 		}

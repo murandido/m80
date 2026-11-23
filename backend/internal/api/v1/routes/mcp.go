@@ -36,4 +36,5 @@ func RegisterMCPRoutes(r chi.Router, db *gorm.DB, v1 http.Handler) {
 	})
 
 	r.With(requireDev).Get("/mcp-calls", proposalHandler.GetMCPCalls)
+	r.With(requireDev).Get("/mcp-reports", handlers.NewMCPReportHandler(db).GetMCPReports)
 }

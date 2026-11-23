@@ -76,3 +76,17 @@ type MCPProposalResponse struct {
 	DecidedByID   *string         `json:"decided_by_id"`
 	DecidedByName *string         `json:"decided_by_name"`
 }
+
+// MCPReportResponse is one day's report from an agent's routine.
+type MCPReportResponse struct {
+	ID         string          `json:"id"`
+	TokenID    string          `json:"token_id"`
+	TokenName  *string         `json:"token_name"`
+	ReportDate string          `json:"report_date" example:"2026-11-23"`
+	Title      string          `json:"title"`
+	Summary    string          `json:"summary"`
+	Findings   json.RawMessage `json:"findings" swaggertype:"array,object"`
+	Actions    json.RawMessage `json:"actions" swaggertype:"array,object"`
+	CreatedAt  time.Time       `json:"created_at"`
+	UpdatedAt  time.Time       `json:"updated_at"`
+}

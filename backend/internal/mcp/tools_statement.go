@@ -21,6 +21,30 @@ type statementSummary struct {
 	CreditsWithoutLink []statementCredit `json:"credits_needing_attention"`
 	Bookings           []json.RawMessage `json:"bookings_needing_attention"`
 	Refunds            []json.RawMessage `json:"refunds_needing_attention"`
+	// The totals before truncate cut the lists, so a capped list still says how much is out
+	// there. Equal to the list lengths when nothing was cut.
+	CreditsTotal  int  `json:"credits_needing_attention_total"`
+	BookingsTotal int  `json:"bookings_needing_attention_total"`
+	RefundsTotal  int  `json:"refunds_needing_attention_total"`
+	Truncated     bool `json:"truncated,omitempty"`
+}
+
+// truncate keeps at most max items per list. The daily check runs every day for every
+// injunction account, and a statement nobody has reconciled yet can carry hundreds of lines -
+// tokens the routine pays for without reading. statement_reconciliation still has them all.
+func (summary *statementSummary) truncate(limit int) {
+	if len(summary.CreditsWithoutLink) > limit {
+		summary.CreditsWithoutLink = summary.CreditsWithoutLink[:limit]
+		summary.Truncated = true
+	}
+	if len(summary.Bookings) > limit {
+		summary.Bookings = summary.Bookings[:limit]
+		summary.Truncated = true
+	}
+	if len(summary.Refunds) > limit {
+		summary.Refunds = summary.Refunds[:limit]
+		summary.Truncated = true
+	}
 }
 
 func unmatched(items []json.RawMessage) []json.RawMessage {
@@ -58,6 +82,9 @@ func (s *Server) statementSummary(ctx context.Context, who caller, accountID str
 			summary.CreditsWithoutLink = append(summary.CreditsWithoutLink, credit)
 		}
 	}
+	summary.CreditsTotal = len(summary.CreditsWithoutLink)
+	summary.BookingsTotal = len(summary.Bookings)
+	summary.RefundsTotal = len(summary.Refunds)
 	return summary, nil
 }
 

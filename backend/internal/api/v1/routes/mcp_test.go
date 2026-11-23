@@ -23,6 +23,7 @@ func TestMCPRoutesAreDevOnly(t *testing.T) {
 		{http.MethodPost, "/mcp-proposals/" + id + "/approve"},
 		{http.MethodPost, "/mcp-proposals/" + id + "/reject"},
 		{http.MethodGet, "/mcp-calls"},
+		{http.MethodGet, "/mcp-reports"},
 	}
 	register := func(r chi.Router, db *gorm.DB) { RegisterMCPRoutes(r, db, nil) }
 
