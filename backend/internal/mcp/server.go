@@ -61,6 +61,7 @@ func NewHandler(db *gorm.DB, v1 http.Handler) http.Handler {
 	})
 	s.registerSystemTools(server)
 	s.registerStockTools(server)
+	s.registerStatementTools(server)
 	s.registerIssuanceTools(server)
 	s.registerProposalTools(server)
 

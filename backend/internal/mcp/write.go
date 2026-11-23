@@ -125,26 +125,43 @@ func (s *Server) batchesWrittenToday(who caller) (int64, error) {
 	return count, err
 }
 
-// batchReasons are the ceilings a new batch of the given points would cross for this token.
+// batchReasons are the ceilings that writing batches would cross for this token: points is
+// one batch's points (0 to skip that check), batches is how many new batches the write adds
+// (0 to skip the daily count, as a correction adds none).
 func (s *Server) batchReasons(who caller, points, batches int) ([]string, error) {
-	if who.Policy == nil {
-		return nil, nil
-	}
 	var reasons []string
-	limits := who.Policy.Limits
-	if limits.MaxBatchPoints != nil && points > *limits.MaxBatchPoints {
-		reasons = append(reasons, fmt.Sprintf("%d pontos acima do limite de %d por lote", points, *limits.MaxBatchPoints))
+	if reason := pointsReason(who, points); reason != "" {
+		reasons = append(reasons, reason)
 	}
-	if limits.MaxBatchesPerDay != nil {
-		done, err := s.batchesWrittenToday(who)
-		if err != nil {
-			return nil, err
-		}
-		if int(done)+batches > *limits.MaxBatchesPerDay {
-			reasons = append(reasons, fmt.Sprintf("limite de %d lotes por dia atingido (%d já lançados hoje)", *limits.MaxBatchesPerDay, done))
-		}
+	reason, err := s.dailyReason(who, batches)
+	if err != nil {
+		return nil, err
+	}
+	if reason != "" {
+		reasons = append(reasons, reason)
 	}
 	return reasons, nil
+}
+
+func pointsReason(who caller, points int) string {
+	if who.Policy == nil || who.Policy.Limits.MaxBatchPoints == nil || points <= *who.Policy.Limits.MaxBatchPoints {
+		return ""
+	}
+	return fmt.Sprintf("%d pontos acima do limite de %d por lote", points, *who.Policy.Limits.MaxBatchPoints)
+}
+
+func (s *Server) dailyReason(who caller, batches int) (string, error) {
+	if who.Policy == nil || who.Policy.Limits.MaxBatchesPerDay == nil || batches == 0 {
+		return "", nil
+	}
+	done, err := s.batchesWrittenToday(who)
+	if err != nil {
+		return "", err
+	}
+	if int(done)+batches <= *who.Policy.Limits.MaxBatchesPerDay {
+		return "", nil
+	}
+	return fmt.Sprintf("limite de %d lotes por dia atingido (%d já lançados hoje)", *who.Policy.Limits.MaxBatchesPerDay, done), nil
 }
 
 // batchSource is where an agent read the batch it is recording. Required from a token with a

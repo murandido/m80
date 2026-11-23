@@ -23,6 +23,7 @@ type stockV1 struct {
 	http.Handler
 	mu        sync.Mutex
 	batches   []map[string]any
+	commits   []map[string]any
 	issuances int
 }
 
@@ -42,7 +43,21 @@ func newStockV1(db *gorm.DB) *stockV1 {
 		utils.SendJSON(w, r, http.StatusOK, "ok", map[string]any{"reconciliation": map[string]any{"credits": []map[string]any{
 			{"index": 0, "occurred_on": creditDay, "points": 500, "verdict": "missing_in_panel"},
 			{"index": 1, "occurred_on": creditDay, "points": 700, "verdict": "missing_in_panel"},
+			{"index": 2, "occurred_on": "2026-11-01", "points": 900, "verdict": "matched", "batch_id": "b-old"},
+		}, "bookings": []map[string]any{
+			{"locator": "OK1", "verdict": "matched"},
+			{"locator": "MISS", "verdict": "missing_in_panel"},
 		}}})
+	})
+	r.Post("/accounts/{id}/azul-statement/commit", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Batches []map[string]any `json:"batches"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		v.mu.Lock()
+		v.commits = append(v.commits, body.Batches...)
+		v.mu.Unlock()
+		utils.SendJSON(w, r, http.StatusOK, "ok", map[string]any{"created": len(body.Batches)})
 	})
 	r.Get("/point-batches", func(w http.ResponseWriter, r *http.Request) {
 		v.mu.Lock()
