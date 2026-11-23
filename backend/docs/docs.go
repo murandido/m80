@@ -8931,6 +8931,45 @@ const docTemplate = `{
                 }
             }
         },
+        "/mcp-reports": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Relatórios diários gravados pelos agentes MCP (ex.: conferência das liminares), dos mais recentes para os mais antigos.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "MCP"
+                ],
+                "summary": "Listar relatórios MCP",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Quantidade (padrão 30, máximo 120)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object"
+                        }
+                    },
+                    "403": {
+                        "description": "Acesso restrito a desenvolvedores",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/mcp-tokens": {
             "get": {
                 "security": [
@@ -8967,7 +9006,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Cria um token MCP do próprio usuário. O valor em claro é devolvido só nesta resposta.",
+                "description": "Cria um token MCP, do próprio usuário ou de outro (ex.: um usuário só para o agente), com política opcional: ferramentas de escrita liberadas e limites. O que a política não libera vira proposta. O valor em claro é devolvido só nesta resposta.",
                 "consumes": [
                     "application/json"
                 ],
@@ -8980,7 +9019,7 @@ const docTemplate = `{
                 "summary": "Criar token MCP",
                 "parameters": [
                     {
-                        "description": "Nome do token",
+                        "description": "Nome, dono e política do token",
                         "name": "request",
                         "in": "body",
                         "required": true,
@@ -9004,6 +9043,18 @@ const docTemplate = `{
                     },
                     "403": {
                         "description": "Acesso restrito a desenvolvedores",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Usuário não encontrado",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Usuário sem permissão para token",
                         "schema": {
                             "$ref": "#/definitions/schemas.ErrorResponse"
                         }
@@ -15702,10 +15753,29 @@ const docTemplate = `{
                 "name"
             ],
             "properties": {
+                "allowed_write_tools": {
+                    "description": "AllowedWriteTools is which free-write tools run directly; the rest become proposals.\nOmitted (null) means all of them - the right default for a person's own token. An empty\nlist means none.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "limits": {
+                    "description": "Limits cap the direct writes; past them a write becomes a proposal.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/schemas.MCPTokenLimits"
+                        }
+                    ]
+                },
                 "name": {
                     "type": "string",
                     "maxLength": 80,
                     "example": "Claude Code - notebook"
+                },
+                "user_id": {
+                    "description": "UserID is whose authority the token carries. Omitted means the caller. A dedicated\nagent user is how an unattended routine gets a narrower role and its own trail.",
+                    "type": "string"
                 }
             }
         },
@@ -17634,6 +17704,19 @@ const docTemplate = `{
                 "success": {
                     "type": "boolean",
                     "example": true
+                }
+            }
+        },
+        "schemas.MCPTokenLimits": {
+            "type": "object",
+            "properties": {
+                "max_batch_points": {
+                    "type": "integer",
+                    "example": 200000
+                },
+                "max_batches_per_day": {
+                    "type": "integer",
+                    "example": 5
                 }
             }
         },

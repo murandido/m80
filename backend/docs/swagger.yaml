@@ -1827,9 +1827,26 @@ definitions:
     type: object
   schemas.CreateMCPTokenRequest:
     properties:
+      allowed_write_tools:
+        description: |-
+          AllowedWriteTools is which free-write tools run directly; the rest become proposals.
+          Omitted (null) means all of them - the right default for a person's own token. An empty
+          list means none.
+        items:
+          type: string
+        type: array
+      limits:
+        allOf:
+        - $ref: '#/definitions/schemas.MCPTokenLimits'
+        description: Limits cap the direct writes; past them a write becomes a proposal.
       name:
         example: Claude Code - notebook
         maxLength: 80
+        type: string
+      user_id:
+        description: |-
+          UserID is whose authority the token carries. Omitted means the caller. A dedicated
+          agent user is how an unattended routine gets a narrower role and its own trail.
         type: string
     required:
     - name
@@ -3258,6 +3275,15 @@ definitions:
       success:
         example: true
         type: boolean
+    type: object
+  schemas.MCPTokenLimits:
+    properties:
+      max_batch_points:
+        example: 200000
+        type: integer
+      max_batches_per_day:
+        example: 5
+        type: integer
     type: object
   schemas.MergeAccountBeneficiaryRequest:
     properties:
@@ -11372,6 +11398,31 @@ paths:
       summary: Rejeitar proposta MCP
       tags:
       - MCP
+  /mcp-reports:
+    get:
+      description: 'Relatórios diários gravados pelos agentes MCP (ex.: conferência
+        das liminares), dos mais recentes para os mais antigos.'
+      parameters:
+      - description: Quantidade (padrão 30, máximo 120)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "403":
+          description: Acesso restrito a desenvolvedores
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Listar relatórios MCP
+      tags:
+      - MCP
   /mcp-tokens:
     get:
       description: Lista os tokens do servidor MCP, inclusive os revogados. O valor
@@ -11395,10 +11446,12 @@ paths:
     post:
       consumes:
       - application/json
-      description: Cria um token MCP do próprio usuário. O valor em claro é devolvido
-        só nesta resposta.
+      description: 'Cria um token MCP, do próprio usuário ou de outro (ex.: um usuário
+        só para o agente), com política opcional: ferramentas de escrita liberadas
+        e limites. O que a política não libera vira proposta. O valor em claro é devolvido
+        só nesta resposta.'
       parameters:
-      - description: Nome do token
+      - description: Nome, dono e política do token
         in: body
         name: request
         required: true
@@ -11417,6 +11470,14 @@ paths:
             $ref: '#/definitions/schemas.ErrorResponse'
         "403":
           description: Acesso restrito a desenvolvedores
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+        "404":
+          description: Usuário não encontrado
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+        "422":
+          description: Usuário sem permissão para token
           schema:
             $ref: '#/definitions/schemas.ErrorResponse'
       security:
