@@ -155,6 +155,10 @@ func (h *StatementHandler) CommitSmilesStatement(w http.ResponseWriter, r *http.
 		return
 	}
 
+	if !guardBatchDays(w, r, h.DB, account.ID, selectedCreditDays(reconciliation.Credits, body.Batches)...) {
+		return
+	}
+
 	result, err := h.recordBatches(account, reconciliation.Credits, body.Batches)
 	if err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Não consegui lançar os lotes: "+err.Error())
