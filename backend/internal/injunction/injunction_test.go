@@ -256,3 +256,83 @@ func TestImportWritesOnlyTheTropaRowsWithoutTheFee(t *testing.T) {
 		}
 	})
 }
+
+// azulProgram returns the AZUL program, creating it inside the transaction when the test
+// database has none: the reconciliation reads a statement only for AZUL and SMILES accounts.
+func azulProgram(t *testing.T, tx *gorm.DB) (data.LoyaltyProgram, data.Airline) {
+	t.Helper()
+	var program data.LoyaltyProgram
+	if err := tx.Where("code = ?", "AZUL").First(&program).Error; err == nil {
+		var airline data.Airline
+		if err := tx.First(&airline, "id = ?", program.DefaultAirlineID).Error; err != nil {
+			t.Fatal(err)
+		}
+		return program, airline
+	}
+	suffix := uuid.New().String()[:8]
+	airline := data.Airline{Name: "Azul Test " + suffix, Code: "AZ" + suffix}
+	mustCreate(t, tx, &airline)
+	program = data.LoyaltyProgram{Name: "Azul", Code: "AZUL", DefaultAirlineID: airline.ID}
+	mustCreate(t, tx, &program)
+	return program, airline
+}
+
+// The bucket the agent may import without asking: the workbook row and the airline statement
+// agree on locator and points, and the panel does not have the booking. A statement that
+// disagrees on the points must not count as confirmation, and a statement booking the
+// workbook never mentions is reported on its own.
+func TestCheckConfirmsAWorkbookRowTheStatementBacks(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		program, _ := azulProgram(t, tx)
+		suffix := uuid.New().String()[:8]
+		agency := data.Agency{Name: "Agência " + suffix}
+		mustCreate(t, tx, &agency)
+		issuer := data.User{Name: "Pedro " + suffix, Phone: fmt.Sprintf("119%08d", atomic.AddInt64(&phoneCounter, 1)), Password: "secret123"}
+		mustCreate(t, tx, &issuer)
+		holder := data.Person{Name: "Hudson " + suffix}
+		mustCreate(t, tx, &holder)
+		account := data.Account{LoyaltyProgramID: program.ID, HolderID: &holder.ID, Category: data.AccountCategoryInjunction}
+		mustCreate(t, tx, &account)
+		group := data.InjunctionGroup{
+			Name: "Tropa " + suffix, AgencyID: agency.ID,
+			Mappings: data.InjunctionGroupMappings{
+				Accounts: []data.InjunctionAccountMapping{{ProgramCode: "AZUL", AccountLabel: "HUDSON", AccountID: account.ID}},
+				Issuers:  []data.InjunctionIssuerMapping{{IssuerName: "PEDRO", UserID: issuer.ID}},
+			},
+		}
+		mustCreate(t, tx, &group)
+
+		statementLine := func(locator string, points int) {
+			loc := locator
+			mustCreate(t, tx, &data.AzulStatementLine{
+				AccountID: account.ID, OccurredOn: day, Kind: data.AzulLineRedemption, Points: -points, Locator: &loc,
+			})
+		}
+		confirmed, mismatch, onlyStatement := "CF"+strings.ToUpper(suffix[:4]), "MM"+strings.ToUpper(suffix[:4]), "ST"+strings.ToUpper(suffix[:4])
+		statementLine(confirmed, 30000)
+		statementLine(mismatch, 45000)
+		statementLine(onlyStatement, 12000)
+
+		content := workbook(t, "20-11-26", [][]any{
+			row(1, "AZUL", confirmed, 30000, 16, "HUDSON", "PEDRO", 0),
+			row(2, "AZUL", mismatch, 40000, 16, "HUDSON", "PEDRO", 0),
+		})
+		result, err := Check(tx, group, content, day, day)
+		if err != nil {
+			t.Fatalf("check: %v", err)
+		}
+		if len(result.Statements) != 1 || result.Statements[0].Error != "" {
+			t.Fatalf("the statement was not read: %+v", result.Statements)
+		}
+		if len(result.MissingInPanelConfirmed) != 1 || result.MissingInPanelConfirmed[0].Locator != confirmed {
+			t.Errorf("confirmed: got %+v", result.MissingInPanelConfirmed)
+		}
+		if len(result.MissingInPanelUnconfirmed) != 1 || result.MissingInPanelUnconfirmed[0].Locator != mismatch ||
+			result.MissingInPanelUnconfirmed[0].StatementPoints == nil || *result.MissingInPanelUnconfirmed[0].StatementPoints != 45000 {
+			t.Errorf("points that disagree must stay unconfirmed: got %+v", result.MissingInPanelUnconfirmed)
+		}
+		if len(result.MissingInSheetAndPanel) != 1 || result.MissingInSheetAndPanel[0].Locator != onlyStatement {
+			t.Errorf("statement only: got %+v", result.MissingInSheetAndPanel)
+		}
+	})
+}
