@@ -9,7 +9,7 @@ import { MicrosoftConnectionCard } from "@/components/injunction-groups/microsof
 import { InjunctionGroupsPanel } from "@/components/injunction-groups/injunction-groups-panel"
 
 export const metadata: Metadata = {
-  title: "Tropas",
+  title: "Controle de Liminares",
   description: "Grupos de contas liminares com planilha no OneDrive e grupo no WhatsApp.",
 }
 
@@ -40,7 +40,7 @@ export default async function InjunctionGroupsPage({
   return (
     <div className="p-6 sm:p-8">
       <div className="flex flex-col gap-6">
-        <h1 className="text-lg font-semibold text-slate-800">Tropas</h1>
+        <h1 className="text-lg font-semibold text-slate-800">Controle de Liminares</h1>
         {callback && (
           <p className={callback.error ? "text-sm text-destructive" : "text-sm text-emerald-700"}>{callback.text}</p>
         )}

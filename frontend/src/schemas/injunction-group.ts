@@ -20,8 +20,6 @@ export type MicrosoftConnection = z.infer<typeof microsoftConnectionSchema>
 export const injunctionGroupSchema = z.object({
   id: z.string(),
   name: z.string(),
-  agency_id: z.string(),
-  agency_name: z.string(),
   whatsapp_chat_name: z.string().nullish(),
   has_spreadsheet: z.boolean(),
   spreadsheet_hint: z.string().nullish(),
@@ -34,20 +32,33 @@ export const injunctionGroupSchema = z.object({
       nicknames: z.string(),
     }),
   ),
-  issuers: z.array(z.object({ issuer_name: z.string(), user_id: z.string(), user_name: z.string() })),
+  // Agency per issuer: one workbook mixes issuers of different agencies. Empty on a mapping
+  // saved before the agency moved here; its rows wait as "needs mapping" until one is picked.
+  issuers: z.array(
+    z.object({
+      issuer_name: z.string(),
+      user_id: z.string(),
+      user_name: z.string(),
+      agency_id: z.string().nullish().transform((value) => value ?? ""),
+      agency_name: z.string().nullish().transform((value) => value ?? ""),
+    }),
+  ),
   created_at: z.string(),
   updated_at: z.string(),
 })
 
 export type InjunctionGroup = z.infer<typeof injunctionGroupSchema>
 
-// The injunction accounts a Tropa can map. Built server-side from GET /accounts, which carries
+// The injunction accounts a group can map. Built server-side from GET /accounts, which carries
 // passwords - only these fields ever reach the browser.
 export type InjunctionAccountOption = { id: string; label: string }
 
+// A panel user an Emissor name can map to. agency_ids pre-fills the issuer's agency when the
+// user belongs to exactly one; with several the operator has to pick.
+export type InjunctionUserOption = { id: string; name: string; agency_ids: string[] }
+
 export const injunctionGroupFormSchema = z.object({
-  name: z.string().trim().min(1, "Dê um nome à Tropa").max(80),
-  agency_id: z.string().min(1, "Escolha a agência"),
+  name: z.string().trim().min(1, "Dê um nome ao grupo").max(80),
   whatsapp_chat_name: z.string().trim().max(120),
   // Empty on edit keeps the stored link; the panel never receives it back.
   spreadsheet_url: z.union([z.literal(""), z.string().trim().url("Cole o link completo da planilha")]),
@@ -61,6 +72,7 @@ export const injunctionGroupFormSchema = z.object({
     z.object({
       issuer_name: z.string().trim().min(1, "Nome como aparece na coluna Emissor"),
       user_id: z.string().min(1, "Escolha o usuário"),
+      agency_id: z.string().min(1, "Escolha a agência das emissões"),
     }),
   ),
 })
