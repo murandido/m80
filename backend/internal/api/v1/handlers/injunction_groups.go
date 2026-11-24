@@ -361,6 +361,11 @@ func (h *InjunctionGroupHandler) downloadWorkbook(w http.ResponseWriter, r *http
 		return nil, false
 	}
 	content, err := h.Workbooks.Download(r.Context(), *group.SpreadsheetURL)
+	if err != nil {
+		// Every failure, not only the unexpected ones: "not shared" and "needs login" are the
+		// ones an operator asks about, and Microsoft's own reason is only in this line.
+		slog.Warn("injunction: workbook download failed", "group_id", group.ID, "err", err)
+	}
 	switch {
 	case err == nil:
 		return content, true
@@ -373,7 +378,6 @@ func (h *InjunctionGroupHandler) downloadWorkbook(w http.ResponseWriter, r *http
 	case errors.Is(err, onedrive.ErrNotShared):
 		utils.SendError(w, r, http.StatusUnprocessableEntity, "A planilha não abre com a conta Microsoft conectada: confira o link e o compartilhamento")
 	default:
-		slog.Error("injunction: workbook download failed", "group_id", group.ID, "err", err)
 		utils.SendError(w, r, http.StatusBadGateway, "A Microsoft não entregou a planilha. Tente de novo.")
 	}
 	return nil, false
