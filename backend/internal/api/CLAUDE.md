@@ -76,10 +76,12 @@ Perfil para cliente de fora que só lê o extrato Azul/Smiles das contas concedi
 - **Política por token** (`mcp_tokens.allowed_write_tools` e `limits`, migration 000094): token sem política escreve tudo direto, como um token pessoal. Com política, toda escrita livre passa por `writeOrPropose` (`internal/mcp/write.go`): a ferramenta não liberada, o limite estourado, o lote duplicado ou o lote sem crédito correspondente no extrato **viram proposta, não erro**. Ferramenta nova de escrita livre entra em `FreeWriteTools` e chama `writeOrPropose`, nunca `s.call` direto. Lote de agente exige `source`, gravado no `note` com o prefixo `[Agente]`. O roteiro da rotina diária das liminares está em `docs/mcp-routine-injunctions.md`.
 - Rate limit próprio de 120 req/min por token, além do geral. Transporte stateless com resposta JSON, para não depender de sessão nem de SSE através do relay do Next.
 
-## Tropas e conexão Microsoft
-- **`internal/injunction`** é a regra de negócio. `Check` cruza a planilha da Tropa com o painel e o extrato e devolve baldes (`missing_in_panel_confirmed`, `…_unconfirmed`, `differs_from_panel`, `missing_in_sheet_and_panel`, `pending_cancellations`, `invalid`, `needs_mapping`). `Import` grava linhas pelo `legacyimport.Commit`.
+## Controle de Liminares e conexão Microsoft
+- **`internal/injunction`** é a regra de negócio. `Check` cruza a planilha do grupo com o painel e o extrato e devolve baldes (`missing_in_panel_confirmed`, `…_unconfirmed`, `differs_from_panel`, `missing_in_sheet_and_panel`, `pending_cancellations`, `invalid`, `needs_mapping`). `Import` grava linhas pelo `legacyimport.Commit`.
   - Os dois reaproveitam o parser e o `Resolve` do `legacyimport`, que **deixou de ser temporário** por isso.
-  - Duas regras são da Tropa: só linhas cujo (programa, rótulo da coluna Conta) está no mapeamento, e `Taxes` zerado (a taxa de resgate não é cobrada).
+  - Regras do grupo: só linhas cujo (programa, rótulo da coluna Conta) está no mapeamento, e `Taxes` zerado (a taxa de resgate não é cobrada).
+  - **A agência vem do emissor, não do grupo** (migration 96 removeu `injunction_groups.agency_id`): uma planilha mistura emissores de agências diferentes. `Import` manda a agência de cada linha em `RowAgencies`; linha cujo emissor não tem agência no mapeamento vira `needs_mapping` antes do commit, para nunca cair na agência padrão.
+  - **Visibilidade:** um admin vê o grupo só se todas as agências dos emissores estão no escopo dele, porque conferir e importar escreve em todas. Grupo sem agência em nenhum emissor é só dev.
 - **Planilha:** `onedrivesync.Service` (um por processo, criado no `v1.NewRouter`) baixa a planilha com o token da conexão Microsoft. Ele renova o token sob lock e grava o token novo antes de usar: ele **rotaciona**.
 - **Rotas:**
   - `/microsoft-connection` é dev-only, porque conectar consente em nome da instalação inteira;

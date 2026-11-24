@@ -4,7 +4,7 @@ import { cookies } from "next/headers"
 import type { z } from "zod"
 import { env } from "@/lib/env"
 import { injunctionGroupFormSchema, schemas } from "@/schemas/injunction-group"
-import type { InjunctionAccountOption, InjunctionGroupForm } from "@/schemas/injunction-group"
+import type { InjunctionAccountOption, InjunctionGroupForm, InjunctionUserOption } from "@/schemas/injunction-group"
 import { getAgenciesSchema } from "@/schemas/agency"
 import { getUsersSchema } from "@/schemas/user"
 
@@ -46,7 +46,7 @@ export async function disconnectMicrosoftAction() {
 }
 
 export async function listInjunctionGroupsAction() {
-  return callApi("/injunction-groups", schemas.groups, "Erro ao listar Tropas.")
+  return callApi("/injunction-groups", schemas.groups, "Erro ao listar os grupos de liminares.")
 }
 
 export async function saveInjunctionGroupAction(id: string | null, input: InjunctionGroupForm) {
@@ -55,26 +55,25 @@ export async function saveInjunctionGroupAction(id: string | null, input: Injunc
   const form = parsed.data
   const body = {
     name: form.name,
-    agency_id: form.agency_id,
     whatsapp_chat_name: form.whatsapp_chat_name || null,
     // null keeps the stored link on an update; a new one replaces it.
     spreadsheet_url: form.spreadsheet_url ? form.spreadsheet_url : id ? null : "",
     accounts: form.accounts,
     issuers: form.issuers,
   }
-  return callApi(id ? `/injunction-groups/${encodeURIComponent(id)}` : "/injunction-groups", schemas.group, "Erro ao salvar a Tropa.", {
+  return callApi(id ? `/injunction-groups/${encodeURIComponent(id)}` : "/injunction-groups", schemas.group, "Erro ao salvar o grupo de liminares.", {
     method: id ? "PUT" : "POST",
     body: JSON.stringify(body),
   })
 }
 
 export async function deleteInjunctionGroupAction(id: string) {
-  return callApi(`/injunction-groups/${encodeURIComponent(id)}`, schemas.empty, "Erro ao excluir a Tropa.", { method: "DELETE" })
+  return callApi(`/injunction-groups/${encodeURIComponent(id)}`, schemas.empty, "Erro ao excluir o grupo de liminares.", { method: "DELETE" })
 }
 
 export async function checkInjunctionGroupAction(id: string, from: string, to: string) {
   const query = new URLSearchParams({ from, to }).toString()
-  return callApi(`/injunction-groups/${encodeURIComponent(id)}/check?${query}`, schemas.check, "Erro ao conferir a Tropa.")
+  return callApi(`/injunction-groups/${encodeURIComponent(id)}/check?${query}`, schemas.check, "Erro ao conferir o grupo de liminares.")
 }
 
 export async function importInjunctionPeriodAction(id: string, from: string, to: string) {
@@ -89,7 +88,7 @@ export async function importInjunctionPeriodAction(id: string, from: string, to:
 // label before anything reaches the browser.
 export async function injunctionFormOptionsAction(): Promise<{
   accounts: InjunctionAccountOption[]
-  users: { id: string; name: string }[]
+  users: InjunctionUserOption[]
   agencies: { id: string; name: string }[]
 }> {
   const token = (await cookies()).get("auth_token")?.value
@@ -124,7 +123,9 @@ export async function injunctionFormOptionsAction(): Promise<{
   return {
     accounts,
     users: users.success
-      ? (users.data.data ?? []).filter((u) => u.role !== "statement_client").map((u) => ({ id: u.id, name: u.name }))
+      ? (users.data.data ?? [])
+          .filter((u) => u.role !== "statement_client")
+          .map((u) => ({ id: u.id, name: u.name, agency_ids: u.agency_ids ?? [] }))
       : [],
     agencies: agencies.success ? (agencies.data.data ?? []).map((a) => ({ id: a.id, name: a.name })) : [],
   }

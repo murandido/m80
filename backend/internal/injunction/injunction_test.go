@@ -109,11 +109,10 @@ func seedWorld(t *testing.T, tx *gorm.DB) world {
 	mustCreate(t, tx, &data.AccountNickname{AccountID: outsider.ID, LoyaltyProgramID: program.ID, Nickname: "SILVIA" + suffix})
 
 	group := data.InjunctionGroup{
-		Name:     "Tropa " + suffix,
-		AgencyID: agency.ID,
+		Name: "Tropa " + suffix,
 		Mappings: data.InjunctionGroupMappings{
 			Accounts: []data.InjunctionAccountMapping{{ProgramCode: program.Code, AccountLabel: "HUDSON", AccountID: hudson.ID}},
-			Issuers:  []data.InjunctionIssuerMapping{{IssuerName: "PEDRO", UserID: issuer.ID}},
+			Issuers:  []data.InjunctionIssuerMapping{{IssuerName: "PEDRO", UserID: issuer.ID, AgencyID: agency.ID}},
 		},
 	}
 	mustCreate(t, tx, &group)
@@ -257,6 +256,69 @@ func TestImportWritesOnlyTheTropaRowsWithoutTheFee(t *testing.T) {
 	})
 }
 
+// One workbook mixes issuers of different agencies: every imported row takes its own issuer's
+// agency, and an issuer mapped without one (a mapping saved before agencies moved onto the
+// issuers) holds its rows back as "needs mapping" instead of filing them under the default.
+func TestImportFilesEachRowUnderItsIssuersAgency(t *testing.T) {
+	runInTx(t, func(tx *gorm.DB) {
+		w := seedWorld(t, tx)
+		code := w.program.Code
+		suffix := uuid.New().String()[:8]
+		otherAgency := data.Agency{Name: "Agência Denilson " + suffix}
+		mustCreate(t, tx, &otherAgency)
+		newUser := func(name string) data.User {
+			user := data.User{Name: name + " " + suffix, Phone: fmt.Sprintf("119%08d", atomic.AddInt64(&phoneCounter, 1)), Password: "secret123"}
+			mustCreate(t, tx, &user)
+			return user
+		}
+		denilson, tiago := newUser("Denilson"), newUser("Tiago")
+		w.group.Mappings.Issuers = append(w.group.Mappings.Issuers,
+			data.InjunctionIssuerMapping{IssuerName: "DENILSON", UserID: denilson.ID, AgencyID: otherAgency.ID},
+			data.InjunctionIssuerMapping{IssuerName: "TIAGO", UserID: tiago.ID},
+		)
+
+		content := workbook(t, "20-11-26", [][]any{
+			row(1, code, "PED001", 20000, 16, "HUDSON", "PEDRO", 0),
+			row(2, code, "DEN001", 15000, 16, "HUDSON", "denilson ", 0),
+			row(3, code, "TIA001", 10000, 16, "HUDSON", "TIAGO", 0),
+		})
+
+		check, err := Check(tx, w.group, content, day, day)
+		if err != nil {
+			t.Fatalf("check: %v", err)
+		}
+		if len(check.NeedsMapping) != 1 || check.NeedsMapping[0].Locator != "TIA001" {
+			t.Errorf("an issuer without agency must need mapping: got %+v", check.NeedsMapping)
+		}
+
+		result, err := Import(tx, w.group, content, day, nil, w.issuer.ID)
+		if err != nil {
+			t.Fatalf("import: %v", err)
+		}
+		if result.Imported != 2 {
+			t.Fatalf("imported %d, want 2 (%+v)", result.Imported, result)
+		}
+		agencyOf := func(locator string) string {
+			var issuance data.Issuance
+			if err := tx.First(&issuance, "program_locator = ?", locator).Error; err != nil {
+				t.Fatalf("%s was not written: %v", locator, err)
+			}
+			return issuance.AgencyID
+		}
+		if got := agencyOf("PED001"); got != w.agency.ID {
+			t.Errorf("PEDRO's row went to agency %s, want %s", got, w.agency.ID)
+		}
+		if got := agencyOf("DEN001"); got != otherAgency.ID {
+			t.Errorf("DENILSON's row went to agency %s, want %s", got, otherAgency.ID)
+		}
+		var withoutAgency int64
+		tx.Model(&data.Issuance{}).Where("program_locator = ?", "TIA001").Count(&withoutAgency)
+		if withoutAgency != 0 {
+			t.Error("a row whose issuer has no agency was imported")
+		}
+	})
+}
+
 // azulProgram returns the AZUL program, creating it inside the transaction when the test
 // database has none: the reconciliation reads a statement only for AZUL and SMILES accounts.
 func azulProgram(t *testing.T, tx *gorm.DB) (data.LoyaltyProgram, data.Airline) {
@@ -294,10 +356,10 @@ func TestCheckConfirmsAWorkbookRowTheStatementBacks(t *testing.T) {
 		account := data.Account{LoyaltyProgramID: program.ID, HolderID: &holder.ID, Category: data.AccountCategoryInjunction}
 		mustCreate(t, tx, &account)
 		group := data.InjunctionGroup{
-			Name: "Tropa " + suffix, AgencyID: agency.ID,
+			Name: "Tropa " + suffix,
 			Mappings: data.InjunctionGroupMappings{
 				Accounts: []data.InjunctionAccountMapping{{ProgramCode: "AZUL", AccountLabel: "HUDSON", AccountID: account.ID}},
-				Issuers:  []data.InjunctionIssuerMapping{{IssuerName: "PEDRO", UserID: issuer.ID}},
+				Issuers:  []data.InjunctionIssuerMapping{{IssuerName: "PEDRO", UserID: issuer.ID, AgencyID: agency.ID}},
 			},
 		}
 		mustCreate(t, tx, &group)

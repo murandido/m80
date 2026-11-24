@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/data"
 	"gorm.io/gorm"
@@ -54,14 +56,18 @@ func TestInjunctionGroupKeepsOnlyInjunctionsAndHidesTheLink(t *testing.T) {
 		}
 		const link = "https://onedrive.live.com/:x:/g/personal/ABC/SECRETPART?resid=1&e=2"
 
-		body := func(accountID string) string {
-			return fmt.Sprintf(`{"name":"Tropa Teste %s","agency_id":"%s","whatsapp_chat_name":"Tropa Azul","spreadsheet_url":%q,`+
-				`"accounts":[{"account_label":" hudson ","account_id":"%s"}],"issuers":[{"issuer_name":"Pedro","user_id":"%s"}]}`,
-				accountID[:6], agency.ID, link, accountID, issuer.ID)
+		bodyWithAgency := func(accountID, agencyID string) string {
+			return fmt.Sprintf(`{"name":"Tropa Teste %s","whatsapp_chat_name":"Tropa Azul","spreadsheet_url":%q,`+
+				`"accounts":[{"account_label":" hudson ","account_id":"%s"}],"issuers":[{"issuer_name":"Pedro","user_id":"%s","agency_id":"%s"}]}`,
+				accountID[:6], link, accountID, issuer.ID, agencyID)
 		}
+		body := func(accountID string) string { return bodyWithAgency(accountID, agency.ID) }
 
 		if rec := callInjunctionGroup(tx, dev, http.MethodPost, "/injunction-groups", "", body(plain.ID)); rec.Code != http.StatusUnprocessableEntity {
 			t.Fatalf("a non-injunction account: got %d, want 422 (%s)", rec.Code, rec.Body.String())
+		}
+		if rec := callInjunctionGroup(tx, dev, http.MethodPost, "/injunction-groups", "", bodyWithAgency(account.ID, uuid.New().String())); rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("an issuer agency that does not exist: got %d, want 422 (%s)", rec.Code, rec.Body.String())
 		}
 
 		rec := callInjunctionGroup(tx, dev, http.MethodPost, "/injunction-groups", "", body(account.ID))
@@ -72,7 +78,8 @@ func TestInjunctionGroupKeepsOnlyInjunctionsAndHidesTheLink(t *testing.T) {
 		if len(group.Accounts) != 1 || group.Accounts[0].AccountLabel != "HUDSON" || group.Accounts[0].ProgramCode == "" {
 			t.Errorf("accounts: %+v", group.Accounts)
 		}
-		if len(group.Issuers) != 1 || group.Issuers[0].IssuerName != "PEDRO" {
+		if len(group.Issuers) != 1 || group.Issuers[0].IssuerName != "PEDRO" ||
+			group.Issuers[0].AgencyID != agency.ID || group.Issuers[0].AgencyName != agency.Name {
 			t.Errorf("issuers: %+v", group.Issuers)
 		}
 		if strings.Contains(rec.Body.String(), "SECRETPART") || !group.HasSpreadsheet {

@@ -12,11 +12,16 @@ import { InputGroup, InputGroupInput } from "@/components/ui/input-group"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { saveInjunctionGroupAction } from "@/actions/injunction-group"
 import { injunctionGroupFormSchema } from "@/schemas/injunction-group"
-import type { InjunctionAccountOption, InjunctionGroup, InjunctionGroupForm } from "@/schemas/injunction-group"
+import type {
+  InjunctionAccountOption,
+  InjunctionGroup,
+  InjunctionGroupForm,
+  InjunctionUserOption,
+} from "@/schemas/injunction-group"
 
 type Options = {
   accounts: InjunctionAccountOption[]
-  users: { id: string; name: string }[]
+  users: InjunctionUserOption[]
   agencies: { id: string; name: string }[]
 }
 
@@ -56,8 +61,9 @@ function TextField({
   )
 }
 
-// Creates or edits a Tropa: which injunction accounts its workbook covers (by the label in the
-// Conta column), which panel user each Emissor name is, the WhatsApp group and the link.
+// Creates or edits a group of the Controle de Liminares: which injunction accounts its workbook
+// covers (by the label in the Conta column), which panel user each Emissor name is and which
+// agency their issuances go to, the WhatsApp group and the link.
 export function InjunctionGroupFormPanel({
   group,
   options,
@@ -73,11 +79,10 @@ export function InjunctionGroupFormPanel({
     resolver: zodResolver(injunctionGroupFormSchema),
     defaultValues: {
       name: group?.name ?? "",
-      agency_id: group?.agency_id ?? options.agencies[0]?.id ?? "",
       whatsapp_chat_name: group?.whatsapp_chat_name ?? "",
       spreadsheet_url: "",
       accounts: group?.accounts.map((a) => ({ account_label: a.account_label, account_id: a.account_id })) ?? [],
-      issuers: group?.issuers.map((i) => ({ issuer_name: i.issuer_name, user_id: i.user_id })) ?? [],
+      issuers: group?.issuers.map((i) => ({ issuer_name: i.issuer_name, user_id: i.user_id, agency_id: i.agency_id })) ?? [],
     },
   })
   const accounts = useFieldArray({ control: form.control, name: "accounts" })
@@ -90,7 +95,7 @@ export function InjunctionGroupFormPanel({
         form.setError("root", { message: result.error })
         return
       }
-      toast.success(group ? "Tropa atualizada." : "Tropa criada.")
+      toast.success(group ? "Grupo atualizado." : "Grupo criado.")
       onDone()
       router.refresh()
     })
@@ -104,28 +109,6 @@ export function InjunctionGroupFormPanel({
           control={form.control}
           render={({ field, fieldState }) => (
             <TextField id="tropa-name" label="Nome" placeholder="Tropa Azul 1" error={fieldState.error} disabled={isPending} {...field} />
-          )}
-        />
-        <Controller
-          name="agency_id"
-          control={form.control}
-          render={({ field, fieldState }) => (
-            <Field>
-              <FieldLabel htmlFor="tropa-agency">Agência</FieldLabel>
-              <Select value={field.value} onValueChange={field.onChange} disabled={isPending}>
-                <SelectTrigger id="tropa-agency" className="bg-slate-200">
-                  <SelectValue placeholder="Escolha" />
-                </SelectTrigger>
-                <SelectContent>
-                  {options.agencies.map((agency) => (
-                    <SelectItem key={agency.id} value={agency.id}>
-                      {agency.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {fieldState.error && <FieldError errors={[fieldState.error]} />}
-            </Field>
           )}
         />
         <Controller
@@ -209,12 +192,12 @@ export function InjunctionGroupFormPanel({
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between">
           <span className="text-sm font-medium">Emissores (coluna Emissor da planilha)</span>
-          <Button type="button" variant="outline" size="sm" onClick={() => issuers.append({ issuer_name: "", user_id: "" })}>
+          <Button type="button" variant="outline" size="sm" onClick={() => issuers.append({ issuer_name: "", user_id: "", agency_id: "" })}>
             <Plus className="h-4 w-4" /> Emissor
           </Button>
         </div>
         {issuers.fields.map((item, index) => (
-          <div key={item.id} className="grid items-end gap-2 sm:grid-cols-[1fr_2fr_auto]">
+          <div key={item.id} className="grid items-end gap-2 sm:grid-cols-[1fr_2fr_2fr_auto]">
             <Controller
               name={`issuers.${index}.issuer_name`}
               control={form.control}
@@ -228,7 +211,18 @@ export function InjunctionGroupFormPanel({
               render={({ field, fieldState }) => (
                 <Field>
                   <FieldLabel>Usuário</FieldLabel>
-                  <Select value={field.value} onValueChange={field.onChange} disabled={isPending}>
+                  <Select
+                    value={field.value}
+                    onValueChange={(userId) => {
+                      field.onChange(userId)
+                      // Only fills an empty agency: an explicit pick is never overwritten.
+                      const agencyIds = options.users.find((user) => user.id === userId)?.agency_ids ?? []
+                      if (agencyIds.length === 1 && !form.getValues(`issuers.${index}.agency_id`)) {
+                        form.setValue(`issuers.${index}.agency_id`, agencyIds[0], { shouldValidate: true })
+                      }
+                    }}
+                    disabled={isPending}
+                  >
                     <SelectTrigger className="bg-slate-200">
                       <SelectValue placeholder="Usuário do painel" />
                     </SelectTrigger>
@@ -236,6 +230,28 @@ export function InjunctionGroupFormPanel({
                       {options.users.map((user) => (
                         <SelectItem key={user.id} value={user.id}>
                           {user.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {fieldState.error && <FieldError errors={[fieldState.error]} />}
+                </Field>
+              )}
+            />
+            <Controller
+              name={`issuers.${index}.agency_id`}
+              control={form.control}
+              render={({ field, fieldState }) => (
+                <Field>
+                  <FieldLabel>Agência das emissões</FieldLabel>
+                  <Select value={field.value} onValueChange={field.onChange} disabled={isPending}>
+                    <SelectTrigger className="bg-slate-200">
+                      <SelectValue placeholder="Agência" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {options.agencies.map((agency) => (
+                        <SelectItem key={agency.id} value={agency.id}>
+                          {agency.name}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -253,7 +269,7 @@ export function InjunctionGroupFormPanel({
 
       <div className="flex items-center gap-3">
         <Button type="submit" disabled={isPending}>
-          {group ? "Salvar" : "Criar Tropa"}
+          {group ? "Salvar" : "Criar grupo"}
         </Button>
         <Button type="button" variant="outline" disabled={isPending} onClick={onDone}>
           Cancelar

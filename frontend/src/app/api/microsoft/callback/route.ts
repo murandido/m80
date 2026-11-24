@@ -2,10 +2,10 @@ import { cookies } from "next/headers"
 import { NextResponse } from "next/server"
 import { env } from "@/lib/env"
 
-// Where Microsoft sends the browser back after the sign-in that lets the API read the Tropas'
+// Where Microsoft sends the browser back after the sign-in that lets the API read the injunction groups'
 // workbooks. This exact path is registered as the redirect URI on the Azure app, so it must
 // not move. It only forwards the code and state to the API with the operator's session -
-// the API checks the state was issued to that same person - and lands back on the Tropas page.
+// the API checks the state was issued to that same person - and lands back on the Controle de Liminares page.
 export const dynamic = "force-dynamic"
 
 // A relative Location on purpose, like /api/logout: the standalone server builds request.url

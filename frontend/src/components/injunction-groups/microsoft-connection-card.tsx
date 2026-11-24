@@ -16,7 +16,7 @@ const STATE_LABELS: Record<string, string> = {
   error: "Erro na última leitura",
 }
 
-// The Microsoft login the API reads the Tropas' workbooks with. Read-only access to files
+// The Microsoft login the API reads the injunction groups' workbooks with. Read-only access to files
 // shared with the account; one per installation.
 export function MicrosoftConnectionCard({ connection }: { connection: MicrosoftConnection | null }) {
   const router = useRouter()
@@ -52,7 +52,7 @@ export function MicrosoftConnectionCard({ connection }: { connection: MicrosoftC
       <CardHeader>
         <CardTitle>Conexão Microsoft</CardTitle>
         <CardDescription>
-          A conta Microsoft com quem as planilhas das Tropas estão compartilhadas. O M80 só lê arquivos
+          A conta Microsoft com quem as planilhas dos grupos de liminares estão compartilhadas. O M80 só lê arquivos
           compartilhados com ela; nada é alterado no OneDrive.
         </CardDescription>
       </CardHeader>

@@ -13,6 +13,7 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/murandido/m-80-backend/carriers/onedrive"
+	"github.com/murandido/m-80-backend/internal/access"
 	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
 	"github.com/murandido/m-80-backend/internal/businessday"
@@ -25,8 +26,8 @@ import (
 	"gorm.io/gorm"
 )
 
-// InjunctionGroupHandler manages the Tropas: groups of injunction accounts that keep their
-// issuances in a OneDrive workbook and talk to the agency in a WhatsApp group.
+// InjunctionGroupHandler manages the Controle de Liminares: groups of injunction accounts
+// that keep their issuances in a OneDrive workbook and talk to the agency in a WhatsApp group.
 type InjunctionGroupHandler struct {
 	DB        *gorm.DB
 	Validator *validator.Validate
@@ -55,15 +56,11 @@ func (h *InjunctionGroupHandler) toResponse(group data.InjunctionGroup) (schemas
 	resp := schemas.InjunctionGroupResponse{
 		ID:               group.ID,
 		Name:             group.Name,
-		AgencyID:         group.AgencyID,
 		WhatsAppChatName: group.WhatsAppChatName,
 		Accounts:         []schemas.InjunctionGroupAccountResponse{},
 		Issuers:          []schemas.InjunctionGroupIssuerResponse{},
 		CreatedAt:        group.CreatedAt,
 		UpdatedAt:        group.UpdatedAt,
-	}
-	if group.Agency != nil {
-		resp.AgencyName = group.Agency.Name
 	}
 	if group.SpreadsheetURL != nil && *group.SpreadsheetURL != "" {
 		resp.HasSpreadsheet = true
@@ -114,32 +111,64 @@ func (h *InjunctionGroupHandler) toResponse(group data.InjunctionGroup) (schemas
 			names[user.ID] = user.Name
 		}
 	}
+	agencyNames := map[string]string{}
+	if agencyIDs := injunction.IssuerAgencyIDs(group); len(agencyIDs) > 0 {
+		var agencies []data.Agency
+		if err := h.DB.Unscoped().Select("id", "name").Where("id IN ?", agencyIDs).Find(&agencies).Error; err != nil {
+			return resp, err
+		}
+		for _, agency := range agencies {
+			agencyNames[agency.ID] = agency.Name
+		}
+	}
 	for _, mapping := range group.Mappings.Issuers {
-		resp.Issuers = append(resp.Issuers, schemas.InjunctionGroupIssuerResponse{IssuerName: mapping.IssuerName, UserID: mapping.UserID, UserName: names[mapping.UserID]})
+		resp.Issuers = append(resp.Issuers, schemas.InjunctionGroupIssuerResponse{
+			IssuerName: mapping.IssuerName, UserID: mapping.UserID, UserName: names[mapping.UserID],
+			AgencyID: mapping.AgencyID, AgencyName: agencyNames[mapping.AgencyID],
+		})
 	}
 	return resp, nil
 }
 
-// loadGroup finds a Tropa in the caller's agency scope; another agency's answers as missing.
+// visibleTo says whether the caller may see a group: every agency its issuers write into has
+// to be in their scope, because checking and importing it writes into all of them. A group
+// with no issuer agency yet (saved before migration 000096) is dev only, like its setup.
+func visibleTo(scope access.AgencyScope, group data.InjunctionGroup) bool {
+	if scope.All {
+		return true
+	}
+	agencyIDs := injunction.IssuerAgencyIDs(group)
+	if len(agencyIDs) == 0 {
+		return false
+	}
+	for _, agencyID := range agencyIDs {
+		if !scope.Allows(agencyID) {
+			return false
+		}
+	}
+	return true
+}
+
+// loadGroup finds a group the caller may see; one outside their agency scope answers as
+// missing.
 func (h *InjunctionGroupHandler) loadGroup(w http.ResponseWriter, r *http.Request) (data.InjunctionGroup, bool) {
 	var group data.InjunctionGroup
-	query := middleware.AgencyScopeFrom(r.Context()).Restrict(h.DB.Preload("Agency"), "injunction_groups.agency_id")
-	err := query.First(&group, "injunction_groups.id = ?", chi.URLParam(r, "id")).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		utils.SendError(w, r, http.StatusNotFound, "Tropa não encontrada")
+	err := h.DB.First(&group, "id = ?", chi.URLParam(r, "id")).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) || (err == nil && !visibleTo(middleware.AgencyScopeFrom(r.Context()), group)) {
+		utils.SendError(w, r, http.StatusNotFound, "Grupo de liminares não encontrado")
 		return group, false
 	}
 	if err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Erro ao buscar a Tropa")
+		utils.SendError(w, r, http.StatusInternalServerError, "Erro ao buscar o grupo de liminares")
 		return group, false
 	}
 	return group, true
 }
 
 // GetInjunctionGroups handles the GET /injunction-groups route
-// @Summary      Listar Tropas
-// @Description  Tropas (grupos de contas liminares com planilha no OneDrive e grupo no WhatsApp) das agências visíveis. O link da planilha vem mascarado.
-// @Tags         Tropas
+// @Summary      Listar grupos de liminares
+// @Description  Grupos de contas liminares com planilha no OneDrive e grupo no WhatsApp, das agências visíveis. O link da planilha vem mascarado.
+// @Tags         Liminares
 // @Produce      json
 // @Security     BearerAuth
 // @Success      200  {object}  object
@@ -147,31 +176,34 @@ func (h *InjunctionGroupHandler) loadGroup(w http.ResponseWriter, r *http.Reques
 // @Router       /injunction-groups [get]
 func (h *InjunctionGroupHandler) GetInjunctionGroups(w http.ResponseWriter, r *http.Request) {
 	var groups []data.InjunctionGroup
-	query := middleware.AgencyScopeFrom(r.Context()).Restrict(h.DB.Preload("Agency"), "injunction_groups.agency_id")
-	if err := query.Order("name").Find(&groups).Error; err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Erro ao listar Tropas")
+	if err := h.DB.Order("name").Find(&groups).Error; err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Erro ao listar os grupos de liminares")
 		return
 	}
+	scope := middleware.AgencyScopeFrom(r.Context())
 	resp := make([]schemas.InjunctionGroupResponse, 0, len(groups))
 	for _, group := range groups {
+		if !visibleTo(scope, group) {
+			continue
+		}
 		item, err := h.toResponse(group)
 		if err != nil {
-			utils.SendError(w, r, http.StatusInternalServerError, "Erro ao listar Tropas")
+			utils.SendError(w, r, http.StatusInternalServerError, "Erro ao listar os grupos de liminares")
 			return
 		}
 		resp = append(resp, item)
 	}
-	utils.SendJSON(w, r, http.StatusOK, "Tropas listadas com sucesso", resp)
+	utils.SendJSON(w, r, http.StatusOK, "Grupos de liminares listados com sucesso", resp)
 }
 
 // GetInjunctionGroup handles the GET /injunction-groups/{id} route
-// @Summary      Ver Tropa
-// @Tags         Tropas
+// @Summary      Ver grupo de liminares
+// @Tags         Liminares
 // @Produce      json
 // @Security     BearerAuth
-// @Param        id   path  string  true  "ID da Tropa"
+// @Param        id   path  string  true  "ID do grupo de liminares"
 // @Success      200  {object}  object
-// @Failure      404  {object}  schemas.ErrorResponse "Tropa não encontrada"
+// @Failure      404  {object}  schemas.ErrorResponse "grupo de liminares não encontrada"
 // @Router       /injunction-groups/{id} [get]
 func (h *InjunctionGroupHandler) GetInjunctionGroup(w http.ResponseWriter, r *http.Request) {
 	group, ok := h.loadGroup(w, r)
@@ -180,15 +212,16 @@ func (h *InjunctionGroupHandler) GetInjunctionGroup(w http.ResponseWriter, r *ht
 	}
 	resp, err := h.toResponse(group)
 	if err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Erro ao buscar a Tropa")
+		utils.SendError(w, r, http.StatusInternalServerError, "Erro ao buscar o grupo de liminares")
 		return
 	}
-	utils.SendJSON(w, r, http.StatusOK, "Tropa", resp)
+	utils.SendJSON(w, r, http.StatusOK, "Grupo de liminares", resp)
 }
 
-// buildMappings checks every account is an injunction and every issuer a user, and fills the
-// program code from the account itself. The message is for the operator when it fails.
-func (h *InjunctionGroupHandler) buildMappings(req schemas.InjunctionGroupRequest) (data.InjunctionGroupMappings, string, error) {
+// buildMappings checks every account is an injunction, every issuer a user with an agency the
+// caller can write into, and fills the program code from the account itself. The message is
+// for the operator when it fails.
+func (h *InjunctionGroupHandler) buildMappings(scope access.AgencyScope, req schemas.InjunctionGroupRequest) (data.InjunctionGroupMappings, string, error) {
 	mappings := data.InjunctionGroupMappings{Accounts: []data.InjunctionAccountMapping{}, Issuers: []data.InjunctionIssuerMapping{}}
 	seen := map[string]bool{}
 	for _, label := range req.Accounts {
@@ -201,7 +234,7 @@ func (h *InjunctionGroupHandler) buildMappings(req schemas.InjunctionGroupReques
 			return mappings, "", err
 		}
 		if account.Category != data.AccountCategoryInjunction {
-			return mappings, "Só contas liminares entram numa Tropa (\"" + label.AccountLabel + "\" não é liminar)", nil
+			return mappings, "Só contas liminares entram no grupo (\"" + label.AccountLabel + "\" não é liminar)", nil
 		}
 		code := ""
 		if account.LoyaltyProgram != nil {
@@ -224,7 +257,17 @@ func (h *InjunctionGroupHandler) buildMappings(req schemas.InjunctionGroupReques
 		if err != nil {
 			return mappings, "", err
 		}
-		mappings.Issuers = append(mappings.Issuers, data.InjunctionIssuerMapping{IssuerName: strings.ToUpper(strings.TrimSpace(label.IssuerName)), UserID: user.ID})
+		var agency data.Agency
+		err = h.DB.Select("id").First(&agency, "id = ?", label.AgencyID).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) || (err == nil && !scope.Allows(agency.ID)) {
+			return mappings, "Agência não encontrada para o emissor \"" + label.IssuerName + "\"", nil
+		}
+		if err != nil {
+			return mappings, "", err
+		}
+		mappings.Issuers = append(mappings.Issuers, data.InjunctionIssuerMapping{
+			IssuerName: strings.ToUpper(strings.TrimSpace(label.IssuerName)), UserID: user.ID, AgencyID: agency.ID,
+		})
 	}
 	return mappings, "", nil
 }
@@ -239,11 +282,7 @@ func (h *InjunctionGroupHandler) save(w http.ResponseWriter, r *http.Request, gr
 		utils.SendError(w, r, http.StatusBadRequest, "Dados inválidos: "+err.Error())
 		return
 	}
-	if !middleware.AgencyScopeFrom(r.Context()).Allows(req.AgencyID) {
-		utils.SendError(w, r, http.StatusNotFound, "Agência não encontrada")
-		return
-	}
-	mappings, message, err := h.buildMappings(req)
+	mappings, message, err := h.buildMappings(middleware.AgencyScopeFrom(r.Context()), req)
 	if err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Erro ao validar as contas e emissores")
 		return
@@ -254,7 +293,6 @@ func (h *InjunctionGroupHandler) save(w http.ResponseWriter, r *http.Request, gr
 	}
 
 	group.Name = strings.TrimSpace(req.Name)
-	group.AgencyID = req.AgencyID
 	group.WhatsAppChatName = req.WhatsAppChatName
 	group.Mappings = mappings
 	if req.SpreadsheetURL != nil {
@@ -266,42 +304,42 @@ func (h *InjunctionGroupHandler) save(w http.ResponseWriter, r *http.Request, gr
 		}
 	}
 
-	if err := h.DB.Omit("Agency").Save(&group).Error; err != nil {
+	if err := h.DB.Save(&group).Error; err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			utils.SendError(w, r, http.StatusUnprocessableEntity, "Já existe uma Tropa com esse nome")
+			utils.SendError(w, r, http.StatusUnprocessableEntity, "Já existe um grupo de liminares com esse nome")
 			return
 		}
-		utils.SendError(w, r, http.StatusInternalServerError, "Erro ao salvar a Tropa")
+		utils.SendError(w, r, http.StatusInternalServerError, "Erro ao salvar o grupo de liminares")
 		return
 	}
 
-	// Read back so the link is decrypted and the agency loaded for the response.
+	// Read back so the link is decrypted for the response.
 	var saved data.InjunctionGroup
-	if err := h.DB.Preload("Agency").First(&saved, "id = ?", group.ID).Error; err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Erro ao salvar a Tropa")
+	if err := h.DB.First(&saved, "id = ?", group.ID).Error; err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Erro ao salvar o grupo de liminares")
 		return
 	}
 	resp, err := h.toResponse(saved)
 	if err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Erro ao salvar a Tropa")
+		utils.SendError(w, r, http.StatusInternalServerError, "Erro ao salvar o grupo de liminares")
 		return
 	}
-	status, message := http.StatusOK, "Tropa atualizada"
+	status, message := http.StatusOK, "Grupo de liminares atualizado"
 	if created {
-		status, message = http.StatusCreated, "Tropa criada"
+		status, message = http.StatusCreated, "Grupo de liminares criado"
 	}
 	utils.SendJSON(w, r, status, message, resp)
 }
 
 // CreateInjunctionGroup handles the POST /injunction-groups route
-// @Summary      Criar Tropa
-// @Description  Cria uma Tropa. Só contas liminares; o programa de cada conta vem da própria conta. Emissores devem ser usuários do painel.
-// @Tags         Tropas
+// @Summary      Criar grupo de liminares
+// @Description  Cria um grupo de liminares. Só contas liminares; o programa de cada conta vem da própria conta. Emissores devem ser usuários do painel, cada um com a agência das emissões dele.
+// @Tags         Liminares
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
-// @Param        request  body  schemas.InjunctionGroupRequest  true  "Tropa"
+// @Param        request  body  schemas.InjunctionGroupRequest  true  "grupo de liminares"
 // @Success      201  {object}  object
 // @Failure      422  {object}  schemas.ErrorResponse "Conta não liminar, emissor inexistente ou nome repetido"
 // @Router       /injunction-groups [post]
@@ -310,14 +348,14 @@ func (h *InjunctionGroupHandler) CreateInjunctionGroup(w http.ResponseWriter, r 
 }
 
 // UpdateInjunctionGroup handles the PUT /injunction-groups/{id} route
-// @Summary      Atualizar Tropa
-// @Description  Substitui a Tropa. spreadsheet_url null mantém o link guardado; "" remove.
-// @Tags         Tropas
+// @Summary      Atualizar grupo de liminares
+// @Description  Substitui o grupo de liminares. spreadsheet_url null mantém o link guardado; "" remove.
+// @Tags         Liminares
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
-// @Param        id       path  string                          true  "ID da Tropa"
-// @Param        request  body  schemas.InjunctionGroupRequest  true  "Tropa"
+// @Param        id       path  string                          true  "ID do grupo de liminares"
+// @Param        request  body  schemas.InjunctionGroupRequest  true  "grupo de liminares"
 // @Success      200  {object}  object
 // @Router       /injunction-groups/{id} [put]
 func (h *InjunctionGroupHandler) UpdateInjunctionGroup(w http.ResponseWriter, r *http.Request) {
@@ -329,12 +367,12 @@ func (h *InjunctionGroupHandler) UpdateInjunctionGroup(w http.ResponseWriter, r 
 }
 
 // DeleteInjunctionGroup handles the DELETE /injunction-groups/{id} route
-// @Summary      Excluir Tropa
-// @Description  Apaga o cadastro da Tropa. Nenhuma emissão ou conta é alterada.
-// @Tags         Tropas
+// @Summary      Excluir grupo de liminares
+// @Description  Apaga o cadastro do grupo de liminares. Nenhuma emissão ou conta é alterada.
+// @Tags         Liminares
 // @Produce      json
 // @Security     BearerAuth
-// @Param        id   path  string  true  "ID da Tropa"
+// @Param        id   path  string  true  "ID do grupo de liminares"
 // @Success      200  {object}  object
 // @Router       /injunction-groups/{id} [delete]
 func (h *InjunctionGroupHandler) DeleteInjunctionGroup(w http.ResponseWriter, r *http.Request) {
@@ -343,10 +381,10 @@ func (h *InjunctionGroupHandler) DeleteInjunctionGroup(w http.ResponseWriter, r 
 		return
 	}
 	if err := h.DB.Delete(&data.InjunctionGroup{}, "id = ?", group.ID).Error; err != nil {
-		utils.SendError(w, r, http.StatusInternalServerError, "Erro ao excluir a Tropa")
+		utils.SendError(w, r, http.StatusInternalServerError, "Erro ao excluir o grupo de liminares")
 		return
 	}
-	utils.SendJSON(w, r, http.StatusOK, "Tropa excluída", nil)
+	utils.SendJSON(w, r, http.StatusOK, "Grupo de liminares excluído", nil)
 }
 
 // injunctionPeriodMaxDays bounds an import-period request: the Tropa workbooks hold a sheet
@@ -357,7 +395,7 @@ const injunctionPeriodMaxDays = 120
 // client itself on failure.
 func (h *InjunctionGroupHandler) downloadWorkbook(w http.ResponseWriter, r *http.Request, group data.InjunctionGroup) ([]byte, bool) {
 	if group.SpreadsheetURL == nil || *group.SpreadsheetURL == "" {
-		utils.SendError(w, r, http.StatusUnprocessableEntity, "A Tropa não tem link de planilha cadastrado")
+		utils.SendError(w, r, http.StatusUnprocessableEntity, "O grupo de liminares não tem link de planilha cadastrado")
 		return nil, false
 	}
 	content, err := h.Workbooks.Download(r.Context(), *group.SpreadsheetURL)
@@ -374,7 +412,7 @@ func (h *InjunctionGroupHandler) downloadWorkbook(w http.ResponseWriter, r *http
 	case errors.Is(err, onedrivesync.ErrNotConnected):
 		utils.SendError(w, r, http.StatusUnprocessableEntity, err.Error())
 	case errors.Is(err, onedrive.ErrNeedsLogin):
-		utils.SendError(w, r, http.StatusUnprocessableEntity, "A conta Microsoft precisa ser conectada de novo (Dev Mode > Tropas)")
+		utils.SendError(w, r, http.StatusUnprocessableEntity, "A conta Microsoft precisa ser conectada de novo (Dev Mode > Controle de Liminares)")
 	case errors.Is(err, onedrive.ErrNotShared):
 		utils.SendError(w, r, http.StatusUnprocessableEntity, "A planilha não abre com a conta Microsoft conectada: confira o link e o compartilhamento")
 	default:
@@ -388,12 +426,12 @@ func parseDay(value string) (time.Time, error) {
 }
 
 // CheckInjunctionGroup handles the GET /injunction-groups/{id}/check route
-// @Summary      Conferir Tropa
-// @Description  Baixa a planilha da Tropa e cruza com o painel e o extrato das contas liminares dela. Só linhas das contas mapeadas; a taxa de resgate é ignorada. Padrão: últimos 7 dias.
-// @Tags         Tropas
+// @Summary      Conferir grupo de liminares
+// @Description  Baixa a planilha do grupo de liminares e cruza com o painel e o extrato das contas liminares dele. Só linhas das contas mapeadas; a taxa de resgate é ignorada. Padrão: últimos 7 dias.
+// @Tags         Liminares
 // @Produce      json
 // @Security     BearerAuth
-// @Param        id    path   string  true   "ID da Tropa"
+// @Param        id    path   string  true   "ID do grupo de liminares"
 // @Param        from  query  string  false  "Primeiro dia (AAAA-MM-DD)"
 // @Param        to    query  string  false  "Último dia (AAAA-MM-DD)"
 // @Success      200  {object}  object
@@ -431,7 +469,7 @@ func (h *InjunctionGroupHandler) CheckInjunctionGroup(w http.ResponseWriter, r *
 		utils.SendError(w, r, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
-	utils.SendJSON(w, r, http.StatusOK, "Conferência da Tropa", result)
+	utils.SendJSON(w, r, http.StatusOK, "Conferência do grupo de liminares", result)
 }
 
 func (h *InjunctionGroupHandler) announce(result legacyimport.CommitResult) {
@@ -447,13 +485,13 @@ func (h *InjunctionGroupHandler) announce(result legacyimport.CommitResult) {
 }
 
 // ImportInjunctionGroupDay handles the POST /injunction-groups/{id}/import route
-// @Summary      Importar dia da planilha da Tropa
-// @Description  Grava como emissões as linhas de um dia da planilha (só das contas da Tropa; sem rows, todas as prontas). Linhas negativas cancelam a emissão do localizador. Taxa de resgate ignorada.
-// @Tags         Tropas
+// @Summary      Importar dia da planilha do grupo de liminares
+// @Description  Grava como emissões as linhas de um dia da planilha (só das contas do grupo de liminares; sem rows, todas as prontas). Linhas negativas cancelam a emissão do localizador. Taxa de resgate ignorada.
+// @Tags         Liminares
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
-// @Param        id       path  string                           true  "ID da Tropa"
+// @Param        id       path  string                           true  "ID do grupo de liminares"
 // @Param        request  body  schemas.InjunctionImportRequest  true  "Dia e linhas"
 // @Success      200  {object}  object
 // @Router       /injunction-groups/{id}/import [post]
@@ -494,13 +532,13 @@ func (h *InjunctionGroupHandler) ImportInjunctionGroupDay(w http.ResponseWriter,
 }
 
 // ImportInjunctionGroupPeriod handles the POST /injunction-groups/{id}/import-period route
-// @Summary      Importar período da planilha da Tropa
-// @Description  Importa todas as linhas prontas das contas da Tropa entre dois dias. Feito para a carga inicial antes da rotina diária.
-// @Tags         Tropas
+// @Summary      Importar período da planilha do grupo de liminares
+// @Description  Importa todas as linhas prontas das contas do grupo de liminares entre dois dias. Feito para a carga inicial antes da rotina diária.
+// @Tags         Liminares
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
-// @Param        id       path  string                                 true  "ID da Tropa"
+// @Param        id       path  string                                 true  "ID do grupo de liminares"
 // @Param        request  body  schemas.InjunctionImportPeriodRequest  true  "Período"
 // @Success      200  {object}  object
 // @Router       /injunction-groups/{id}/import-period [post]

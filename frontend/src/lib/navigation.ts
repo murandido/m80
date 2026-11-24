@@ -111,7 +111,7 @@ export const navSections: NavSection[] = [
       // approver's session, and a token carries its owner's whole authority.
       { title: "Agente MCP", url: "/dashboard/mcp", icon: Cpu, roles: [] },
       // Dev-only: it holds the Microsoft login and decides which workbook rows become issuances.
-      { title: "Tropas", url: "/dashboard/injunction-groups", icon: Users, roles: [] },
+      { title: "Controle de Liminares", url: "/dashboard/injunction-groups", icon: Users, roles: [] },
     ],
   },
 ]

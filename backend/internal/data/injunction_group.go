@@ -9,14 +9,13 @@ import (
 	"gorm.io/gorm"
 )
 
-// InjunctionGroup is a Tropa (migration 000095): the injunction accounts one OneDrive
-// workbook covers, the WhatsApp group the agent talks to about them, and how the workbook's
-// labels map onto the panel.
+// InjunctionGroup is one entry of the Controle de Liminares (migration 000095): the
+// injunction accounts one OneDrive workbook covers, the WhatsApp group the agent talks to
+// about them, and how the workbook's labels map onto the panel. It has no agency of its own
+// (migration 000096): each issuer mapping carries the agency their issuances belong to.
 type InjunctionGroup struct {
 	ID               string  `gorm:"primaryKey;type:uuid" json:"id"`
 	Name             string  `gorm:"not null" json:"name"`
-	AgencyID         string  `gorm:"column:agency_id;type:uuid;not null" json:"agency_id"`
-	Agency           *Agency `gorm:"foreignKey:AgencyID;references:ID" json:"agency,omitempty"`
 	WhatsAppChatName *string `gorm:"column:whatsapp_chat_name" json:"whatsapp_chat_name"`
 	// SpreadsheetURL is encrypted at rest: it opens a workbook full of passenger names to
 	// anyone signed in with access. Never sent back in full.
@@ -41,10 +40,13 @@ type InjunctionAccountMapping struct {
 	AccountID    string `json:"account_id"`
 }
 
-// InjunctionIssuerMapping is one name as typed in the Emissor column.
+// InjunctionIssuerMapping is one name as typed in the Emissor column, and the agency the
+// issuances of that issuer belong to. AgencyID is empty only on mappings saved before
+// migration 000096; their rows stay "needs mapping" until one is picked.
 type InjunctionIssuerMapping struct {
 	IssuerName string `json:"issuer_name"`
 	UserID     string `json:"user_id"`
+	AgencyID   string `json:"agency_id"`
 }
 
 func (g *InjunctionGroup) BeforeCreate(tx *gorm.DB) error {

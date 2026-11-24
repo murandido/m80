@@ -24,7 +24,13 @@ import {
   deleteInjunctionGroupAction,
   importInjunctionPeriodAction,
 } from "@/actions/injunction-group"
-import type { CheckItem, CheckResult, InjunctionAccountOption, InjunctionGroup } from "@/schemas/injunction-group"
+import type {
+  CheckItem,
+  CheckResult,
+  InjunctionAccountOption,
+  InjunctionGroup,
+  InjunctionUserOption,
+} from "@/schemas/injunction-group"
 
 const BUCKETS: { key: keyof CheckResult; label: string; tone: "ok" | "warn" | "bad" }[] = [
   { key: "missing_in_panel_confirmed", label: "Faltam no painel (planilha e extrato concordam)", tone: "ok" },
@@ -44,7 +50,7 @@ function CheckView({ result }: { result: CheckResult }) {
   return (
     <div className="flex flex-col gap-2 text-sm">
       <p className="text-xs text-muted-foreground">
-        {result.from} a {result.to} · {result.sheet_rows} linhas das contas da Tropa
+        {result.from} a {result.to} · {result.sheet_rows} linhas das contas do grupo
         {result.statements.map((s) => (
           <span key={s.account_id}>
             {" "}
@@ -82,7 +88,7 @@ function GroupCard({
   options,
 }: {
   group: InjunctionGroup
-  options: { accounts: InjunctionAccountOption[]; users: { id: string; name: string }[]; agencies: { id: string; name: string }[] }
+  options: { accounts: InjunctionAccountOption[]; users: InjunctionUserOption[]; agencies: { id: string; name: string }[] }
 }) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
@@ -139,14 +145,17 @@ function GroupCard({
         <div className="flex flex-col gap-1 text-sm">
           <span className="font-medium">{group.name}</span>
           <span className="text-xs text-muted-foreground">
-            {group.agency_name} · WhatsApp: {group.whatsapp_chat_name || "—"} · planilha:{" "}
+            WhatsApp: {group.whatsapp_chat_name || "—"} · planilha:{" "}
             {group.has_spreadsheet ? group.spreadsheet_hint : "não cadastrada"}
           </span>
           <span className="text-xs">
             Contas: {group.accounts.map((a) => `${a.account_label} → ${a.program_code} ${a.nicknames}`).join("; ") || "nenhuma"}
           </span>
           <span className="text-xs">
-            Emissores: {group.issuers.map((i) => `${i.issuer_name} → ${i.user_name}`).join("; ") || "nenhum"}
+            Emissores:{" "}
+            {group.issuers
+              .map((i) => `${i.issuer_name} → ${i.user_name} (${i.agency_name || "sem agência: linhas não são importadas"})`)
+              .join("; ") || "nenhum"}
           </span>
         </div>
         <div className="flex gap-2">
@@ -195,7 +204,7 @@ function GroupCard({
                 Importar {from} a {to}?
               </AlertDialogTitle>
               <AlertDialogDescription>
-                Grava como emissões todas as linhas prontas das contas desta Tropa nesse período (e aplica os estornos).
+                Grava como emissões todas as linhas prontas das contas deste grupo nesse período (e aplica os estornos).
                 Linhas incompletas, sem mapeamento ou que já existem no painel ficam de fora. Rode &quot;Conferir agora&quot;
                 antes para ver o que entra.
               </AlertDialogDescription>
@@ -218,20 +227,20 @@ export function InjunctionGroupsPanel({
   options,
 }: {
   groups: InjunctionGroup[]
-  options: { accounts: InjunctionAccountOption[]; users: { id: string; name: string }[]; agencies: { id: string; name: string }[] }
+  options: { accounts: InjunctionAccountOption[]; users: InjunctionUserOption[]; agencies: { id: string; name: string }[] }
 }) {
   const [creating, setCreating] = useState(false)
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Tropas</CardTitle>
+        <CardTitle>Grupos de liminares</CardTitle>
         <CardDescription>
-          Grupos de contas liminares que controlam as emissões numa planilha do OneDrive. Só as linhas das contas mapeadas
+          Grupos de contas liminares (ex.: as Tropas) que controlam as emissões numa planilha do OneDrive. A agência de cada emissão vem do emissor. Só as linhas das contas mapeadas
           são lidas; a taxa de resgate é ignorada.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
-        {groups.length === 0 && !creating && <p className="text-sm text-muted-foreground">Nenhuma Tropa cadastrada.</p>}
+        {groups.length === 0 && !creating && <p className="text-sm text-muted-foreground">Nenhum grupo cadastrado.</p>}
         {groups.map((group) => (
           <GroupCard key={group.id} group={group} options={options} />
         ))}
@@ -239,7 +248,7 @@ export function InjunctionGroupsPanel({
           <InjunctionGroupFormPanel group={null} options={options} onDone={() => setCreating(false)} />
         ) : (
           <Button type="button" className="self-start" onClick={() => setCreating(true)}>
-            Nova Tropa
+            Novo grupo
           </Button>
         )}
       </CardContent>
