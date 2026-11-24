@@ -2223,6 +2223,87 @@ definitions:
     required:
     - administrator_id
     type: object
+  schemas.InjunctionAccountLabel:
+    properties:
+      account_id:
+        type: string
+      account_label:
+        example: HUDSON
+        maxLength: 80
+        type: string
+    required:
+    - account_id
+    - account_label
+    type: object
+  schemas.InjunctionGroupRequest:
+    properties:
+      accounts:
+        items:
+          $ref: '#/definitions/schemas.InjunctionAccountLabel'
+        type: array
+      agency_id:
+        type: string
+      issuers:
+        items:
+          $ref: '#/definitions/schemas.InjunctionIssuerLabel'
+        type: array
+      name:
+        example: Tropa Azul 1
+        maxLength: 80
+        type: string
+      spreadsheet_url:
+        maxLength: 2000
+        type: string
+      whatsapp_chat_name:
+        maxLength: 120
+        type: string
+    required:
+    - agency_id
+    - name
+    type: object
+  schemas.InjunctionImportPeriodRequest:
+    properties:
+      from:
+        example: "2026-10-01"
+        type: string
+      to:
+        example: "2026-11-30"
+        type: string
+    required:
+    - from
+    - to
+    type: object
+  schemas.InjunctionImportRequest:
+    properties:
+      day:
+        example: "2026-11-20"
+        type: string
+      rows:
+        items:
+          $ref: '#/definitions/schemas.InjunctionRowSelection'
+        type: array
+    required:
+    - day
+    type: object
+  schemas.InjunctionIssuerLabel:
+    properties:
+      issuer_name:
+        example: PEDRO
+        maxLength: 80
+        type: string
+      user_id:
+        type: string
+    required:
+    - issuer_name
+    - user_id
+    type: object
+  schemas.InjunctionRowSelection:
+    properties:
+      block_index:
+        type: integer
+      number:
+        type: integer
+    type: object
   schemas.InventoryBatchLineResponse:
     properties:
       agency_id:
@@ -3373,6 +3454,16 @@ definitions:
       success:
         example: true
         type: boolean
+    type: object
+  schemas.MicrosoftCallbackRequest:
+    properties:
+      code:
+        type: string
+      state:
+        type: string
+    required:
+    - code
+    - state
     type: object
   schemas.NicknameAvailabilityCheckResponse:
     properties:
@@ -9393,6 +9484,223 @@ paths:
       summary: Stream de eventos (SSE)
       tags:
       - Eventos
+  /injunction-groups:
+    get:
+      description: Tropas (grupos de contas liminares com planilha no OneDrive e grupo
+        no WhatsApp) das agências visíveis. O link da planilha vem mascarado.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "403":
+          description: Requer admin
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Listar Tropas
+      tags:
+      - Tropas
+    post:
+      consumes:
+      - application/json
+      description: Cria uma Tropa. Só contas liminares; o programa de cada conta vem
+        da própria conta. Emissores devem ser usuários do painel.
+      parameters:
+      - description: Tropa
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/schemas.InjunctionGroupRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            type: object
+        "422":
+          description: Conta não liminar, emissor inexistente ou nome repetido
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Criar Tropa
+      tags:
+      - Tropas
+  /injunction-groups/{id}:
+    delete:
+      description: Apaga o cadastro da Tropa. Nenhuma emissão ou conta é alterada.
+      parameters:
+      - description: ID da Tropa
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Excluir Tropa
+      tags:
+      - Tropas
+    get:
+      parameters:
+      - description: ID da Tropa
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "404":
+          description: Tropa não encontrada
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Ver Tropa
+      tags:
+      - Tropas
+    put:
+      consumes:
+      - application/json
+      description: Substitui a Tropa. spreadsheet_url null mantém o link guardado;
+        "" remove.
+      parameters:
+      - description: ID da Tropa
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Tropa
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/schemas.InjunctionGroupRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Atualizar Tropa
+      tags:
+      - Tropas
+  /injunction-groups/{id}/check:
+    get:
+      description: 'Baixa a planilha da Tropa e cruza com o painel e o extrato das
+        contas liminares dela. Só linhas das contas mapeadas; a taxa de resgate é
+        ignorada. Padrão: últimos 7 dias.'
+      parameters:
+      - description: ID da Tropa
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Primeiro dia (AAAA-MM-DD)
+        in: query
+        name: from
+        type: string
+      - description: Último dia (AAAA-MM-DD)
+        in: query
+        name: to
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "422":
+          description: Sem planilha, sem conexão Microsoft ou planilha inacessível
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Conferir Tropa
+      tags:
+      - Tropas
+  /injunction-groups/{id}/import:
+    post:
+      consumes:
+      - application/json
+      description: Grava como emissões as linhas de um dia da planilha (só das contas
+        da Tropa; sem rows, todas as prontas). Linhas negativas cancelam a emissão
+        do localizador. Taxa de resgate ignorada.
+      parameters:
+      - description: ID da Tropa
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Dia e linhas
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/schemas.InjunctionImportRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Importar dia da planilha da Tropa
+      tags:
+      - Tropas
+  /injunction-groups/{id}/import-period:
+    post:
+      consumes:
+      - application/json
+      description: Importa todas as linhas prontas das contas da Tropa entre dois
+        dias. Feito para a carga inicial antes da rotina diária.
+      parameters:
+      - description: ID da Tropa
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Período
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/schemas.InjunctionImportPeriodRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Importar período da planilha da Tropa
+      tags:
+      - Tropas
   /inventory-closing:
     get:
       description: Lucro por lote, acerto entre agências e pendências, por conta e
@@ -11515,6 +11823,98 @@ paths:
       summary: Revogar token MCP
       tags:
       - MCP
+  /microsoft-connection:
+    delete:
+      description: Apaga o token guardado. As planilhas deixam de ser lidas até conectar
+        de novo.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Desconectar Microsoft
+      tags:
+      - Tropas
+    get:
+      description: Estado da conta Microsoft usada para ler as planilhas das Tropas
+        no OneDrive. O token nunca é devolvido.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "403":
+          description: Acesso restrito a desenvolvedores
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Conexão Microsoft
+      tags:
+      - Tropas
+  /microsoft-connection/callback:
+    post:
+      consumes:
+      - application/json
+      description: Troca o código do retorno da Microsoft pelo token e guarda a conexão
+        (substitui a anterior).
+      parameters:
+      - description: Código e state do retorno
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/schemas.MicrosoftCallbackRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "400":
+          description: Dados inválidos
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+        "422":
+          description: Login expirado ou recusado pela Microsoft
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Concluir conexão Microsoft
+      tags:
+      - Tropas
+  /microsoft-connection/start:
+    post:
+      description: Devolve a URL de login da Microsoft (só leitura de arquivos). O
+        retorno chega em /api/microsoft/callback do painel.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: object
+        "403":
+          description: Acesso restrito a desenvolvedores
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+        "503":
+          description: Servidor sem o app Microsoft configurado
+          schema:
+            $ref: '#/definitions/schemas.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Iniciar conexão Microsoft
+      tags:
+      - Tropas
   /observation-presets:
     get:
       description: Retorna todas as observações padrão cadastradas no sistema.

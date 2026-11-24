@@ -6002,6 +6002,339 @@ const docTemplate = `{
                 }
             }
         },
+        "/injunction-groups": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Tropas (grupos de contas liminares com planilha no OneDrive e grupo no WhatsApp) das agências visíveis. O link da planilha vem mascarado.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Tropas"
+                ],
+                "summary": "Listar Tropas",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object"
+                        }
+                    },
+                    "403": {
+                        "description": "Requer admin",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Cria uma Tropa. Só contas liminares; o programa de cada conta vem da própria conta. Emissores devem ser usuários do painel.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Tropas"
+                ],
+                "summary": "Criar Tropa",
+                "parameters": [
+                    {
+                        "description": "Tropa",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/schemas.InjunctionGroupRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "type": "object"
+                        }
+                    },
+                    "422": {
+                        "description": "Conta não liminar, emissor inexistente ou nome repetido",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/injunction-groups/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Tropas"
+                ],
+                "summary": "Ver Tropa",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ID da Tropa",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object"
+                        }
+                    },
+                    "404": {
+                        "description": "Tropa não encontrada",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Substitui a Tropa. spreadsheet_url null mantém o link guardado; \"\" remove.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Tropas"
+                ],
+                "summary": "Atualizar Tropa",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ID da Tropa",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Tropa",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/schemas.InjunctionGroupRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Apaga o cadastro da Tropa. Nenhuma emissão ou conta é alterada.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Tropas"
+                ],
+                "summary": "Excluir Tropa",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ID da Tropa",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                }
+            }
+        },
+        "/injunction-groups/{id}/check": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Baixa a planilha da Tropa e cruza com o painel e o extrato das contas liminares dela. Só linhas das contas mapeadas; a taxa de resgate é ignorada. Padrão: últimos 7 dias.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Tropas"
+                ],
+                "summary": "Conferir Tropa",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ID da Tropa",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Primeiro dia (AAAA-MM-DD)",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Último dia (AAAA-MM-DD)",
+                        "name": "to",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object"
+                        }
+                    },
+                    "422": {
+                        "description": "Sem planilha, sem conexão Microsoft ou planilha inacessível",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/injunction-groups/{id}/import": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Grava como emissões as linhas de um dia da planilha (só das contas da Tropa; sem rows, todas as prontas). Linhas negativas cancelam a emissão do localizador. Taxa de resgate ignorada.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Tropas"
+                ],
+                "summary": "Importar dia da planilha da Tropa",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ID da Tropa",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Dia e linhas",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/schemas.InjunctionImportRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                }
+            }
+        },
+        "/injunction-groups/{id}/import-period": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Importa todas as linhas prontas das contas da Tropa entre dois dias. Feito para a carga inicial antes da rotina diária.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Tropas"
+                ],
+                "summary": "Importar período da planilha da Tropa",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ID da Tropa",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Período",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/schemas.InjunctionImportPeriodRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                }
+            }
+        },
         "/inventory-closing": {
             "get": {
                 "security": [
@@ -9101,6 +9434,148 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Token não encontrado",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/microsoft-connection": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Estado da conta Microsoft usada para ler as planilhas das Tropas no OneDrive. O token nunca é devolvido.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Tropas"
+                ],
+                "summary": "Conexão Microsoft",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object"
+                        }
+                    },
+                    "403": {
+                        "description": "Acesso restrito a desenvolvedores",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Apaga o token guardado. As planilhas deixam de ser lidas até conectar de novo.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Tropas"
+                ],
+                "summary": "Desconectar Microsoft",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                }
+            }
+        },
+        "/microsoft-connection/callback": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Troca o código do retorno da Microsoft pelo token e guarda a conexão (substitui a anterior).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Tropas"
+                ],
+                "summary": "Concluir conexão Microsoft",
+                "parameters": [
+                    {
+                        "description": "Código e state do retorno",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/schemas.MicrosoftCallbackRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object"
+                        }
+                    },
+                    "400": {
+                        "description": "Dados inválidos",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Login expirado ou recusado pela Microsoft",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/microsoft-connection/start": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Devolve a URL de login da Microsoft (só leitura de arquivos). O retorno chega em /api/microsoft/callback do painel.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Tropas"
+                ],
+                "summary": "Iniciar conexão Microsoft",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object"
+                        }
+                    },
+                    "403": {
+                        "description": "Acesso restrito a desenvolvedores",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Servidor sem o app Microsoft configurado",
                         "schema": {
                             "$ref": "#/definitions/schemas.ErrorResponse"
                         }
@@ -16261,6 +16736,123 @@ const docTemplate = `{
                 }
             }
         },
+        "schemas.InjunctionAccountLabel": {
+            "type": "object",
+            "required": [
+                "account_id",
+                "account_label"
+            ],
+            "properties": {
+                "account_id": {
+                    "type": "string"
+                },
+                "account_label": {
+                    "type": "string",
+                    "maxLength": 80,
+                    "example": "HUDSON"
+                }
+            }
+        },
+        "schemas.InjunctionGroupRequest": {
+            "type": "object",
+            "required": [
+                "agency_id",
+                "name"
+            ],
+            "properties": {
+                "accounts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/schemas.InjunctionAccountLabel"
+                    }
+                },
+                "agency_id": {
+                    "type": "string"
+                },
+                "issuers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/schemas.InjunctionIssuerLabel"
+                    }
+                },
+                "name": {
+                    "type": "string",
+                    "maxLength": 80,
+                    "example": "Tropa Azul 1"
+                },
+                "spreadsheet_url": {
+                    "type": "string",
+                    "maxLength": 2000
+                },
+                "whatsapp_chat_name": {
+                    "type": "string",
+                    "maxLength": 120
+                }
+            }
+        },
+        "schemas.InjunctionImportPeriodRequest": {
+            "type": "object",
+            "required": [
+                "from",
+                "to"
+            ],
+            "properties": {
+                "from": {
+                    "type": "string",
+                    "example": "2026-10-01"
+                },
+                "to": {
+                    "type": "string",
+                    "example": "2026-11-30"
+                }
+            }
+        },
+        "schemas.InjunctionImportRequest": {
+            "type": "object",
+            "required": [
+                "day"
+            ],
+            "properties": {
+                "day": {
+                    "type": "string",
+                    "example": "2026-11-20"
+                },
+                "rows": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/schemas.InjunctionRowSelection"
+                    }
+                }
+            }
+        },
+        "schemas.InjunctionIssuerLabel": {
+            "type": "object",
+            "required": [
+                "issuer_name",
+                "user_id"
+            ],
+            "properties": {
+                "issuer_name": {
+                    "type": "string",
+                    "maxLength": 80,
+                    "example": "PEDRO"
+                },
+                "user_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "schemas.InjunctionRowSelection": {
+            "type": "object",
+            "properties": {
+                "block_index": {
+                    "type": "integer"
+                },
+                "number": {
+                    "type": "integer"
+                }
+            }
+        },
         "schemas.InventoryBatchLineResponse": {
             "type": "object",
             "properties": {
@@ -17841,6 +18433,21 @@ const docTemplate = `{
                 "success": {
                     "type": "boolean",
                     "example": true
+                }
+            }
+        },
+        "schemas.MicrosoftCallbackRequest": {
+            "type": "object",
+            "required": [
+                "code",
+                "state"
+            ],
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "state": {
+                    "type": "string"
                 }
             }
         },
