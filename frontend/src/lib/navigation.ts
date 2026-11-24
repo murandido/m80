@@ -5,6 +5,7 @@ import {
   Bot,
   Building2,
   Cpu,
+  Users,
   FileUp,
   HandCoins,
   IdCard,
@@ -109,6 +110,8 @@ export const navSections: NavSection[] = [
       // Dev-only: approving a proposal cancels issuances and closes periods with the
       // approver's session, and a token carries its owner's whole authority.
       { title: "Agente MCP", url: "/dashboard/mcp", icon: Cpu, roles: [] },
+      // Dev-only: it holds the Microsoft login and decides which workbook rows become issuances.
+      { title: "Tropas", url: "/dashboard/injunction-groups", icon: Users, roles: [] },
     ],
   },
 ]

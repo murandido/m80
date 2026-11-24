@@ -11,6 +11,7 @@ export const mcpFreeWriteTools = [
   { value: "add_adjustment", label: "Registrar alteração de passagem" },
   { value: "update_adjustment", label: "Corrigir alteração de passagem" },
   { value: "sync_issuance_traveos", label: "Completar emissão pela Traveos" },
+  { value: "import_spreadsheet_issuances", label: "Importar emissões da planilha da Tropa (só se o extrato confirmar)" },
 ] as const
 
 export const mcpTokenLimitsSchema = z.object({
