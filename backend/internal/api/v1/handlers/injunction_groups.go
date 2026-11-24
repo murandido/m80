@@ -3,15 +3,23 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/murandido/m-80-backend/carriers/onedrive"
 	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
+	"github.com/murandido/m-80-backend/internal/businessday"
 	"github.com/murandido/m-80-backend/internal/data"
+	"github.com/murandido/m-80-backend/internal/events"
+	"github.com/murandido/m-80-backend/internal/injunction"
+	"github.com/murandido/m-80-backend/internal/legacyimport"
 	"github.com/murandido/m-80-backend/internal/onedrivesync"
 	"github.com/murandido/m-80-backend/internal/utils"
 	"gorm.io/gorm"
@@ -23,10 +31,11 @@ type InjunctionGroupHandler struct {
 	DB        *gorm.DB
 	Validator *validator.Validate
 	Workbooks *onedrivesync.Service
+	Broker    *events.Broker
 }
 
-func NewInjunctionGroupHandler(db *gorm.DB, workbooks *onedrivesync.Service) *InjunctionGroupHandler {
-	return &InjunctionGroupHandler{DB: db, Validator: validator.New(), Workbooks: workbooks}
+func NewInjunctionGroupHandler(db *gorm.DB, workbooks *onedrivesync.Service, broker *events.Broker) *InjunctionGroupHandler {
+	return &InjunctionGroupHandler{DB: db, Validator: validator.New(), Workbooks: workbooks, Broker: broker}
 }
 
 // spreadsheetHint shows enough of a link to recognise it, and not enough to open it.
@@ -338,4 +347,210 @@ func (h *InjunctionGroupHandler) DeleteInjunctionGroup(w http.ResponseWriter, r 
 		return
 	}
 	utils.SendJSON(w, r, http.StatusOK, "Tropa excluída", nil)
+}
+
+// injunctionPeriodMaxDays bounds an import-period request: the Tropa workbooks hold a sheet
+// per day, and a backfill wider than this is a typo in the dates.
+const injunctionPeriodMaxDays = 120
+
+// downloadWorkbook reads the Tropa's workbook through the Microsoft connection, answering the
+// client itself on failure.
+func (h *InjunctionGroupHandler) downloadWorkbook(w http.ResponseWriter, r *http.Request, group data.InjunctionGroup) ([]byte, bool) {
+	if group.SpreadsheetURL == nil || *group.SpreadsheetURL == "" {
+		utils.SendError(w, r, http.StatusUnprocessableEntity, "A Tropa não tem link de planilha cadastrado")
+		return nil, false
+	}
+	content, err := h.Workbooks.Download(r.Context(), *group.SpreadsheetURL)
+	switch {
+	case err == nil:
+		return content, true
+	case errors.Is(err, onedrivesync.ErrNotConfigured):
+		utils.SendError(w, r, http.StatusServiceUnavailable, err.Error())
+	case errors.Is(err, onedrivesync.ErrNotConnected):
+		utils.SendError(w, r, http.StatusUnprocessableEntity, err.Error())
+	case errors.Is(err, onedrive.ErrNeedsLogin):
+		utils.SendError(w, r, http.StatusUnprocessableEntity, "A conta Microsoft precisa ser conectada de novo (Dev Mode > Tropas)")
+	case errors.Is(err, onedrive.ErrNotShared):
+		utils.SendError(w, r, http.StatusUnprocessableEntity, "A planilha não abre com a conta Microsoft conectada: confira o link e o compartilhamento")
+	default:
+		slog.Error("injunction: workbook download failed", "group_id", group.ID, "err", err)
+		utils.SendError(w, r, http.StatusBadGateway, "A Microsoft não entregou a planilha. Tente de novo.")
+	}
+	return nil, false
+}
+
+func parseDay(value string) (time.Time, error) {
+	return time.Parse(time.DateOnly, value)
+}
+
+// CheckInjunctionGroup handles the GET /injunction-groups/{id}/check route
+// @Summary      Conferir Tropa
+// @Description  Baixa a planilha da Tropa e cruza com o painel e o extrato das contas liminares dela. Só linhas das contas mapeadas; a taxa de resgate é ignorada. Padrão: últimos 7 dias.
+// @Tags         Tropas
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id    path   string  true   "ID da Tropa"
+// @Param        from  query  string  false  "Primeiro dia (AAAA-MM-DD)"
+// @Param        to    query  string  false  "Último dia (AAAA-MM-DD)"
+// @Success      200  {object}  object
+// @Failure      422  {object}  schemas.ErrorResponse "Sem planilha, sem conexão Microsoft ou planilha inacessível"
+// @Router       /injunction-groups/{id}/check [get]
+func (h *InjunctionGroupHandler) CheckInjunctionGroup(w http.ResponseWriter, r *http.Request) {
+	group, ok := h.loadGroup(w, r)
+	if !ok {
+		return
+	}
+	today := businessday.Of(time.Now())
+	from, to := today.AddDate(0, 0, -7), today
+	if raw := r.URL.Query().Get("from"); raw != "" {
+		parsed, err := parseDay(raw)
+		if err != nil {
+			utils.SendError(w, r, http.StatusBadRequest, "from inválido: use AAAA-MM-DD")
+			return
+		}
+		from = parsed
+	}
+	if raw := r.URL.Query().Get("to"); raw != "" {
+		parsed, err := parseDay(raw)
+		if err != nil {
+			utils.SendError(w, r, http.StatusBadRequest, "to inválido: use AAAA-MM-DD")
+			return
+		}
+		to = parsed
+	}
+	workbook, ok := h.downloadWorkbook(w, r, group)
+	if !ok {
+		return
+	}
+	result, err := injunction.Check(h.DB, group, workbook, from, to)
+	if err != nil {
+		utils.SendError(w, r, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	utils.SendJSON(w, r, http.StatusOK, "Conferência da Tropa", result)
+}
+
+func (h *InjunctionGroupHandler) announce(result legacyimport.CommitResult) {
+	if h.Broker == nil {
+		return
+	}
+	if result.Imported+result.CreatedAndCancelled > 0 {
+		h.Broker.Broadcast(events.Event{Type: eventIssuanceCreated, Payload: map[string]string{"id": ""}})
+	}
+	if result.Cancelled+result.CreatedAndCancelled > 0 {
+		h.Broker.Broadcast(events.Event{Type: eventIssuanceCancelled, Payload: map[string]string{"id": ""}})
+	}
+}
+
+// ImportInjunctionGroupDay handles the POST /injunction-groups/{id}/import route
+// @Summary      Importar dia da planilha da Tropa
+// @Description  Grava como emissões as linhas de um dia da planilha (só das contas da Tropa; sem rows, todas as prontas). Linhas negativas cancelam a emissão do localizador. Taxa de resgate ignorada.
+// @Tags         Tropas
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id       path  string                           true  "ID da Tropa"
+// @Param        request  body  schemas.InjunctionImportRequest  true  "Dia e linhas"
+// @Success      200  {object}  object
+// @Router       /injunction-groups/{id}/import [post]
+func (h *InjunctionGroupHandler) ImportInjunctionGroupDay(w http.ResponseWriter, r *http.Request) {
+	user, ok := r.Context().Value(middleware.UserContextKey).(data.User)
+	if !ok {
+		utils.SendError(w, r, http.StatusInternalServerError, "Internal Server Error: Could not read user context")
+		return
+	}
+	group, ok := h.loadGroup(w, r)
+	if !ok {
+		return
+	}
+	var req schemas.InjunctionImportRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || h.Validator.Struct(req) != nil {
+		utils.SendError(w, r, http.StatusBadRequest, "Informe day (AAAA-MM-DD) e, se quiser, rows")
+		return
+	}
+	day, _ := parseDay(req.Day)
+	var rows []legacyimport.RowSelection
+	if len(req.Rows) > 0 {
+		rows = make([]legacyimport.RowSelection, 0, len(req.Rows))
+		for _, row := range req.Rows {
+			rows = append(rows, legacyimport.RowSelection{BlockIndex: row.BlockIndex, Number: row.Number})
+		}
+	}
+	workbook, ok := h.downloadWorkbook(w, r, group)
+	if !ok {
+		return
+	}
+	result, err := injunction.Import(h.DB, group, workbook, day, rows, user.ID)
+	if err != nil {
+		utils.SendError(w, r, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	h.announce(result)
+	utils.SendJSON(w, r, http.StatusOK, "Dia importado", result)
+}
+
+// ImportInjunctionGroupPeriod handles the POST /injunction-groups/{id}/import-period route
+// @Summary      Importar período da planilha da Tropa
+// @Description  Importa todas as linhas prontas das contas da Tropa entre dois dias. Feito para a carga inicial antes da rotina diária.
+// @Tags         Tropas
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id       path  string                                 true  "ID da Tropa"
+// @Param        request  body  schemas.InjunctionImportPeriodRequest  true  "Período"
+// @Success      200  {object}  object
+// @Router       /injunction-groups/{id}/import-period [post]
+func (h *InjunctionGroupHandler) ImportInjunctionGroupPeriod(w http.ResponseWriter, r *http.Request) {
+	user, ok := r.Context().Value(middleware.UserContextKey).(data.User)
+	if !ok {
+		utils.SendError(w, r, http.StatusInternalServerError, "Internal Server Error: Could not read user context")
+		return
+	}
+	group, ok := h.loadGroup(w, r)
+	if !ok {
+		return
+	}
+	var req schemas.InjunctionImportPeriodRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || h.Validator.Struct(req) != nil {
+		utils.SendError(w, r, http.StatusBadRequest, "Informe from e to (AAAA-MM-DD)")
+		return
+	}
+	from, _ := parseDay(req.From)
+	to, _ := parseDay(req.To)
+	if to.Before(from) || to.Sub(from) > injunctionPeriodMaxDays*24*time.Hour {
+		utils.SendError(w, r, http.StatusBadRequest, fmt.Sprintf("Período inválido (até %d dias)", injunctionPeriodMaxDays))
+		return
+	}
+	workbook, ok := h.downloadWorkbook(w, r, group)
+	if !ok {
+		return
+	}
+
+	type dayResult struct {
+		Day    string                    `json:"day"`
+		Result legacyimport.CommitResult `json:"result"`
+		Error  string                    `json:"error,omitempty"`
+	}
+	total := legacyimport.CommitResult{Skipped: []legacyimport.SkippedRow{}}
+	days := []dayResult{}
+	for day := from; !day.After(to); day = day.AddDate(0, 0, 1) {
+		result, err := injunction.Import(h.DB, group, workbook, day, nil, user.ID)
+		if err != nil {
+			// A day the workbook does not have is normal (weekends, future days).
+			if !strings.Contains(err.Error(), "não tem a aba") {
+				days = append(days, dayResult{Day: day.Format(time.DateOnly), Error: err.Error()})
+			}
+			continue
+		}
+		if result.Imported+result.Cancelled+result.CreatedAndCancelled+len(result.Skipped) == 0 {
+			continue
+		}
+		total.Imported += result.Imported
+		total.Cancelled += result.Cancelled
+		total.CreatedAndCancelled += result.CreatedAndCancelled
+		total.Skipped = append(total.Skipped, result.Skipped...)
+		days = append(days, dayResult{Day: day.Format(time.DateOnly), Result: result})
+	}
+	h.announce(total)
+	utils.SendJSON(w, r, http.StatusOK, "Período importado", map[string]any{"total": total, "days": days})
 }

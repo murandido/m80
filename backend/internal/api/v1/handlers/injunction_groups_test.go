@@ -20,7 +20,7 @@ func callInjunctionGroup(tx *gorm.DB, caller data.User, method, path, id, body s
 	}
 	req = req.WithContext(asUser(req.Context(), caller))
 	rec := httptest.NewRecorder()
-	h := NewInjunctionGroupHandler(tx, nil)
+	h := NewInjunctionGroupHandler(tx, nil, nil)
 	switch method {
 	case http.MethodPost:
 		h.CreateInjunctionGroup(rec, req)

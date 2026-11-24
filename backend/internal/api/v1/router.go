@@ -121,7 +121,7 @@ func NewRouter(db *gorm.DB, broker *events.Broker, bookings *booking.Registry, m
 		// The Microsoft login the Tropas' workbooks are read with, dev-gated inside.
 		routes.RegisterMicrosoftRoutes(r, workbooks)
 		// The Tropas: injunction accounts with a OneDrive workbook and a WhatsApp group.
-		routes.RegisterInjunctionGroupRoutes(r, db, workbooks)
+		routes.RegisterInjunctionGroupRoutes(r, db, workbooks, broker)
 	})
 
 	// The statement client's own area, outside the staff group above: the only routes that role

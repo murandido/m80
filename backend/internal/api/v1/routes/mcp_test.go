@@ -32,7 +32,7 @@ func TestMicrosoftConnectionRoutesAreDevOnly(t *testing.T) {
 // decides which workbook is read and which of its rows become issuances.
 func TestInjunctionGroupRouteGates(t *testing.T) {
 	const id = "00000000-0000-0000-0000-000000000000"
-	register := func(r chi.Router, db *gorm.DB) { RegisterInjunctionGroupRoutes(r, db, onedrivesync.New(nil, nil)) }
+	register := func(r chi.Router, db *gorm.DB) { RegisterInjunctionGroupRoutes(r, db, onedrivesync.New(nil, nil), nil) }
 	for _, tc := range []struct {
 		method, path string
 		refused      []string
@@ -41,6 +41,9 @@ func TestInjunctionGroupRouteGates(t *testing.T) {
 		{http.MethodPost, "/injunction-groups", []string{data.RoleUser, data.RoleAdmin}},
 		{http.MethodPut, "/injunction-groups/" + id, []string{data.RoleUser, data.RoleAdmin}},
 		{http.MethodDelete, "/injunction-groups/" + id, []string{data.RoleUser, data.RoleAdmin}},
+		{http.MethodGet, "/injunction-groups/" + id + "/check", []string{data.RoleUser}},
+		{http.MethodPost, "/injunction-groups/" + id + "/import", []string{data.RoleUser}},
+		{http.MethodPost, "/injunction-groups/" + id + "/import-period", []string{data.RoleUser, data.RoleAdmin}},
 	} {
 		for _, role := range tc.refused {
 			if code := callRoute(t, register, role, tc.method, tc.path); code != http.StatusForbidden {

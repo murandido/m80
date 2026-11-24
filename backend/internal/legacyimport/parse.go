@@ -1,10 +1,12 @@
 // Package legacyimport reads the hand-kept "Controle de Emissões" spreadsheet the team
 // used before the panel existed, so a day of it can be brought into the database.
 //
-// It is a bridge, not a platform: when the migration off the spreadsheets is finished the
-// whole package goes away, along with internal/api/v1/{handlers,routes}/legacy_import.go,
+// It started as a bridge off the spreadsheets, and the import screen still is one. But
+// internal/injunction now reads the Tropas' workbooks with it every day - some issuances
+// exist only there - so Parse, Resolve and Commit outlive the screen: removing the bridge
+// means removing internal/api/v1/{handlers,routes}/legacy_import.go,
 // frontend/src/{app/dashboard/import,components/legacy-import,actions/legacy-import.ts},
-// the RegisterLegacyImportRoutes call and the navigation entry. The one thing that stays
+// the RegisterLegacyImportRoutes call and the navigation entry, not this package. The one thing that stays
 // behind is issuances.imported - it describes rows that outlive the screen, and it is what
 // keeps Traveos from ever being asked to issue a ticket for a booking from August 2026.
 //

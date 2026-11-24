@@ -56,3 +56,23 @@ type InjunctionGroupResponse struct {
 	CreatedAt        time.Time                        `json:"created_at"`
 	UpdatedAt        time.Time                        `json:"updated_at"`
 }
+
+// InjunctionImportRequest imports rows of one workbook day. Rows empty means every row of
+// the Tropa that is ready to import; rows of other accounts are never imported.
+type InjunctionImportRequest struct {
+	Day  string                   `json:"day" validate:"required,datetime=2006-01-02" example:"2026-11-20"`
+	Rows []InjunctionRowSelection `json:"rows" validate:"dive"`
+}
+
+// InjunctionRowSelection names one row of a workbook day.
+type InjunctionRowSelection struct {
+	BlockIndex int `json:"block_index"`
+	Number     int `json:"number"`
+}
+
+// InjunctionImportPeriodRequest imports every ready row of the Tropa between two days - the
+// one-off backfill before the daily routine starts.
+type InjunctionImportPeriodRequest struct {
+	From string `json:"from" validate:"required,datetime=2006-01-02" example:"2026-10-01"`
+	To   string `json:"to" validate:"required,datetime=2006-01-02" example:"2026-11-30"`
+}
