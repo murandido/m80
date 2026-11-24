@@ -28,6 +28,31 @@ func TestMicrosoftConnectionRoutesAreDevOnly(t *testing.T) {
 	}
 }
 
+// Reading a Tropa is admin, like the rest of the inventory; changing it is dev, because it
+// decides which workbook is read and which of its rows become issuances.
+func TestInjunctionGroupRouteGates(t *testing.T) {
+	const id = "00000000-0000-0000-0000-000000000000"
+	register := func(r chi.Router, db *gorm.DB) { RegisterInjunctionGroupRoutes(r, db, onedrivesync.New(nil, nil)) }
+	for _, tc := range []struct {
+		method, path string
+		refused      []string
+	}{
+		{http.MethodGet, "/injunction-groups", []string{data.RoleUser}},
+		{http.MethodPost, "/injunction-groups", []string{data.RoleUser, data.RoleAdmin}},
+		{http.MethodPut, "/injunction-groups/" + id, []string{data.RoleUser, data.RoleAdmin}},
+		{http.MethodDelete, "/injunction-groups/" + id, []string{data.RoleUser, data.RoleAdmin}},
+	} {
+		for _, role := range tc.refused {
+			if code := callRoute(t, register, role, tc.method, tc.path); code != http.StatusForbidden {
+				t.Errorf("%s %s as %s: got %d, want 403", tc.method, tc.path, role, code)
+			}
+		}
+	}
+	if code := callRoute(t, register, data.RoleAdmin, http.MethodGet, "/injunction-groups"); code == http.StatusForbidden {
+		t.Error("an admin cannot read the Tropas")
+	}
+}
+
 // Everything the panel does with the MCP server - minting tokens, reading the agent's activity,
 // approving what it proposed - is dev-only. An admin who could approve a proposal could cancel
 // an issuance through the agent with no more checks than cancelling it directly, and one who
