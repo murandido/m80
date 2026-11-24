@@ -90,3 +90,22 @@ type MCPReportResponse struct {
 	CreatedAt  time.Time       `json:"created_at"`
 	UpdatedAt  time.Time       `json:"updated_at"`
 }
+
+// MicrosoftConnectionResponse is the Microsoft login as the panel shows it. The token never
+// leaves the API.
+type MicrosoftConnectionResponse struct {
+	Configured   bool       `json:"configured"`
+	Connected    bool       `json:"connected"`
+	State        *string    `json:"state" example:"ok"`
+	Detail       *string    `json:"detail"`
+	AccountName  *string    `json:"account_name"`
+	AccountEmail *string    `json:"account_email"`
+	LastOKAt     *time.Time `json:"last_ok_at"`
+	ConnectedAt  *time.Time `json:"connected_at"`
+}
+
+// MicrosoftCallbackRequest is what the panel forwards from Microsoft's redirect.
+type MicrosoftCallbackRequest struct {
+	Code  string `json:"code" validate:"required"`
+	State string `json:"state" validate:"required"`
+}

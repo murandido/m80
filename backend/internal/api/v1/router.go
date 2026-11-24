@@ -1,7 +1,10 @@
 package v1
 
 import (
+	"log/slog"
+
 	"github.com/go-chi/chi/v5"
+	"github.com/murandido/m-80-backend/carriers/onedrive"
 	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/handlers"
 	"github.com/murandido/m-80-backend/internal/api/v1/routes"
@@ -10,6 +13,7 @@ import (
 	"github.com/murandido/m-80-backend/internal/events"
 	"github.com/murandido/m-80-backend/internal/health"
 	"github.com/murandido/m-80-backend/internal/latamsync"
+	"github.com/murandido/m-80-backend/internal/onedrivesync"
 	"github.com/murandido/m-80-backend/internal/smilessync"
 	"gorm.io/gorm"
 )
@@ -18,6 +22,16 @@ func NewRouter(db *gorm.DB, broker *events.Broker, bookings *booking.Registry, m
 	r := chi.NewRouter()
 	// The groups below shadow r; approved MCP proposals need the whole router.
 	root := r
+
+	// One per process: the Microsoft token cache and refresh lock only hold if every route
+	// shares them. A missing app registration leaves it unconfigured, not the API down.
+	var graph onedrivesync.Graph
+	if client, err := onedrive.New(); err == nil {
+		graph = client
+	} else {
+		slog.Warn("microsoft connection disabled", "err", err)
+	}
+	workbooks := onedrivesync.New(db, graph)
 
 	authHandler := handlers.NewAuthHandler(db)
 
@@ -104,6 +118,8 @@ func NewRouter(db *gorm.DB, broker *events.Broker, bookings *booking.Registry, m
 		// /mcp itself is mounted by internal/api, outside this group: its credential is an
 		// MCP token, which these routes never accept.
 		routes.RegisterMCPRoutes(r, db, root)
+		// The Microsoft login the Tropas' workbooks are read with, dev-gated inside.
+		routes.RegisterMicrosoftRoutes(r, workbooks)
 	})
 
 	// The statement client's own area, outside the staff group above: the only routes that role
