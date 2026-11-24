@@ -21,7 +21,7 @@ const categoryInjunction = "injunction"
 type dailyCheckInput struct {
 	Date       string   `json:"date,omitempty" jsonschema:"Dia da conferência (AAAA-MM-DD). Vazio = hoje. O fechamento vai do dia 1 do mês até esta data."`
 	MaxItems   int      `json:"max_items,omitempty" jsonschema:"Máximo de linhas do extrato por lista e por conta (padrão 30); os totais vêm sempre. Para ver tudo de uma conta, use statement_reconciliation."`
-	AccountIDs []string `json:"account_ids,omitempty" jsonschema:"Só estas contas liminares (ex.: as de uma Tropa, de list_injunction_groups). Vazio = todas."`
+	AccountIDs []string `json:"account_ids,omitempty" jsonschema:"Só estas contas liminares (ex.: as de um grupo de list_injunction_groups). Vazio = todas."`
 }
 
 const defaultDailyCheckItems = 30

@@ -2,11 +2,10 @@ package schemas
 
 import "time"
 
-// InjunctionGroupRequest creates or replaces a Tropa. SpreadsheetURL null keeps the stored
+// InjunctionGroupRequest creates or replaces an entry of the Controle de Liminares. SpreadsheetURL null keeps the stored
 // link on an update (the panel never has it to send back); "" removes it.
 type InjunctionGroupRequest struct {
 	Name             string                   `json:"name" validate:"required,max=80" example:"Tropa Azul 1"`
-	AgencyID         string                   `json:"agency_id" validate:"required,uuid"`
 	WhatsAppChatName *string                  `json:"whatsapp_chat_name" validate:"omitempty,max=120"`
 	SpreadsheetURL   *string                  `json:"spreadsheet_url" validate:"omitempty,url,max=2000"`
 	Accounts         []InjunctionAccountLabel `json:"accounts" validate:"dive"`
@@ -20,10 +19,12 @@ type InjunctionAccountLabel struct {
 	AccountID    string `json:"account_id" validate:"required,uuid"`
 }
 
-// InjunctionIssuerLabel maps the Emissor column onto a panel user.
+// InjunctionIssuerLabel maps the Emissor column onto a panel user and the agency their
+// issuances belong to: one workbook mixes issuers of different agencies.
 type InjunctionIssuerLabel struct {
 	IssuerName string `json:"issuer_name" validate:"required,max=80" example:"PEDRO"`
 	UserID     string `json:"user_id" validate:"required,uuid"`
+	AgencyID   string `json:"agency_id" validate:"required,uuid"`
 }
 
 // InjunctionGroupAccountResponse is one mapped account with what the panel needs to show it.
@@ -40,14 +41,14 @@ type InjunctionGroupIssuerResponse struct {
 	IssuerName string `json:"issuer_name"`
 	UserID     string `json:"user_id"`
 	UserName   string `json:"user_name"`
+	AgencyID   string `json:"agency_id"`
+	AgencyName string `json:"agency_name"`
 }
 
 // InjunctionGroupResponse is a Tropa as the panel lists it. The workbook link is masked.
 type InjunctionGroupResponse struct {
 	ID               string                           `json:"id"`
 	Name             string                           `json:"name"`
-	AgencyID         string                           `json:"agency_id"`
-	AgencyName       string                           `json:"agency_name"`
 	WhatsAppChatName *string                          `json:"whatsapp_chat_name"`
 	HasSpreadsheet   bool                             `json:"has_spreadsheet"`
 	SpreadsheetHint  *string                          `json:"spreadsheet_hint" example:"onedrive.live.com/…xvHPc"`

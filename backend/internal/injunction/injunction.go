@@ -75,9 +75,15 @@ type CheckResult struct {
 
 func fold(value string) string { return strings.ToLower(strings.TrimSpace(value)) }
 
-// Mappings turns the Tropa's setup into the importer's.
+// Mappings turns the Tropa's setup into the importer's. The importer wants a day agency, but
+// it never decides anything here: every row the Tropa imports carries its issuer's own (see
+// rowAgencies), and a row whose issuer has none is held back before the commit. Any issuer's
+// agency fills it, so a Tropa never depends on the installation having a default agency.
 func Mappings(group data.InjunctionGroup) legacyimport.Mappings {
-	mappings := legacyimport.Mappings{AgencyID: group.AgencyID}
+	mappings := legacyimport.Mappings{}
+	if agencyIDs := IssuerAgencyIDs(group); len(agencyIDs) > 0 {
+		mappings.AgencyID = agencyIDs[0]
+	}
 	for _, account := range group.Mappings.Accounts {
 		mappings.Accounts = append(mappings.Accounts, legacyimport.AccountMapping{
 			ProgramCode: account.ProgramCode, AccountLabel: account.AccountLabel, AccountID: account.AccountID,
@@ -89,10 +95,12 @@ func Mappings(group data.InjunctionGroup) legacyimport.Mappings {
 	return mappings
 }
 
-// scope is the set of (program, account label) pairs a Tropa reads.
+// scope is the set of (program, account label) pairs a Tropa reads, and the agency of each
+// issuer it maps.
 type scope struct {
 	programs map[string]string // loyalty program id -> code
 	labels   map[string]bool   // code + "\x00" + fold(label)
+	agencies map[string]string // fold(issuer name) -> agency id
 }
 
 func loadScope(db *gorm.DB, group data.InjunctionGroup) (scope, error) {
@@ -100,14 +108,54 @@ func loadScope(db *gorm.DB, group data.InjunctionGroup) (scope, error) {
 	if err := db.Unscoped().Select("id", "code").Find(&programs).Error; err != nil {
 		return scope{}, fmt.Errorf("injunction: loading programs: %w", err)
 	}
-	s := scope{programs: map[string]string{}, labels: map[string]bool{}}
+	s := scope{programs: map[string]string{}, labels: map[string]bool{}, agencies: map[string]string{}}
 	for _, program := range programs {
 		s.programs[program.ID] = program.Code
 	}
 	for _, account := range group.Mappings.Accounts {
 		s.labels[account.ProgramCode+"\x00"+fold(account.AccountLabel)] = true
 	}
+	for _, issuer := range group.Mappings.Issuers {
+		if issuer.AgencyID != "" {
+			s.agencies[fold(issuer.IssuerName)] = issuer.AgencyID
+		}
+	}
 	return s, nil
+}
+
+// requireIssuerAgency turns a row that would be written into "needs mapping" when its issuer
+// has no agency on the Tropa. The importer would otherwise file it under the default agency,
+// and a wrong agency is not something anybody notices before the month closes. It also
+// catches an issuer the importer matched to a user by name alone, without a Tropa mapping.
+func (s scope) requireIssuerAgency(row legacyimport.ResolvedRow) legacyimport.ResolvedRow {
+	if row.Verdict != legacyimport.VerdictOk && row.Verdict != legacyimport.VerdictCancellation {
+		return row
+	}
+	if s.agencies[fold(row.IssuerName)] != "" {
+		return row
+	}
+	row.Verdict = legacyimport.VerdictNeedsMapping
+	row.Reason = fmt.Sprintf("o emissor \"%s\" não tem agência definida neste grupo", strings.TrimSpace(row.IssuerName))
+	row.Cancellation = nil
+	return row
+}
+
+// rowAgencies is the agency of every selected row, from its issuer.
+func (s scope) rowAgencies(rows []legacyimport.ResolvedRow, selection []legacyimport.RowSelection) []legacyimport.RowAgencyMapping {
+	selected := map[legacyimport.RowSelection]bool{}
+	for _, row := range selection {
+		selected[row] = true
+	}
+	var mappings []legacyimport.RowAgencyMapping
+	for _, row := range rows {
+		if !selected[legacyimport.RowSelection{BlockIndex: row.BlockIndex, Number: row.Number}] {
+			continue
+		}
+		mappings = append(mappings, legacyimport.RowAgencyMapping{
+			BlockIndex: row.BlockIndex, Number: row.Number, AgencyID: s.agencies[fold(row.IssuerName)],
+		})
+	}
+	return mappings
 }
 
 // includes says whether a resolved row belongs to the Tropa. A row too broken to name its
@@ -148,7 +196,7 @@ func resolveDay(db *gorm.DB, group data.InjunctionGroup, s scope, day legacyimpo
 	for _, block := range preview.Blocks {
 		for _, row := range block.Rows {
 			if s.includes(row) {
-				rows = append(rows, row)
+				rows = append(rows, s.requireIssuerAgency(row))
 			}
 		}
 	}
@@ -403,7 +451,11 @@ func Import(db *gorm.DB, group data.InjunctionGroup, workbook []byte, date time.
 	}
 	day = withoutRedemptionFee(day)
 
-	resolved, err := ResolveDay(db, group, day)
+	s, err := loadScope(db, group)
+	if err != nil {
+		return legacyimport.CommitResult{}, err
+	}
+	resolved, err := resolveDay(db, group, s, day)
 	if err != nil {
 		return legacyimport.CommitResult{}, err
 	}
@@ -424,5 +476,20 @@ func Import(db *gorm.DB, group data.InjunctionGroup, workbook []byte, date time.
 	if len(selection) == 0 {
 		return legacyimport.CommitResult{}, nil
 	}
-	return legacyimport.Commit(db, day, Mappings(group), selection, actorID)
+	mappings := Mappings(group)
+	mappings.RowAgencies = s.rowAgencies(resolved, selection)
+	return legacyimport.Commit(db, day, mappings, selection, actorID)
+}
+
+// IssuerAgencyIDs is every agency the Tropa's issuers write into, without repeats.
+func IssuerAgencyIDs(group data.InjunctionGroup) []string {
+	seen := map[string]bool{}
+	var ids []string
+	for _, issuer := range group.Mappings.Issuers {
+		if issuer.AgencyID != "" && !seen[issuer.AgencyID] {
+			seen[issuer.AgencyID] = true
+			ids = append(ids, issuer.AgencyID)
+		}
+	}
+	return ids
 }
