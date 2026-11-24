@@ -19,8 +19,9 @@ import (
 const categoryInjunction = "injunction"
 
 type dailyCheckInput struct {
-	Date     string `json:"date,omitempty" jsonschema:"Dia da conferência (AAAA-MM-DD). Vazio = hoje. O fechamento vai do dia 1 do mês até esta data."`
-	MaxItems int    `json:"max_items,omitempty" jsonschema:"Máximo de linhas do extrato por lista e por conta (padrão 30); os totais vêm sempre. Para ver tudo de uma conta, use statement_reconciliation."`
+	Date       string   `json:"date,omitempty" jsonschema:"Dia da conferência (AAAA-MM-DD). Vazio = hoje. O fechamento vai do dia 1 do mês até esta data."`
+	MaxItems   int      `json:"max_items,omitempty" jsonschema:"Máximo de linhas do extrato por lista e por conta (padrão 30); os totais vêm sempre. Para ver tudo de uma conta, use statement_reconciliation."`
+	AccountIDs []string `json:"account_ids,omitempty" jsonschema:"Só estas contas liminares (ex.: as de uma Tropa, de list_injunction_groups). Vazio = todas."`
 }
 
 const defaultDailyCheckItems = 30
@@ -65,12 +66,14 @@ type agentBatch struct {
 
 type accountCheck struct {
 	stockAccount
-	Alerts         []stockAlert      `json:"alerts"`
-	Statement      *statementSummary `json:"statement,omitempty"`
-	StatementError string            `json:"statement_error,omitempty"`
-	Closing        *closingCheck     `json:"closing,omitempty"`
-	ClosingError   string            `json:"closing_error,omitempty"`
-	AgentBatches   []agentBatch      `json:"agent_batches_since_last_report"`
+	Tropa            string            `json:"tropa,omitempty"`
+	WhatsAppChatName string            `json:"whatsapp_chat_name,omitempty"`
+	Alerts           []stockAlert      `json:"alerts"`
+	Statement        *statementSummary `json:"statement,omitempty"`
+	StatementError   string            `json:"statement_error,omitempty"`
+	Closing          *closingCheck     `json:"closing,omitempty"`
+	ClosingError     string            `json:"closing_error,omitempty"`
+	AgentBatches     []agentBatch      `json:"agent_batches_since_last_report"`
 }
 
 type saveReportInput struct {
@@ -182,6 +185,29 @@ func (s *Server) registerReportTools(server *sdk.Server) {
 		if err != nil {
 			return nil, err
 		}
+		if len(in.AccountIDs) > 0 {
+			wanted := map[string]bool{}
+			for _, id := range in.AccountIDs {
+				wanted[id] = true
+			}
+			filtered := accounts[:0]
+			for _, account := range accounts {
+				if wanted[account.ID] {
+					filtered = append(filtered, account)
+				}
+			}
+			accounts = filtered
+		}
+		// Which Tropa (and WhatsApp group) each account belongs to, so the routine knows where
+		// to talk about it. A failure here is not worth failing the check over.
+		tropaOf := map[string]injunctionGroup{}
+		if groups, err := s.injunctionGroups(ctx, who); err == nil {
+			for _, group := range groups {
+				for _, account := range group.Accounts {
+					tropaOf[account.AccountID] = group
+				}
+			}
+		}
 		since, err := s.lastReportAt(who)
 		if err != nil {
 			return nil, err
@@ -198,9 +224,11 @@ func (s *Server) registerReportTools(server *sdk.Server) {
 		checks := make([]accountCheck, 0, len(accounts))
 		for _, account := range accounts {
 			check := accountCheck{
-				stockAccount: account,
-				Alerts:       stockAlerts([]stockAccount{account}, stockAlertsInput{}, day),
-				AgentBatches: []agentBatch{},
+				stockAccount:     account,
+				Tropa:            tropaOf[account.ID].Name,
+				WhatsAppChatName: deref(tropaOf[account.ID].WhatsAppChatName),
+				Alerts:           stockAlerts([]stockAccount{account}, stockAlertsInput{}, day),
+				AgentBatches:     []agentBatch{},
 			}
 			if check.Alerts == nil {
 				check.Alerts = []stockAlert{}

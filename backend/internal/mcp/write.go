@@ -23,6 +23,7 @@ var FreeWriteTools = []string{
 	"add_point_batch",
 	"update_point_batch",
 	"record_statement_batches",
+	"import_spreadsheet_issuances",
 }
 
 // batchCreatingTools are the free writes that add points to the stock, the ones
