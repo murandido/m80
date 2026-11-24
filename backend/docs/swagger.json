@@ -5996,6 +5996,339 @@
                 }
             }
         },
+        "/injunction-groups": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Tropas (grupos de contas liminares com planilha no OneDrive e grupo no WhatsApp) das agências visíveis. O link da planilha vem mascarado.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Tropas"
+                ],
+                "summary": "Listar Tropas",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object"
+                        }
+                    },
+                    "403": {
+                        "description": "Requer admin",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Cria uma Tropa. Só contas liminares; o programa de cada conta vem da própria conta. Emissores devem ser usuários do painel.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Tropas"
+                ],
+                "summary": "Criar Tropa",
+                "parameters": [
+                    {
+                        "description": "Tropa",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/schemas.InjunctionGroupRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "type": "object"
+                        }
+                    },
+                    "422": {
+                        "description": "Conta não liminar, emissor inexistente ou nome repetido",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/injunction-groups/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Tropas"
+                ],
+                "summary": "Ver Tropa",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ID da Tropa",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object"
+                        }
+                    },
+                    "404": {
+                        "description": "Tropa não encontrada",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Substitui a Tropa. spreadsheet_url null mantém o link guardado; \"\" remove.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Tropas"
+                ],
+                "summary": "Atualizar Tropa",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ID da Tropa",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Tropa",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/schemas.InjunctionGroupRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Apaga o cadastro da Tropa. Nenhuma emissão ou conta é alterada.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Tropas"
+                ],
+                "summary": "Excluir Tropa",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ID da Tropa",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                }
+            }
+        },
+        "/injunction-groups/{id}/check": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Baixa a planilha da Tropa e cruza com o painel e o extrato das contas liminares dela. Só linhas das contas mapeadas; a taxa de resgate é ignorada. Padrão: últimos 7 dias.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Tropas"
+                ],
+                "summary": "Conferir Tropa",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ID da Tropa",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Primeiro dia (AAAA-MM-DD)",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Último dia (AAAA-MM-DD)",
+                        "name": "to",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object"
+                        }
+                    },
+                    "422": {
+                        "description": "Sem planilha, sem conexão Microsoft ou planilha inacessível",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/injunction-groups/{id}/import": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Grava como emissões as linhas de um dia da planilha (só das contas da Tropa; sem rows, todas as prontas). Linhas negativas cancelam a emissão do localizador. Taxa de resgate ignorada.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Tropas"
+                ],
+                "summary": "Importar dia da planilha da Tropa",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ID da Tropa",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Dia e linhas",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/schemas.InjunctionImportRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                }
+            }
+        },
+        "/injunction-groups/{id}/import-period": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Importa todas as linhas prontas das contas da Tropa entre dois dias. Feito para a carga inicial antes da rotina diária.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Tropas"
+                ],
+                "summary": "Importar período da planilha da Tropa",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ID da Tropa",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Período",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/schemas.InjunctionImportPeriodRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                }
+            }
+        },
         "/inventory-closing": {
             "get": {
                 "security": [
@@ -8736,6 +9069,507 @@
                     },
                     "500": {
                         "description": "Erro ao arquivar programa de fidelidade",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/mcp-calls": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Trilha das chamadas de ferramenta feitas pelo agente MCP, das mais recentes para as mais antigas.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "MCP"
+                ],
+                "summary": "Listar chamadas MCP",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Quantidade (padrão 100, máximo 500)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object"
+                        }
+                    },
+                    "403": {
+                        "description": "Acesso restrito a desenvolvedores",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/mcp-proposals": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Lista as propostas do agente MCP, das mais recentes para as mais antigas. Propostas pendentes há mais de 48h viram expired antes da leitura.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "MCP"
+                ],
+                "summary": "Listar propostas MCP",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "pending (padrão), applied, rejected, failed, expired ou all",
+                        "name": "status",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object"
+                        }
+                    },
+                    "403": {
+                        "description": "Acesso restrito a desenvolvedores",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/mcp-proposals/{id}/approve": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Executa a operação proposta pelo agente com a sessão de quem aprova (o perfil e o escopo checados são os do aprovador). Se a API recusar a operação, a proposta vira failed com a mensagem da recusa.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "MCP"
+                ],
+                "summary": "Aprovar proposta MCP",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ID da proposta",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object"
+                        }
+                    },
+                    "403": {
+                        "description": "Acesso restrito a desenvolvedores",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Proposta não encontrada",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Proposta já decidida ou expirada",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/mcp-proposals/{id}/reject": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Encerra a proposta sem executar nada.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "MCP"
+                ],
+                "summary": "Rejeitar proposta MCP",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ID da proposta",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object"
+                        }
+                    },
+                    "403": {
+                        "description": "Acesso restrito a desenvolvedores",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Proposta não encontrada",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Proposta já decidida ou expirada",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/mcp-reports": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Relatórios diários gravados pelos agentes MCP (ex.: conferência das liminares), dos mais recentes para os mais antigos.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "MCP"
+                ],
+                "summary": "Listar relatórios MCP",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Quantidade (padrão 30, máximo 120)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object"
+                        }
+                    },
+                    "403": {
+                        "description": "Acesso restrito a desenvolvedores",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/mcp-tokens": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Lista os tokens do servidor MCP, inclusive os revogados. O valor do token nunca é devolvido.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "MCP"
+                ],
+                "summary": "Listar tokens MCP",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object"
+                        }
+                    },
+                    "403": {
+                        "description": "Acesso restrito a desenvolvedores",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Cria um token MCP, do próprio usuário ou de outro (ex.: um usuário só para o agente), com política opcional: ferramentas de escrita liberadas e limites. O que a política não libera vira proposta. O valor em claro é devolvido só nesta resposta.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "MCP"
+                ],
+                "summary": "Criar token MCP",
+                "parameters": [
+                    {
+                        "description": "Nome, dono e política do token",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/schemas.CreateMCPTokenRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "type": "object"
+                        }
+                    },
+                    "400": {
+                        "description": "Dados inválidos",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Acesso restrito a desenvolvedores",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Usuário não encontrado",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Usuário sem permissão para token",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/mcp-tokens/{id}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Revoga um token MCP. A linha fica, para a trilha de chamadas continuar apontando para ela.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "MCP"
+                ],
+                "summary": "Revogar token MCP",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "ID do token",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object"
+                        }
+                    },
+                    "403": {
+                        "description": "Acesso restrito a desenvolvedores",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Token não encontrado",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/microsoft-connection": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Estado da conta Microsoft usada para ler as planilhas das Tropas no OneDrive. O token nunca é devolvido.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Tropas"
+                ],
+                "summary": "Conexão Microsoft",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object"
+                        }
+                    },
+                    "403": {
+                        "description": "Acesso restrito a desenvolvedores",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Apaga o token guardado. As planilhas deixam de ser lidas até conectar de novo.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Tropas"
+                ],
+                "summary": "Desconectar Microsoft",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                }
+            }
+        },
+        "/microsoft-connection/callback": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Troca o código do retorno da Microsoft pelo token e guarda a conexão (substitui a anterior).",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Tropas"
+                ],
+                "summary": "Concluir conexão Microsoft",
+                "parameters": [
+                    {
+                        "description": "Código e state do retorno",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/schemas.MicrosoftCallbackRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object"
+                        }
+                    },
+                    "400": {
+                        "description": "Dados inválidos",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "422": {
+                        "description": "Login expirado ou recusado pela Microsoft",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/microsoft-connection/start": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Devolve a URL de login da Microsoft (só leitura de arquivos). O retorno chega em /api/microsoft/callback do painel.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Tropas"
+                ],
+                "summary": "Iniciar conexão Microsoft",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object"
+                        }
+                    },
+                    "403": {
+                        "description": "Acesso restrito a desenvolvedores",
+                        "schema": {
+                            "$ref": "#/definitions/schemas.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Servidor sem o app Microsoft configurado",
                         "schema": {
                             "$ref": "#/definitions/schemas.ErrorResponse"
                         }
@@ -15382,6 +16216,38 @@
                 }
             }
         },
+        "schemas.CreateMCPTokenRequest": {
+            "type": "object",
+            "required": [
+                "name"
+            ],
+            "properties": {
+                "allowed_write_tools": {
+                    "description": "AllowedWriteTools is which free-write tools run directly; the rest become proposals.\nOmitted (null) means all of them - the right default for a person's own token. An empty\nlist means none.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "limits": {
+                    "description": "Limits cap the direct writes; past them a write becomes a proposal.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/schemas.MCPTokenLimits"
+                        }
+                    ]
+                },
+                "name": {
+                    "type": "string",
+                    "maxLength": 80,
+                    "example": "Claude Code - notebook"
+                },
+                "user_id": {
+                    "description": "UserID is whose authority the token carries. Omitted means the caller. A dedicated\nagent user is how an unattended routine gets a narrower role and its own trail.",
+                    "type": "string"
+                }
+            }
+        },
         "schemas.CreateObservationPresetRequest": {
             "type": "object",
             "required": [
@@ -15861,6 +16727,123 @@
             "properties": {
                 "administrator_id": {
                     "type": "string"
+                }
+            }
+        },
+        "schemas.InjunctionAccountLabel": {
+            "type": "object",
+            "required": [
+                "account_id",
+                "account_label"
+            ],
+            "properties": {
+                "account_id": {
+                    "type": "string"
+                },
+                "account_label": {
+                    "type": "string",
+                    "maxLength": 80,
+                    "example": "HUDSON"
+                }
+            }
+        },
+        "schemas.InjunctionGroupRequest": {
+            "type": "object",
+            "required": [
+                "agency_id",
+                "name"
+            ],
+            "properties": {
+                "accounts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/schemas.InjunctionAccountLabel"
+                    }
+                },
+                "agency_id": {
+                    "type": "string"
+                },
+                "issuers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/schemas.InjunctionIssuerLabel"
+                    }
+                },
+                "name": {
+                    "type": "string",
+                    "maxLength": 80,
+                    "example": "Tropa Azul 1"
+                },
+                "spreadsheet_url": {
+                    "type": "string",
+                    "maxLength": 2000
+                },
+                "whatsapp_chat_name": {
+                    "type": "string",
+                    "maxLength": 120
+                }
+            }
+        },
+        "schemas.InjunctionImportPeriodRequest": {
+            "type": "object",
+            "required": [
+                "from",
+                "to"
+            ],
+            "properties": {
+                "from": {
+                    "type": "string",
+                    "example": "2026-10-01"
+                },
+                "to": {
+                    "type": "string",
+                    "example": "2026-11-30"
+                }
+            }
+        },
+        "schemas.InjunctionImportRequest": {
+            "type": "object",
+            "required": [
+                "day"
+            ],
+            "properties": {
+                "day": {
+                    "type": "string",
+                    "example": "2026-11-20"
+                },
+                "rows": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/schemas.InjunctionRowSelection"
+                    }
+                }
+            }
+        },
+        "schemas.InjunctionIssuerLabel": {
+            "type": "object",
+            "required": [
+                "issuer_name",
+                "user_id"
+            ],
+            "properties": {
+                "issuer_name": {
+                    "type": "string",
+                    "maxLength": 80,
+                    "example": "PEDRO"
+                },
+                "user_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "schemas.InjunctionRowSelection": {
+            "type": "object",
+            "properties": {
+                "block_index": {
+                    "type": "integer"
+                },
+                "number": {
+                    "type": "integer"
                 }
             }
         },
@@ -17310,6 +18293,19 @@
                 }
             }
         },
+        "schemas.MCPTokenLimits": {
+            "type": "object",
+            "properties": {
+                "max_batch_points": {
+                    "type": "integer",
+                    "example": 200000
+                },
+                "max_batches_per_day": {
+                    "type": "integer",
+                    "example": 5
+                }
+            }
+        },
         "schemas.MergeAccountBeneficiaryRequest": {
             "type": "object",
             "required": [
@@ -17431,6 +18427,21 @@
                 "success": {
                     "type": "boolean",
                     "example": true
+                }
+            }
+        },
+        "schemas.MicrosoftCallbackRequest": {
+            "type": "object",
+            "required": [
+                "code",
+                "state"
+            ],
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "state": {
+                    "type": "string"
                 }
             }
         },

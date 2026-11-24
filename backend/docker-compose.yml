@@ -123,6 +123,11 @@ services:
       - SMILES_SYNC_INTERVAL=$SMILES_SYNC_INTERVAL_DEV
       # Optional egress proxy for every Smiles host. Empty dials directly.
       - SMILES_PROXY_URL=$SMILES_PROXY_URL_DEV
+      # The Azure app the Tropas' OneDrive workbooks are read with (carriers/onedrive). All three
+      # blank leaves the Microsoft connection off; the API still boots.
+      - MICROSOFT_CLIENT_ID=${MICROSOFT_CLIENT_ID_DEV:-}
+      - MICROSOFT_CLIENT_SECRET=${MICROSOFT_CLIENT_SECRET_DEV:-}
+      - MICROSOFT_REDIRECT_URI=${MICROSOFT_REDIRECT_URI_DEV:-}
       # Passenger autofill for the browser extension (internal/passengerextract). Blank key
       # turns the feature off; blank models use the defaults.
       - ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY_DEV
@@ -429,6 +434,11 @@ services:
       # Optional egress proxy for every Smiles host, like LATAM_PROXY_URL/AIRFRANCE_PROXY_URL
       # above.
       - SMILES_PROXY_URL=$SMILES_PROXY_URL_PROD
+      # The Azure app the Tropas' OneDrive workbooks are read with (carriers/onedrive). All three
+      # blank leaves the Microsoft connection off; the API still boots.
+      - MICROSOFT_CLIENT_ID=${MICROSOFT_CLIENT_ID_PROD:-}
+      - MICROSOFT_CLIENT_SECRET=${MICROSOFT_CLIENT_SECRET_PROD:-}
+      - MICROSOFT_REDIRECT_URI=${MICROSOFT_REDIRECT_URI_PROD:-}
       # Passenger autofill for the browser extension (internal/passengerextract). Blank key
       # turns the feature off; blank models use the defaults.
       - ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY_PROD

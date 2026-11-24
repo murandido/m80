@@ -137,6 +137,10 @@ func (h *StatementHandler) CommitAzulStatement(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	if !guardBatchDays(w, r, h.DB, account.ID, selectedCreditDays(reconciliation.Credits, body.Batches)...) {
+		return
+	}
+
 	result, err := h.recordBatches(account, reconciliation.Credits, body.Batches)
 	if err != nil {
 		utils.SendError(w, r, http.StatusInternalServerError, "Não consegui lançar os lotes: "+err.Error())
@@ -220,6 +224,18 @@ func (h *StatementHandler) reconcileAzul(
 		return statement.Reconciliation{}, from, to, err
 	}
 	return statement.Reconcile(parsed.Movements, bookings, batches), from, to, nil
+}
+
+// selectedCreditDays is the day of every credit a commit would turn into a batch, for the
+// closed-period guard. An index out of range is left to recordBatches, which skips it.
+func selectedCreditDays(credits []statement.CreditLine, selections []schemas.StatementBatchSelection) []time.Time {
+	days := make([]time.Time, 0, len(selections))
+	for _, selection := range selections {
+		if selection.Index >= 0 && selection.Index < len(credits) {
+			days = append(days, credits[selection.Index].OccurredOn)
+		}
+	}
+	return days
 }
 
 // recordBatches writes the chosen credits as batches, one per origin and funding agency

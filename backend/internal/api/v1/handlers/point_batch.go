@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/murandido/m-80-backend/internal/api/middleware"
 	"github.com/murandido/m-80-backend/internal/api/v1/schemas"
+	"github.com/murandido/m-80-backend/internal/businessday"
 	"github.com/murandido/m-80-backend/internal/data"
 	"github.com/murandido/m-80-backend/internal/utils"
 	"gorm.io/gorm"
@@ -143,6 +144,10 @@ func (h *PointBatchHandler) CreatePointBatch(w http.ResponseWriter, r *http.Requ
 		default:
 			utils.SendError(w, r, http.StatusInternalServerError, "Failed to fetch account: "+err.Error())
 		}
+		return
+	}
+
+	if !guardBatchDays(w, r, h.DB, req.AccountID, acquiredOn) {
 		return
 	}
 
@@ -317,6 +322,18 @@ func (h *PointBatchHandler) UpdatePointBatch(w http.ResponseWriter, r *http.Requ
 		updates["note"] = *req.Note
 	}
 
+	// Anything but the note moves the batch's costing, so both the day it sits on and the
+	// day it moves to have to be open. A note is free text nobody prices.
+	if touchesCosting(updates) {
+		days := []time.Time{batch.AcquiredOn}
+		if moved, ok := updates["acquired_on"].(time.Time); ok {
+			days = append(days, moved)
+		}
+		if !guardBatchDays(w, r, h.DB, batch.AccountID, days...) {
+			return
+		}
+	}
+
 	if len(updates) > 0 {
 		if err := h.DB.Model(&batch).Updates(updates).Error; err != nil {
 			var pgErr *pgconn.PgError
@@ -428,4 +445,37 @@ func (h *PointBatchHandler) DeletePointBatch(w http.ResponseWriter, r *http.Requ
 	}
 
 	utils.SendJSON(w, r, http.StatusOK, "Lote excluído com sucesso", nil)
+}
+
+// guardBatchDays refuses a batch write that lands in a closed inventory period, the same
+// guard issuances and alterations already get. The recompute never replays a closed period,
+// so a batch added there would never be consumed and one edited there would leave the
+// settled costing describing a batch that no longer exists. days are acquired_on values -
+// calendar days, not instants - so they are read as the São Paulo day they name. ok is false
+// when a response was already sent.
+func guardBatchDays(w http.ResponseWriter, r *http.Request, db *gorm.DB, accountID string, days ...time.Time) bool {
+	starts := make([]time.Time, 0, len(days))
+	for _, day := range days {
+		starts = append(starts, businessday.Start(day))
+	}
+	frozenUntil, err := refuseClosedPeriod(db, accountID, starts...)
+	if err != nil {
+		utils.SendError(w, r, http.StatusInternalServerError, "Failed to check the inventory period: "+err.Error())
+		return false
+	}
+	if !frozenUntil.IsZero() {
+		utils.SendError(w, r, http.StatusUnprocessableEntity, closedPeriodMessage(frozenUntil))
+		return false
+	}
+	return true
+}
+
+// touchesCosting reports whether a batch update changes anything the FIFO costing reads.
+func touchesCosting(updates map[string]interface{}) bool {
+	for column := range updates {
+		if column != "note" {
+			return true
+		}
+	}
+	return false
 }

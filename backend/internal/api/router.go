@@ -15,6 +15,7 @@ import (
 	"github.com/murandido/m-80-backend/internal/events"
 	"github.com/murandido/m-80-backend/internal/health"
 	"github.com/murandido/m-80-backend/internal/latamsync"
+	"github.com/murandido/m-80-backend/internal/mcp"
 	"github.com/murandido/m-80-backend/internal/smilessync"
 	httpSwagger "github.com/swaggo/http-swagger"
 	"gorm.io/gorm"
@@ -53,7 +54,18 @@ func NewRouter(db *gorm.DB, broker *events.Broker, bookings *booking.Registry, m
 		))
 	}
 
-	r.Mount("/api/v1", v1.NewRouter(db, broker, bookings, monitor, smilesGuard, latamGuard, azulConnector))
+	v1Router := v1.NewRouter(db, broker, bookings, monitor, smilesGuard, latamGuard, azulConnector)
+	r.Mount("/api/v1", v1Router)
+
+	// The personal MCP server. Outside /api/v1 because its credential is an MCP token, which no
+	// v1 route accepts; every tool then calls back into v1Router as the token's owner, so the
+	// role gates and the agency scope apply to the agent exactly as to the panel.
+	// Only the verbs the streamable HTTP transport uses: r.Handle would register every
+	// method, CONNECT and TRACE included, which nothing here answers.
+	mcpHandler := mcp.NewHandler(db, v1Router)
+	r.Post("/mcp", mcpHandler.ServeHTTP)
+	r.Get("/mcp", mcpHandler.ServeHTTP)
+	r.Delete("/mcp", mcpHandler.ServeHTTP)
 
 	return r
 }
