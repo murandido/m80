@@ -111,6 +111,11 @@ func (h *MicrosoftConnectionHandler) FinishMicrosoftConnection(w http.ResponseWr
 		return
 	}
 	_, err := h.Workbooks.Finish(r.Context(), user.ID, req.Code, req.State)
+	if err != nil {
+		// Every refusal, not only the unexpected ones: Microsoft's own reason (the AADSTS code
+		// on a refused code exchange) is only in this line, and the panel just says "error".
+		slog.Warn("microsoft connection: finish failed", "user_id", user.ID, "err", err)
+	}
 	switch {
 	case errors.Is(err, onedrivesync.ErrNotConfigured):
 		utils.SendError(w, r, http.StatusServiceUnavailable, err.Error())
@@ -119,7 +124,6 @@ func (h *MicrosoftConnectionHandler) FinishMicrosoftConnection(w http.ResponseWr
 		utils.SendError(w, r, http.StatusUnprocessableEntity, err.Error())
 		return
 	case err != nil:
-		slog.Error("microsoft connection: finish failed", "user_id", user.ID, "err", err)
 		utils.SendError(w, r, http.StatusBadGateway, "A Microsoft não respondeu como esperado. Tente de novo.")
 		return
 	}
