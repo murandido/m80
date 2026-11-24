@@ -6009,14 +6009,14 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Tropas (grupos de contas liminares com planilha no OneDrive e grupo no WhatsApp) das agências visíveis. O link da planilha vem mascarado.",
+                "description": "Grupos de contas liminares com planilha no OneDrive e grupo no WhatsApp, das agências visíveis. O link da planilha vem mascarado.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
-                    "Tropas"
+                    "Liminares"
                 ],
-                "summary": "Listar Tropas",
+                "summary": "Listar grupos de liminares",
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -6038,7 +6038,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Cria uma Tropa. Só contas liminares; o programa de cada conta vem da própria conta. Emissores devem ser usuários do painel.",
+                "description": "Cria um grupo de liminares. Só contas liminares; o programa de cada conta vem da própria conta. Emissores devem ser usuários do painel, cada um com a agência das emissões dele.",
                 "consumes": [
                     "application/json"
                 ],
@@ -6046,12 +6046,12 @@ const docTemplate = `{
                     "application/json"
                 ],
                 "tags": [
-                    "Tropas"
+                    "Liminares"
                 ],
-                "summary": "Criar Tropa",
+                "summary": "Criar grupo de liminares",
                 "parameters": [
                     {
-                        "description": "Tropa",
+                        "description": "grupo de liminares",
                         "name": "request",
                         "in": "body",
                         "required": true,
@@ -6087,13 +6087,13 @@ const docTemplate = `{
                     "application/json"
                 ],
                 "tags": [
-                    "Tropas"
+                    "Liminares"
                 ],
-                "summary": "Ver Tropa",
+                "summary": "Ver grupo de liminares",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "ID da Tropa",
+                        "description": "ID do grupo de liminares",
                         "name": "id",
                         "in": "path",
                         "required": true
@@ -6107,7 +6107,7 @@ const docTemplate = `{
                         }
                     },
                     "404": {
-                        "description": "Tropa não encontrada",
+                        "description": "grupo de liminares não encontrada",
                         "schema": {
                             "$ref": "#/definitions/schemas.ErrorResponse"
                         }
@@ -6120,7 +6120,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Substitui a Tropa. spreadsheet_url null mantém o link guardado; \"\" remove.",
+                "description": "Substitui o grupo de liminares. spreadsheet_url null mantém o link guardado; \"\" remove.",
                 "consumes": [
                     "application/json"
                 ],
@@ -6128,19 +6128,19 @@ const docTemplate = `{
                     "application/json"
                 ],
                 "tags": [
-                    "Tropas"
+                    "Liminares"
                 ],
-                "summary": "Atualizar Tropa",
+                "summary": "Atualizar grupo de liminares",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "ID da Tropa",
+                        "description": "ID do grupo de liminares",
                         "name": "id",
                         "in": "path",
                         "required": true
                     },
                     {
-                        "description": "Tropa",
+                        "description": "grupo de liminares",
                         "name": "request",
                         "in": "body",
                         "required": true,
@@ -6164,18 +6164,18 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Apaga o cadastro da Tropa. Nenhuma emissão ou conta é alterada.",
+                "description": "Apaga o cadastro do grupo de liminares. Nenhuma emissão ou conta é alterada.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
-                    "Tropas"
+                    "Liminares"
                 ],
-                "summary": "Excluir Tropa",
+                "summary": "Excluir grupo de liminares",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "ID da Tropa",
+                        "description": "ID do grupo de liminares",
                         "name": "id",
                         "in": "path",
                         "required": true
@@ -6198,18 +6198,18 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Baixa a planilha da Tropa e cruza com o painel e o extrato das contas liminares dela. Só linhas das contas mapeadas; a taxa de resgate é ignorada. Padrão: últimos 7 dias.",
+                "description": "Baixa a planilha do grupo de liminares e cruza com o painel e o extrato das contas liminares dele. Só linhas das contas mapeadas; a taxa de resgate é ignorada. Padrão: últimos 7 dias.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
-                    "Tropas"
+                    "Liminares"
                 ],
-                "summary": "Conferir Tropa",
+                "summary": "Conferir grupo de liminares",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "ID da Tropa",
+                        "description": "ID do grupo de liminares",
                         "name": "id",
                         "in": "path",
                         "required": true
@@ -6250,7 +6250,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Grava como emissões as linhas de um dia da planilha (só das contas da Tropa; sem rows, todas as prontas). Linhas negativas cancelam a emissão do localizador. Taxa de resgate ignorada.",
+                "description": "Grava como emissões as linhas de um dia da planilha (só das contas do grupo de liminares; sem rows, todas as prontas). Linhas negativas cancelam a emissão do localizador. Taxa de resgate ignorada.",
                 "consumes": [
                     "application/json"
                 ],
@@ -6258,13 +6258,13 @@ const docTemplate = `{
                     "application/json"
                 ],
                 "tags": [
-                    "Tropas"
+                    "Liminares"
                 ],
-                "summary": "Importar dia da planilha da Tropa",
+                "summary": "Importar dia da planilha do grupo de liminares",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "ID da Tropa",
+                        "description": "ID do grupo de liminares",
                         "name": "id",
                         "in": "path",
                         "required": true
@@ -6296,7 +6296,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Importa todas as linhas prontas das contas da Tropa entre dois dias. Feito para a carga inicial antes da rotina diária.",
+                "description": "Importa todas as linhas prontas das contas do grupo de liminares entre dois dias. Feito para a carga inicial antes da rotina diária.",
                 "consumes": [
                     "application/json"
                 ],
@@ -6304,13 +6304,13 @@ const docTemplate = `{
                     "application/json"
                 ],
                 "tags": [
-                    "Tropas"
+                    "Liminares"
                 ],
-                "summary": "Importar período da planilha da Tropa",
+                "summary": "Importar período da planilha do grupo de liminares",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "ID da Tropa",
+                        "description": "ID do grupo de liminares",
                         "name": "id",
                         "in": "path",
                         "required": true
@@ -16756,7 +16756,6 @@ const docTemplate = `{
         "schemas.InjunctionGroupRequest": {
             "type": "object",
             "required": [
-                "agency_id",
                 "name"
             ],
             "properties": {
@@ -16765,9 +16764,6 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/schemas.InjunctionAccountLabel"
                     }
-                },
-                "agency_id": {
-                    "type": "string"
                 },
                 "issuers": {
                     "type": "array",
@@ -16828,10 +16824,14 @@ const docTemplate = `{
         "schemas.InjunctionIssuerLabel": {
             "type": "object",
             "required": [
+                "agency_id",
                 "issuer_name",
                 "user_id"
             ],
             "properties": {
+                "agency_id": {
+                    "type": "string"
+                },
                 "issuer_name": {
                     "type": "string",
                     "maxLength": 80,
