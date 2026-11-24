@@ -8,23 +8,29 @@ import { env } from "@/lib/env"
 // the API checks the state was issued to that same person - and lands back on the Tropas page.
 export const dynamic = "force-dynamic"
 
-function back(request: Request, outcome: string): NextResponse {
-  return NextResponse.redirect(new URL(`/dashboard/injunction-groups?microsoft=${outcome}`, request.url))
+// A relative Location on purpose, like /api/logout: the standalone server builds request.url
+// from its bind address (HOSTNAME=0.0.0.0), not from the Host Caddy forwards, so an absolute
+// redirect sent the operator to http://0.0.0.0:3000 after signing in.
+function back(outcome: string): NextResponse {
+  return new NextResponse(null, {
+    status: 303,
+    headers: { Location: `/dashboard/injunction-groups?microsoft=${outcome}` },
+  })
 }
 
 export async function GET(request: Request) {
   const params = new URL(request.url).searchParams
   if (params.get("error")) {
     // The operator cancelled or Microsoft refused (e.g. consent denied). Nothing to forward.
-    return back(request, "cancelled")
+    return back("cancelled")
   }
 
   const code = params.get("code")
   const state = params.get("state")
-  if (!code || !state) return back(request, "error")
+  if (!code || !state) return back("error")
 
   const token = (await cookies()).get("auth_token")?.value
-  if (!token) return NextResponse.redirect(new URL("/", request.url))
+  if (!token) return new NextResponse(null, { status: 303, headers: { Location: "/" } })
 
   try {
     const res = await fetch(`${env.BACKEND_URL}/api/v1/microsoft-connection/callback`, {
@@ -33,8 +39,8 @@ export async function GET(request: Request) {
       body: JSON.stringify({ code, state }),
       cache: "no-store",
     })
-    return back(request, res.ok ? "ok" : "error")
+    return back(res.ok ? "ok" : "error")
   } catch {
-    return back(request, "error")
+    return back("error")
   }
 }
