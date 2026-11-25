@@ -81,7 +81,7 @@ func (s *Server) registerInjunctionTools(server *sdk.Server) {
 		Name: "spreadsheet_check",
 		Description: "Baixa a planilha do grupo e cruza com o painel e o extrato, só nas contas liminares dele (taxa de resgate ignorada). Baldes: " +
 			"missing_in_panel_confirmed (planilha e extrato concordam, falta no painel: pode importar), missing_in_panel_unconfirmed (só a planilha), " +
-			"differs_from_panel (pontos/milheiro/conta diferentes), missing_in_sheet_and_panel (só o extrato), pending_cancellations (estornos), " +
+			"differs_from_panel (pontos/milheiro/conta diferentes), missing_in_sheet_and_panel (só o extrato, com o dia da cobrança, o trecho e o estorno do extrato), pending_cancellations (estornos), " +
 			"invalid (localizador sem dados) e needs_mapping. Pontos inteiros; milheiro em centavos por mil pontos.",
 		Annotations: readOnly(),
 	}, func(ctx context.Context, who caller, in spreadsheetCheckInput) (any, error) {
