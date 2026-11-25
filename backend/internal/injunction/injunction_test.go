@@ -373,7 +373,14 @@ func TestCheckConfirmsAWorkbookRowTheStatementBacks(t *testing.T) {
 		confirmed, mismatch, onlyStatement := "CF"+strings.ToUpper(suffix[:4]), "MM"+strings.ToUpper(suffix[:4]), "ST"+strings.ToUpper(suffix[:4])
 		statementLine(confirmed, 30000)
 		statementLine(mismatch, 45000)
-		statementLine(onlyStatement, 12000)
+		onlyStatementLocator, origin, destination := onlyStatement, "VCP", "REC"
+		mustCreate(t, tx, &data.AzulStatementLine{
+			AccountID: account.ID, OccurredOn: day, Kind: data.AzulLineRedemption, Points: -12000,
+			Locator: &onlyStatementLocator, Origin: &origin, Destination: &destination,
+		})
+		mustCreate(t, tx, &data.AzulStatementLine{
+			AccountID: account.ID, OccurredOn: day, Kind: data.AzulLineRefund, Points: 12000, Locator: &onlyStatementLocator,
+		})
 
 		content := workbook(t, "20-11-26", [][]any{
 			row(1, "AZUL", confirmed, 30000, 16, "HUDSON", "PEDRO", 0),
@@ -394,7 +401,16 @@ func TestCheckConfirmsAWorkbookRowTheStatementBacks(t *testing.T) {
 			t.Errorf("points that disagree must stay unconfirmed: got %+v", result.MissingInPanelUnconfirmed)
 		}
 		if len(result.MissingInSheetAndPanel) != 1 || result.MissingInSheetAndPanel[0].Locator != onlyStatement {
-			t.Errorf("statement only: got %+v", result.MissingInSheetAndPanel)
+			t.Fatalf("statement only: got %+v", result.MissingInSheetAndPanel)
+		}
+		// The line the agency is asked to write down needs a date and a trip to be found, and
+		// a full refund means there is nothing left to charge.
+		gap := result.MissingInSheetAndPanel[0]
+		if gap.Day != day.Format(time.DateOnly) || gap.Route != "VCP→REC" {
+			t.Errorf("statement only: day %q route %q, want %s and VCP→REC", gap.Day, gap.Route, day.Format(time.DateOnly))
+		}
+		if gap.StatementRefundedPoints == nil || *gap.StatementRefundedPoints != 12000 {
+			t.Errorf("statement only: refunded %v, want 12000", gap.StatementRefundedPoints)
 		}
 	})
 }

@@ -38,6 +38,12 @@ type Item struct {
 	PanelIssuanceID    string  `json:"panel_issuance_id,omitempty"`
 	Detail             string  `json:"detail"`
 	Observation        *string `json:"observation,omitempty"`
+
+	// On a line only on the statement, Day is the statement's first charge, Route the trip
+	// as its legs spell it and StatementRefundedPoints what it gave back: a booking refunded
+	// in full is not one left to charge.
+	Route                   string `json:"route,omitempty"`
+	StatementRefundedPoints *int   `json:"statement_refunded_points,omitempty"`
 }
 
 // AccountStatement is how far the statement of one account could be read.
@@ -230,6 +236,10 @@ type statementBooking struct {
 	accountID string
 	program   string
 	points    int
+	// day is the statement's first charge, route its legs and refunded what it gave back.
+	day      time.Time
+	route    string
+	refunded int
 }
 
 // statementGaps reconciles every account of the Tropa and returns the bookings missing in the
@@ -275,9 +285,17 @@ func statementGaps(db *gorm.DB, group data.InjunctionGroup) (map[string]statemen
 			reports = append(reports, report)
 			continue
 		}
-		for _, booking := range statement.Reconcile(parsed.Movements, bookings, batches).Bookings {
+		reconciliation := statement.Reconcile(parsed.Movements, bookings, batches)
+		refunded := map[string]int{}
+		for _, refund := range reconciliation.Refunds {
+			refunded[refund.Locator] = refund.StatementPoints
+		}
+		for _, booking := range reconciliation.Bookings {
 			if booking.Verdict == statement.VerdictMissingInPanel && booking.Locator != "" {
-				gaps[strings.ToUpper(booking.Locator)] = statementBooking{accountID: mapping.AccountID, program: mapping.ProgramCode, points: booking.StatementPoints}
+				gaps[strings.ToUpper(booking.Locator)] = statementBooking{
+					accountID: mapping.AccountID, program: mapping.ProgramCode, points: booking.StatementPoints,
+					day: booking.OccurredOn, route: booking.Route, refunded: refunded[booking.Locator],
+				}
 			}
 		}
 		reports = append(reports, report)
@@ -370,10 +388,18 @@ func Check(db *gorm.DB, group data.InjunctionGroup, workbook []byte, from, to ti
 			continue
 		}
 		points := gap.points
-		result.MissingInSheetAndPanel = append(result.MissingInSheetAndPanel, Item{
+		item := Item{
 			Locator: locator, Program: gap.program, AccountID: gap.accountID, Points: gap.points, StatementPoints: &points,
-			Detail: "no extrato, mas nem na planilha nem no painel",
-		})
+			Route: gap.route, Detail: "no extrato, mas nem na planilha nem no painel",
+		}
+		if !gap.day.IsZero() {
+			item.Day = gap.day.Format(time.DateOnly)
+		}
+		if gap.refunded != 0 {
+			refunded := gap.refunded
+			item.StatementRefundedPoints = &refunded
+		}
+		result.MissingInSheetAndPanel = append(result.MissingInSheetAndPanel, item)
 	}
 	sort.Slice(result.MissingInSheetAndPanel, func(i, j int) bool {
 		return result.MissingInSheetAndPanel[i].Locator < result.MissingInSheetAndPanel[j].Locator
