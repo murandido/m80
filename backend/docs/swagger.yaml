@@ -4529,11 +4529,19 @@ definitions:
         example: MJF6HC
         type: string
       occurred_on:
+        description: |-
+          OccurredOn is the panel's issue day, or the statement's first charge when the panel
+          does not have the booking.
         example: "2026-08-05"
         type: string
       panel_points:
         example: 350000
         type: integer
+      route:
+        description: Route is the trip as the statement's legs spell it, empty when
+          it sent no airports.
+        example: VCP→REC→VCP
+        type: string
       statement_points:
         description: |-
           StatementPoints is what left the account according to the airline, positive, with

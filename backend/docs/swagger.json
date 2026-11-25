@@ -19902,12 +19902,18 @@
                     "example": "MJF6HC"
                 },
                 "occurred_on": {
+                    "description": "OccurredOn is the panel's issue day, or the statement's first charge when the panel\ndoes not have the booking.",
                     "type": "string",
                     "example": "2026-08-05"
                 },
                 "panel_points": {
                     "type": "integer",
                     "example": 350000
+                },
+                "route": {
+                    "description": "Route is the trip as the statement's legs spell it, empty when it sent no airports.",
+                    "type": "string",
+                    "example": "VCP→REC→VCP"
                 },
                 "statement_points": {
                     "description": "StatementPoints is what left the account according to the airline, positive, with\nthe legs of one booking already summed.",
