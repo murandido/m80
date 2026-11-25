@@ -2,6 +2,7 @@ package statement
 
 import (
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -50,7 +51,12 @@ type BookingLine struct {
 	StatementPoints int
 	PanelPoints     int
 	IssuanceID      string
-	OccurredOn      time.Time
+	// OccurredOn is the panel's issue day when the panel has the booking, and the first day
+	// the statement charged it when it does not - the only date such a line has.
+	OccurredOn time.Time
+	// Route is the trip as the statement's legs spell it ("VCP→REC→VCP"), empty when the
+	// airline sent no airports.
+	Route string
 }
 
 // RefundLine compares one booking's refund.
@@ -105,6 +111,7 @@ func Reconcile(movements []Movement, bookings []PanelBooking, batches []PanelBat
 	// five legs as five mismatches.
 	statementBookings := map[string]int{}
 	statementRefunds := map[string]int{}
+	trips := map[string]*statementTrip{}
 	var credits []Movement
 
 	for _, movement := range movements {
@@ -112,6 +119,12 @@ func Reconcile(movements []Movement, bookings []PanelBooking, batches []PanelBat
 		switch movement.Kind {
 		case KindRedemption:
 			statementBookings[movement.Locator] -= movement.Points // stored positive
+			trip := trips[movement.Locator]
+			if trip == nil {
+				trip = &statementTrip{}
+				trips[movement.Locator] = trip
+			}
+			trip.add(movement)
 		case KindRefund:
 			statementRefunds[movement.Locator] += movement.Points
 		case KindAccrual:
@@ -128,23 +141,76 @@ func Reconcile(movements []Movement, bookings []PanelBooking, batches []PanelBat
 		result.PanelNetPoints += batch.Points
 	}
 
-	result.Bookings = reconcileBookings(statementBookings, byLocator)
+	result.Bookings = reconcileBookings(statementBookings, byLocator, trips)
 	result.Refunds = reconcileRefunds(statementRefunds, byLocator)
 	result.Credits = reconcileCredits(credits, batches)
 	return result
 }
 
-func reconcileBookings(statement map[string]int, panel map[string]PanelBooking) []BookingLine {
+// statementTrip is what the statement says about one locator besides its points: the first
+// day it was charged and the legs, in the order the airline listed them.
+type statementTrip struct {
+	firstDay time.Time
+	legs     [][2]string
+}
+
+func (trip *statementTrip) add(movement Movement) {
+	if trip.firstDay.IsZero() || movement.OccurredOn.Before(trip.firstDay) {
+		trip.firstDay = movement.OccurredOn
+	}
+	origin, destination := strings.TrimSpace(movement.Origin), strings.TrimSpace(movement.Destination)
+	if origin == "" && destination == "" {
+		return
+	}
+	leg := [2]string{origin, destination}
+	for _, known := range trip.legs {
+		// Azul repeats a leg when it charges a booking again (a remark, a second passenger),
+		// and the route should name the trip once.
+		if known == leg {
+			return
+		}
+	}
+	trip.legs = append(trip.legs, leg)
+}
+
+// route chains consecutive legs ("VCP→REC" then "REC→VCP" reads "VCP→REC→VCP", the arrow
+// the statement page already uses) and separates the ones that do not connect with " / ".
+func (trip *statementTrip) route() string {
+	var segments []string
+	var current []string
+	for _, leg := range trip.legs {
+		if len(current) > 0 && current[len(current)-1] == leg[0] {
+			current = append(current, leg[1])
+			continue
+		}
+		if len(current) > 0 {
+			segments = append(segments, strings.Join(current, "→"))
+		}
+		current = []string{leg[0], leg[1]}
+	}
+	if len(current) > 0 {
+		segments = append(segments, strings.Join(current, "→"))
+	}
+	return strings.Join(segments, " / ")
+}
+
+func reconcileBookings(statement map[string]int, panel map[string]PanelBooking, trips map[string]*statementTrip) []BookingLine {
 	lines := make([]BookingLine, 0, len(statement))
 	seen := map[string]bool{}
 
 	for locator, points := range statement {
 		seen[locator] = true
 		line := BookingLine{Locator: locator, StatementPoints: points}
+		if trip := trips[locator]; trip != nil {
+			line.Route = trip.route()
+		}
 		booking, found := panel[locator]
 		switch {
 		case !found:
 			line.Verdict = VerdictMissingInPanel
+			if trip := trips[locator]; trip != nil {
+				line.OccurredOn = trip.firstDay
+			}
 		case booking.Points == points:
 			line.Verdict = VerdictMatched
 			line.PanelPoints = booking.Points

@@ -61,6 +61,11 @@ type Movement struct {
 	// origin for a batch ("Transferência de Pontos Livelo", "Pontuacao C6 Bank") and is
 	// shown next to the movement so a human can tell two identical credits apart.
 	Description string
+	// Origin and Destination are the leg's airports on a redemption or refund, empty on
+	// anything else. They are what tells a human which trip a locator the panel does not
+	// know was for.
+	Origin      string
+	Destination string
 }
 
 // Statement is a parsed file.

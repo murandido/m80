@@ -382,6 +382,7 @@ func toStatementResponse(
 			PanelPoints:     line.PanelPoints,
 			IssuanceID:      line.IssuanceID,
 			OccurredOn:      occurred,
+			Route:           line.Route,
 		})
 	}
 	for _, line := range reconciliation.Refunds {

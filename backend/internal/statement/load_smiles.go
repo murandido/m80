@@ -31,6 +31,8 @@ func LoadSmilesStatement(db *gorm.DB, accountID string) (Statement, error) {
 			Locator:     smilesReconcilableLocator(row),
 			Points:      row.Points,
 			Description: deref(row.Description),
+			Origin:      deref(row.Origin),
+			Destination: deref(row.Destination),
 		})
 	}
 	return Statement{Movements: movements}, nil

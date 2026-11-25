@@ -35,6 +35,8 @@ func LoadAzulStatement(db *gorm.DB, accountID string) (Statement, error) {
 			Locator:     deref(row.Locator),
 			Points:      row.Points,
 			Description: deref(row.Description),
+			Origin:      deref(row.Origin),
+			Destination: deref(row.Destination),
 		})
 	}
 	return Statement{Movements: movements}, nil

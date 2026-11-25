@@ -62,6 +62,45 @@ func TestReconcileFindsABookingOnlyOnTheStatement(t *testing.T) {
 	}
 }
 
+// A booking the panel does not have has no issue day of its own: the statement's first
+// charge is the only date anybody can put next to it, and the legs say which trip it was.
+func TestReconcileDatesAndRoutesABookingOnlyOnTheStatement(t *testing.T) {
+	t.Parallel()
+
+	result := Reconcile([]Movement{
+		{OccurredOn: day("2026-10-21"), Kind: KindRedemption, Locator: "TRIPNR", Points: -30000, Origin: "VCP", Destination: "REC"},
+		{OccurredOn: day("2026-10-20"), Kind: KindRedemption, Locator: "TRIPNR", Points: -30000, Origin: "REC", Destination: "VCP"},
+		{OccurredOn: day("2026-10-21"), Kind: KindRedemption, Locator: "TRIPNR", Points: -1000, Origin: "VCP", Destination: "REC"},
+		{OccurredOn: day("2026-10-22"), Kind: KindRedemption, Locator: "TRIPNR", Points: -5000, Origin: "GRU", Destination: "CNF"},
+	}, nil, nil)
+
+	line, _ := bookingLine(result.Bookings, "TRIPNR")
+	if !line.OccurredOn.Equal(day("2026-10-20")) {
+		t.Errorf("occurred on = %s, want the first charge, 2026-10-20", line.OccurredOn.Format(time.DateOnly))
+	}
+	if line.Route != "VCP→REC→VCP / GRU→CNF" {
+		t.Errorf("route = %q, want the connecting legs chained and the repeated one once", line.Route)
+	}
+}
+
+// When the panel has the booking, its issue day stays the line's date: the statement's
+// charge can come a day later and the panel is what the operator recorded.
+func TestReconcileKeepsThePanelDayOfAKnownBooking(t *testing.T) {
+	t.Parallel()
+
+	result := Reconcile([]Movement{
+		{OccurredOn: day("2026-10-21"), Kind: KindRedemption, Locator: "KNOWNP", Points: -10000},
+	}, []PanelBooking{{IssuanceID: "i1", Locator: "KNOWNP", IssuedOn: day("2026-10-20"), Points: 12000}}, nil)
+
+	line, _ := bookingLine(result.Bookings, "KNOWNP")
+	if !line.OccurredOn.Equal(day("2026-10-20")) {
+		t.Errorf("occurred on = %s, want the panel's 2026-10-20", line.OccurredOn.Format(time.DateOnly))
+	}
+	if line.Route != "" {
+		t.Errorf("route = %q, want empty without airports", line.Route)
+	}
+}
+
 func TestReconcileFindsABookingOnlyInThePanel(t *testing.T) {
 	t.Parallel()
 

@@ -12,7 +12,11 @@ type StatementBookingLine struct {
 	StatementPoints int    `json:"statement_points" example:"360000"`
 	PanelPoints     int    `json:"panel_points" example:"350000"`
 	IssuanceID      string `json:"issuance_id"`
-	OccurredOn      string `json:"occurred_on" example:"2026-08-05"`
+	// OccurredOn is the panel's issue day, or the statement's first charge when the panel
+	// does not have the booking.
+	OccurredOn string `json:"occurred_on" example:"2026-08-05"`
+	// Route is the trip as the statement's legs spell it, empty when it sent no airports.
+	Route string `json:"route" example:"VCP→REC→VCP"`
 }
 
 // StatementRefundLine compares one booking's refund.
